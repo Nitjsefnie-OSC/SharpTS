@@ -56,6 +56,8 @@ public class SharpTSErrorClass : SharpTSClass
             staticProperties: [])
     {
         _errorTypeName = errorTypeName;
+        if (errorTypeName == "Error")
+            DefineStaticProperty("isError", SharpTSPropertyDescriptor.ForMethod(FindStaticMethod("isError")!));
         Prototype.DefineExtraProperty("name", new SharpTSPropertyDescriptor
         {
             Value = errorTypeName,

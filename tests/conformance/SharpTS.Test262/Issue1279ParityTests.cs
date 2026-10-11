@@ -4649,7 +4649,7 @@ public sealed class Issue1279ParityTests
     [InlineData("built-ins/Error/isError/name.js")]
     [InlineData("built-ins/Error/isError/prop-desc.js")]
     public void Error_isError_has_standard_function_metadata(string relativePath)
-        => AssertPass(relativePath, Test262ExecutionMode.Interpreted);
+        => AssertPassInBothModes(relativePath);
 
     [Fact]
     public void Error_and_Function_constructors_report_standard_length()

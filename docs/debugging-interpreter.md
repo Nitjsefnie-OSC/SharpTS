@@ -27,8 +27,21 @@ add this configuration to `.vscode/launch.json`:
 
 The command saves a dirty editor before launch. Breakpoints are verified against the saved source;
 if a requested line is blank, a comment, a declaration-only construct, or a brace, it moves to the
-next executable statement and reports the bound line. Changing a file after launch makes its
-breakpoints unverified until the next session, rather than running against mismatched source.
+next executable statement and reports the bound line. If a saved file changes or disappears after
+launch, existing breakpoints are invalidated when the adapter checks a prospective hit or presents
+that source. They remain unverified until the next session, even if the original file is restored.
+Stack frames for changed sources open the parsed launch snapshot through DAP `source`, preserving
+the text that is actually executing.
+
+The command carries `sharpts.projectFile` and `sharpts.additionalReferences` into the launch. A
+`.csproj` supplies existing direct `HintPath` assemblies and locally cached package libraries;
+SharpTS discovers the TypeScript configuration separately. This reads the project without running
+MSBuild, restoring packages, or building it. An explicit tsconfig path or directory remains valid
+for `project` in a launch configuration.
+
+Interpreter debugging remains available if the language server fails to start. Its error message
+identifies the server failure and points to **SharpTS: Restart Language Server**; check
+`sharpts.dotnetPath` and the installed server files before retrying.
 
 Use **SharpTS: Debug Compiled Current File** for the portable-PDB/CoreCLR path. The two commands are
 deliberately separate because they execute different runtimes and may expose different edge cases.
@@ -36,10 +49,11 @@ deliberately separate because they execute different runtimes and may expose dif
 ## Standalone DAP tool
 
 The first public `SharpTS.DebugAdapter` NuGet upload remains a
-[release gate](plans/interpreter-dap.md#remaining-release-gates-2026-10-08). To validate a source
+[release gate](plans/interpreter-dap.md#remaining-release-gates-2026-10-11). To validate a source
 checkout before publication, build Release and run `pwsh ./scripts/test-debug-adapter-package.ps1`.
 It packs the current build, installs that exact version from an isolated local feed, verifies the
-installed DLL hash and reported version, and records the usable tool path in its result JSON.
+installed DLL hash and reported version, and runs a real DAP launch/breakpoint/output/disconnect
+flow through the installed shim. Its result JSON records the usable tool path and protocol evidence.
 
 Install the client-independent adapter as a .NET tool:
 
@@ -58,7 +72,8 @@ The `launch` request accepts:
 
 - `program` (required): saved `.ts`, `.tsx`, `.mts`, or `.cts` entry point.
 - `cwd`, `args`, and `env`: working directory, `process.argv` values, and environment overrides.
-- `project`: optional tsconfig/project path; normal tsconfig discovery is used when omitted.
+- `project`: optional tsconfig path/directory or `.csproj` supplying existing managed references;
+  normal tsconfig discovery is used when omitted or when a `.csproj` is selected.
 - `references`: additional .NET assembly paths.
 - `stopOnEntry`, `justMyCode`, and `console`; `internalConsole` is the only console in v1.
 - `diagnostics`: `errors` (default), `all`, or `none` for launch-time diagnostic output.

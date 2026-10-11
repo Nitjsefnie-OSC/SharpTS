@@ -330,13 +330,22 @@ internal sealed class DapAdapterSession(DapProtocolConnection connection, TextWr
         (InterpreterDebugThreadInfo thread, DebugStopSnapshot stop) = RequireStop(threadId);
         ResetStopHandles(_debugHost.CurrentStopEpoch);
         int start = Math.Max(0, TryGetInt(request.Arguments, "startFrame") ?? 0);
-        int levels = Math.Clamp(TryGetInt(request.Arguments, "levels") ?? stop.Frames.Count, 0, 1_000);
+        int requestedLevels = TryGetInt(request.Arguments, "levels") ?? 0;
+        int levels = Math.Clamp(requestedLevels == 0 ? stop.Frames.Count : requestedLevels, 0, 1_000);
+        // Recursive frames often share a document. Validate each source only once per request.
+        var sources = new Dictionary<SourceDocument, object>();
+        object GetSourceDescriptor(SourceDocument document)
+        {
+            if (!sources.TryGetValue(document, out object? source))
+                sources[document] = source = SourceDescriptor(document);
+            return source;
+        }
         object[] frames = stop.Frames.Select((frame, index) => (frame, index))
             .Skip(start).Take(levels).Select(item => new
             {
                 id = GetFrameHandle(thread.Id, stop, item.index, item.frame),
                 name = item.frame.Name,
-                source = SourceDescriptor(item.frame.Location.Document),
+                source = GetSourceDescriptor(item.frame.Location.Document),
                 line = ToClientLine(item.frame.Location.Line),
                 column = ToClientColumn(item.frame.Location.Column),
                 endLine = ToClientLine(item.frame.Location.EndLine),
@@ -528,7 +537,7 @@ internal sealed class DapAdapterSession(DapProtocolConnection connection, TextWr
     {
         int reference = request.Arguments.RequiredInt32("sourceReference");
         if (!_debugHost.TryGetSource(reference, out InterpreterDebugSourceInfo? source)
-            || source is null || !source.Document.IsVirtual)
+            || source is null)
             throw new DapRequestException("Source reference is stale or invalid.");
         SourceDocument document = source.Document;
         return connection.SendResponseAsync(request, true, new
@@ -544,9 +553,13 @@ internal sealed class DapAdapterSession(DapProtocolConnection connection, TextWr
     {
         _ = RequireDebuggee();
         IReadOnlyList<InterpreterDebugSourceInfo> sources = _debugHost.Sources;
+        int start = Math.Max(0, TryGetInt(request.Arguments, "startModule") ?? 0);
+        int requestedCount = TryGetInt(request.Arguments, "moduleCount") ?? 0;
+        int count = requestedCount == 0 ? sources.Count : Math.Max(0, requestedCount);
         return connection.SendResponseAsync(request, true, new
         {
-            modules = sources.Select(source => ModuleDescriptor(source.Document, source.Id)).ToArray(),
+            modules = sources.Skip(start).Take(count)
+                .Select(source => ModuleDescriptor(source.Document, source.Id)).ToArray(),
             totalModules = sources.Count,
         }, cancellationToken: cancellationToken);
     }
@@ -629,12 +642,12 @@ internal sealed class DapAdapterSession(DapProtocolConnection connection, TextWr
         {
             Observe(connection.SendEventAsync("loadedSource", new
             {
-                reason = change.Reason == InterpreterDebugSourceChangeReason.New ? "new" : "removed",
+                reason = SourceChangeReason(change.Reason),
                 source = SourceDescriptor(change.Source.Document, change.Source.Id),
             }));
             Observe(connection.SendEventAsync("module", new
             {
-                reason = change.Reason == InterpreterDebugSourceChangeReason.New ? "new" : "removed",
+                reason = SourceChangeReason(change.Reason),
                 module = ModuleDescriptor(change.Source.Document, change.Source.Id),
             }));
         }
@@ -689,11 +702,25 @@ internal sealed class DapAdapterSession(DapProtocolConnection connection, TextWr
 
     private object SourceDescriptor(SourceDocument document, int? knownSourceId = null)
     {
-        if (!document.IsVirtual)
+        bool changed = _debugHost.HasChangedSource(document);
+        if (!document.IsVirtual && !changed)
             return new { name = Path.GetFileName(document.Path), path = document.Path, sourceReference = 0 };
         int sourceId = knownSourceId ?? _debugHost.GetSource(document).Id;
-        return new { name = Path.GetFileName(document.Path), path = (string?)null, sourceReference = sourceId };
+        return new
+        {
+            name = Path.GetFileName(document.Path),
+            path = document.IsVirtual ? null : document.Path,
+            sourceReference = sourceId,
+            origin = changed ? "Source captured at launch; file changed on disk." : null,
+        };
     }
+
+    private static string SourceChangeReason(InterpreterDebugSourceChangeReason reason) => reason switch
+    {
+        InterpreterDebugSourceChangeReason.New => "new",
+        InterpreterDebugSourceChangeReason.Changed => "changed",
+        _ => "removed",
+    };
 
     private static object ModuleDescriptor(SourceDocument document, int id) => new
     {

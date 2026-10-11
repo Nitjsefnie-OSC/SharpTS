@@ -114,7 +114,9 @@ jobs:
 
       - name: Pack and smoke test interpreter debug adapter tool
         shell: pwsh
-        run: ./scripts/test-debug-adapter-package.ps1
+        run: |
+          ./scripts/test-smoke-process.ps1
+          ./scripts/test-debug-adapter-package.ps1
 
       - name: Setup Node for VS Code extension packaging
         if: matrix.os == 'ubuntu-24.04'

@@ -35,6 +35,11 @@ const runDirectory = await fs.mkdtemp(path.join(base, "run-"));
 const git = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", windowsHide: true });
 assert.equal(git.status, 0, git.stderr);
 const results = [];
+const referenceAssembly = path.resolve(root, options.get("reference-assembly")
+  ?? "tests/fixtures/SharpTS.DebuggerReferenceFixture/bin/Release/net10.0/SharpTS.DebuggerReferenceFixture.dll");
+await fs.access(referenceAssembly);
+const xml = (value) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+  .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 for (const variant of modes) {
   const artifacts = path.join(runDirectory, variant);
   const workspace = path.join(artifacts, "workspace");
@@ -67,13 +72,16 @@ for (const variant of modes) {
   for (const name of ["SharpTS.LanguageServer.dll", "SharpTS.dll", "SharpTS.DebugAdapter.dll"])
     binaryHashes[name] = await hash(path.join(binaryDirectory, name));
   const project = path.join(workspace, "tsconfig.json");
-  // A real, existing reference makes forwarding additionalReferences observable at launch.
-  const references = [path.join(binaryDirectory, "SharpTS.dll")];
-  const config = { mode: variant, artifacts, workspace, extensions, project, references, binaryHashes, package: packaged,
+  const managedProject = path.join(workspace, "references.csproj");
+  await fs.writeFile(managedProject, `<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>`
+    + `<Reference Include="SharpTS.DebuggerReferenceFixture"><HintPath>${xml(referenceAssembly)}</HintPath>`
+    + `</Reference></ItemGroup></Project>\n`);
+  const references = [referenceAssembly];
+  const config = { mode: variant, artifacts, workspace, extensions, project, managedProject, references, binaryHashes, package: packaged,
     developmentExtension, sourceCommit: git.stdout.trim(), result: path.join(artifacts, "result.json") };
   await fs.mkdir(path.join(workspace, ".vscode"), { recursive: true });
   await fs.writeFile(path.join(workspace, ".vscode/settings.json"), JSON.stringify({
-    "sharpts.dotnetPath": options.get("dotnet") ?? "dotnet", "sharpts.projectFile": project,
+    "sharpts.dotnetPath": options.get("dotnet") ?? "dotnet", "sharpts.projectFile": managedProject,
     "sharpts.additionalReferences": references, "files.autoSave": "off",
     "security.workspace.trust.enabled": false, "update.mode": "none",
     "extensions.autoCheckUpdates": false, "extensions.autoUpdate": false,
@@ -81,7 +89,9 @@ for (const variant of modes) {
   }, null, 2) + "\n");
   const launch = JSON.parse(await fs.readFile(path.join(workspace, "interpreter.launch.json"), "utf8"));
   await fs.writeFile(path.join(workspace, ".vscode/launch.json"), JSON.stringify(launch, null, 2) + "\n");
-  await fs.writeFile(path.join(workspace, "command.ts"), "const savedValue = 40;\nconsole.log(`saved=${savedValue + 2}`);\n");
+  await fs.writeFile(path.join(workspace, "command.ts"), "const savedValue = 40;\nconsole.log(`saved=${savedValue + 2}`);\n"
+    + 'import { ReferenceProbe } from "dotnet:SharpTS.DebuggerReferenceFixture.ReferenceProbe";\n'
+    + 'console.log(`managed=${ReferenceProbe.getAnswer()}`);\n');
   await fs.writeFile(path.join(workspace, "terminate.ts"), "let ticks = 0;\nwhile (true) {\n    ticks++;\n}\n");
   const configFile = path.join(artifacts, "test-config.json");
   await fs.writeFile(configFile, JSON.stringify(config, null, 2) + "\n");

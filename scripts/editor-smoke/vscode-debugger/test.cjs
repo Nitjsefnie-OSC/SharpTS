@@ -149,7 +149,7 @@ exports.run = async function run() {
   const launch = (name, additions = {}) => ({ type: "sharpts-interpreter", request: "launch", name,
     program: source("main.ts"), cwd: config.workspace, project: config.project,
     args: ["alpha", "beta"], env: { SHARPTS_DAP_ACCEPTANCE: "configured", SHARPTS_DAP_EXCEPTION: "none" },
-    references: [], console: "internalConsole", justMyCode: true, diagnostics: "all", ...additions });
+    references: config.references, console: "internalConsole", justMyCode: true, diagnostics: "all", ...additions });
   try {
     extension = vscode.extensions.getExtension("sharpts.vscode-sharpts");
     assert.ok(extension, "the actual SharpTS extension must be present");
@@ -191,7 +191,7 @@ exports.run = async function run() {
     const commandLaunch = command.messages.find((item) => item.direction === "client" && item.message.command === "launch").message.arguments;
     assert.ok(samePath(commandLaunch.program, source("command.ts")));
     assert.ok(samePath(commandLaunch.cwd, config.workspace));
-    assert.ok(samePath(commandLaunch.project, config.project));
+    assert.ok(samePath(commandLaunch.project, config.managedProject));
     assert.deepEqual(commandLaunch.references, config.references);
     let frames = await stack(command, stopped);
     await inspect(command, frames[0], "command-module-scope");
@@ -199,6 +199,7 @@ exports.run = async function run() {
     await resume(command, stopped.body.threadId);
     await completed(command);
     assert.match(output(command), /saved=42/);
+    assert.match(output(command), /managed=42/);
     vscode.debug.removeBreakpoints([commandBreakpoint]);
     // Restore the unrelated buffer before checking breakpoints against committed source checksums.
     const restore = new vscode.WorkspaceEdit();
@@ -403,7 +404,7 @@ exports.run = async function run() {
       sourceCommit: config.sourceCommit, binaryHashes: config.binaryHashes, package: config.package,
       adapterFactoriesRegisteredByHarness: 0, adaptersSpawnedByHarness: 0,
       presentationEvidence: "VS Code debug APIs and actual extension-host DAP traffic; no visual UI assertions",
-      coverage: ["dirty-command-save", "project-and-reference-forwarding", "launch-json", "bound-source-breakpoints",
+      coverage: ["dirty-command-save", "project-and-reference-forwarding", "managed-project-reference-execution", "launch-json", "bound-source-breakpoints",
         "comment-line-snapping", "class-expansion", "method-and-function-scopes", "closure-values", "loop-stops",
         "watch-hover-repl", "read-only-evaluation", "step-in-next-out", "async-generator-resumption",
         "worker-thread-step", "debug-console-output", "caught-uncaught-unhandled-exceptions", "pause-terminate-relaunch",

@@ -75,8 +75,26 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     };
 
-    client = new LanguageClient('sharpts', 'SharpTS Language Server', serverOptions, clientOptions);
-    await client.start();
+    const createLanguageClient = () => new LanguageClient(
+        'sharpts', 'SharpTS Language Server', serverOptions, clientOptions,
+    );
+    client = createLanguageClient();
+
+    const recoverLanguageServer = async (error: unknown) => {
+        const failedClient = client;
+        // v9 caches a failed start promise and cannot restart a client in StartFailed.
+        client = createLanguageClient();
+        try {
+            await failedClient?.dispose();
+        } catch {
+            // v9's stop rejects in StartFailed; its node-side finally still schedules process cleanup.
+            // That rejection bypasses cleanup of these client-owned resources. Only access the
+            // lazy channel getter here: successful disposal has already cleared its channel.
+            failedClient?.outputChannel.dispose();
+            failedClient?.diagnostics?.dispose();
+        }
+        reportLanguageServerFailure(error);
+    };
 
     // Compile / run commands use the core CLI (`SharpTS.dll`), not the LSP server.
     const compileCommands = new CompileCommands(coreDll);
@@ -93,7 +111,13 @@ export async function activate(context: vscode.ExtensionContext) {
         ),
         vscode.commands.registerCommand('sharpts.run', () => compileCommands.run()),
         vscode.commands.registerCommand('sharpts.compileAndRun', () => compileCommands.compileAndRun()),
-        vscode.commands.registerCommand('sharpts.restartServer', () => client?.restart()),
+        vscode.commands.registerCommand('sharpts.restartServer', async () => {
+            try {
+                await client?.restart();
+            } catch (error) {
+                await recoverLanguageServer(error);
+            }
+        }),
         vscode.debug.registerDebugAdapterDescriptorFactory(INTERPRETER_DEBUG_TYPE, {
             createDebugAdapterDescriptor: (session) => {
                 if (!fs.existsSync(adapterDll)) {
@@ -113,6 +137,22 @@ export async function activate(context: vscode.ExtensionContext) {
             },
         }),
         { dispose: () => compileCommands.dispose() }
+    );
+
+    try {
+        await client.start();
+    } catch (error) {
+        await recoverLanguageServer(error);
+    }
+}
+
+function reportLanguageServerFailure(error: unknown): void {
+    const detail = error instanceof Error ? error.message : String(error);
+    void vscode.window.showErrorMessage(
+        `SharpTS language server could not start: ${detail}. `
+        + 'Check sharpts.dotnetPath and the bundled server files, then run '
+        + 'SharpTS: Restart Language Server (reload VS Code after changing dotnetPath). '
+        + 'Interpreter debugging and compile/run commands remain available.',
     );
 }
 

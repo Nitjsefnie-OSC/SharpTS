@@ -1,0 +1,118 @@
+using System.Xml.Linq;
+using SharpTS.IO;
+
+namespace SharpTS.References;
+
+/// <summary>
+/// Resolves direct HintPath references and locally cached package libraries from a C# project.
+/// </summary>
+public static class CsprojReferenceResolver
+{
+    /// <summary>
+    /// Reads a C# project without evaluating MSBuild, restoring packages, or building outputs.
+    /// Relative HintPath values are resolved against the project directory; package libraries
+    /// are read from NUGET_PACKAGES or the default user cache. Missing references are skipped.
+    /// Only references already available on disk are returned as absolute paths.
+    /// </summary>
+    public static List<string> Parse(string csprojPath)
+    {
+        if (!CompilerFileSystem.FileExists(csprojPath))
+            throw new FileNotFoundException($"Project file not found: {csprojPath}");
+
+        var doc = XDocument.Parse(CompilerFileSystem.ReadAllText(csprojPath));
+        XNamespace projectNamespace = doc.Root?.Name.Namespace ?? XNamespace.None;
+        var projectDir = Path.GetDirectoryName(Path.GetFullPath(csprojPath)) ?? ".";
+        var references = new List<string>();
+
+        // Parse <Reference> elements (direct assembly references)
+        foreach (var refElement in doc.Descendants(projectNamespace + "Reference"))
+        {
+            CompilerFileSystem.ThrowIfCancellationRequested();
+            var hintPath = refElement.Element(projectNamespace + "HintPath")?.Value;
+            if (!string.IsNullOrEmpty(hintPath))
+            {
+                // Normalize path separators for cross-platform compatibility
+                // (csproj files often use backslashes even when targeting Unix)
+                hintPath = hintPath.Replace('\\', Path.DirectorySeparatorChar);
+                var fullPath = Path.GetFullPath(Path.Combine(projectDir, hintPath));
+                if (CompilerFileSystem.FileExists(fullPath))
+                    references.Add(fullPath);
+            }
+        }
+
+        // Parse <PackageReference> elements (NuGet packages)
+        var packageReferences = new List<(string Id, string Version)>();
+        foreach (var pkgElement in doc.Descendants(projectNamespace + "PackageReference"))
+        {
+            CompilerFileSystem.ThrowIfCancellationRequested();
+            var id = pkgElement.Attribute("Include")?.Value;
+            var version = pkgElement.Attribute("Version")?.Value
+                ?? pkgElement.Element(projectNamespace + "Version")?.Value;
+
+            if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(version))
+            {
+                packageReferences.Add((id, version));
+            }
+        }
+
+        // Resolve NuGet packages to actual DLLs
+        var nugetPath = GetNuGetPackagesPath();
+        foreach (var (id, version) in packageReferences)
+        {
+            CompilerFileSystem.ThrowIfCancellationRequested();
+            var packagePath = Path.Combine(nugetPath, id.ToLowerInvariant(), version);
+            if (CompilerFileSystem.DirectoryExists(packagePath))
+            {
+                var libPath = FindBestTfmLib(packagePath);
+                if (libPath != null)
+                {
+                    foreach (var dll in CompilerFileSystem.EnumerateFiles(libPath, "*.dll"))
+                    {
+                        references.Add(dll);
+                    }
+                }
+            }
+        }
+
+        return references;
+    }
+
+    private static string GetNuGetPackagesPath()
+    {
+        // Check NUGET_PACKAGES environment variable first
+        var envPath = Environment.GetEnvironmentVariable("NUGET_PACKAGES");
+        if (!string.IsNullOrEmpty(envPath) && CompilerFileSystem.DirectoryExists(envPath))
+            return envPath;
+
+        // Default to user profile location
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return Path.Combine(userProfile, ".nuget", "packages");
+    }
+
+    private static string? FindBestTfmLib(string packagePath)
+    {
+        var libPath = Path.Combine(packagePath, "lib");
+        if (!CompilerFileSystem.DirectoryExists(libPath))
+            return null;
+
+        // Prefer newer .NET versions, then netstandard
+        var tfmPreferences = new[]
+        {
+            "net10.0", "net9.0", "net8.0", "net7.0", "net6.0", "net5.0",
+            "netcoreapp3.1", "netcoreapp3.0",
+            "netstandard2.1", "netstandard2.0", "netstandard1.6"
+        };
+
+        foreach (var tfm in tfmPreferences)
+        {
+            CompilerFileSystem.ThrowIfCancellationRequested();
+            var tfmPath = Path.Combine(libPath, tfm);
+            if (CompilerFileSystem.DirectoryExists(tfmPath))
+                return tfmPath;
+        }
+
+        // Fall back to first available
+        var dirs = CompilerFileSystem.EnumerateDirectories(libPath);
+        return dirs.Count > 0 ? dirs[0] : null;
+    }
+}

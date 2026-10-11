@@ -184,6 +184,29 @@ public sealed class DapEndToEndTests
         string[] names = stack.GetProperty("body").GetProperty("stackFrames")
             .EnumerateArray().Select(frame => frame.GetProperty("name").GetString()!).ToArray();
         Assert.Equal(new[] { "recurse", "recurse", "recurse", "<module: recursive.ts>" }, names);
+        JsonElement allFrames = await dap.RequestAsync("stackTrace", new { threadId = 1, levels = 0 });
+        AssertSuccess(allFrames);
+        Assert.Equal(4, allFrames.GetProperty("body").GetProperty("stackFrames").GetArrayLength());
+        JsonElement page = await dap.RequestAsync("stackTrace", new
+        {
+            threadId = 1,
+            startFrame = 1,
+            levels = 2,
+        });
+        AssertSuccess(page);
+        Assert.Equal(4, page.GetProperty("body").GetProperty("totalFrames").GetInt32());
+        Assert.Equal(stack.GetProperty("body").GetProperty("stackFrames").EnumerateArray()
+                .Skip(1).Take(2).Select(frame => frame.GetProperty("id").GetInt32()),
+            page.GetProperty("body").GetProperty("stackFrames").EnumerateArray()
+                .Select(frame => frame.GetProperty("id").GetInt32()));
+        JsonElement remaining = await dap.RequestAsync("stackTrace", new
+        {
+            threadId = 1,
+            startFrame = 2,
+            levels = 0,
+        });
+        AssertSuccess(remaining);
+        Assert.Equal(2, remaining.GetProperty("body").GetProperty("stackFrames").GetArrayLength());
         int topFrameId = stack.GetProperty("body").GetProperty("stackFrames")[0]
             .GetProperty("id").GetInt32();
         JsonElement scopes = await dap.RequestAsync("scopes", new { frameId = topFrameId });
@@ -227,6 +250,120 @@ public sealed class DapEndToEndTests
         Assert.False(breakpoint.GetProperty("verified").GetBoolean());
         Assert.Contains("changed", breakpoint.GetProperty("message").GetString(),
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ChangedOrDeletedSourceInvalidatesPreviouslyBoundBreakpoint(bool deleteSource)
+    {
+        string directory = CreateFixtureDirectory();
+        string program = Path.Combine(directory, "main.ts");
+        string imported = Path.Combine(directory, "helper.ts");
+        await File.WriteAllTextAsync(program,
+            "import { answer } from './helper';\nconsole.log(answer());\n");
+        const string original = "export function answer(): number {\n  return 42;\n}\n";
+        await File.WriteAllTextAsync(imported, original);
+
+        await using var dap = new DapProtocolHarness();
+        AssertSuccess(await dap.RequestAsync("initialize", new { adapterID = "sharpts" }));
+        AssertSuccess(await dap.RequestAsync("launch", new { program, stopOnEntry = true }));
+        JsonElement binding = await dap.RequestAsync("setBreakpoints", new
+        {
+            source = new { path = imported },
+            breakpoints = new[] { new { line = 2 } },
+        });
+        Assert.True(binding.GetProperty("body").GetProperty("breakpoints")[0]
+            .GetProperty("verified").GetBoolean());
+        int breakpointId = binding.GetProperty("body").GetProperty("breakpoints")[0]
+            .GetProperty("id").GetInt32();
+        AssertSuccess(await dap.RequestAsync("configurationDone"));
+        await dap.WaitForEventAsync("stopped");
+
+        if (deleteSource)
+            File.Delete(imported);
+        else
+            await File.WriteAllTextAsync(imported, "// inserted after binding\n" + original);
+
+        AssertSuccess(await dap.RequestAsync("continue", new { threadId = 1 }));
+        JsonElement changed = await dap.WaitForEventAsync("breakpoint");
+        Assert.Equal("changed", changed.GetProperty("body").GetProperty("reason").GetString());
+        JsonElement breakpoint = changed.GetProperty("body").GetProperty("breakpoint");
+        Assert.Equal(breakpointId, breakpoint.GetProperty("id").GetInt32());
+        Assert.False(breakpoint.GetProperty("verified").GetBoolean());
+        Assert.Contains("changed", breakpoint.GetProperty("message").GetString(),
+            StringComparison.OrdinalIgnoreCase);
+        // A stale breakpoint stop would prevent the program from exiting without another continue.
+        JsonElement exited = await dap.WaitForEventAsync("exited");
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ChangedOrDeletedStoppedSourceServesLaunchSnapshotUntilNextSession(bool deleteSource)
+    {
+        string directory = CreateFixtureDirectory();
+        string program = Path.Combine(directory, "main.ts");
+        const string original = "let answer = 42;\nconsole.log(answer);\n";
+        await File.WriteAllTextAsync(program, original);
+
+        await using (var dap = new DapProtocolHarness())
+        {
+            AssertSuccess(await dap.RequestAsync("initialize", new { adapterID = "sharpts" }));
+            AssertSuccess(await dap.RequestAsync("launch", new { program, stopOnEntry = true }));
+            AssertSuccess(await dap.RequestAsync("setBreakpoints", new
+            {
+                source = new { path = program },
+                breakpoints = new[] { new { line = 2 } },
+            }));
+            AssertSuccess(await dap.RequestAsync("configurationDone"));
+            await dap.WaitForEventAsync("stopped");
+
+            if (deleteSource)
+                File.Delete(program);
+            else
+                await File.WriteAllTextAsync(program, "// inserted while stopped\n" + original);
+
+            JsonElement stack = await dap.RequestAsync("stackTrace", new { threadId = 1 });
+            AssertSuccess(stack);
+            JsonElement source = stack.GetProperty("body").GetProperty("stackFrames")[0]
+                .GetProperty("source");
+            int sourceReference = source.GetProperty("sourceReference").GetInt32();
+            Assert.True(sourceReference > 0);
+            Assert.Equal(Path.GetFullPath(program), source.GetProperty("path").GetString());
+            JsonElement content = await dap.RequestAsync("source", new { sourceReference });
+            AssertSuccess(content);
+            Assert.Equal(original, content.GetProperty("body").GetProperty("content").GetString());
+
+            JsonElement changed = await dap.WaitForEventAsync("breakpoint");
+            Assert.False(changed.GetProperty("body").GetProperty("breakpoint")
+                .GetProperty("verified").GetBoolean());
+
+            await File.WriteAllTextAsync(program, original);
+            JsonElement restored = await dap.RequestAsync("setBreakpoints", new
+            {
+                source = new { path = program },
+                breakpoints = new[] { new { line = 2 } },
+            });
+            AssertSuccess(restored);
+            Assert.False(restored.GetProperty("body").GetProperty("breakpoints")[0]
+                .GetProperty("verified").GetBoolean());
+            AssertSuccess(await dap.RequestAsync("continue", new { threadId = 1 }));
+            await dap.WaitForEventAsync("exited");
+        }
+
+        await using var restarted = new DapProtocolHarness();
+        AssertSuccess(await restarted.RequestAsync("initialize", new { adapterID = "sharpts" }));
+        AssertSuccess(await restarted.RequestAsync("launch", new { program }));
+        JsonElement rebound = await restarted.RequestAsync("setBreakpoints", new
+        {
+            source = new { path = program },
+            breakpoints = new[] { new { line = 2 } },
+        });
+        AssertSuccess(rebound);
+        Assert.True(rebound.GetProperty("body").GetProperty("breakpoints")[0]
+            .GetProperty("verified").GetBoolean());
     }
 
     [Fact]
@@ -472,6 +609,28 @@ public sealed class DapEndToEndTests
             .ToArray();
         Assert.Contains(Path.GetFullPath(first), loadedPaths);
         Assert.Contains(Path.GetFullPath(second), loadedPaths);
+
+        JsonElement allModules = await dap.RequestAsync("modules");
+        AssertSuccess(allModules);
+        int[] moduleIds = allModules.GetProperty("body").GetProperty("modules").EnumerateArray()
+            .Select(module => module.GetProperty("id").GetInt32()).ToArray();
+        Assert.True(moduleIds.Length >= 3);
+        JsonElement modulePage = await dap.RequestAsync("modules", new { startModule = 1, moduleCount = 1 });
+        AssertSuccess(modulePage);
+        Assert.Equal(moduleIds.Length, modulePage.GetProperty("body").GetProperty("totalModules").GetInt32());
+        Assert.Equal(moduleIds[1], Assert.Single(modulePage.GetProperty("body").GetProperty("modules")
+            .EnumerateArray()).GetProperty("id").GetInt32());
+        JsonElement remainingModules = await dap.RequestAsync("modules", new { startModule = 1, moduleCount = 0 });
+        AssertSuccess(remainingModules);
+        Assert.Equal(moduleIds.Skip(1), remainingModules.GetProperty("body").GetProperty("modules")
+            .EnumerateArray().Select(module => module.GetProperty("id").GetInt32()));
+        JsonElement beyondModules = await dap.RequestAsync("modules", new
+        {
+            startModule = moduleIds.Length,
+            moduleCount = 1,
+        });
+        AssertSuccess(beyondModules);
+        Assert.Empty(beyondModules.GetProperty("body").GetProperty("modules").EnumerateArray());
 
         AssertSuccess(await dap.RequestAsync("configurationDone"));
         await dap.WaitForEventAsync("stopped");

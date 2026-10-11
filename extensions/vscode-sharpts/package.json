@@ -126,7 +126,7 @@
               },
               "project": {
                 "type": "string",
-                "description": "Optional tsconfig.json or project path."
+                "description": "Optional tsconfig.json/directory, or .csproj whose existing assembly references are loaded while tsconfig.json is discovered normally."
               },
               "references": {
                 "type": "array",
@@ -206,7 +206,7 @@
     "bundle-adapter": "dotnet publish ../../src/SharpTS.DebugAdapter/SharpTS.DebugAdapter.csproj -c Release -o ./bin/server",
     "prebuild": "npm run bundle-server && npm run bundle-adapter",
     "build": "npm run compile",
-    "test": "npm run compile && node ../../tests/vscode-sharpts/InterpreterDebugConfiguration.test.cjs",
+    "test": "npm run compile && node --test ../../tests/vscode-sharpts/InterpreterDebugConfiguration.test.cjs ../../tests/vscode-sharpts/ExtensionActivation.test.cjs",
     "prepackage": "npm run build",
     "package": "vsce package"
   },

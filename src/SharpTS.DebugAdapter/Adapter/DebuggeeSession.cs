@@ -5,6 +5,7 @@ using SharpTS.Execution.Debugging;
 using SharpTS.Hosting;
 using SharpTS.Modules;
 using SharpTS.Parsing;
+using SharpTS.References;
 using SharpTS.Runtime;
 using SharpTS.Runtime.BuiltIns;
 
@@ -62,11 +63,17 @@ internal sealed class DebuggeeSession : IAsyncDisposable
         SharpTSProgram program = await Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
+            bool managedProject = string.Equals(
+                Path.GetExtension(options.Project), ".csproj", StringComparison.OrdinalIgnoreCase);
+            string? tsconfig = managedProject ? null : options.Project;
+            IReadOnlyList<string> references = managedProject
+                ? options.References.Concat(CsprojReferenceResolver.Parse(options.Project!)).ToArray()
+                : options.References;
             return SharpTSProgramLoader.Load(options.Program, new SharpTSProgramLoadOptions
             {
-                TsConfigPath = options.Project,
-                DiscoverTsConfig = options.Project is null,
-                References = options.References,
+                TsConfigPath = tsconfig,
+                DiscoverTsConfig = tsconfig is null,
+                References = references,
             });
         }, cancellationToken).ConfigureAwait(false);
 

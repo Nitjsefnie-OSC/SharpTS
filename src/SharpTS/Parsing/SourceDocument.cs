@@ -57,6 +57,7 @@ public sealed class SourceDocument
         return new SourceDocument(path, reader.ReadToEnd())
         {
             _checksum = SHA256.HashData(sourceBytes),
+            IsPhysicalFileSnapshot = true,
         };
     }
 
@@ -66,6 +67,9 @@ public sealed class SourceDocument
 
     /// <summary>True when the text has no backing file, so consumers must carry it themselves.</summary>
     public bool IsVirtual { get; }
+
+    /// <summary>Records physical capture even if the file disappears before a consumer registers it.</summary>
+    internal bool IsPhysicalFileSnapshot { get; private init; }
 
     public LineIndex Lines { get; }
 

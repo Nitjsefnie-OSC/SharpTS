@@ -24,6 +24,7 @@ internal sealed record InterpreterDebugSourceInfo(int Id, SourceDocument Documen
 internal enum InterpreterDebugSourceChangeReason
 {
     New,
+    Changed,
     Removed,
 }
 
@@ -40,6 +41,7 @@ internal sealed class InterpreterDebugHost : IDisposable
     private readonly Dictionary<int, ThreadState> _threads = [];
     private readonly Dictionary<string, SourceState> _sources = new(SourcePathComparer);
     private readonly Dictionary<string, BreakpointState> _breakpoints = new(SourcePathComparer);
+    private readonly HashSet<string> _invalidatedSources = new(SourcePathComparer);
     private readonly Queue<InterpreterDebugStopEvent> _pendingStopEvents = [];
     private int _nextThreadId = 1;
     private int _nextSourceId;
@@ -87,7 +89,8 @@ internal sealed class InterpreterDebugHost : IDisposable
         get
         {
             lock (_gate)
-                return _sources.Values.OrderBy(source => source.Id).Select(ToInfo).ToArray();
+                return _sources.Values.SelectMany(source => source.Versions)
+                    .OrderBy(source => source.Id).Select(ToInfo).ToArray();
         }
     }
 
@@ -213,6 +216,11 @@ internal sealed class InterpreterDebugHost : IDisposable
         IReadOnlyList<(int Line, int Column)> requested)
     {
         string identity = InterpreterDebugController.NormalizeSourceIdentity(sourcePath);
+        SourceDocument? document;
+        lock (_gate)
+            document = _sources.TryGetValue(identity, out SourceState? source) ? source.Document : null;
+        if (document is not null)
+            HasChangedSource(document);
         lock (_gate)
         {
             ThrowIfDisposed();
@@ -223,6 +231,8 @@ internal sealed class InterpreterDebugHost : IDisposable
 
             foreach (ThreadState thread in _threads.Values)
             {
+                if (_invalidatedSources.Contains(identity))
+                    thread.Controller.InvalidateSource(identity);
                 thread.BreakpointBindings[identity] = thread.Controller
                     .SetBreakpoints(identity, requests);
             }
@@ -230,6 +240,24 @@ internal sealed class InterpreterDebugHost : IDisposable
             state.Aggregate = AggregateBindings(state);
             return state.Aggregate;
         }
+    }
+
+    public bool HasChangedSource(SourceDocument document)
+    {
+        if (document.IsVirtual)
+            return false;
+        string identity = InterpreterDebugController.NormalizeSourceIdentity(document.Path);
+        lock (_gate)
+        {
+            if (_invalidatedSources.Contains(identity))
+                return true;
+            bool hadBackingFile = _sources.TryGetValue(identity, out SourceState? source)
+                && source.HadBackingFile;
+            if (!InterpreterDebugController.HasSourceChanged(document, hadBackingFile))
+                return false;
+        }
+        OnSourceInvalidated(document);
+        return true;
     }
 
     public void RequestPause(int threadId)
@@ -330,7 +358,10 @@ internal sealed class InterpreterDebugHost : IDisposable
         {
             if (!_sources.TryGetValue(identity, out SourceState? source))
                 throw new InvalidOperationException("The source is no longer loaded.");
-            return ToInfo(source);
+            SourceVersionState? version = source.Versions.FirstOrDefault(version =>
+                version.Document.Checksum.AsSpan().SequenceEqual(document.Checksum))
+                ?? throw new InvalidOperationException("The source version is no longer loaded.");
+            return ToInfo(version);
         }
     }
 
@@ -338,9 +369,10 @@ internal sealed class InterpreterDebugHost : IDisposable
     {
         lock (_gate)
         {
-            SourceState? state = _sources.Values.FirstOrDefault(candidate => candidate.Id == sourceId);
-            source = state is null ? null : ToInfo(state);
-            return state is not null;
+            SourceVersionState? version = _sources.Values.SelectMany(state => state.Versions)
+                .FirstOrDefault(candidate => candidate.Id == sourceId);
+            source = version is null ? null : ToInfo(version);
+            return source is not null;
         }
     }
 
@@ -389,10 +421,14 @@ internal sealed class InterpreterDebugHost : IDisposable
         var thread = new ThreadState(id, name, interpreter, controller, requestShutdown);
         thread.StoppedHandler = stop => OnControllerStopped(id, stop);
         thread.SourceHandler = document => OnSourceRegistered(id, document);
+        thread.SourceInvalidatedHandler = OnSourceInvalidated;
         controller.Stopped += thread.StoppedHandler;
         controller.SourceRegistered += thread.SourceHandler;
+        controller.SourceInvalidated += thread.SourceInvalidatedHandler;
         foreach ((string identity, BreakpointState breakpoint) in _breakpoints)
         {
+            if (_invalidatedSources.Contains(identity))
+                controller.InvalidateSource(identity);
             thread.BreakpointBindings[identity] = controller
                 .SetBreakpoints(identity, breakpoint.Requests);
         }
@@ -487,6 +523,7 @@ internal sealed class InterpreterDebugHost : IDisposable
     private void OnSourceRegistered(int threadId, SourceDocument document)
     {
         InterpreterDebugSourceEvent? sourceEvent = null;
+        SourceDocument? superseded = null;
         DebugBreakpointBinding[] changed = [];
         lock (_gate)
         {
@@ -503,11 +540,24 @@ internal sealed class InterpreterDebugHost : IDisposable
                 sourceEvent = new InterpreterDebugSourceEvent(
                     InterpreterDebugSourceChangeReason.New, ToInfo(source));
             }
+            else if (!source.Versions.Any(version =>
+                version.Document.Checksum.AsSpan().SequenceEqual(document.Checksum)))
+            {
+                var version = new SourceVersionState(checked(++_nextSourceId), document);
+                source.Versions.Add(version);
+                sourceEvent = new InterpreterDebugSourceEvent(
+                    InterpreterDebugSourceChangeReason.New, ToInfo(version));
+                superseded = source.Document;
+            }
             source.ThreadIds.Add(threadId);
+            source.Versions.First(version =>
+                version.Document.Checksum.AsSpan().SequenceEqual(document.Checksum)).ThreadIds.Add(threadId);
 
             if (_breakpoints.TryGetValue(identity, out BreakpointState? breakpoint))
             {
                 IReadOnlyList<DebugBreakpointBinding> before = breakpoint.Aggregate;
+                if (superseded is not null || _invalidatedSources.Contains(identity))
+                    thread.Controller.InvalidateSource(identity);
                 thread.BreakpointBindings[identity] = thread.Controller
                     .SetBreakpoints(identity, breakpoint.Requests);
                 breakpoint.Aggregate = AggregateBindings(breakpoint);
@@ -515,8 +565,44 @@ internal sealed class InterpreterDebugHost : IDisposable
             }
         }
 
+        if (superseded is not null)
+            OnSourceInvalidated(superseded);
         if (sourceEvent is not null)
             SourceChanged?.Invoke(sourceEvent);
+        foreach (DebugBreakpointBinding binding in changed)
+            BreakpointChanged?.Invoke(binding);
+    }
+
+    private void OnSourceInvalidated(SourceDocument document)
+    {
+        DebugBreakpointBinding[] changed = [];
+        InterpreterDebugSourceInfo? sourceInfo = null;
+        lock (_gate)
+        {
+            string identity = InterpreterDebugController.NormalizeSourceIdentity(document.Path);
+            if (_disposed || !_invalidatedSources.Add(identity))
+                return;
+            if (_sources.TryGetValue(identity, out SourceState? source))
+            {
+                SourceVersionState? version = source.Versions.FirstOrDefault(version =>
+                    version.Document.Checksum.AsSpan().SequenceEqual(document.Checksum));
+                sourceInfo = version is null ? ToInfo(source) : ToInfo(version);
+            }
+            foreach (ThreadState thread in _threads.Values)
+                thread.Controller.InvalidateSource(identity);
+            if (_breakpoints.TryGetValue(identity, out BreakpointState? breakpoint))
+            {
+                IReadOnlyList<DebugBreakpointBinding> before = breakpoint.Aggregate;
+                foreach (ThreadState thread in _threads.Values)
+                    thread.BreakpointBindings[identity] = thread.Controller
+                        .SetBreakpoints(identity, breakpoint.Requests);
+                breakpoint.Aggregate = AggregateBindings(breakpoint);
+                changed = ChangedBindings(before, breakpoint.Aggregate);
+            }
+        }
+        if (sourceInfo is not null)
+            SourceChanged?.Invoke(new InterpreterDebugSourceEvent(
+                InterpreterDebugSourceChangeReason.Changed, sourceInfo));
         foreach (DebugBreakpointBinding binding in changed)
             BreakpointChanged?.Invoke(binding);
     }
@@ -535,16 +621,25 @@ internal sealed class InterpreterDebugHost : IDisposable
 
             thread.Controller.Stopped -= thread.StoppedHandler;
             thread.Controller.SourceRegistered -= thread.SourceHandler;
+            thread.Controller.SourceInvalidated -= thread.SourceInvalidatedHandler;
             foreach (string identity in thread.SourceIdentities)
             {
                 if (_sources.TryGetValue(identity, out SourceState? source))
                 {
                     source.ThreadIds.Remove(threadId);
+                    foreach (SourceVersionState version in source.Versions.ToArray())
+                    {
+                        version.ThreadIds.Remove(threadId);
+                        if (version.ThreadIds.Count == 0)
+                        {
+                            source.Versions.Remove(version);
+                            sourceEvents.Add(new InterpreterDebugSourceEvent(
+                                InterpreterDebugSourceChangeReason.Removed, ToInfo(version)));
+                        }
+                    }
                     if (source.ThreadIds.Count == 0)
                     {
                         _sources.Remove(identity);
-                        sourceEvents.Add(new InterpreterDebugSourceEvent(
-                            InterpreterDebugSourceChangeReason.Removed, ToInfo(source)));
                     }
                 }
 
@@ -642,6 +737,9 @@ internal sealed class InterpreterDebugHost : IDisposable
     private static InterpreterDebugSourceInfo ToInfo(SourceState source) =>
         new(source.Id, source.Document);
 
+    private static InterpreterDebugSourceInfo ToInfo(SourceVersionState source) =>
+        new(source.Id, source.Document);
+
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
     public void Dispose()
@@ -659,12 +757,14 @@ internal sealed class InterpreterDebugHost : IDisposable
             _threads.Clear();
             _sources.Clear();
             _breakpoints.Clear();
+            _invalidatedSources.Clear();
         }
 
         foreach (ThreadState thread in threads)
         {
             thread.Controller.Stopped -= thread.StoppedHandler;
             thread.Controller.SourceRegistered -= thread.SourceHandler;
+            thread.Controller.SourceInvalidated -= thread.SourceInvalidatedHandler;
             thread.Controller.Terminate();
             thread.RequestShutdown(thread.Interpreter);
             thread.Controller.Dispose();
@@ -692,12 +792,22 @@ internal sealed class InterpreterDebugHost : IDisposable
         public DebugStopSnapshot? CurrentStop { get; set; }
         public Action<DebugStopSnapshot> StoppedHandler { get; set; } = null!;
         public Action<SourceDocument> SourceHandler { get; set; } = null!;
+        public Action<SourceDocument> SourceInvalidatedHandler { get; set; } = null!;
     }
 
     private sealed class SourceState(int id, string identity, SourceDocument document)
     {
-        public int Id { get; } = id;
+        public int Id => Versions[0].Id;
         public string Identity { get; } = identity;
+        public SourceDocument Document => Versions[0].Document;
+        public List<SourceVersionState> Versions { get; } = [new(id, document)];
+        public bool HadBackingFile { get; } = document.IsPhysicalFileSnapshot || File.Exists(document.Path);
+        public HashSet<int> ThreadIds { get; } = [];
+    }
+
+    private sealed class SourceVersionState(int id, SourceDocument document)
+    {
+        public int Id { get; } = id;
         public SourceDocument Document { get; } = document;
         public HashSet<int> ThreadIds { get; } = [];
     }

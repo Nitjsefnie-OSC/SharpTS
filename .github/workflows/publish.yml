@@ -123,6 +123,13 @@ jobs:
           test -f "./nupkg/SharpTS.Gui.Sdk.${{ steps.version.outputs.VERSION }}.nupkg" || { echo "❌ SharpTS.Gui.Sdk package not found"; exit 1; }
           echo "✓ All packages created successfully"
 
+      - name: Launch interpreter through the exact debug adapter release package
+        shell: pwsh
+        run: |
+          ./scripts/test-smoke-process.ps1
+          ./scripts/test-debug-adapter-package.ps1 `
+            -PackagePath "./nupkg/SharpTS.DebugAdapter.${{ steps.version.outputs.VERSION }}.nupkg"
+
       - name: Audit tagged GUI SDK package
         shell: pwsh
         run: >-

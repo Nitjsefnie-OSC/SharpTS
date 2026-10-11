@@ -169,8 +169,6 @@ public partial class RuntimeEmitter
         var wrapperLocal = il.DeclareLocal(_types.IEnumeratorOfObject);
         var mappedValueLocal = il.DeclareLocal(_types.Object);
         var mapperArgsLocal = il.DeclareLocal(_types.ObjectArray);
-        var mapperExceptionLocal = il.DeclareLocal(_types.Exception);
-        var returnMethodLocal = il.DeclareLocal(_types.Object);
 
         // iterator = Call(items[@@iterator], items)
         il.Emit(OpCodes.Ldarg_0);
@@ -206,13 +204,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IEnumerator, "MoveNext")!);
         il.Emit(OpCodes.Brfalse, streamingDoneLabel);
 
-        // mapperArgs = [wrapper.Current, index]
+        // Read the current value directly when no mapper is supplied. Only
+        // mapped calls need an argument array and a boxed index.
+        var invokeMapperLabel = il.DefineLabel();
+        var mappedValueReadyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, wrapperLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.IEnumeratorOfObject, "Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, mappedValueLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
+        il.Emit(OpCodes.Brfalse, invokeMapperLabel);
+        il.Emit(OpCodes.Br, mappedValueReadyLabel);
+        il.MarkLabel(invokeMapperLabel);
+
+        // mapperArgs = [current, index]
         il.Emit(OpCodes.Ldc_I4_2);
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldloc, wrapperLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.IEnumeratorOfObject, "Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, mappedValueLocal);
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -221,19 +231,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Stloc, mapperArgsLocal);
-
-        var invokeMapperLabel = il.DefineLabel();
-        var mappedValueReadyLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
-        il.Emit(OpCodes.Brfalse, invokeMapperLabel);
-        il.Emit(OpCodes.Ldloc, mapperArgsLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Stloc, mappedValueLocal);
-        il.Emit(OpCodes.Br, mappedValueReadyLabel);
-        il.MarkLabel(invokeMapperLabel);
-        il.Emit(OpCodes.Nop);
 
         // mappedValue = Call(mapfn, thisArg, mapperArgs). If this throws,
         // perform IteratorClose and then rethrow the original completion.
@@ -244,34 +241,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.Invocation.Method);
         il.Emit(OpCodes.Stloc, mappedValueLocal);
         il.BeginCatchBlock(_types.Exception);
-        il.Emit(OpCodes.Stloc, mapperExceptionLocal);
-
-        // Best-effort IteratorClose: Get(iterator, "return") and call it when
-        // present. A close failure must not replace the mapper's throw.
-        il.BeginExceptionBlock();
-        il.Emit(OpCodes.Ldloc, iteratorLocal);
-        il.Emit(OpCodes.Ldstr, "return");
-        il.Emit(OpCodes.Call, runtime.ObjectRead.Property);
-        il.Emit(OpCodes.Stloc, returnMethodLocal);
-        var skipReturnCallLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, returnMethodLocal);
-        il.Emit(OpCodes.Brfalse, skipReturnCallLabel);
-        il.Emit(OpCodes.Ldloc, returnMethodLocal);
-        il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
-        il.Emit(OpCodes.Brtrue, skipReturnCallLabel);
-        il.Emit(OpCodes.Ldloc, iteratorLocal);
-        il.Emit(OpCodes.Ldloc, returnMethodLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Call, runtime.Invocation.Method);
         il.Emit(OpCodes.Pop);
-        il.MarkLabel(skipReturnCallLabel);
-        il.BeginCatchBlock(_types.Exception);
-        il.Emit(OpCodes.Pop);
-        il.EndExceptionBlock();
 
-        il.Emit(OpCodes.Ldloc, mapperExceptionLocal);
-        il.Emit(OpCodes.Throw);
+        // The shared close primitive handles generated generators and native
+        // adapters as well as guest return methods. Preserve the mapper throw
+        // if retrieving or invoking return produces another exception.
+        il.Emit(OpCodes.Ldloc, iteratorLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Call, runtime.IteratorProtocol.Close);
+        il.Emit(OpCodes.Rethrow);
         il.EndExceptionBlock();
         il.MarkLabel(mappedValueReadyLabel);
 

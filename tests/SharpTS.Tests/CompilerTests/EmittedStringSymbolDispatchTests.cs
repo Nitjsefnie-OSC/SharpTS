@@ -75,9 +75,17 @@ public sealed class EmittedStringSymbolDispatchTests
             var row = Dispatch(value); Assert.Null(row.Value); Assert.False(row.Invoked); Assert.False(row.Own);
         }
         Assert.Null(Get("Classified")); Assert.Null(Get("IndexReceiver"));
-        Set("Classification", "number"); var primitive = Dispatch(42);
-        Assert.Null(Get("Classified")); Assert.Same(output, primitive.Value); Assert.True(primitive.Invoked); Assert.False(primitive.Own);
-        Assert.Equal(42, Get("IndexReceiver")); Assert.Equal(42, Get("Receiver")); Assert.Same(values, Get("Arguments"));
+        foreach (var (classificationName, value) in new (string, object)[]
+        {
+            ("boolean", true), ("number", 42), ("string", "primitive"),
+            ("bigint", System.Numerics.BigInteger.One), ("symbol", symbol)
+        })
+        {
+            Set("Classification", classificationName); var primitive = Dispatch(value);
+            Assert.Same(value, Get("Classified")); Assert.Null(primitive.Value); Assert.False(primitive.Invoked); Assert.False(primitive.Own);
+            Assert.Null(Get("IndexReceiver")); Assert.Null(Get("IndexSymbol")); Assert.Null(Get("StorageReceiver"));
+            Assert.Null(Get("Receiver")); Assert.Null(Get("SelectedMethod")); Assert.Null(Get("Arguments"));
+        }
         Set("Classification", "object"); object candidate = "selected native type";
         var called = Dispatch(candidate); Assert.Same(output, called.Value); Assert.True(called.Invoked); Assert.Equal(nativeType, called.Own);
         Assert.Same(candidate, Get("IndexReceiver")); Assert.Same(symbol, Get("IndexSymbol"));

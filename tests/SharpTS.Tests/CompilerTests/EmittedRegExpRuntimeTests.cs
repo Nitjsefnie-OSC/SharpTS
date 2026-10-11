@@ -197,11 +197,13 @@ public sealed class EmittedRegExpRuntimeTests
                 continue;
             }
             Assert.DoesNotContain(regexType!, types); types.Add(regexType!); Assert.Equal(2, regexType!.GetConstructors().Length);
-            foreach (string name in new[] { "StringMatchRegExp", "StringSearchRegExp" })
+            foreach (var (name, parameterCount) in new[] {
+                ("StringMatchRegExp", 2), ("StringSearchRegExp", 2), ("StringReplaceRegExp", 3)
+            })
             {
                 var protocol = runtimeType.GetMethod(name)!;
                 Assert.Equal(typeof(object), protocol.ReturnType);
-                Assert.Equal(new[] { typeof(object), typeof(object) }, protocol.GetParameters().Select(parameter => parameter.ParameterType));
+                Assert.Equal(Enumerable.Repeat(typeof(object), parameterCount), protocol.GetParameters().Select(parameter => parameter.ParameterType));
                 Assert.Equal("__this", protocol.GetParameters()[0].Name);
                 Assert.Contains(protocol.GetCustomAttributesData(), attribute => attribute.AttributeType.Name == "$PadUndefined");
             }

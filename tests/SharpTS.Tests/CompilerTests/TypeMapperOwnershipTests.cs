@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Compilation;
+using SharpTS.Parsing;
 using Xunit;
 using TI = SharpTS.TypeSystem.TypeInfo;
 
@@ -56,11 +57,16 @@ public sealed class TypeMapperOwnershipTests
         var module = NewModule();
         var mapper = new TypeMapper(module);
         Assert.Throws<InvalidOperationException>(() => mapper.DelegateAdapters);
-        var foreign = new RuntimeEmitter(TypeProvider.Runtime).EmitAll(NewModule(), new RuntimeFeatureDetector().Detect([]));
+        // Exercise receiver scope declarations with executable builders as well
+        // as their usual persisted-assembly compilation path.
+        var statements = new Parser(new Lexer("[1].find((value: number): boolean => value === 1);")
+            .ScanTokens()).ParseOrThrow();
+        var features = new RuntimeFeatureDetector().Detect(statements);
+        var foreign = new RuntimeEmitter(TypeProvider.Runtime).EmitAll(NewModule(), features);
         Assert.Throws<InvalidOperationException>(() => mapper.SetRuntime(foreign));
         Assert.Throws<ArgumentNullException>(() => mapper.SetRuntime(null!));
         Assert.Throws<InvalidOperationException>(() => mapper.DelegateAdapters);
-        var runtime = new RuntimeEmitter(TypeProvider.Runtime).EmitAll(module, new RuntimeFeatureDetector().Detect([]));
+        var runtime = new RuntimeEmitter(TypeProvider.Runtime).EmitAll(module, features);
         mapper.SetRuntime(runtime);
         var adapters = mapper.DelegateAdapters;
         var handle = adapters.GetOrEmit(typeof(Func<object, object>));

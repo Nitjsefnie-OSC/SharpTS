@@ -360,37 +360,16 @@ public static class StringBuiltIns
             }
         }
 
-        if (searchValue is SharpTSRegExp regex)
-        {
-            if (replaceValue is ISharpTSCallable regexReplacer)
-            {
-                return RuntimeValue.FromString(regex.Replace(str, match =>
-                {
-                    var callbackArgs = new List<object?>(match.Groups.Count + 2)
-                    {
-                        match.Value
-                    };
-                    for (int i = 1; i < match.Groups.Count; i++)
-                    {
-                        var group = match.Groups[i];
-                        callbackArgs.Add(group.Success
-                            ? group.Value
-                            : SharpTSUndefined.Instance);
-                    }
-                    callbackArgs.Add((double)match.Index);
-                    callbackArgs.Add(str);
+        return ReplaceWithoutSymbolDispatch(interpreter, str, searchValue, replaceValue);
+    }
 
-                    object? result = FunctionBuiltIns.CallWithThis(
-                        interpreter, regexReplacer, SharpTSUndefined.Instance,
-                        callbackArgs);
-                    return interpreter.ToStringForBuiltInArgument(result);
-                }));
-            }
-
-            var regexReplacement = interpreter.ToStringForBuiltInArgument(replaceValue);
-            return RuntimeValue.FromString(regex.Replace(str, regexReplacement));
-        }
-
+    // Borrowed calls resolve @@replace with the original receiver before
+    // converting it to a string. Do not repeat that observable lookup here.
+    internal static RuntimeValue ReplaceWithoutSymbolDispatch(
+        Interpreter interpreter, string str, object? searchValue, object? replaceValue)
+    {
+        // Native RegExp values also use ordinary string search when their
+        // @@replace is nullish. An unchanged native protocol dispatches above.
         var search = interpreter.ToStringForBuiltInArgument(searchValue);
         bool functionalReplace = replaceValue is ISharpTSCallable;
         string? replacementText = functionalReplace

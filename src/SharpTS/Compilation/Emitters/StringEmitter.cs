@@ -35,12 +35,16 @@ public sealed class StringEmitter : ITypeEmitterStrategy
 
         // String protocol hooks receive the original receiver before ToString.
         // Preserve boxed String identity on the direct typed path too.
-        if (methodName is "replaceAll" or "match" or "matchAll" or "search" or "split")
+        if (methodName is "replace" or "replaceAll" or "match" or "matchAll" or "search" or "split")
         {
             emitter.EmitExpression(receiver);
             emitter.EmitBoxIfNeeded(receiver);
             switch (methodName)
             {
+                case "replace":
+                    if (!TryEmitStableRegExpReplace(emitter, receiver, arguments))
+                        EmitReplace(emitter, arguments);
+                    break;
                 case "replaceAll": EmitReplaceAll(emitter, arguments); break;
                 case "match": EmitMatch(emitter, arguments); break;
                 case "matchAll": EmitMatchAll(emitter, arguments); break;
@@ -90,12 +94,6 @@ public sealed class StringEmitter : ITypeEmitterStrategy
             case "trim":
                 il.Emit(OpCodes.Ldc_I4_0);
                 il.Emit(OpCodes.Call, ctx.Runtime!.Strings.TrimInline);
-                return true;
-
-            case "replace":
-                if (TryEmitStableRegExpReplace(emitter, receiver, arguments))
-                    return true;
-                EmitReplace(emitter, arguments);
                 return true;
 
             case "split":
@@ -438,9 +436,9 @@ public sealed class StringEmitter : ITypeEmitterStrategy
             || !IsSideEffectFreePrimitiveString(arguments[1], ctx))
             return false;
 
-        // The ordinary method prologue has already left the unwrapped receiver
-        // string on the stack. Spill it so the instance regex can be loaded
-        // first for the typed helper call.
+        // Unwrap only after selecting the stable native path. Ordinary
+        // protocol calls retain the receiver object for @@replace dispatch.
+        ctx.IL.Emit(OpCodes.Call, ctx.Runtime.BoxedPrimitives.UnwrapStringReceiver);
         var inputLocal = ctx.IL.DeclareLocal(ctx.Types.String);
         ctx.IL.Emit(OpCodes.Stloc, inputLocal);
 

@@ -45,13 +45,12 @@ public partial class ILEmitter
         // null/undefined, etc.).
         builder.Emit_Br(fallbackLabel);
 
-        // String path — unwrap the receiver to its primitive string value.
-        // UnwrapStringReceiver fast-paths CLR strings and walks $Object
-        // wrappers' __primitiveValue. Both cases yield a string for the
-        // string-method emitters below.
+        // replace passes the original receiver through @@replace dispatch.
+        // Other string helpers unwrap CLR strings and boxed primitive values.
         builder.MarkLabel(isStringLabel);
         IL.Emit(OpCodes.Ldloc, objLocal);
-        IL.Emit(OpCodes.Call, _ctx.Runtime!.BoxedPrimitives.UnwrapStringReceiver);
+        if (methodName != "replace")
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.BoxedPrimitives.UnwrapStringReceiver);
 
         switch (methodName)
         {

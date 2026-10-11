@@ -2493,7 +2493,7 @@ public partial class RuntimeEmitter
                 runtime.FunctionConstruction.GetOrCreate, runtime.FunctionConstruction.CachedConstructor, runtime.Symbols.GetStorage,
                 runtime.Symbols.Iterator, runtime.ObjectPrototypes.Prototype, runtime.DescriptorStorage.SetPrototype),
             runtime.RegExps.Implementation is not null ? new StringPrototypeRegExpInputs(runtime.RegExps.RequireImplementation().StringMatch, runtime.RegExps.RequireImplementation().StringMatchAll,
-                runtime.RegExps.RequireImplementation().StringSearch, runtime.RegExps.RequireImplementation().StringReplaceAll, runtime.RegExps.RequireImplementation().StringSplitProto) : null);
+                runtime.RegExps.RequireImplementation().StringSearch, runtime.RegExps.RequireImplementation().StringReplace, runtime.RegExps.RequireImplementation().StringReplaceAll, runtime.RegExps.RequireImplementation().StringSplitProto) : null);
         // Boolean.prototype population wires dedicated toString and valueOf helpers.
         EmitBooleanPrototypePopulate(typeBuilder, runtime.Booleans,
             new BooleanPrototypeInputs(

@@ -350,9 +350,34 @@ public sealed class ArraySortDirectComparatorTests
             .Single(method => method.Name.EndsWith(name, StringComparison.Ordinal));
 
     private static IEnumerable<MethodBase> CalledMethods(MethodInfo method)
-        => Instructions(method)
+    {
+        foreach (var called in Instructions(method)
             .Where(instruction => instruction.Operand is MethodBase)
-            .Select(instruction => (MethodBase)instruction.Operand!);
+            .Select(instruction => (MethodBase)instruction.Operand!))
+        {
+            yield return called;
+
+            // Receiver scopes preserve the selected sort implementation behind
+            // a save/restore boundary. Inspect only that boundary, rather than
+            // descending into the kernel's intentional runtime fallback calls.
+            const string scopeSuffix = "WithReceiverScope";
+            if (called is not MethodInfo scoped || scoped.DeclaringType?.Name != "$Runtime"
+                || !scoped.Name.EndsWith(scopeSuffix, StringComparison.Ordinal))
+                continue;
+
+            var helper = Assert.IsAssignableFrom<MethodInfo>(Assert.Single(Instructions(scoped)
+                .Where(instruction => instruction.Operand is MethodBase)
+                .Select(instruction => (MethodBase)instruction.Operand!)));
+            Assert.Equal(scoped.Name[..^scopeSuffix.Length], helper.Name);
+            Assert.Same(scoped.DeclaringType, helper.DeclaringType);
+            Assert.Equal(scoped.ReturnType, helper.ReturnType);
+            Assert.Equal(scoped.GetParameters().Select(parameter => parameter.ParameterType),
+                helper.GetParameters().Select(parameter => parameter.ParameterType));
+            Assert.Equal(ExceptionHandlingClauseOptions.Finally,
+                Assert.Single(scoped.GetMethodBody()!.ExceptionHandlingClauses).Flags);
+            yield return helper;
+        }
+    }
 
     private static IEnumerable<(OpCode OpCode, object? Operand)> Instructions(MethodInfo method)
     {

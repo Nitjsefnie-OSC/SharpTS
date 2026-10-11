@@ -12,7 +12,7 @@ public partial class RuntimeEmitter
         FieldInfo ObjectPrototype, MethodInfo SetPrototype);
 
     private readonly record struct StringPrototypeRegExpInputs(
-        MethodBuilder Match, MethodBuilder MatchAll, MethodBuilder Search, MethodBuilder ReplaceAll, MethodBuilder Split);
+        MethodBuilder Match, MethodBuilder MatchAll, MethodBuilder Search, MethodBuilder Replace, MethodBuilder ReplaceAll, MethodBuilder Split);
 
     /// <summary>
     /// Emits a static method that populates the <c>String.prototype</c>
@@ -90,10 +90,9 @@ public partial class RuntimeEmitter
         Wire("trim",           strings.Trim,           0);
         Wire("trimStart",      strings.TrimStart,      0);
         Wire("trimEnd",        strings.TrimEnd,        0);
-        Wire("replace",        strings.Replace,        2);
-        // Use the regex-aware entry point here as well as at direct string
-        // call sites. It preserves borrowed primitive receivers until after
-        // @@replace dispatch and implements the RegExp/global checks.
+        // Use the protocol-aware entry points here as well as at direct string
+        // call sites, so borrowed calls observe Object candidates' @@replace.
+        Wire("replace",        regExp?.Replace ?? strings.Replace, 2);
         Wire("replaceAll",     regExp?.ReplaceAll, 2);
         // split slot uses the regex-aware + limit-aware proto helper. The basic
         // StringSplit (string,string → list, no limit, no regex) is no longer

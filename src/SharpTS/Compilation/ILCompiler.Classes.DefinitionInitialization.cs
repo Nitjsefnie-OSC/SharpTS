@@ -30,7 +30,7 @@ public partial class ILCompiler
 
         var members = new List<(int Position, bool Static, Expr Key, MethodBuilder Method, bool? Getter, IReadOnlyList<Stmt.Parameter> Parameters)>();
         foreach (var method in expression.Methods.Where(method => method.Body != null &&
-                     !method.IsPrivate && method.Name.Lexeme != "constructor" && method.ComputedKey == null))
+                     !method.IsPrivate && (method.IsStatic || method.Name.Lexeme != "constructor") && method.ComputedKey == null))
         {
             var builder = method.IsStatic ? _classExprs.StaticMethods[expression][method.Name.Lexeme]
                 : _classExprs.InstanceMethods[expression][method.Name.Lexeme];

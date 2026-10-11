@@ -2030,8 +2030,9 @@ public static class ArrayBuiltIns
             return callback switch
             {
                 SharpTSFunction fn => fn.BindThis(thisValue),
-                SharpTSArrowFunction afn when afn.HasOwnThis && thisValue is not null
-                    => afn.Bind(thisValue),
+                SharpTSArrowFunction afn when afn.HasOwnThis
+                    && (thisValue is not null || afn.IsStrict)
+                    => afn.Bind(thisValue!),
                 _ => callback,
             };
         }

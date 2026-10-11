@@ -1667,12 +1667,24 @@ public partial class RuntimeEmitter
         var readSpreadabilityLabel = il.DefineLabel();
         var spreadabilityKnownLabel = il.DefineLabel();
 
-        // IsConcatSpreadable returns false immediately for primitives. In
-        // particular, String.prototype[Symbol.isConcatSpreadable] must affect
-        // boxed String objects but never primitive string values.
+        // IsConcatSpreadable returns false for every primitive before Get.
+        // Hooks on primitive prototypes apply only to wrapper objects.
+        var primitiveElementLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, elementLocal);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brfalse, readSpreadabilityLabel);
+        il.Emit(OpCodes.Brfalse, primitiveElementLabel);
+        foreach (var primitiveType in new[]
+        {
+            _types.String, _types.Boolean, _types.Double, _types.Int32,
+            _types.Int64, typeof(System.Numerics.BigInteger),
+            runtime.Symbols.Type, runtime.Sentinels.UndefinedType
+        })
+        {
+            il.Emit(OpCodes.Ldloc, elementLocal);
+            il.Emit(OpCodes.Isinst, primitiveType);
+            il.Emit(OpCodes.Brtrue, primitiveElementLabel);
+        }
+        il.Emit(OpCodes.Br, readSpreadabilityLabel);
+        il.MarkLabel(primitiveElementLabel);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, spreadableLocal);
         il.Emit(OpCodes.Br, spreadabilityKnownLabel);
@@ -1868,6 +1880,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
         il.Emit(OpCodes.Brtrue, delegateLabel);
+
+        // Dynamic prototype calls can receive a packed numeric $Array whose
+        // List storage is empty. Materialize that storage before snapshotting
+        // the iteration length; otherwise the callback is never invoked.
+        var notPackedArray = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.ArrayStorage.Type);
+        il.Emit(OpCodes.Brfalse, notPackedArray);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.ArrayStorage.Type);
+        il.Emit(OpCodes.Callvirt, runtime.ArrayStorage.EnsureBoxed);
+        il.MarkLabel(notPackedArray);
 
         // Array/List receivers can carry index accessors installed by
         // defineProperty and inherited indexed properties. Snapshot their raw
@@ -2242,9 +2266,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, rcvrLocal);
         il.MarkLabel(haveReceiverLabel);
 
-        // $Array path: own descriptor accessors override the raw dense/sparse
-        // slot. A raw hole is absent, so consult the prototype chain before
-        // deciding whether iteration skips the index.
+        // Array/List paths read the original receiver. The materialized list
+        // can snapshot the iteration length, but its old data slots must not
+        // hide deletions, writes, or inherited values exposed by a callback.
         var notTSArrayReceiver = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, rcvrLocal);
         il.Emit(OpCodes.Isinst, runtime.ArrayStorage.Type);
@@ -2254,24 +2278,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, keyStrLocal);
         il.Emit(OpCodes.Ldloc, rcvrLocal);
         il.Emit(OpCodes.Ldloc, keyStrLocal);
-        il.Emit(OpCodes.Call, runtime.DescriptorStorage.GetPropertyDescriptor);
-        il.Emit(OpCodes.Brtrue, loadArrayPropertyLabel);
-        il.Emit(OpCodes.Ldloc, listValLocal);
-        il.Emit(OpCodes.Isinst, runtime.ArrayStorage.HoleType);
-        il.Emit(OpCodes.Brfalse, returnListValLabel);
-        il.Emit(OpCodes.Ldloc, rcvrLocal);
-        il.Emit(OpCodes.Ldloc, keyStrLocal);
         il.Emit(OpCodes.Call, runtime.ArrayOperations.HasArrayLikeProperty);
         il.Emit(OpCodes.Brfalse, returnHoleLabel);
-        il.MarkLabel(loadArrayPropertyLabel);
-        il.Emit(OpCodes.Ldloc, rcvrLocal);
-        il.Emit(OpCodes.Ldloc, keyStrLocal);
-        il.Emit(OpCodes.Call, runtime.ObjectRead.Property);
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Br, loadArrayPropertyLabel);
         il.MarkLabel(notTSArrayReceiver);
 
-        // Plain compiled arrays are List<object>. They use the same observable
-        // descriptor/prototype path as $Array above.
+        // Plain compiled arrays use the same live property protocol.
         var notListReceiver = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, rcvrLocal);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
@@ -2281,16 +2293,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, keyStrLocal);
         il.Emit(OpCodes.Ldloc, rcvrLocal);
         il.Emit(OpCodes.Ldloc, keyStrLocal);
-        il.Emit(OpCodes.Call, runtime.DescriptorStorage.GetPropertyDescriptor);
-        il.Emit(OpCodes.Brtrue, loadArrayPropertyLabel);
-        il.Emit(OpCodes.Ldloc, listValLocal);
-        il.Emit(OpCodes.Isinst, runtime.ArrayStorage.HoleType);
-        il.Emit(OpCodes.Brfalse, returnListValLabel);
-        il.Emit(OpCodes.Ldloc, rcvrLocal);
-        il.Emit(OpCodes.Ldloc, keyStrLocal);
         il.Emit(OpCodes.Call, runtime.ArrayOperations.HasArrayLikeProperty);
         il.Emit(OpCodes.Brfalse, returnHoleLabel);
-        il.Emit(OpCodes.Br, loadArrayPropertyLabel);
+        il.MarkLabel(loadArrayPropertyLabel);
+        il.Emit(OpCodes.Ldloc, rcvrLocal);
+        il.Emit(OpCodes.Ldloc, keyStrLocal);
+        il.Emit(OpCodes.Call, runtime.ObjectRead.Property);
+        il.Emit(OpCodes.Ret);
         il.MarkLabel(notListReceiver);
 
         // Dict path: per-iteration HasProperty check via TryGetValue + PDS.

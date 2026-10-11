@@ -59,7 +59,7 @@ public static class ArrayStaticBuiltIns
                     // an infinite iterator whose mapfn throws on the first element
                     // must surface that throw immediately (materialize-first would
                     // spin forever); and the throw must trigger IteratorClose. The
-                    // lazy `foreach` here gives both — when mapfn throws, the C#
+                    // lazy iteration here gives both — when mapfn throws, the C#
                     // enumerator over GetIterableElements is disposed, which runs
                     // EnumerateWithIteratorProtocol's finally → the iterator's
                     // return(). Array-likes (ReadArrayLikeElements) have no iterator
@@ -70,12 +70,36 @@ public static class ArrayStaticBuiltIns
                         ? interpreter.GetIterableElements(iterable)
                         : interpreter.ReadArrayLikeElements(iterable);
                     int i = 0;
-                    foreach (var element in source)
+                    var enumerator = source.GetEnumerator();
+                    bool abruptCompletion = false;
+                    try
                     {
-                        callbackArgs[0] = element;
-                        callbackArgs[1] = (double)i++;
-                        result.Add(FunctionBuiltIns.CallWithThis(
-                            interpreter, mapFn, thisArg, callbackArgs));
+                        while (enumerator.MoveNext())
+                        {
+                            callbackArgs[0] = enumerator.Current;
+                            callbackArgs[1] = (double)i++;
+                            result.Add(FunctionBuiltIns.CallWithThis(
+                                interpreter, mapFn, thisArg, callbackArgs));
+                        }
+                    }
+                    catch
+                    {
+                        abruptCompletion = true;
+                        throw;
+                    }
+                    finally
+                    {
+                        if (abruptCompletion)
+                        {
+                            // Array.from preserves an iteration/mapper throw
+                            // even when IteratorClose's return lookup throws.
+                            try { enumerator.Dispose(); }
+                            catch { /* Preserve the original completion. */ }
+                        }
+                        else
+                        {
+                            enumerator.Dispose();
+                        }
                     }
                     return RuntimeValue.FromObject(new SharpTSArray(result));
                 }

@@ -174,6 +174,9 @@ public sealed class RuntimeFeatureSet
     // prototype-chain mutation API, or __proto__ access makes a backing-list-only
     // array append unsafe. The discarded-result push fast path requires this false.
     public bool UsesArrayPrototypeMutation { get; set; } = true;
+    // Typed array helpers scope their receiver during nested calls. Keep these
+    // adapters only when the source can select a method using that transport.
+    public bool UsesArrayReceiverScopes { get; set; } = true;
     // Number prototype mutation makes typed number instance methods observable
     // through ordinary property lookup. Direct formatting requires this false.
     public bool UsesNumberPrototypeMutation { get; set; } = true;

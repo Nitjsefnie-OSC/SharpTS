@@ -583,7 +583,11 @@ internal sealed class InterpreterDebugHost : IDisposable
             if (_disposed || !_invalidatedSources.Add(identity))
                 return;
             if (_sources.TryGetValue(identity, out SourceState? source))
-                sourceInfo = ToInfo(source);
+            {
+                SourceVersionState? version = source.Versions.FirstOrDefault(version =>
+                    version.Document.Checksum.AsSpan().SequenceEqual(document.Checksum));
+                sourceInfo = version is null ? ToInfo(source) : ToInfo(version);
+            }
             foreach (ThreadState thread in _threads.Values)
                 thread.Controller.InvalidateSource(identity);
             if (_breakpoints.TryGetValue(identity, out BreakpointState? breakpoint))

@@ -358,6 +358,12 @@ internal sealed class StringPrototypeMethodWrapper : ISharpTSCallable, IBuiltInF
         var coerced = _receiver is SharpTSStringPrototype
             ? ""
             : interpreter.ToStringForBuiltInArgument(_receiver);
+        if (_name == "replace")
+        {
+            return StringBuiltIns.ReplaceWithoutSymbolDispatch(interpreter, coerced,
+                arguments.Count > 0 ? arguments[0] : SharpTSUndefined.Instance,
+                arguments.Count > 1 ? arguments[1] : SharpTSUndefined.Instance).ToObject();
+        }
         return _inner.Bind(coerced).Call(interpreter, arguments);
     }
 

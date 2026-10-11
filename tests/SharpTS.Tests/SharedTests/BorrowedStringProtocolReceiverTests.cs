@@ -68,4 +68,116 @@ public sealed class BorrowedStringProtocolReceiverTests
     {
         Assert.Equal(expected, TestHarness.Run(source, ExecutionMode.Compiled));
     }
+
+    [Theory, ModeData]
+    public void ReplaceNativeNullishProtocolUsesStringFallback(ExecutionMode mode)
+    {
+        var row = Cases().Single(row => (string)row[0] == "replace-native-nullish-hook-string-fallback");
+        Assert.Equal((string)row[2], TestHarness.Run((string)row[1], mode));
+    }
+
+    [Theory, ModeData]
+    public void ReplaceProtocolPreservesReceiverAndReplacementInBorrowedCalls(ExecutionMode mode)
+    {
+        const string source = """
+            const receiver: any = { toString() { throw "unexpected receiver conversion"; } };
+            const replacement: any = { toString() { throw "unexpected replacement conversion"; } };
+            const pattern: any = {};
+            let order = "";
+            Object.defineProperty(pattern, Symbol.replace, {
+                get() {
+                    order += "get>";
+                    return function(value: any, substitute: any) {
+                        order += "call>";
+                        console.log(this === pattern, value === receiver, substitute === replacement);
+                        return "hook";
+                    };
+                }
+            });
+            const replace: any = String.prototype.replace;
+            console.log(replace.call(receiver, pattern, replacement),
+                replace.apply(receiver, [pattern, replacement]),
+                replace.bind(receiver, pattern, replacement)(), order);
+            """;
+
+        Assert.Equal("true true true\ntrue true true\ntrue true true\nhook hook hook get>call>get>call>get>call>\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void ReplaceProtocolPreservesPrimitiveReceiverTypes(ExecutionMode mode)
+    {
+        const string source = """
+            const pattern: any = { [Symbol.replace](value: any) { return typeof value; } };
+            const replace: any = String.prototype.replace;
+            for (const receiver of [77, false, "abc", 1n, Symbol("s")]) {
+                console.log(replace.call(receiver, pattern));
+            }
+            """;
+
+        Assert.Equal("number\nboolean\nstring\nbigint\nsymbol\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void ReplaceFallbackConvertsReceiverAfterProtocolLookup(ExecutionMode mode)
+    {
+        const string source = """
+            let order = "";
+            const receiver: any = { toString() { order += "receiver>"; return "abc"; } };
+            const pattern: any = { toString() { order += "pattern>"; return "b"; } };
+            const replacement: any = { toString() { order += "replacement>"; return "X"; } };
+            Object.defineProperty(pattern, Symbol.replace, { get() { order += "get>"; return null; } });
+            const replace: any = String.prototype.replace;
+            console.log(replace.call(receiver, pattern, replacement), order);
+            order = "";
+            console.log(replace.call(receiver, pattern, function(matched: any, index: any, value: any) {
+                order += "call>";
+                console.log(matched, index, value);
+                return "Y";
+            }), order);
+            console.log(replace.call("undefined"), replace.call("abc", "b"), replace.call("abc", "z", "X"));
+            """;
+
+        Assert.Equal("aXc get>receiver>pattern>replacement>\nb 1 abc\naYc get>receiver>pattern>call>\nundefined aundefinedc abc\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void ReplaceAbruptLookupAndReceiverConversionKeepObservableOrder(ExecutionMode mode)
+    {
+        const string source = """
+            let order = "";
+            const original = new Error("original");
+            const receiver: any = { toString() { order += "receiver>"; throw original; } };
+            const abruptPattern: any = {};
+            Object.defineProperty(abruptPattern, Symbol.replace, { get() { order += "get>"; throw original; } });
+            const replace: any = String.prototype.replace;
+            try { replace.call(receiver, abruptPattern, "X"); }
+            catch (error) { console.log(error === original, order); }
+            order = "";
+            const fallbackPattern: any = { toString() { order += "pattern>"; return "b"; } };
+            Object.defineProperty(fallbackPattern, Symbol.replace, { get() { order += "get>"; return undefined; } });
+            try { replace.call(receiver, fallbackPattern, "X"); }
+            catch (error) { console.log(error === original, order); }
+            """;
+
+        Assert.Equal("true get>\ntrue get>receiver>\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void ReplaceRejectsNullishReceiversBeforeProtocolLookup(ExecutionMode mode)
+    {
+        const string source = """
+            let calls = 0;
+            const pattern: any = {};
+            Object.defineProperty(pattern, Symbol.replace, { get() { calls++; return function() { return "hook"; }; } });
+            const replace: any = String.prototype.replace;
+            for (const receiver of [null, undefined]) {
+                try { replace.call(receiver, pattern, "X"); }
+                catch (error) { console.log(error.name, error instanceof TypeError, calls); }
+            }
+            """;
+
+        Assert.Equal("TypeError true 0\nTypeError true 0\n", TestHarness.Run(source, mode));
+    }
 }

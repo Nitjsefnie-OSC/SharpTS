@@ -2,7 +2,7 @@
   "verifiedLocalDate": "2026-10-11",
   "status": "passed",
   "sourceBase": "e3f69107324652e842d5bfd20ae25a11fa90a615",
-  "sourceNote": "Includes the epic #1405 acceptance working-tree changes; binary fingerprints identify the actual tested payloads.",
+  "sourceNote": "Adapter binaries include the epic #1405 acceptance changes over sourceBase. The final editor run also includes failed-language-client recovery over a82a0b71570e64a94d2f9b5f9096e6744b26edff; binary fingerprints identify the actual tested payloads.",
   "platform": "win32-x64",
   "editor": "VS Code 1.140.0",
   "shippingExtension": "SharpTS 0.2.0",
@@ -21,11 +21,11 @@
   "expectedShutdownDiagnosticNote": "VS Code reports stdout EOF as read error after exited, terminated and successful disconnect; full lifecycle context is retained in the transcripts.",
   "adapterFactoriesRegisteredByHarness": 0,
   "adaptersSpawnedByHarness": 0,
-  "vsixSha256": "1e8c204d40180ffad0b5dfa0b037722c0f777d52f137b186c1b39b5e2f4122df",
+  "vsixSha256": "4612bdf96d04ca951331a5566f991985b4b3c0b45e5ccefa6b3db77a2c91c486",
   "languageServerSha256": "7ae7a96844a608240132a12e99f6362ca793b9a7d7a0aa67edcd6df736d340d1",
   "coreSha256": "93af38c966dca228282d35a291e568798100404face7f37688ce17ee6f7bc840",
   "adapterSha256": "df123f933421a663cfd570233200132dc7093e39a422d719204b26dd1bcd028e",
-  "rawEditorEvidence": "artifacts/epic-1405/vscode/run-vj2rxC/result.json",
+  "rawEditorEvidence": "artifacts/epic-1405/vscode-final/run-CdMN0E/result.json",
   "debuggerSuite": {
     "passed": 78,
     "failed": 0,
@@ -75,5 +75,14 @@
     "contractAndSmokePassed": 42,
     "evidence": "artifacts/epic-1405/test262-focused/test262-focused.trx",
     "note": "Broad Issue1279 parity failures are outside the debugger path. Baseline reproduction and follow-up issues are recorded in the PR; no conformance baseline was updated."
+  },
+  "extensionRecoveryCoverage": "StartFailed cached rejection, repeated retry, successful recovery, later restart failure, and owned channel/diagnostics cleanup",
+  "packageCi": {
+    "head": "a82a0b71570e64a94d2f9b5f9096e6744b26edff",
+    "run": "https://github.com/nickna/SharpTS/actions/runs/38160211730",
+    "windows": "package/helper/installed-protocol smoke passed",
+    "linux": "package/helper/installed-protocol smoke passed",
+    "macos": "package/installed-protocol smoke and raw-DAP suite passed",
+    "note": "The subsequent recovery fix changes only extension code/tests; adapter/tool binaries are unchanged."
   }
 }

@@ -75,7 +75,26 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     };
 
-    client = new LanguageClient('sharpts', 'SharpTS Language Server', serverOptions, clientOptions);
+    const createLanguageClient = () => new LanguageClient(
+        'sharpts', 'SharpTS Language Server', serverOptions, clientOptions,
+    );
+    client = createLanguageClient();
+
+    const recoverLanguageServer = async (error: unknown) => {
+        const failedClient = client;
+        // v9 caches a failed start promise and cannot restart a client in StartFailed.
+        client = createLanguageClient();
+        try {
+            await failedClient?.dispose();
+        } catch {
+            // v9's stop rejects in StartFailed; its node-side finally still schedules process cleanup.
+            // That rejection bypasses cleanup of these client-owned resources. Only access the
+            // lazy channel getter here: successful disposal has already cleared its channel.
+            failedClient?.outputChannel.dispose();
+            failedClient?.diagnostics?.dispose();
+        }
+        reportLanguageServerFailure(error);
+    };
 
     // Compile / run commands use the core CLI (`SharpTS.dll`), not the LSP server.
     const compileCommands = new CompileCommands(coreDll);
@@ -96,7 +115,7 @@ export async function activate(context: vscode.ExtensionContext) {
             try {
                 await client?.restart();
             } catch (error) {
-                reportLanguageServerFailure(error);
+                await recoverLanguageServer(error);
             }
         }),
         vscode.debug.registerDebugAdapterDescriptorFactory(INTERPRETER_DEBUG_TYPE, {
@@ -123,7 +142,7 @@ export async function activate(context: vscode.ExtensionContext) {
     try {
         await client.start();
     } catch (error) {
-        reportLanguageServerFailure(error);
+        await recoverLanguageServer(error);
     }
 }
 

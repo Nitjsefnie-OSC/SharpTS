@@ -22,6 +22,8 @@ public class SharpTSErrorClass : SharpTSClass
     /// For user subclasses like <c>class MyError extends Error</c>, this is "MyError".
     /// </summary>
     private readonly string _errorTypeName;
+    private readonly bool _isBuiltIn;
+    internal override bool RequiresNew => !_isBuiltIn;
 
     /// <summary>
     /// Creates a built-in Error constructor class (Error, TypeError, etc.) with no user-defined methods.
@@ -56,6 +58,7 @@ public class SharpTSErrorClass : SharpTSClass
             staticProperties: [])
     {
         _errorTypeName = errorTypeName;
+        _isBuiltIn = true;
         if (errorTypeName == "Error")
             DefineStaticProperty("isError", SharpTSPropertyDescriptor.ForMethod(FindStaticMethod("isError")!));
         Prototype.DefineExtraProperty("name", new SharpTSPropertyDescriptor

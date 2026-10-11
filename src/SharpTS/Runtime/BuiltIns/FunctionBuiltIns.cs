@@ -186,6 +186,8 @@ public static class FunctionBuiltIns
 
     private static object? InvokeWithThis(Interpreter interp, ISharpTSCallable callable, object? thisArg, List<object?> args)
     {
+        if (callable is SharpTSClass klass)
+            klass.ValidateCall();
         if (callable is SharpTSProxy proxy)
             return proxy.TrapApply(thisArg, args, interp);
 
@@ -433,6 +435,9 @@ public class BoundFunction : ISharpTSCallable
             combined[i] = RuntimeValue.FromBoxed(_boundArgs[i]);
         arguments.CopyTo(combined.AsSpan(_boundArgs.Count));
 
+        if (_target is SharpTSClass klass)
+            klass.ValidateCall();
+
         if (!_ignoreThisArg && _target is SharpTSProxy proxy)
             return RuntimeValue.FromBoxed(proxy.TrapApply(
                 _thisArg, CallableInterop.ToBoxedList(combined), interpreter));
@@ -484,6 +489,9 @@ public class BoundFunction : ISharpTSCallable
         // Combine bound args with call args
         var combinedArgs = new List<object?>(_boundArgs);
         combinedArgs.AddRange(arguments);
+
+        if (_target is SharpTSClass klass)
+            klass.ValidateCall();
 
         if (!_ignoreThisArg && _target is SharpTSProxy proxy)
             return proxy.TrapApply(_thisArg, combinedArgs, interpreter);

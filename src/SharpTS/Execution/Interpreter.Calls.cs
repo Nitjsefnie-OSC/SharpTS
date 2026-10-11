@@ -277,6 +277,8 @@ public partial class Interpreter
                     explicitTypes,
                     ResolveDotNetResultTypeHint(call));
             }
+            if (function is SharpTSClass klass)
+                klass.ValidateCall();
             return function.Call(this, argumentsList);
         }
         finally
@@ -537,6 +539,8 @@ public partial class Interpreter
                 {
                     rented[i] = EvaluateRV(call.Arguments[i]);
                 }
+                if (v2Callee is SharpTSClass klass)
+                    klass.ValidateCall();
                 return v2Callee.CallV2(this, rented.AsSpan(0, argCount));
             }
             finally
@@ -593,6 +597,8 @@ public partial class Interpreter
             }
             else
             {
+                if (function is SharpTSClass klass)
+                    klass.ValidateCall();
                 result = function.Call(this, argumentsList);
             }
             return RuntimeValue.FromBoxed(result);

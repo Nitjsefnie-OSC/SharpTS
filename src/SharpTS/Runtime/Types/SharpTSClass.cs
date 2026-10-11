@@ -45,6 +45,7 @@ public class SharpTSClass(
     public SharpTSClass? Superclass { get; } = superclass;
     public bool IsAbstract { get; } = isAbstract;
     internal RuntimeEnvironment? InitializerEnvironment { get; set; }
+    internal virtual bool RequiresNew => true;
     internal IReadOnlyList<Stmt.Field>? OrderedInstanceFields { get; set; }
     private readonly FrozenDictionary<string, ISharpTSCallable> _methods = methods.ToFrozenDictionary();
     private readonly FrozenDictionary<string, ISharpTSCallable> _staticMethods = staticMethods.ToFrozenDictionary();
@@ -100,6 +101,14 @@ public class SharpTSClass(
         ISharpTSCallable? constructor = FindMethod("constructor");
         if (constructor != null) return constructor.Arity();
         return Superclass?.Arity() ?? 0;
+    }
+
+    // The callable ABI also constructs instances for `new`. Guest call paths
+    // validate separately so construction can keep using that shared entry point.
+    internal void ValidateCall()
+    {
+        if (RequiresNew)
+            throw new ThrowException(new SharpTSTypeError($"Class constructor {Name} cannot be invoked without 'new'"));
     }
 
     public virtual object? Call(Interpreter interpreter, List<object?> arguments)
@@ -317,7 +326,9 @@ public class SharpTSClass(
             ?? (_staticProperties.TryGetValue(name, out var value)
                 ? new SharpTSPropertyDescriptor(value, writable: true, enumerable: true, configurable: true)
                     { HasValue = true }
-                : null);
+                : !_deletedStaticMethods.Contains(name) && _staticMethods.TryGetValue(name, out var method)
+                    ? SharpTSPropertyDescriptor.ForMethod(method)
+                    : null);
 
     internal SharpTSPropertyDescriptor? FindStaticPropertyDescriptor(string name)
         => HasOwnStaticMember(name)

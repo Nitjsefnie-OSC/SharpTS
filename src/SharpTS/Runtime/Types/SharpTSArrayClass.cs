@@ -39,6 +39,7 @@ public class SharpTSArrayClass : SharpTSClass
     /// the root of guest Array-subclass hierarchies.
     /// </summary>
     public static readonly SharpTSArrayClass ArrayBase = new();
+    internal override bool RequiresNew => !ReferenceEquals(this, ArrayBase);
 
     private SharpTSArrayClass()
         : base(

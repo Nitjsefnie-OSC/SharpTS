@@ -119,6 +119,7 @@ public sealed class RuntimeFeatureDetector
             UsesDatePrototypeMutation = false,
             UsesPromisePrototypeMutation = false,
             UsesArrayPrototypeMutation = false,
+            UsesArrayReceiverScopes = false,
             UsesNumberPrototypeMutation = false,
             UsesStringPrototypeMutation = false,
             UsesMathMutation = false,
@@ -361,6 +362,10 @@ public sealed class RuntimeFeatureDetector
                 _set.UsesObjectIntegrityMutation = true;
                 if (name is "eval" or "Function")
                 {
+                    // Callable discovery can parse indirect/grouped literal
+                    // eval after this walk. Retain receiver scopes for opaque
+                    // source as well as the direct eval AST visited below.
+                    _set.UsesArrayReceiverScopes = true;
                     _set.UsesDatePrototypeMutation = true;
                     _set.UsesRegExpPrototypeMutation = true;
                     _set.UsesStringPrototypeMutation = true;
@@ -584,6 +589,7 @@ public sealed class RuntimeFeatureDetector
             // valve; the fine-grained ones still get set by their own triggers.
             case "globalThis":
             case "global":
+                _set.UsesArrayReceiverScopes = true;
                 _set.UsesObjectIntegrityMutation = true;
                 _set.UsesPromise = true;
                 _set.UsesRegExpPrototypeMutation = true;
@@ -663,6 +669,9 @@ public sealed class RuntimeFeatureDetector
                 _set.UsesCjsRequire = true;
                 break;
             case Stmt.Export exp:
+                // Hosted consumers may inspect callback/search function values
+                // on exported arrays even when this producer never names them.
+                _set.UsesArrayReceiverScopes = true;
                 if (exp.Declaration is Stmt.Function exportedFunction && _typeMap is not null)
                 {
                     var functionType = _typeMap.GetFunctionType(exportedFunction.Name.Lexeme);
@@ -874,6 +883,13 @@ public sealed class RuntimeFeatureDetector
 
     // ── Expression walk ──────────────────────────────────────────────────
 
+    private static bool UsesArrayReceiverScope(string methodName) => methodName is
+        "map" or "filter" or "forEach" or "find" or "findIndex"
+        or "findLast" or "findLastIndex" or "some" or "every" or "flatMap"
+        or "reduce" or "reduceRight" or "flat" or "includes" or "sort"
+        or "toSorted" or "toReversed" or "with" or "at" or "toSpliced"
+        or "indexOf" or "lastIndexOf";
+
     private void VisitExpr(Expr? expr)
     {
         if (expr is null) return;
@@ -885,6 +901,12 @@ public sealed class RuntimeFeatureDetector
                 HandleIdentifier(v.Name.Lexeme);
                 break;
 
+            case Expr.This:
+                // Script `this` can expose the global Array constructor to a
+                // host or callback without an explicit prototype member read.
+                _set.UsesArrayReceiverScopes = true;
+                break;
+
             case Expr.Literal lit when lit.Value is System.Numerics.BigInteger:
                 // `123n` literal — BigInt arithmetic helpers are needed even
                 // without a bare `BigInt` identifier.
@@ -892,6 +914,8 @@ public sealed class RuntimeFeatureDetector
                 break;
 
             case Expr.Get g:
+                if (UsesArrayReceiverScope(g.Name.Lexeme))
+                    _set.UsesArrayReceiverScopes = true;
                 if (IsOpaqueEvaluator(g.Object, g.Name.Lexeme))
                     MarkOpaqueEvaluatorMutation();
                 // crypto.X509Certificate exposes Date-valued accessors. Their
@@ -1046,6 +1070,10 @@ public sealed class RuntimeFeatureDetector
                 break;
 
             case Expr.GetIndex gi:
+                if (gi.Index is Expr.Literal { Value: string scopedArrayMember }
+                        ? UsesArrayReceiverScope(scopedArrayMember)
+                        : gi.Index is not Expr.Literal)
+                    _set.UsesArrayReceiverScopes = true;
                 if (gi.Index is Expr.Literal { Value: string indexedMember }
                     && IsOpaqueEvaluator(gi.Object, indexedMember))
                     MarkOpaqueEvaluatorMutation();
@@ -1887,6 +1915,7 @@ public sealed class RuntimeFeatureDetector
         _set.UsesDatePrototypeMutation = true;
         _set.UsesPromisePrototypeMutation = true;
         _set.UsesArrayPrototypeMutation = true;
+        _set.UsesArrayReceiverScopes = true;
         _set.UsesNumberPrototypeMutation = true;
         _set.UsesNumberConstructorMutation = true;
         _set.UsesRegExpPrototypeMutation = true;

@@ -36,12 +36,14 @@ public partial class RuntimeEmitter
 
     private void EmitArrayPrototypePopulate(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        EmitArrayReceiverScopedAdapters(typeBuilder, runtime);
+        if (_features.UsesArrayReceiverScopes)
+            EmitArrayReceiverScopedAdapters(typeBuilder, runtime);
         var method = runtime.ArrayOperations.PrototypePopulateMethod;
 
         var il = method.GetILGenerator();
         var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item",
             _types.String, _types.Object);
+        var installMethod = EmitArrayPrototypeMethodInstaller(typeBuilder, runtime, setItem);
 
         EmitPrototypePopulateGuard(il, runtime.ArrayOperations.PrototypeField);
 
@@ -86,11 +88,38 @@ public partial class RuntimeEmitter
         // unblocks borrowed Array.prototype.X patterns
         // (`obj.map = Array.prototype.map; obj.map(cb)`).
         void Wire(string jsName, MethodBuilder? helper, int jsLength)
-            => EmitWirePrototypeMethod(il, runtime, runtime.ArrayOperations.PrototypeField, arrDescLocal,
-                setItem, jsName, helper, jsLength);
+        {
+            if (helper is null) return;
+            try { helper.DefineParameter(1, ParameterAttributes.None, "__this"); }
+            catch { /* already named — preserve the existing parameter */ }
+            il.Emit(OpCodes.Ldsfld, runtime.ArrayOperations.PrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            _types.EmitLoadMethodInfo(il, helper);
+            il.Emit(OpCodes.Ldc_I4, jsLength);
+            il.Emit(OpCodes.Call, installMethod);
+        }
+
+        // Callback/search function values need adapters when property lookup or
+        // reflection can expose them. Simple programs retain the compact raw
+        // wiring; opaque Object/Reflect/eval routes conservatively keep adapters.
+        bool usesPrototypeAdapters = _emitHosted
+            || _features.UsesArrayReceiverScopes
+            || _features.UsesArrayPrototypeMutation
+            || _features.UsesDynamicPropertyDescriptors
+            || _features.UsesReflect
+            || _features.UsesObjectIntegrityMutation
+            || _features.UsesClassPrototypeMutation
+            || _features.UsesSourceExecution;
 
         void WireCallback(string jsName, MethodBuilder helper)
-            => Wire(jsName, EmitArrayCallbackPrototypeAdapter(typeBuilder, runtime, helper), 1);
+            => Wire(jsName, usesPrototypeAdapters
+                ? EmitArrayCallbackPrototypeAdapter(typeBuilder, runtime, helper)
+                : helper, 1);
+
+        void WireSearch(string jsName, MethodBuilder helper)
+            => Wire(jsName, usesPrototypeAdapters
+                ? EmitArraySearchPrototypeAdapter(typeBuilder, runtime, helper)
+                : helper, 1);
 
         WireCallback("map",           runtime.ArrayOperations.Map);
         WireCallback("filter",        runtime.ArrayOperations.Filter);
@@ -104,8 +133,8 @@ public partial class RuntimeEmitter
         Wire("reduce",         runtime.ArrayOperations.Reduce,         1);
         Wire("reduceRight",    runtime.ArrayOperations.ReduceRight,    1);
         Wire("includes",       runtime.ArrayOperations.IncludesProto,  1);
-        Wire("indexOf",        EmitArraySearchPrototypeAdapter(typeBuilder, runtime, runtime.ArrayOperations.IndexOf), 1);
-        Wire("lastIndexOf",    EmitArraySearchPrototypeAdapter(typeBuilder, runtime, runtime.ArrayOperations.LastIndexOf), 1);
+        WireSearch("indexOf",     runtime.ArrayOperations.IndexOf);
+        WireSearch("lastIndexOf", runtime.ArrayOperations.LastIndexOf);
         Wire("join",           runtime.ArrayOperations.Join,           1);
         Wire("concat",         runtime.ArrayOperations.Concat,         1);
         Wire("reverse",        runtime.ArrayOperations.ReverseProto,   0);

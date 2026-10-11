@@ -83,6 +83,7 @@ internal sealed class InterpreterDebugController : IDisposable
         new(Runtime.Types.ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, List<DebugBreakpointBinding>> _breakpoints =
         new(SourcePathComparer);
+    private readonly HashSet<string> _invalidatedSources = new(SourcePathComparer);
     private readonly ConcurrentQueue<IDebuggerWorkItem> _work = new();
     private readonly AsyncLocal<FrameContext?> _currentFrame = new();
     private readonly AsyncLocal<LastExecutionPoint?> _lastExecution = new();
@@ -108,6 +109,7 @@ internal sealed class InterpreterDebugController : IDisposable
     public event Action<DebugStopSnapshot>? Stopped;
     public event Action? Continued;
     public event Action<SourceDocument>? SourceRegistered;
+    public event Action<SourceDocument>? SourceInvalidated;
 
     public DebugExecutionState State
     {
@@ -189,7 +191,8 @@ internal sealed class InterpreterDebugController : IDisposable
                 .OrderBy(location => location.Span.Start)
                 .ToArray();
 
-            _sources.Add(identity, new SourceEntry(document, locations));
+            _sources.Add(identity, new SourceEntry(document, locations,
+                document.IsPhysicalFileSnapshot || File.Exists(document.Path)));
             foreach (DebugSourceLocation location in locations)
                 _locations.TryAdd(location.Statement, location);
             registered = true;
@@ -232,8 +235,10 @@ internal sealed class InterpreterDebugController : IDisposable
                     continue;
                 }
 
-                if (HasSourceChanged(source.Document))
+                if (_invalidatedSources.Contains(identity)
+                    || HasSourceChanged(source.Document, source.HadBackingFile))
                 {
+                    _invalidatedSources.Add(identity);
                     bindings.Add(new DebugBreakpointBinding(
                         id, identity, requestedLine, requestedColumn, false, null, null,
                         "Source changed after launch; restart the debug session."));
@@ -259,6 +264,27 @@ internal sealed class InterpreterDebugController : IDisposable
 
             _breakpoints[identity] = bindings;
             return bindings.ToArray();
+        }
+    }
+
+    internal void InvalidateSource(string sourcePath)
+    {
+        lock (_gate)
+            InvalidateSourceCore(NormalizeSourceIdentity(sourcePath));
+    }
+
+    private void InvalidateSourceCore(string identity)
+    {
+        _invalidatedSources.Add(identity);
+        if (_breakpoints.TryGetValue(identity, out List<DebugBreakpointBinding>? bindings))
+        {
+            _breakpoints[identity] = bindings.Select(binding => binding with
+            {
+                Verified = false,
+                Line = null,
+                Column = null,
+                Message = "Source changed after launch; restart the debug session.",
+            }).ToList();
         }
     }
 
@@ -382,6 +408,7 @@ internal sealed class InterpreterDebugController : IDisposable
             RegisterModule(module);
 
         DebugStopSnapshot? stopped = null;
+        SourceDocument? invalidated = null;
         lock (_gate)
         {
             if (_state == DebugExecutionState.Terminating)
@@ -396,19 +423,24 @@ internal sealed class InterpreterDebugController : IDisposable
                 frame.LastLocation = location;
             _lastExecution.Value = new LastExecutionPoint(location, environment);
 
-            DebugStopReason? reason = SelectStopReason(location);
+            DebugStopReason? reason = SelectStopReason(location, out invalidated);
             if (reason is null)
             {
                 if (_state == DebugExecutionState.Continuing)
                     _state = DebugExecutionState.Running;
-                return;
             }
-
-            stopped = CreateSnapshot(reason.Value, location, environment, exception: null, unhandled: false);
-            _currentStop = stopped;
-            _state = DebugExecutionState.Stopped;
+            else
+            {
+                stopped = CreateSnapshot(reason.Value, location, environment, exception: null, unhandled: false);
+                _currentStop = stopped;
+                _state = DebugExecutionState.Stopped;
+            }
         }
 
+        if (invalidated is not null)
+            SourceInvalidated?.Invoke(invalidated);
+        if (stopped is null)
+            return;
         Stopped?.Invoke(stopped);
         WaitWhileStopped(interpreter);
     }
@@ -528,8 +560,9 @@ internal sealed class InterpreterDebugController : IDisposable
         }
     }
 
-    private DebugStopReason? SelectStopReason(DebugSourceLocation location)
+    private DebugStopReason? SelectStopReason(DebugSourceLocation location, out SourceDocument? invalidated)
     {
+        invalidated = null;
         bool hiddenByJustMyCode = _justMyCode && location.Document.IsVirtual;
         if (_entryStopPending && !hiddenByJustMyCode)
         {
@@ -537,7 +570,7 @@ internal sealed class InterpreterDebugController : IDisposable
             return DebugStopReason.Entry;
         }
 
-        if (MatchesBreakpoint(location))
+        if (MatchesBreakpoint(location, out invalidated))
             return DebugStopReason.Breakpoint;
 
         if (_state == DebugExecutionState.PauseRequested)
@@ -564,13 +597,24 @@ internal sealed class InterpreterDebugController : IDisposable
         return DebugStopReason.Step;
     }
 
-    private bool MatchesBreakpoint(DebugSourceLocation location)
+    private bool MatchesBreakpoint(DebugSourceLocation location, out SourceDocument? invalidated)
     {
+        invalidated = null;
         string identity = NormalizeSourceIdentity(location.Document.Path);
-        return _breakpoints.TryGetValue(identity, out List<DebugBreakpointBinding>? bindings)
+        bool matches = _breakpoints.TryGetValue(identity, out List<DebugBreakpointBinding>? bindings)
             && bindings.Any(binding => binding.Verified
                 && binding.Line == location.Line
                 && (binding.Column is null || binding.Column <= location.Column));
+        if (!matches)
+            return false;
+        // Read source bytes only for a prospective breakpoint hit, never for ordinary safe points.
+        if (HasSourceChanged(location.Document, _sources[identity].HadBackingFile))
+        {
+            InvalidateSourceCore(identity);
+            invalidated = location.Document;
+            return false;
+        }
+        return true;
     }
 
     private DebugStopSnapshot CreateSnapshot(
@@ -654,10 +698,12 @@ internal sealed class InterpreterDebugController : IDisposable
         return sameLine ?? locations.FirstOrDefault(location => location.Line > line);
     }
 
-    private static bool HasSourceChanged(SourceDocument document)
+    internal static bool HasSourceChanged(SourceDocument document, bool hadBackingFile)
     {
-        if (document.IsVirtual || !File.Exists(document.Path))
+        if (document.IsVirtual)
             return false;
+        if (!File.Exists(document.Path))
+            return hadBackingFile;
         try
         {
             byte[] current = System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(document.Path));
@@ -739,7 +785,8 @@ internal sealed class InterpreterDebugController : IDisposable
 
     private sealed record SourceEntry(
         SourceDocument Document,
-        IReadOnlyList<DebugSourceLocation> Locations);
+        IReadOnlyList<DebugSourceLocation> Locations,
+        bool HadBackingFile);
 
     private sealed class FrameContext(
         string name,

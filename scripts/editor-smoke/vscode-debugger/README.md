@@ -16,6 +16,7 @@ from the repository root in PowerShell:
 ```powershell
 npm ci --prefix extensions/vscode-sharpts
 npm run compile --prefix extensions/vscode-sharpts
+dotnet build tests/fixtures/SharpTS.DebuggerReferenceFixture/SharpTS.DebuggerReferenceFixture.csproj -c Release
 dotnet publish src/SharpTS.LanguageServer/SharpTS.LanguageServer.csproj -c Release -o artifacts/editor-debugger/published
 dotnet publish src/SharpTS.DebugAdapter/SharpTS.DebugAdapter.csproj -c Release -o artifacts/editor-debugger/published
 New-Item -ItemType Directory -Force extensions/vscode-sharpts/bin/server | Out-Null
@@ -32,7 +33,8 @@ The two modes run sequentially with separate, fresh profiles and extension direc
 - `--mode both` runs both variants and writes an aggregate result; this is the default.
 
 Optional `--name value` arguments are `--code` (VS Code executable), `--code-cli`
-(the VS Code `cli.js` path for a Windows install), `--dotnet`,
+(the VS Code `cli.js` path for a Windows install), `--dotnet`, `--reference-assembly`
+(the built managed reference fixture DLL),
 `--development-extension`, `--package`, and `--artifacts`. The default executable on
 Windows is `%LOCALAPPDATA%/Programs/Microsoft VS Code/Code.exe`; on other platforms it
 is `code`. No dependencies are downloaded by the harness itself.
@@ -47,6 +49,8 @@ language server, core, and adapter assemblies. The test copies
   document, preserves an unrelated dirty document, and forwards project/reference settings.
   The isolated profile sets `debug.saveBeforeStart` to `allEditors` to verify the command
   suppresses VS Code's save-all participant and saves only its active source document.
+  Its configured `.csproj` contains a real fixture assembly reference; the command executes
+  an imported managed method, proving that project context reaches runtime assembly loading.
 - The real `launch.json` resolves the workspace, arguments, environment, and launch defaults.
 - Source breakpoints stop in the entry file, imported functions, async and generator
   resumptions, and a worker. A breakpoint on a comment binds to the next executable line.

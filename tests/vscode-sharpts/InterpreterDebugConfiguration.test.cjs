@@ -40,3 +40,14 @@ test('interpreter command omits unset optional context', () => {
     assert.equal(configuration.project, undefined);
     assert.equal(configuration.references, undefined);
 });
+
+test('interpreter command forwards managed project context independently of explicit references', () => {
+    const configuration = createInterpreterDebugConfiguration(
+        '/workspace/src/app.ts',
+        '/workspace',
+        { projectFile: 'interop.csproj', additionalReferences: ['lib/extra.dll'] },
+    );
+
+    assert.equal(configuration.project, 'interop.csproj');
+    assert.deepEqual(configuration.references, ['lib/extra.dll']);
+});

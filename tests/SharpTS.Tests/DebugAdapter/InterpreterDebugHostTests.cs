@@ -103,6 +103,108 @@ public sealed class InterpreterDebugHostTests
     }
 
     [Fact]
+    public void WorkerReloadOfChangedPathKeepsEachSourceSnapshotAndInvalidatesAllBindings()
+    {
+        using var host = new InterpreterDebugHost();
+        using var main = new Interpreter(TextWriter.Null, TextWriter.Null);
+        InterpreterDebugThreadInfo mainThread = host.RegisterMain(main);
+        const string path = "C:/debug/shared.ts";
+        ParsedModule original = ParseModule(path, "let value = 1;");
+        mainThread.Controller.RegisterModule(original);
+        DebugBreakpointBinding binding = Assert.Single(host.SetBreakpoints(path, [(1, 1)]));
+        Assert.True(binding.Verified);
+        InterpreterDebugSourceInfo originalSource = host.GetSource(original.Document!);
+        var changed = new List<DebugBreakpointBinding>();
+        host.BreakpointChanged += changed.Add;
+
+        using var worker = new Interpreter(TextWriter.Null, TextWriter.Null);
+        using IDisposable registration = host.RegisterWorker(
+            worker, "worker", static interpreter => interpreter.Shutdown());
+        ParsedModule replacement = ParseModule(path, "// changed\nlet value = 2;");
+        worker.DebugController!.RegisterModule(replacement);
+
+        InterpreterDebugSourceInfo replacementSource = host.GetSource(replacement.Document!);
+        Assert.NotEqual(originalSource.Id, replacementSource.Id);
+        Assert.True(host.TryGetSource(originalSource.Id, out InterpreterDebugSourceInfo? first));
+        Assert.True(host.TryGetSource(replacementSource.Id, out InterpreterDebugSourceInfo? second));
+        Assert.Equal(original.Document!.Text, first!.Document.Text);
+        Assert.Equal(replacement.Document!.Text, second!.Document.Text);
+        Assert.Equal(2, host.Sources.Count);
+        Assert.True(host.HasChangedSource(original.Document));
+        Assert.True(host.HasChangedSource(replacement.Document));
+        Assert.Contains(changed, candidate => candidate.Id == binding.Id && !candidate.Verified);
+        Assert.False(Assert.Single(host.SetBreakpoints(path, [(1, 1)])).Verified);
+    }
+
+    [Fact]
+    public void ExitedWorkerSourceVersionsAreReleasedWhileMainKeepsSharedPathLoaded()
+    {
+        using var host = new InterpreterDebugHost();
+        using var main = new Interpreter(TextWriter.Null, TextWriter.Null);
+        InterpreterDebugThreadInfo mainThread = host.RegisterMain(main);
+        const string path = "C:/debug/shared-snapshot-lifetime.ts";
+        ParsedModule original = ParseModule(path, "let value = 1;");
+        mainThread.Controller.RegisterModule(original);
+        int originalSourceId = host.GetSource(original.Document!).Id;
+        var removed = new List<int>();
+        host.SourceChanged += change =>
+        {
+            if (change.Reason == InterpreterDebugSourceChangeReason.Removed)
+                removed.Add(change.Source.Id);
+        };
+
+        for (int index = 0; index < 3; index++)
+        {
+            using var worker = new Interpreter(TextWriter.Null, TextWriter.Null);
+            IDisposable registration = host.RegisterWorker(
+                worker, "worker", static interpreter => interpreter.Shutdown());
+            ParsedModule replacement = ParseModule(path, $"let value = {index + 2};");
+            worker.DebugController!.RegisterModule(replacement);
+            int workerSourceId = host.GetSource(replacement.Document!).Id;
+            Assert.Equal(2, host.Sources.Count);
+
+            registration.Dispose();
+
+            Assert.False(host.TryGetSource(workerSourceId, out _));
+            Assert.Contains(workerSourceId, removed);
+            Assert.Equal(originalSourceId, Assert.Single(host.Sources).Id);
+            Assert.True(host.TryGetSource(originalSourceId, out _));
+        }
+    }
+
+    [Fact]
+    public void PhysicalSourceDeletedAfterCaptureBeforeRegistrationCannotVerifyBreakpoints()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(), "sharpts-dap-capture-deletion", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string path = Path.Combine(directory, "main.ts");
+            File.WriteAllText(path, "let value = 1;");
+            SourceDocument document = SourceDocument.FromBytes(path, File.ReadAllBytes(path));
+            File.Delete(path);
+            var result = new Parser(new Lexer(document.Text).ScanTokens())
+                .WithSourceDocument(document).Parse();
+            Assert.True(result.IsSuccess);
+            var module = new ParsedModule(path, result.Statements) { Document = document };
+            using var host = new InterpreterDebugHost();
+            using var main = new Interpreter(TextWriter.Null, TextWriter.Null);
+            InterpreterDebugThreadInfo mainThread = host.RegisterMain(main);
+            mainThread.Controller.RegisterModule(module);
+
+            Assert.False(Assert.Single(mainThread.Controller.SetBreakpoints(path, [(1, 1)])).Verified);
+            Assert.False(Assert.Single(host.SetBreakpoints(path, [(1, 1)])).Verified);
+            Assert.True(host.HasChangedSource(document));
+            Assert.Equal(document.Text, host.GetSource(document).Document.Text);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task CoordinatedPauseReportsEachParkedThreadAndResumeReleasesAll()
     {
         using var host = new InterpreterDebugHost();

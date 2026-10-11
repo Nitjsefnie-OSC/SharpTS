@@ -52,7 +52,7 @@ The v1 request is `launch` only. Its configuration accepts:
 | `cwd` | Working directory; defaults to the program directory. |
 | `args` | Guest `process.argv` entries after the script path. |
 | `env` | Explicit environment additions/overrides. Null removes a variable. |
-| `project` | Optional tsconfig path; normal discovery applies when omitted. |
+| `project` | Optional tsconfig path/directory, or `.csproj` for existing managed references with normal tsconfig discovery. |
 | `references` | Additional managed assembly references. |
 | `stopOnEntry` | Stop at the first executable source statement. |
 | `justMyCode` | Hide virtual/default-library sources by default. |
@@ -60,8 +60,10 @@ The v1 request is `launch` only. Its configuration accepts:
 | `console` | `internalConsole` in v1; other values fail clearly. |
 | `logFile` | Optional redacted adapter diagnostic log (configured by the client process launch). |
 
-The source checksum captured during launch is authoritative. A file changed after launch is marked
-stale and its breakpoints remain unverified rather than silently binding to different text.
+The source checksum captured during launch is authoritative. Prospective breakpoint hits and source
+presentation check it against the current file, including deletion. A changed source invalidates
+existing bindings across the session until restart; stack frames expose the parsed snapshot through
+DAP `source`. Ordinary statement dispatch performs no source-file I/O.
 
 ## Execution and concurrency model
 
@@ -166,13 +168,19 @@ checklist still requires an interactive Extension Development Host. The worker-i
 limitation was resolved by #1404. Cooperative suspension still cannot preempt a blocking
 managed/native call; partial-stop events report that limitation accurately.
 
-## Remaining release gates (2026-10-08)
+## Remaining release gates (2026-10-11)
 
-The current Windows ARM64 acceptance run passed 51 debugger tests, including the latency gates and
-natural disconnect exit with stdin left open. The hermetic core suite passed 25,218 tests with
-three skips. Both the development extension and installed VSIX passed ten real VS Code adapter
-sessions, with every adapter exiting zero. The exact local NuGet candidate installed and ran
-successfully; its compressed payload is 135,453 bytes larger than the CLI, below the 5 MiB bound.
+The current Windows x64 acceptance run passed 78 debugger/project tests, including the latency gates,
+stale-source snapshots, worker source lifetimes, managed project references, and natural disconnect
+exit with stdin left open. Both the development extension and installed VSIX passed ten real VS Code
+adapter sessions, including a managed-reference launch, with every adapter exiting zero. Four extension
+unit tests passed, including language-server startup failure. The exact local NuGet candidate passed
+a multi-file breakpoint/evaluate/output/disconnect session through its installed shim; its compressed
+payload is 149,486 bytes larger than the CLI, below the 5 MiB bound.
+The hermetic core suite passed 25,347 tests with three skips using the same exclusions as CI.
+The TypeScript smoke gate passed 32 corpus cases and 17 gate tests. Test262 contract/report/smoke
+checks passed, while the broader #1279 parity run exposed 33 existing failures across 3,200 tests;
+those are tracked separately from debugger acceptance. No conformance baseline was updated.
 [Verification fingerprints and evidence paths](../../scripts/editor-smoke/vscode-debugger/last-verified.json)
 identify the tested binaries and retain the scope of these assertions.
 

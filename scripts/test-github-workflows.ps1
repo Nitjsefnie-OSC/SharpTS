@@ -234,6 +234,19 @@ function Get-PublishJob([string] $Name) {
 $publishNuGetJob = Get-PublishJob 'publish-nuget'
 $verifyNuGetJob = Get-PublishJob 'verify-nuget'
 $releaseJob = Get-PublishJob 'release'
+$publishBuildJob = Get-PublishJob 'build'
+foreach ($requiredText in @('./scripts/test-smoke-process.ps1', './scripts/test-debug-adapter-package.ps1',
+    '-PackagePath "./nupkg/SharpTS.DebugAdapter.${{ steps.version.outputs.VERSION }}.nupkg"')) {
+    if (-not $publishBuildJob.Contains($requiredText, [StringComparison]::Ordinal)) {
+        $errors.Add("Publish build must smoke-test the exact debug adapter release candidate: $requiredText")
+    }
+}
+$adapterSmokePosition = $publishBuildJob.IndexOf('./scripts/test-debug-adapter-package.ps1', [StringComparison]::Ordinal)
+foreach ($boundary in @('Preflight NuGet package IDs and artifacts', 'Upload package artifacts')) {
+    if ($adapterSmokePosition -lt 0 -or $adapterSmokePosition -gt $publishBuildJob.IndexOf($boundary, [StringComparison]::Ordinal)) {
+        $errors.Add("The exact debug adapter package must pass protocol smoke before $boundary.")
+    }
+}
 
 foreach ($requiredText in @(
     'needs: [build, binaries, native-binaries]',

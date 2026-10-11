@@ -4,11 +4,55 @@ using Xunit;
 
 namespace SharpTS.Tests.LanguageServer.Project;
 
+// These tests temporarily change cwd or the process-wide NuGet cache environment.
+[CollectionDefinition("CsprojParser", DisableParallelization = true)]
+public sealed class CsprojParserTestsCollection { }
+
 /// <summary>
 /// Unit tests for CsprojParser.
 /// </summary>
+[Collection("CsprojParser")]
 public class CsprojParserTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Parse_MsbuildXmlNamespace_ResolvesHintPathAndCachedPackage(bool versionAttribute)
+    {
+        string tempDir = LspTestFixtures.CreateTempDirectory();
+        string? previousCache = Environment.GetEnvironmentVariable("NUGET_PACKAGES");
+        try
+        {
+            string localLibrary = Path.Combine(tempDir, "libs", "LocalLibrary.dll");
+            Directory.CreateDirectory(Path.GetDirectoryName(localLibrary)!);
+            File.WriteAllBytes(localLibrary, []);
+            string cache = Path.Combine(tempDir, "packages");
+            string packageLibrary = Path.Combine(cache, "testpackage", "1.2.3", "lib", "net10.0", "PackageLibrary.dll");
+            Directory.CreateDirectory(Path.GetDirectoryName(packageLibrary)!);
+            File.WriteAllBytes(packageLibrary, []);
+            Environment.SetEnvironmentVariable("NUGET_PACKAGES", cache);
+            string packageReference = versionAttribute
+                ? "<PackageReference Include=\"TestPackage\" Version=\"1.2.3\" />"
+                : "<PackageReference Include=\"TestPackage\"><Version>1.2.3</Version></PackageReference>";
+            string project = Path.Combine(tempDir, "references.csproj");
+            File.WriteAllText(project, $"""
+                <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                  <ItemGroup>
+                    <Reference Include="LocalLibrary"><HintPath>libs\LocalLibrary.dll</HintPath></Reference>
+                    {packageReference}
+                  </ItemGroup>
+                </Project>
+                """);
+
+            Assert.Equal(new[] { localLibrary, packageLibrary }, CsprojParser.Parse(project));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NUGET_PACKAGES", previousCache);
+            LspTestFixtures.CleanupTempDirectory(tempDir);
+        }
+    }
+
     [Fact]
     public void Parse_EmptyCsproj_ReturnsEmptyList()
     {

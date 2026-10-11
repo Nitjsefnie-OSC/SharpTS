@@ -16,7 +16,8 @@
     <PackageTags>typescript;interpreter;compiler;dotnet;il</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
 
-    <!-- Source Link -->
+    <!-- Source Link is supplied by the pinned .NET SDK. An explicit package
+         reference would override its serviced Git tasks. -->
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <DebugType>embedded</DebugType>
@@ -167,7 +168,6 @@
   <ItemGroup>
     <ProjectReference Include="..\SharpTS.Hosting.Abstractions\SharpTS.Hosting.Abstractions.csproj" />
     <!-- MinVer is inherited from Directory.Build.props (repo-wide versioning). -->
-    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
     <PackageReference Include="NickNa.PEPacker" />
     <PackageReference Include="System.Reflection.MetadataLoadContext" />
     <PackageReference Include="Microsoft.ILVerification" />

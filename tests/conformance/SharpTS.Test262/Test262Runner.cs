@@ -734,12 +734,16 @@ public sealed class Test262Runner
         if (msg.Contains("Test262Error", StringComparison.Ordinal))
             return new Test262Result(Test262Outcome.Fail, msg, null);
 
-        // Compiled mode: user-thrown JS values are preserved in Exception.Data["__tsValue"].
+        // Compiled guest throws use the emitted Value carrier; older runtime helpers
+        // still preserve their values in Exception.Data["__tsValue"]. Inspect both so
+        // assertions retain their name/message instead of becoming [object Object].
+        var tsValue = ex.GetType().Name == "$ThrownValueException"
+            ? RuntimeTypes.WrapException(ex)
+            : ex.Data.Contains("__tsValue") ? ex.Data["__tsValue"] : null;
         // For `throw new Test262Error(msg)`, the value is a Dictionary or $Object whose
         // `name` field is "Test262Error". Check that before falling back to RuntimeError.
-        if (ex.Data.Contains("__tsValue"))
+        if (tsValue is not null)
         {
-            var tsValue = ex.Data["__tsValue"];
             string? name = null;
             string? userMessage = null;
             if (tsValue is System.Collections.Generic.IDictionary<string, object?> d)
@@ -811,6 +815,9 @@ public sealed class Test262Runner
             // throw-catch cycle reliably, so match on the message shape.
             if (userMessage is not null && IsTest262HarnessMessage(userMessage))
                 return new Test262Result(Test262Outcome.Fail, userMessage, null);
+
+            if (userMessage is not null)
+                return new Test262Result(Test262Outcome.RuntimeError, userMessage, null);
         }
 
         // Last-resort: ex.Message itself looks like an assert-harness Test262Error.

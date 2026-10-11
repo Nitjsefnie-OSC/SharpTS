@@ -52,6 +52,7 @@ public partial class RuntimeEmitter
         MethodBuilder GetProperty,
         EmittedStringCoercionRuntime StringCoercion,
         EmittedSymbolRuntime Symbols,
+        MethodBuilder TypeOf,
         Type UndefinedType
     );
 
@@ -193,6 +194,7 @@ public partial class RuntimeEmitter
                 inputs.GetProperty,
                 inputs.StringCoercion,
                 inputs.Symbols,
+                inputs.TypeOf,
                 inputs.UndefinedType
             )
         );
@@ -465,7 +467,7 @@ public partial class RuntimeEmitter
 
         // IsRegExp(searchValue) requires a global RegExp before @@replace is
         // retrieved. Preserve that observable ordering for native RegExp
-        // values, then use the shared non-nullish GetMethod dispatch.
+        // values, then use the shared Object-only GetMethod dispatch.
         var symbolDispatchLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, regExp.Type);
@@ -685,6 +687,7 @@ public partial class RuntimeEmitter
         var srcLocal = il.DeclareLocal(_types.String);
         var flagsLocal = il.DeclareLocal(_types.String);
         var rxLocal = il.DeclareLocal(regExp.Type);
+        var patternTypeLocal = il.DeclareLocal(_types.String);
 
         var patternIsRegExpLabel = il.DefineLabel();
         var patternNotRegExpLabel = il.DefineLabel();
@@ -706,8 +709,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, skipRegexLike);                 // null → not regexp-like
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brtrue, skipRegexLike);                  // string → not regexp-like
+        il.Emit(OpCodes.Call, inputs.TypeOf);
+        il.Emit(OpCodes.Stloc, patternTypeLocal);
+        var objectPatternLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, patternTypeLocal);
+        il.Emit(OpCodes.Ldstr, "object");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, objectPatternLabel);
+        il.Emit(OpCodes.Ldloc, patternTypeLocal);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, skipRegexLike);
+        il.MarkLabel(objectPatternLabel);
         il.Emit(OpCodes.Ldarg_0);                                // receiver
         il.Emit(OpCodes.Ldsfld, inputs.Symbols.Match);            // Symbol.match (symbol object)
         il.Emit(OpCodes.Call, inputs.GetIndex);                 // pattern[Symbol.match]
@@ -1292,8 +1305,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, preparedMatcherLabel);
         il.MarkLabel(notPreparedLabel);
 
-        // IsRegExp only observes @@match on Objects. The subsequent GetMethod
-        // lookup also observes @@matchAll on non-nullish primitives (ES2025).
+        // Both IsRegExp and the subsequent @@matchAll GetMethod lookup only
+        // observe protocol properties on Object candidates.
         var patternClassificationDone = il.DefineLabel();
         var patternIsObject = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
@@ -1444,11 +1457,8 @@ public partial class RuntimeEmitter
         // RegExpCreate. The intrinsic helper is retained on the rich-result
         // fast path; every user override is invoked with the original receiver
         // value (before ToString(this), as required by the observable order).
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, patternIsObjectLocal);
         il.Emit(OpCodes.Brfalse, fallbackCreateLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
-        il.Emit(OpCodes.Brtrue, fallbackCreateLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldsfld, inputs.Symbols.MatchAll);
         il.Emit(OpCodes.Call, inputs.GetIndex);

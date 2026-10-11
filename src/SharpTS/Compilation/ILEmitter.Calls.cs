@@ -794,7 +794,7 @@ public partial class ILEmitter
 
         // For iterator methods that accept thisArg (callbackfn, thisArg) per
         // ECMA-262, save the previous _currentCallbackThisArg, stash methodArgs[1]
-        // (or null) into the thread-static, then restore after the call.
+        // (or undefined) into the thread-static, then restore after the call.
         // EmitCallbackArgsAndInvoke reads it as the receiver to InvokeMethodValue.
         bool hasThisArgSlot = methodName is "every" or "some" or "filter" or "map"
             or "forEach" or "find" or "findIndex" or "findLast" or "findLastIndex"
@@ -812,7 +812,7 @@ public partial class ILEmitter
             }
             else
             {
-                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Ldsfld, runtime.Sentinels.UndefinedInstance);
             }
             IL.Emit(OpCodes.Stsfld, runtime.ArrayOperations.CallbackThisArgField);
         }

@@ -84,11 +84,19 @@ public partial class ILCompiler
     /// </summary>
     private void CollectArrowsFromStatementsInCurrentModule(List<Stmt> statements)
     {
-        foreach (var stmt in statements)
+        var previousStrict = _currentCollectStrict;
+        _currentCollectStrict = previousStrict || DirectivePrologue.HasUseStrict(statements);
+        try
         {
-            CollectArrowsFromStmt(stmt);
+            foreach (var stmt in statements)
+            {
+                CollectArrowsFromStmt(stmt);
+            }
         }
-
+        finally
+        {
+            _currentCollectStrict = previousStrict;
+        }
     }
 
     /// <summary>

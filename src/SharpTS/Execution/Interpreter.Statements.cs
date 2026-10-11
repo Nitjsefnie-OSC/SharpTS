@@ -893,7 +893,7 @@ public partial class Interpreter
         // Consult that override before falling back to indexed enumeration.
         if (iterable is SharpTSArray array && array.HasSymbolProperty(SharpTSSymbol.Iterator))
         {
-            var iteratorFn = array.GetBySymbol(SharpTSSymbol.Iterator);
+            var iteratorFn = GetSymbolPropertyValue(array, SharpTSSymbol.Iterator);
             if (iteratorFn is not ISharpTSCallable)
                 throw new ThrowException(new SharpTSTypeError(
                     "[Symbol.iterator] must be a function"));
@@ -978,6 +978,33 @@ public partial class Interpreter
         {
             throw new ThrowException(new SharpTSTypeError(
                 "[Symbol.iterator] must be a function"));
+        }
+
+        // An overridden array @@iterator can delegate to the intrinsic
+        // values() function, which returns the native iterator wrapper. Consume
+        // that wrapper's current state just as guest iterator objects are
+        // consumed below, including closing it when the consumer stops early.
+        if (iterator is SharpTSIterator nativeIterator)
+        {
+            bool nativeDone = true;
+            try
+            {
+                while (true)
+                {
+                    nativeDone = true;
+                    ThrowIfExecutionCancelled();
+                    var next = nativeIterator.Next();
+                    if (next.Done)
+                        yield break;
+                    nativeDone = false;
+                    yield return next.Value;
+                }
+            }
+            finally
+            {
+                if (!nativeDone)
+                    nativeIterator.Return(SharpTSUndefined.Instance);
+            }
         }
 
         // A generator-valued [Symbol.iterator]() (`*[Symbol.iterator]() { yield ... }`) returns a

@@ -518,7 +518,7 @@ public partial class StandaloneDllTests
 
     [Theory]
     [MemberData(nameof(SharedTests.PrimitiveStringSymbolHookTests.Cases), MemberType = typeof(SharedTests.PrimitiveStringSymbolHookTests))]
-    public void Isolated_Issue1795PrimitiveSymbolHooks_PreserveLookup(string name, string source, string expected)
+    public void Isolated_StringProtocolCandidates_PreserveObjectLookup(string name, string source, string expected)
     {
         using var directory = IntegrationTests.CliTestHelper.CreateTempDirectory();
         var path = directory.CreateFile("main.ts", source);
@@ -536,7 +536,7 @@ public partial class StandaloneDllTests
 
     [Theory]
     [MemberData(nameof(SharedTests.PrimitiveStringSymbolHookTests.HostedCases), MemberType = typeof(SharedTests.PrimitiveStringSymbolHookTests))]
-    public void Isolated_Issue1795HostedPrimitiveSymbolHooks_VerifyDeclarations(string name, string source)
+    public void Isolated_HostedStringProtocolCandidates_VerifyDeclarations(string name, string source)
     {
         using var directory = IntegrationTests.CliTestHelper.CreateTempDirectory();
         var path = directory.CreateFile("main.ts", source + "\nexport function run(){return 1;}\n");

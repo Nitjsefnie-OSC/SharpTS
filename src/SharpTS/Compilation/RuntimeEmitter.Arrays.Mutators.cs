@@ -1745,17 +1745,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
         il.Emit(OpCodes.Stloc, resultLocal);
 
-        // Hoist args[3] allocation once per call; pre-fill args[2] = list
-        // (constant for the helper invocation). Per-iter writes only touch
-        // args[0] (element) and args[1] (boxed index).
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Ldc_I4_3);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Stloc, argsLocal);
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
+        EmitInitCallbackArgs(il, runtime.ArrayOperations, out var argsLocal);
 
         // for (int i = 0; i < list.Count; i++)
         il.Emit(OpCodes.Ldc_I4_0);
@@ -1793,10 +1783,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Stelem_Ref);
 
-        // callResult = InvokeValue(callback, args)
-        il.Emit(OpCodes.Ldarg_1); // callback - first arg
-        il.Emit(OpCodes.Ldloc, argsLocal); // args - second arg
-        il.Emit(OpCodes.Call, runtime.Invocation.Value);
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayOperations.CallbackThisArgField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Call, runtime.Invocation.Method);
         il.Emit(OpCodes.Stloc, callResultLocal);
 
         // number[] unboxing deopt: a numeric-mode $Array callback result is an EMPTY base list
@@ -4872,15 +4862,22 @@ public partial class RuntimeEmitter
 
         var hasEnd = il.DefineLabel();
         var endDone = il.DefineLabel();
+        var defaultEnd = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldlen);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Ldc_I4_2);
         il.Emit(OpCodes.Bgt, hasEnd);
+        il.MarkLabel(defaultEnd);
         il.Emit(OpCodes.Ldloc, length);
         il.Emit(OpCodes.Stloc, end);
         il.Emit(OpCodes.Br, endDone);
         il.MarkLabel(hasEnd);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
+        il.Emit(OpCodes.Brtrue, defaultEnd);
         EmitGenericRelativeArrayIndex(il, runtime, () =>
         {
             il.Emit(OpCodes.Ldarg_1);
@@ -5331,15 +5328,22 @@ public partial class RuntimeEmitter
 
         var hasEnd = il.DefineLabel();
         var endDone = il.DefineLabel();
+        var defaultEnd = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldlen);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Ldc_I4_2);
         il.Emit(OpCodes.Bgt, hasEnd);
+        il.MarkLabel(defaultEnd);
         il.Emit(OpCodes.Ldloc, length);
         il.Emit(OpCodes.Stloc, final);
         il.Emit(OpCodes.Br, endDone);
         il.MarkLabel(hasEnd);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
+        il.Emit(OpCodes.Brtrue, defaultEnd);
         EmitGenericRelativeArrayIndex(il, runtime, () =>
         {
             il.Emit(OpCodes.Ldarg_1);

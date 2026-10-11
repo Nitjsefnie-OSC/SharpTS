@@ -11,10 +11,9 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Implements the shared GetMethod(object, wellKnownSymbol) portion of the
-    /// String match/search/replace/split protocols. Every non-nullish candidate
-    /// consults its symbol properties, including inherited primitive prototype
-    /// properties, and invokes an existing method with the original candidate
-    /// as <c>this</c>.
+    /// String match/search/replace/split protocols. Only Object candidates
+    /// consult their symbol properties; primitive candidates use the built-in
+    /// fallback without accessing their wrapper prototypes.
     /// </summary>
     private void EmitStringTryInvokeSymbolMethod(
         TypeBuilder typeBuilder, EmittedStringRuntime strings, StringSymbolDispatchInputs inputs)
@@ -30,6 +29,7 @@ public partial class RuntimeEmitter
         var noMethodLabel = il.DefineLabel();
         var callableLabel = il.DefineLabel();
         var methodLocal = il.DeclareLocal(_types.Object);
+        var candidateTypeLocal = il.DeclareLocal(_types.String);
 
         // invoked = false
         il.Emit(OpCodes.Ldarg_3);
@@ -41,14 +41,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stind_I1);
 
-        // GetMethod performs ordinary [[Get]] for every non-nullish candidate.
-        // GetIndex resolves primitive prototypes while retaining the original
-        // receiver for accessor and method invocation.
+        // String protocols only perform GetMethod when the candidate is an
+        // Object. Functions and boxed primitives qualify; primitive values do
+        // not, even when their wrapper prototype supplies a protocol getter.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, noMethodLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.UndefinedType);
         il.Emit(OpCodes.Brtrue, noMethodLabel);
+        var objectCandidateLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.TypeOf);
+        il.Emit(OpCodes.Stloc, candidateTypeLocal);
+        il.Emit(OpCodes.Ldloc, candidateTypeLocal);
+        il.Emit(OpCodes.Ldstr, "object");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, objectCandidateLabel);
+        il.Emit(OpCodes.Ldloc, candidateTypeLocal);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, noMethodLabel);
+        il.MarkLabel(objectCandidateLabel);
         // Record whether a native RegExp supplied an own symbol property.
         // Regardless of that result, continue through ordinary GetIndex below:
         // it resolves the current RegExp.prototype descriptor before falling

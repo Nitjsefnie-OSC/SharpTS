@@ -190,8 +190,8 @@ public partial class ILCompiler
         if (isInstanceMethod && (_classExprs.DefinitionMethods.ContainsKey(methodBuilder) || _classExprs.Builders.Values.Any(builder => ReferenceEquals(builder, methodBuilder.DeclaringType))))
             analysis = analysis with { UsesThis = true };
 
-        // Build state machine type. A static async generator method (#778) has no `this`/instance fields,
-        // so it is set up like a free function (isInstanceMethod: false, static stub). Use the
+        // Static methods capture their call-time guest receiver from the runtime,
+        // while instance methods capture arg0. Use the
         // MethodBuilder's (mangled) name rather than method.Name.Lexeme so a private async generator's
         // `#p` lexeme doesn't put a `#` in the name.
         var smBuilder = new AsyncGeneratorStateMachineBuilder(_moduleBuilder, _types, _asyncGenerators.StateMachineCounter++);
@@ -202,7 +202,7 @@ public partial class ILCompiler
             analysis,
             isInstanceMethod: isInstanceMethod,
             runtime: _runtime,
-            hasDynamicThis: !isInstanceMethod && _classExprs.Builders.Values.Any(builder => ReferenceEquals(builder, methodBuilder.DeclaringType))
+            hasDynamicThis: !isInstanceMethod
         );
         RegisterStateMachine(
             methodBuilder,

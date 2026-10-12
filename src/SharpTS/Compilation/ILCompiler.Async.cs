@@ -1660,7 +1660,7 @@ public partial class ILCompiler
             hasAsyncArrows: hasAsyncArrows,
             hasLock: hasLock,
             hoistedParameterTypes: GetStableAsyncParameterFieldTypes(method),
-            hasDynamicThis: !isInstanceMethod && _classExprs.Builders.Values.Any(builder => ReferenceEquals(builder, methodBuilder.DeclaringType))
+            hasDynamicThis: !isInstanceMethod
         );
         if (GetAsyncClassDefinitionOwnerField(methodBuilder, isInstanceMethod) != null)
             smBuilder.HoistedLocals[CompilationContext.SuperOwnerCaptureName] = smBuilder.StateMachineType.DefineField(

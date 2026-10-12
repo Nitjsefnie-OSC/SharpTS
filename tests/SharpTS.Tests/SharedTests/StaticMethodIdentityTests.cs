@@ -124,10 +124,9 @@ public sealed class StaticMethodIdentityTests
         Assert.Equal("plain async\ntrue true plain async\n", TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void AsyncAndGeneratorMethodsReceiveThisOnlyWhenCalled()
+    [Theory, ModeData]
+    public void AsyncAndGeneratorMethodsReceiveThisOnlyWhenCalled(ExecutionMode mode)
     {
-        // Compiled async/generator static receivers are tracked separately in #2012.
         const string source = """
             class Base {
                 static async asynchronous() { await Promise.resolve(0); return this; }
@@ -151,26 +150,47 @@ public sealed class StaticMethodIdentityTests
                 console.log((await asynchronous.call(null)) === null, (await asynchronous.apply(undefined, [])) === undefined, (await asynchronous.call(7)) === 7);
                 console.log((await asynchronous.bind(null)()) === null, (await asynchronous.bind(undefined)()) === undefined, (await asynchronous.bind(false)()) === false);
                 console.log((await asynchronous.apply("value", [])) === "value");
-                console.log((await asynchronous.call()) === undefined, (await asynchronous.apply()) === undefined, (await asynchronous.bind()()) === undefined);
                 console.log(base.generator().next().value === base, derived["generator"]().next().value === derived);
                 console.log(generator().next().value === undefined, copied.generator().next().value === copied);
                 console.log(generator.call(copied).next().value === copied);
                 console.log(generator.call(null).next().value === null, generator.apply(undefined, []).next().value === undefined, generator.call(7).next().value === 7);
                 console.log(generator.bind(null)().next().value === null, generator.bind(undefined)().next().value === undefined, generator.bind(false)().next().value === false);
                 console.log(generator.apply("value", []).next().value === "value");
-                console.log(generator.call().next().value === undefined, generator.apply().next().value === undefined, generator.bind()().next().value === undefined);
                 console.log((await base.asyncGenerator().next()).value === base, (await derived["asyncGenerator"]().next()).value === derived);
                 console.log((await asyncGenerator().next()).value === undefined, (await copied.asyncGenerator().next()).value === copied);
                 console.log((await asyncGenerator.call(copied).next()).value === copied);
                 console.log((await asyncGenerator.call(null).next()).value === null, (await asyncGenerator.apply(undefined, []).next()).value === undefined, (await asyncGenerator.call(7).next()).value === 7);
                 console.log((await asyncGenerator.bind(null)().next()).value === null, (await asyncGenerator.bind(undefined)().next()).value === undefined, (await asyncGenerator.bind(false)().next()).value === false);
                 console.log((await asyncGenerator.apply("value", []).next()).value === "value");
-                console.log((await asyncGenerator.call().next()).value === undefined, (await asyncGenerator.apply().next()).value === undefined, (await asyncGenerator.bind()().next()).value === undefined);
             }
             run();
             """;
 
-        Assert.Equal("true true true\n" + string.Concat(Enumerable.Repeat("true true\ntrue true\ntrue\ntrue true true\ntrue true true\ntrue\ntrue true true\n", 3)), TestHarness.RunInterpreted(source));
+        Assert.Equal("true true true\n" + string.Concat(Enumerable.Repeat("true true\ntrue true\ntrue\ntrue true true\ntrue true true\ntrue\n", 3)), TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void AsyncAndGeneratorMethodsDefaultOmittedReceiverToUndefined()
+    {
+        // Compiled omitted call/apply receivers are tracked separately in #2016.
+        const string source = """
+            class Base {
+                static async asynchronous() { await Promise.resolve(0); return this; }
+                static *generator() { yield this; }
+                static async *asyncGenerator() { await Promise.resolve(0); yield this; }
+            }
+            const base: any = Base;
+            const asynchronous: any = base.asynchronous;
+            const generator: any = base.generator;
+            const asyncGenerator: any = base.asyncGenerator;
+            async function run() {
+                console.log((await asynchronous.call()) === undefined, (await asynchronous.apply()) === undefined, (await asynchronous.bind()()) === undefined);
+                console.log(generator.call().next().value === undefined, generator.apply().next().value === undefined, generator.bind()().next().value === undefined);
+                console.log((await asyncGenerator.call().next()).value === undefined, (await asyncGenerator.apply().next()).value === undefined, (await asyncGenerator.bind()().next()).value === undefined);
+            }
+            run();
+            """;
+        Assert.Equal("true true true\ntrue true true\ntrue true true\n", TestHarness.RunInterpreted(source));
     }
 
     [Fact]
@@ -206,10 +226,9 @@ public sealed class StaticMethodIdentityTests
         Assert.Equal(string.Concat(Enumerable.Repeat("first first second\n", 4)) + "first second\n", TestHarness.RunInterpreted(source));
     }
 
-    [Fact]
-    public void StaticIteratorMethodsBindClassCallsAndCopiedProtocols()
+    [Theory, ModeData]
+    public void StaticIteratorMethodsBindClassCallsAndCopiedProtocols(ExecutionMode mode)
     {
-        // Compiled static generator receivers remain tracked in #2012.
         const string source = """
             class Base {
                 static *[Symbol.iterator]() { yield this; }
@@ -229,7 +248,7 @@ public sealed class StaticMethodIdentityTests
             run();
             """;
 
-        Assert.Equal("true\ntrue\ntrue\ntrue\n", TestHarness.RunInterpreted(source));
+        Assert.Equal("true\ntrue\ntrue\ntrue\n", TestHarness.Run(source, mode));
     }
 
     [Fact]

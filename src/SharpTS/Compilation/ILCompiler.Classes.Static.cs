@@ -499,8 +499,8 @@ public partial class ILCompiler
         MarkPadsUndefined(_classes.StaticMethods[className][method.Name.Lexeme]);
         MarkFunctionLength(_classes.StaticMethods[className][method.Name.Lexeme], method.Parameters);
 
-        // Static async generator methods (#778) use the async generator state machine, set up like a
-        // free function (no `this`). Checked FIRST since a `static async *m()` has both IsAsync and
+        // Static async generator methods (#778) hoist their guest receiver without a CLR instance
+        // parameter. Checked FIRST since a `static async *m()` has both IsAsync and
         // IsGenerator set, so it must not fall into the sync-generator or plain-async branch below.
         if (method.IsGenerator && method.IsAsync)
         {
@@ -509,8 +509,7 @@ public partial class ILCompiler
             return;
         }
 
-        // Static generator methods (#692) use the generator state machine, set up like a free
-        // function (no `this`).
+        // Static generator methods (#692) likewise hoist their guest receiver.
         if (method.IsGenerator && !method.IsAsync)
         {
             var genMethodBuilder = _classes.StaticMethods[className][method.Name.Lexeme];
@@ -714,7 +713,8 @@ public partial class ILCompiler
             isInstanceMethod: false,  // Static method!
             hasAsyncArrows: hasAsyncArrows,
             hasLock: hasLock,
-            hoistedParameterTypes: GetStableAsyncParameterFieldTypes(method)
+            hoistedParameterTypes: GetStableAsyncParameterFieldTypes(method),
+            hasDynamicThis: true
         );
 
         if (EmitDebugSymbols)
@@ -754,6 +754,7 @@ public partial class ILCompiler
         var ctx = CreateModuleMemberContext(il, smBuilder.MoveNextMethod);
         ctx.IsStrictMode = true;
         // Static method: IsInstanceMethod stays false (the default).
+        ctx.IsStaticSuperContext = true;
         ctx.CurrentClassBuilder = typeBuilder;
         ctx.EmittingTypeBuilder = typeBuilder;
         ctx.AsyncArrowBuilders = _async.ArrowBuilders;

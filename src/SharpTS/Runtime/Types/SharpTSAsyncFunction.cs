@@ -41,6 +41,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
     internal bool IsStaticMethod => _declaration.IsStatic;
     internal SharpTSClass? PrivateOwner { get; set; }
     private readonly bool _receiverBound;
+    internal bool HasBoundReceiver => _receiverBound;
     // JS: functions (including async) are objects and support property assignment.
     private Dictionary<string, object?>? _properties;
 

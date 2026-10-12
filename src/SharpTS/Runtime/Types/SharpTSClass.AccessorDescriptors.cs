@@ -75,7 +75,10 @@ public partial class SharpTSClass
             || Superclass?.HasInstanceAccessorDeclaration(key) == true;
 
     internal SharpTSPropertyDescriptor? FindInstanceAccessorDescriptor(SharpTSSymbol key)
-        => Prototype.GetOwnPropertyDescriptor(key) ?? Superclass?.FindInstanceAccessorDescriptor(key);
+        => FindInstanceSymbolPropertyDescriptor(key);
+
+    internal SharpTSPropertyDescriptor? FindInstanceSymbolPropertyDescriptor(SharpTSSymbol key)
+        => Prototype.GetOwnPropertyDescriptor(key) ?? Superclass?.FindInstanceSymbolPropertyDescriptor(key);
 
     internal SharpTSPropertyDescriptor? GetOwnStaticSymbolPropertyDescriptor(SharpTSSymbol symbol)
         => _staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol)

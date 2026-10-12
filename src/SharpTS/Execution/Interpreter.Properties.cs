@@ -1781,10 +1781,24 @@ public partial class Interpreter
     private static object? BindMemberCallReceiver(object? callee, object? receiver)
     {
         if (receiver is null) return callee;
-        // Class static methods are canonical function objects on property reads.
-        // Only a member call supplies their dynamic receiver, including when a
-        // method is inherited or copied onto an ordinary object.
-        if (callee is ISharpTSCallable callable)
+        // Raw method data properties preserve function identity on reads.
+        // The member call supplies their receiver, including a prototype or
+        // an ordinary object onto which a method has been copied.
+        if (callee is SharpTSFunction function)
+            callee = function.BindThis(receiver);
+        else if (callee is SharpTSAsyncFunction asyncFunction)
+        {
+            // Instance property reads already install the method's receiver scope.
+            // Binding it again would shift VariableResolver's lexical distances.
+            // Raw prototype method values still need their member-call receiver.
+            if (!asyncFunction.HasBoundReceiver)
+                callee = asyncFunction.BindThisValue(receiver);
+        }
+        else if (callee is SharpTSGeneratorFunction { PrivateOwner: not null } generatorMethod)
+            callee = generatorMethod.BindToReceiver(receiver);
+        else if (callee is SharpTSAsyncGeneratorFunction { PrivateOwner: not null } asyncGeneratorMethod)
+            callee = asyncGeneratorMethod.BindToReceiver(receiver);
+        else if (callee is ISharpTSCallable callable)
             callee = FunctionBuiltIns.BindStaticReceiver(callable, receiver) ?? callee;
         callee = TryBindReceiverForMethodAccess(callee, receiver) ?? callee;
         return TryBindUnboundBuiltInReceiver(callee, receiver) ?? callee;

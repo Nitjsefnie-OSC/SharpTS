@@ -490,11 +490,22 @@ public partial class SharpTSClass(
         }
         BindPrivateMemberOwner(func);
         if (isStatic) (_staticSymbolMethods ??= [])[symbol] = func;
-        else (_symbolMethods ??= [])[symbol] = func;
+        else
+        {
+            (_symbolMethods ??= [])[symbol] = func;
+            _prototype?.DefineDeclaredSymbolMethod(symbol, func);
+        }
+    }
+
+    internal IEnumerable<(SharpTSSymbol Key, ISharpTSCallable Method)> OwnInstanceSymbolMethods()
+    {
+        foreach (var (key, method) in _symbolMethods ?? [])
+            yield return (key, method);
     }
 
     public ISharpTSCallable? FindSymbolMethod(SharpTSSymbol symbol)
-        => _symbolMethods?.GetValueOrDefault(symbol) ?? Superclass?.FindSymbolMethod(symbol);
+        => FindInstanceSymbolPropertyDescriptor(symbol) is { HasValue: true, Value: ISharpTSCallable method }
+            ? method : null;
 
     public ISharpTSCallable? FindStaticSymbolMethod(SharpTSSymbol symbol)
         => _staticSymbolMethods?.GetValueOrDefault(symbol) ?? Superclass?.FindStaticSymbolMethod(symbol);

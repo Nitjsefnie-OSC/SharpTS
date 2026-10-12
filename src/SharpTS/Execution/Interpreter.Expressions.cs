@@ -1454,24 +1454,13 @@ public partial class Interpreter
     /// </summary>
     private object? GetInstanceSymbolValue(SharpTSInstance instance, SharpTSSymbol symbol)
     {
-        object? own = instance.GetBySymbol(symbol);
-        if (own != null) return own;
-        if (instance.GetClass().HasInstanceAccessorDeclaration(symbol))
-        {
-            return TryReadDescriptor(instance.GetClass().FindInstanceAccessorDescriptor(symbol), instance, out var value)
-                ? value : SharpTSUndefined.Instance;
-        }
-        // Declared symbol-keyed method (`[Symbol.iterator]() {...}`) — returned bound, like a
-        // normal method read (`instance[Symbol.iterator]` yields the callable).
-        if (instance.GetClass().FindSymbolMethod(symbol) is { } method)
-        {
-            return SharpTSClass.BindMethod(method, instance);
-        }
-        if (instance.GetClass().FindSymbolGetter(symbol) is { } getter)
-        {
-            return getter.Bind(instance).Call(this, []);
-        }
-        return SharpTSUndefined.Instance;
+        if (instance.HasSymbolProperty(symbol)) return instance.GetBySymbol(symbol);
+        var descriptor = instance.GetClass().FindInstanceSymbolPropertyDescriptor(symbol);
+        if (!TryReadDescriptor(descriptor, instance, out var value)) return SharpTSUndefined.Instance;
+        // Instance method reads retain their existing binding behavior. The
+        // prototype itself exposes the canonical unbound descriptor value.
+        return descriptor is { HasValue: true } && value is ISharpTSCallable method
+            ? SharpTSClass.BindMethod(method, instance) : value;
     }
 
     /// <summary>
@@ -1889,19 +1878,23 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.InstanceSymbol t:
-                if (!t.Target.HasSymbolProperty(t.Key) && t.Target.GetClass().HasInstanceAccessorDeclaration(t.Key))
+                if (!t.Target.HasSymbolProperty(t.Key))
                 {
-                    if (!TryAssignThroughDescriptor(t.Target.GetClass().FindInstanceAccessorDescriptor(t.Key),
-                            t.Target, t.Key.ToString(), value, strictMode))
+                    var descriptor = t.Target.GetClass().FindInstanceSymbolPropertyDescriptor(t.Key);
+                    if (TryAssignThroughDescriptor(descriptor, t.Target, t.Key.ToString(), value, strictMode))
+                        break;
+                    // A removed declared accessor must not reappear through
+                    // the immutable declaration table below.
+                    if (t.Target.GetClass().HasInstanceAccessorDeclaration(t.Key))
                     {
                         if (strictMode) t.Target.SetBySymbolStrict(t.Key, value, strictMode);
                         else t.Target.SetBySymbol(t.Key, value);
+                        break;
                     }
-                    break;
                 }
                 // A declared symbol-keyed setter (`set [Symbol.x](v)`) intercepts
                 // assignment unless shadowed by an own symbol data property.
-                if (t.Target.GetBySymbol(t.Key) == null
+                if (!t.Target.HasSymbolProperty(t.Key)
                     && t.Target.GetClass().FindSymbolSetter(t.Key) is { } symSetter)
                 {
                     symSetter.Bind(t.Target).Call(this, [value]);

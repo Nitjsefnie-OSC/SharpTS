@@ -94,6 +94,13 @@ public sealed class EmittedSymbolRuntime
         internal set => SetHandle(ref _isSymbol, value);
     }
 
+    private MethodBuilder? _methodName;
+    public MethodBuilder MethodName
+    {
+        get => Require(_methodName);
+        internal set => SetHandle(ref _methodName, value);
+    }
+
     private FieldBuilder? _iterator;
     public FieldBuilder Iterator
     {
@@ -230,6 +237,7 @@ public sealed class EmittedSymbolRuntime
         _ = GetStorage;
         _ = TryGetStorage;
         _ = IsSymbol;
+        _ = MethodName;
         _ = Iterator;
         _ = AsyncIterator;
         _ = ToStringTag;

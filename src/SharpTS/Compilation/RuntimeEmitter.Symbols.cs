@@ -85,6 +85,43 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>Derives a declared method name from an already evaluated Symbol key.</summary>
+    private void EmitSymbolMethodName(TypeBuilder typeBuilder, EmittedSymbolRuntime symbols)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetSymbolMethodName", MethodAttributes.Assembly | MethodAttributes.Static,
+            _types.String, [_types.Object, _types.String]);
+        symbols.MethodName = method;
+        var il = method.GetILGenerator();
+        var symbol = il.DeclareLocal(symbols.Type);
+        var description = il.DeclareLocal(_types.String);
+        var ordinaryKey = il.DefineLabel();
+        var noDescription = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, symbols.Type);
+        il.Emit(OpCodes.Stloc, symbol);
+        il.Emit(OpCodes.Ldloc, symbol);
+        il.Emit(OpCodes.Brfalse, ordinaryKey);
+        il.Emit(OpCodes.Ldloc, symbol);
+        il.Emit(OpCodes.Callvirt, symbols.DescriptionGetter);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Stloc, description);
+        il.Emit(OpCodes.Ldloc, description);
+        il.Emit(OpCodes.Brfalse, noDescription);
+        il.Emit(OpCodes.Ldstr, "[");
+        il.Emit(OpCodes.Ldloc, description);
+        il.Emit(OpCodes.Ldstr, "]");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(noDescription);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(ordinaryKey);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ret);
+    }
+
     /// <summary>
     /// Emits: public static void DisposeResource(object resource, object disposeSymbol)
     /// Disposes a resource using Symbol.dispose if available.

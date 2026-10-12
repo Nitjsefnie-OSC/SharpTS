@@ -77,14 +77,17 @@ public static class FunctionBuiltIns
         return null;
     }
 
-    private static string GetFunctionName(ISharpTSCallable callable)
+    internal static string GetFunctionName(ISharpTSCallable callable)
     {
         return callable switch
         {
             // Built-in wrappers know their own spec name; without this they fell through
             // to "" and every `<method>/name.js` test failed.
             IBuiltInFunctionMetadata builtIn => builtIn.FunctionName,
-            SharpTSFunction fn => fn.ToString().Replace("<fn ", "").TrimEnd('>'),
+            SharpTSFunction fn => fn.TryGetProperty("name", out var name) ? name as string ?? "" : "",
+            SharpTSAsyncFunction fn => fn.TryGetProperty("name", out var name) ? name as string ?? "" : "",
+            SharpTSGeneratorFunction fn => fn.ComputedName ?? "",
+            SharpTSAsyncGeneratorFunction fn => fn.ComputedName ?? "",
             SharpTSArrowFunction arrow => arrow.ToString().Contains("<fn ")
                 ? arrow.ToString().Replace("<fn ", "").TrimEnd('>')
                 : "",
@@ -433,15 +436,7 @@ public class BoundFunction : ISharpTSCallable
 
     private static string GetBaseName(ISharpTSCallable target)
     {
-        return target switch
-        {
-            SharpTSFunction fn => fn.ToString().Replace("<fn ", "").TrimEnd('>'),
-            SharpTSArrowFunction arrow => arrow.ToString().Contains("<fn ")
-                ? arrow.ToString().Replace("<fn ", "").TrimEnd('>')
-                : "",
-            BoundFunction bound => bound.Name,
-            _ => ""
-        };
+        return FunctionBuiltIns.GetFunctionName(target);
     }
 
     public int Arity()

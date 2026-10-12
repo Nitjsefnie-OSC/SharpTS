@@ -179,7 +179,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
             // 'super' not in scope - ignore
         }
 
-        return new SharpTSAsyncFunction(_declaration, environment, receiverBound: true) { PrivateOwner = PrivateOwner };
+        return ShareObjectState(new SharpTSAsyncFunction(_declaration, environment, receiverBound: true));
     }
 
     /// <summary>
@@ -191,7 +191,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
     {
         RuntimeEnvironment environment = new(_closure);
         environment.Define("this", thisObject);
-        return new SharpTSAsyncFunction(_declaration, environment, receiverBound: true) { PrivateOwner = PrivateOwner };
+        return ShareObjectState(new SharpTSAsyncFunction(_declaration, environment, receiverBound: true));
     }
 
     public SharpTSAsyncFunction BindStatic(SharpTSClass klass)
@@ -201,7 +201,15 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         environment.Define("this", klass);
         if (klass.Superclass != null)
             environment.Define("super", klass.Superclass);
-        return new SharpTSAsyncFunction(_declaration, environment, receiverBound: true) { PrivateOwner = PrivateOwner };
+        return ShareObjectState(new SharpTSAsyncFunction(_declaration, environment, receiverBound: true));
+    }
+
+    private SharpTSAsyncFunction ShareObjectState(SharpTSAsyncFunction bound)
+    {
+        _properties ??= [];
+        bound._properties = _properties;
+        bound.PrivateOwner = PrivateOwner;
+        return bound;
     }
 
     public override string ToString() => $"<async fn {_declaration.Name.Lexeme}>";

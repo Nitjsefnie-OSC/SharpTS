@@ -472,6 +472,22 @@ public partial class SharpTSClass(
 
     public void AddSymbolMethod(SharpTSSymbol symbol, ISharpTSCallable func, bool isStatic)
     {
+        string name = symbol.Description is { } description ? $"[{description}]" : "";
+        switch (func)
+        {
+            case SharpTSFunction function:
+                function.DefineProperty("name", new SharpTSPropertyDescriptor(value: name, configurable: true));
+                break;
+            case SharpTSAsyncFunction function:
+                function.SetProperty("name", name);
+                break;
+            case SharpTSGeneratorFunction function:
+                function.ComputedName = name;
+                break;
+            case SharpTSAsyncGeneratorFunction function:
+                function.ComputedName = name;
+                break;
+        }
         BindPrivateMemberOwner(func);
         if (isStatic) (_staticSymbolMethods ??= [])[symbol] = func;
         else (_symbolMethods ??= [])[symbol] = func;

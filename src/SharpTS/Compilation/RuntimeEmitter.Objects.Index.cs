@@ -56,6 +56,7 @@ public partial class RuntimeEmitter
         EmittedSymbolAccessorRuntime SymbolAccessors,
         EmittedSymbolRuntime Symbols,
         ConstructorBuilder TSFunctionCtor,
+        ConstructorBuilder TSFunctionCachedCtor,
         MethodBuilder TSFunctionGetOrCreate,
         MethodBuilder TSFunctionNameGetter,
         MethodBuilder TSFunctionLengthGetter,
@@ -374,18 +375,31 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Stloc, staticValue);
             il.Emit(OpCodes.Ldloc, symMethodLocal);
             il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldloc, staticValue);
             il.Emit(OpCodes.Callvirt, inputs.TSFunctionNameGetter);
+            il.Emit(OpCodes.Call, inputs.Symbols.MethodName);
             il.Emit(OpCodes.Ldloc, staticValue);
             il.Emit(OpCodes.Callvirt, inputs.TSFunctionLengthGetter);
             il.Emit(OpCodes.Call, inputs.TSFunctionGetOrCreate);
             il.Emit(OpCodes.Ret);
 
             il.MarkLabel(instanceMethod);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, symMethodLocal);
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);
+            il.Emit(OpCodes.Stloc, staticValue);
             il.Emit(OpCodes.Ldarg_0);                          // obj — receiver to bind
             il.Emit(OpCodes.Ldloc, symMethodLocal);            // found MethodInfo (typed object)
             il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);   // new $TSFunction(obj, method)
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloc, staticValue);
+            il.Emit(OpCodes.Callvirt, inputs.TSFunctionNameGetter);
+            il.Emit(OpCodes.Call, inputs.Symbols.MethodName);
+            il.Emit(OpCodes.Ldloc, staticValue);
+            il.Emit(OpCodes.Callvirt, inputs.TSFunctionLengthGetter);
+            il.Emit(OpCodes.Newobj, inputs.TSFunctionCachedCtor);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noSymMethodLabel);
         }

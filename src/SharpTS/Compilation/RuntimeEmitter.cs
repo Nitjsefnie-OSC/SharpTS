@@ -438,6 +438,7 @@ public partial class RuntimeEmitter
 
         // Emit $BoundTSFunction class for bound functions
         // Must come after TSFunction (uses TSFunctionType, TSFunctionInvokeWithThis)
+        DefineBoundFunctionName(runtime.RuntimeClass.Type, runtime.FunctionBindings);
         EmitBoundTSFunctionClass(moduleBuilder, runtime.FunctionBindings, runtime.FunctionValues);
 
         // Emit $AsyncLocalStorage class for async context propagation

@@ -448,6 +448,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                 SharpTSInstance instance => instance.HasSymbolProperty(symbol),
                 SharpTSMath math
                     => math.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
+                SharpTSNumberNamespace number
+                    => number.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
                 SharpTSStringPrototype stringPrototype
                     => stringPrototype.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
                 _ => false,
@@ -467,6 +469,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                     && SharpTSPropertyDescriptor.FromAnyObject(descriptor).Enumerable,
             SharpTSObject obj => obj.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSMath math => math.GetOwnPropertyDescriptor(key) is { Enumerable: true },
+            SharpTSNumberNamespace number => number.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSJSON json => json.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSDate date => date.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSRegExp regex

@@ -689,6 +689,10 @@ public partial class Interpreter
                     : arrowDescriptor.Value;
             }
 
+            if (current is SharpTSNumberNamespace numberNamespace
+                && TryReadDescriptor(numberNamespace.GetOwnPropertyDescriptor(name), receiver, out var numberValue))
+                return numberValue;
+
             if (current is ISharpTSCallable callable)
             {
                 // Ordinary callables inherit from the realm's mutable
@@ -720,7 +724,7 @@ public partial class Interpreter
                     return objectDescriptor.Value;
                 }
                 return objectPrototype.GetMember(name)
-                    ?? FunctionBuiltIns.GetMember(callable, name)
+                    ?? (callable is SharpTSNumberNamespace ? null : FunctionBuiltIns.GetMember(callable, name))
                     ?? SharpTSUndefined.Instance;
             }
 
@@ -820,6 +824,11 @@ public partial class Interpreter
         return SharpTSUndefined.Instance;
     }
 
+    internal object? GetNumberConstructorSymbolValue(
+        SharpTSNumberNamespace number, SharpTSSymbol symbol, object? receiver)
+        => TryReadDescriptor(number.GetOwnPropertyDescriptor(symbol), receiver, out var value)
+            ? value : SharpTSUndefined.Instance;
+
     /// <summary>
     /// ECMA-262 §7.3.11 HasProperty(O, P): true when <paramref name="obj"/> or
     /// anything on its prototype chain has an own data field OR an accessor
@@ -853,6 +862,12 @@ public partial class Interpreter
             }
             if (obj is SharpTSObjectPrototype objectPrototype)
                 return objectPrototype.GetOwnPropertyDescriptor(name) is not null;
+            if (obj is SharpTSNumberNamespace number)
+            {
+                if (number.HasOwnProperty(name)) return true;
+                obj = GetFunctionPrototype();
+                continue;
+            }
             if (obj is SharpTSObject so)
             {
                 // SharpTSObject.HasProperty covers own fields + getters; add setters
@@ -1053,16 +1068,18 @@ public partial class Interpreter
             }
         }
 
-        // String/Number/Boolean are the same shape — per-realm constructor objects whose
+        if (obj is SharpTSNumberNamespace numberNamespace)
+            return RuntimeValue.FromBoxed(GetPropertyValue(numberNamespace, get.Name.Lexeme));
+
+        // String/Boolean are per-realm constructor objects whose
         // statics carry no receiver semantics. Going through instance-member dispatch would
         // hand out a freshly bound copy per read, so `String.fromCharCode` would not equal
         // the `value` of its own descriptor.
-        if (obj is SharpTSStringNamespace or SharpTSNumberNamespace or SharpTSBooleanNamespace)
+        if (obj is SharpTSStringNamespace or SharpTSBooleanNamespace)
         {
             var nsMember = obj switch
             {
                 SharpTSStringNamespace ns => ns.GetMember(get.Name.Lexeme),
-                SharpTSNumberNamespace ns => ns.GetMember(get.Name.Lexeme),
                 _ => ((SharpTSBooleanNamespace)obj).GetMember(get.Name.Lexeme),
             };
             if (nsMember != null) return RuntimeValue.FromBoxed(nsMember);
@@ -2089,6 +2106,9 @@ public partial class Interpreter
     /// </summary>
     private object? EvaluateGetOnFallback(object? obj, string memberName)
     {
+        if (obj is SharpTSNumberNamespace numberNamespace)
+            return GetPropertyValue(numberNamespace, memberName);
+
         if (obj is SharpTSJSON json)
         {
             if (TryReadDescriptor(json.GetOwnPropertyDescriptor(memberName), json, out var ownJsonValue))
@@ -2613,6 +2633,13 @@ public partial class Interpreter
         // (Object/Array/String/Number/Boolean/Function.prototype). Test262 assigns
         // indexed elements and `length` onto them before calling Array.prototype.* with
         // a primitive receiver, and patches them to exercise inherited-property paths.
+        if (obj is SharpTSNumberNamespace numberNamespace)
+        {
+            if (!TryAssignThroughDescriptor(numberNamespace.GetOwnPropertyDescriptor(set.Name.Lexeme),
+                    numberNamespace, set.Name.Lexeme, value, strictMode))
+                numberNamespace.SetExtra(set.Name.Lexeme, value);
+            return value;
+        }
         if (obj is ISharpTSMutableBuiltIn builtInProto)
         {
             builtInProto.SetExtra(set.Name.Lexeme, value);

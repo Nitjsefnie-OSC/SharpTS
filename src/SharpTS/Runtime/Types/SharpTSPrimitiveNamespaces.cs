@@ -575,7 +575,7 @@ internal sealed class SymbolPrototypeMethodWrapper : ISharpTSCallable, IBuiltInF
 /// Singleton representing the Number namespace/constructor.
 /// Callable as Number(value) for type conversion, and provides static methods.
 /// </summary>
-public class SharpTSNumberNamespace : ISharpTSCallable, ISharpTSMutableBuiltIn
+public class SharpTSNumberNamespace : ISharpTSCallable, ISharpTSMutableBuiltIn, ISharpTSSymbolPropertyBag
 {
     /// <summary>
     /// Process-wide template instance. Retained as the BuiltInRegistry singleton (existence
@@ -592,14 +592,43 @@ public class SharpTSNumberNamespace : ISharpTSCallable, ISharpTSMutableBuiltIn
     // ECMA-262 makes a constructor object ordinary and extensible, so `Number.foo = 1`
     // must take. Descriptor-aware storage keeps defineProperty attributes intact.
     private readonly SharpTSObject _extras = new([]);
-    private readonly HashSet<string> _deletedBuiltIns = [];
     private readonly Dictionary<string, object?> _realmBuiltIns = [];
+    private bool _builtInPropertiesInitialized;
+    internal Func<SharpTSNumberPrototype>? RealmPrototypeFactory { get; set; }
 
     internal void SetRealmBuiltInAlias(string name, object value)
         => _realmBuiltIns[name] = value;
 
-    public bool HasExtra(string name) => _extras.HasProperty(name) || _extras.HasSetter(name);
-    public object? TryGetExtra(string name) => _extras.GetProperty(name);
+    private void EnsureBuiltInProperties()
+    {
+        if (_builtInPropertiesInitialized) return;
+        _builtInPropertiesInitialized = true;
+        DefineIntrinsic("length", 1.0, writable: false, configurable: true);
+        DefineIntrinsic("name", "Number", writable: false, configurable: true);
+        DefineIntrinsic("prototype", RealmPrototypeFactory?.Invoke() ?? SharpTSNumberPrototype.Instance,
+            writable: false, configurable: false);
+        foreach (string name in NumberBuiltIns.StaticMemberNames)
+        {
+            bool constant = NumberBuiltIns.GetStaticMember(name) is BuiltInMethod { IsConstant: true };
+            DefineIntrinsic(name, GetIntrinsicMember(name), writable: !constant, configurable: !constant);
+        }
+    }
+
+    private void DefineIntrinsic(string name, object? value, bool writable, bool configurable)
+        => _extras.DefineProperty(name, new SharpTSPropertyDescriptor
+        {
+            Value = value,
+            HasValue = true,
+            Writable = writable,
+            HasWritable = true,
+            Enumerable = false,
+            HasEnumerable = true,
+            Configurable = configurable,
+            HasConfigurable = true,
+        });
+
+    public bool HasExtra(string name) => HasOwnProperty(name);
+    public object? TryGetExtra(string name) => GetMember(name);
 
     /// <summary>
     /// Assigns an expando. A write targeting a numeric constant is dropped because those
@@ -608,57 +637,63 @@ public class SharpTSNumberNamespace : ISharpTSCallable, ISharpTSMutableBuiltIn
     /// </summary>
     public void SetExtra(string name, object? value)
     {
-        if (IsReadOnlyBuiltIn(name)) return;
-        _deletedBuiltIns.Remove(name);
-        if (IsBuiltInMethod(name) && !HasExtra(name))
-        {
-            _extras.DefineProperty(name, new SharpTSPropertyDescriptor
-            {
-                Value = value,
-                HasValue = true,
-                Writable = true,
-                HasWritable = true,
-                Enumerable = false,
-                HasEnumerable = true,
-                Configurable = true,
-                HasConfigurable = true,
-            });
-            return;
-        }
+        EnsureBuiltInProperties();
         _extras.SetProperty(name, value);
     }
 
     public bool DefineExtraProperty(string name, SharpTSPropertyDescriptor descriptor)
     {
-        _deletedBuiltIns.Remove(name);
+        EnsureBuiltInProperties();
         return _extras.DefineProperty(name, descriptor);
     }
     public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
-        => _extras.GetOwnPropertyDescriptor(name);
+    {
+        EnsureBuiltInProperties();
+        return _extras.GetOwnPropertyDescriptor(name);
+    }
     public ISharpTSCallable? GetExtraGetter(string name) => _extras.GetGetter(name);
     public ISharpTSCallable? GetExtraSetter(string name) => _extras.GetSetter(name);
-    public bool DeleteProperty(string name)
+    public bool DeleteProperty(string name) => DeletePropertyStrict(name, false);
+    internal bool DeletePropertyStrict(string name, bool strictMode)
     {
-        if (IsReadOnlyBuiltIn(name)) return false;
-        bool hadExtra = HasExtra(name);
-        if (hadExtra && !_extras.DeleteProperty(name)) return false;
-        if (IsBuiltInMethod(name)) _deletedBuiltIns.Add(name);
-        return true;
+        EnsureBuiltInProperties();
+        return _extras.DeletePropertyStrict(name, strictMode);
     }
-    public IEnumerable<string> OwnEnumerableKeys() => _extras.OwnEnumerableKeys();
-
-    private static bool IsReadOnlyBuiltIn(string name)
-        => name == "prototype"
-            || NumberBuiltIns.GetStaticMember(name) is BuiltInMethod { IsConstant: true };
-
-    private static bool IsBuiltInMethod(string name)
-        => NumberBuiltIns.GetStaticMember(name) is BuiltInMethod { IsConstant: false };
-
+    public IEnumerable<string> OwnEnumerableKeys()
+    {
+        EnsureBuiltInProperties();
+        return _extras.OwnEnumerableKeys();
+    }
+    internal IEnumerable<string> OwnStringKeys()
+    {
+        EnsureBuiltInProperties();
+        return _extras.OwnVisibleStringKeys();
+    }
     public bool HasOwnProperty(string name)
-        => name is "name" or "length"
-            || HasExtra(name)
-            || (!_deletedBuiltIns.Contains(name)
-                && (name == "prototype" || NumberBuiltIns.GetStaticMember(name) != null));
+        => GetOwnPropertyDescriptor(name) is not null;
+
+    internal bool DefineProperty(SharpTSSymbol symbol, SharpTSPropertyDescriptor descriptor)
+    {
+        EnsureBuiltInProperties();
+        return _extras.DefineProperty(symbol, descriptor);
+    }
+    internal SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(SharpTSSymbol symbol)
+        => _extras.GetOwnPropertyDescriptor(symbol);
+    internal IEnumerable<SharpTSSymbol> GetSymbolPropertyNames() => _extras.GetSymbolPropertyNames();
+    internal bool DeleteBySymbolStrict(SharpTSSymbol symbol, bool strictMode)
+        => _extras.DeleteBySymbolStrict(symbol, strictMode);
+    bool ISharpTSSymbolPropertyBag.HasSymbolProperty(SharpTSSymbol symbol)
+        => _extras.HasSymbolProperty(symbol);
+    object? ISharpTSSymbolPropertyBag.GetBySymbol(SharpTSSymbol symbol) => _extras.GetBySymbol(symbol);
+    bool ISharpTSSymbolPropertyBag.TryGetSymbolAccessor(
+        SharpTSSymbol symbol, out ISharpTSCallable? getter, out ISharpTSCallable? setter)
+        => _extras.TryGetSymbolAccessor(symbol, out getter, out setter);
+    void ISharpTSSymbolPropertyBag.SetBySymbolStrict(
+        SharpTSSymbol symbol, object? value, bool strictMode)
+    {
+        EnsureBuiltInProperties();
+        _extras.SetBySymbolStrict(symbol, value, strictMode);
+    }
 
     public int Arity() => 1;
 
@@ -681,11 +716,14 @@ public class SharpTSNumberNamespace : ISharpTSCallable, ISharpTSMutableBuiltIn
     /// </summary>
     public object? GetMember(string name)
     {
-        if (HasExtra(name)) return TryGetExtra(name);
-        if (name == "name") return "Number";
-        if (name == "length") return 1.0;
-        if (name == "prototype") return SharpTSNumberPrototype.Instance;
-        if (_deletedBuiltIns.Contains(name)) return null;
+        var descriptor = GetOwnPropertyDescriptor(name);
+        return descriptor is null ? null
+            : descriptor.HasGet || descriptor.HasSet ? SharpTSUndefined.Instance
+            : descriptor.Value;
+    }
+
+    private object? GetIntrinsicMember(string name)
+    {
         if (_realmBuiltIns.TryGetValue(name, out var cached)) return cached;
         // Materialize constant-wrapping members (MAX_VALUE, EPSILON, …) here rather than
         // leaving the wrapper for each read path to unwrap — a per-realm intrinsic bypasses

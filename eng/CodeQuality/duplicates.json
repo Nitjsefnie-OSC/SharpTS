@@ -152,14 +152,6 @@
     "Reason": "Existing arrow and delegate adapters share compact ldarg selection; defer IL utility consolidation to a focused adapter change."
   },
   {
-    "Hash": "9aafa02617961f0dec6a1190dcaaac68c48b011ee87a48c8602a9f14ef8814e0",
-    "Members": [
-      "src/SharpTS/Runtime/Types/SharpTSPrimitiveNamespaces.cs::SharpTSNumberNamespace.SetExtra(string name, object? value)",
-      "src/SharpTS/Runtime/Types/SharpTSPrimitiveNamespaces.cs::SharpTSStringNamespace.SetExtra(string name, object? value)"
-    ],
-    "Reason": "Number and String namespace objects own separate property stores and built-in policies; retain matching extra-property descriptor semantics."
-  },
-  {
     "Hash": "9c591acd65a372ef6b9d884a19d7f0ccea824fb3fc382f192c110b1bed15bcbc",
     "Members": [
       "src/SharpTS/Compilation/ExternalMethodResolver.cs::ExternalMethodResolver.GetTypeSize(Type t)",

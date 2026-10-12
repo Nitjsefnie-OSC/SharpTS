@@ -1592,7 +1592,10 @@ public partial class Interpreter
         if (obj is ISharpTSSymbolPropertyBag symbolBag
             && index is SharpTSSymbol bagSymbol)
         {
-            symbolBag.SetBySymbolStrict(bagSymbol, value, strictMode);
+            if (obj is not SharpTSNumberNamespace symbolNumber
+                || !TryAssignThroughDescriptor(symbolNumber.GetOwnPropertyDescriptor(bagSymbol),
+                    symbolNumber, bagSymbol.ToString(), value, strictMode))
+                symbolBag.SetBySymbolStrict(bagSymbol, value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
 
@@ -1706,7 +1709,7 @@ public partial class Interpreter
         // writability. Other keys on a callable (user-stored fn[k] = v) aren't
         // supported here either; let them fall through to the spec-conformant
         // error.
-        if (obj is ISharpTSCallable && obj is not SharpTSFunction
+        if (obj is ISharpTSCallable && obj is not (SharpTSFunction or SharpTSNumberNamespace)
             && index?.ToString() is "name" or "length")
         {
             if (strictMode)
@@ -1936,7 +1939,10 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.BuiltInPrototypeString t:
-                t.Target.SetExtra(t.Key, value);
+                if (t.Target is not SharpTSNumberNamespace indexedNumber
+                    || !TryAssignThroughDescriptor(indexedNumber.GetOwnPropertyDescriptor(t.Key),
+                        indexedNumber, t.Key, value, strictMode))
+                    t.Target.SetExtra(t.Key, value);
                 break;
 
             default:

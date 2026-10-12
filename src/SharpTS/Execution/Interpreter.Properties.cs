@@ -3103,7 +3103,7 @@ public partial class Interpreter
 
     private RuntimeValue GetPrivateCore(object? obj, string fieldName)
     {
-        var owner = _environment.PrivateClass;
+        var owner = _environment.FindPrivateClass(fieldName);
         if (owner?.HasStaticPrivateField(fieldName) == true)
         {
             if (!ReferenceEquals(obj, owner)) throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it"));
@@ -3124,6 +3124,8 @@ public partial class Interpreter
         // Handle static private field access on class
         if (obj is SharpTSClass klass)
         {
+            if (owner is not null && !ReferenceEquals(klass, owner))
+                throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it"));
             // For static private fields, the class being accessed IS the declaring class
             // The type checker already verified we're inside this class
             if (klass.HasStaticPrivateField(fieldName))
@@ -3137,7 +3139,7 @@ public partial class Interpreter
         // Instance private field access
         if (obj is SharpTSInstance instance)
         {
-            var declaringClass = _environment.PrivateClass ?? instance.RuntimeClass;
+            var declaringClass = owner ?? instance.RuntimeClass;
             return declaringClass.GetPrivateFieldRV(instance, fieldName);
         }
 
@@ -3164,7 +3166,8 @@ public partial class Interpreter
 
     private RuntimeValue SetPrivateCore(object? obj, RuntimeValue value, string fieldName)
     {
-        if (_environment.PrivateClass is { } owner && owner.HasStaticPrivateField(fieldName))
+        var owner = _environment.FindPrivateClass(fieldName);
+        if (owner is not null && owner.HasStaticPrivateField(fieldName))
         {
             if (!ReferenceEquals(obj, owner)) throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it"));
             owner.SetStaticPrivateField(fieldName, value.ToObject());
@@ -3173,6 +3176,8 @@ public partial class Interpreter
         // Handle static private field assignment on class
         if (obj is SharpTSClass klass)
         {
+            if (owner is not null && !ReferenceEquals(klass, owner))
+                throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it"));
             // For static private fields, the class being accessed IS the declaring class
             // The type checker already verified we're inside this class
             if (klass.HasStaticPrivateField(fieldName))
@@ -3187,7 +3192,7 @@ public partial class Interpreter
         // Instance private field assignment
         if (obj is SharpTSInstance instance)
         {
-            var declaringClass = _environment.PrivateClass ?? instance.RuntimeClass;
+            var declaringClass = owner ?? instance.RuntimeClass;
             declaringClass.SetPrivateField(instance, fieldName, value.ToObject());
             return value;
         }
@@ -3229,9 +3234,13 @@ public partial class Interpreter
 
     private RuntimeValue CallPrivateCore(object? obj, List<object?> arguments, string methodName)
     {
+        var owner = _environment.FindPrivateClass(methodName);
         // Handle static private method call on class
         if (obj is SharpTSClass klass)
         {
+            if (owner is not null && !ReferenceEquals(klass, owner))
+                throw new ThrowException(new SharpTSTypeError(
+                    $"Cannot access private member {methodName} from an object whose class did not declare it"));
             // For static private methods, the class being accessed IS the declaring class
             // The type checker already verified we're inside this class
             var method = klass.GetStaticPrivateMethod(methodName);
@@ -3246,7 +3255,7 @@ public partial class Interpreter
         // Instance private method call
         if (obj is SharpTSInstance instance)
         {
-            var declaringClass = _environment.PrivateClass ?? instance.RuntimeClass;
+            var declaringClass = owner ?? instance.RuntimeClass;
             if (!declaringClass.HasPrivateBrand(instance))
                 throw new ThrowException(new SharpTSTypeError(
                     $"Cannot access private member {methodName} from an object whose class did not declare it"));

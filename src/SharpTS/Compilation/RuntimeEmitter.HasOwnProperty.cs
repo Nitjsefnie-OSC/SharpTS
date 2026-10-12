@@ -479,6 +479,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Brfalse, notTypeLabel);
+        // Explicit definitions can recreate a deleted intrinsic. Like Type
+        // value lookup, stored own properties precede the deletion ledger.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+        il.Emit(OpCodes.Brtrue, trueLabel);
         // Skip if the (Type, name) pair was deleted via the per-Type tracker
         // (e.g. `delete Object.assign` marks Object Type + "assign" as deleted).
         il.Emit(OpCodes.Ldarg_0);
@@ -634,14 +640,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindOwnMethod);
         il.Emit(OpCodes.Brtrue, trueLabel);
         il.MarkLabel(checkStoredTypeProperties);
-        // PDS check — user-set static properties (e.g. `Object.assign = X`,
-        // verifyProperty's isConfigurable round-trip via delete+hasOwn).
-        // Without this, propertyHelper sees configurable:true but isConfigurable
-        // returns false because the bracket set didn't surface.
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, nameLocal);
-        il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
-        il.Emit(OpCodes.Brtrue, trueLabel);
         il.Emit(OpCodes.Br, falseLabel);
         il.MarkLabel(notTypeLabel);
 

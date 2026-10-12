@@ -85,6 +85,24 @@ public sealed class ClassStaticDescriptorTests
     }
 
     [Theory, ModeData]
+    public void PartialDefinitionPreservesOwnFieldAttributesWithoutCopyingInheritedFields(ExecutionMode mode)
+    {
+        const string source = """
+            class Base<T> { static count = 4; }
+            class Derived<T> extends Base<T> {}
+            Object.defineProperty(Base, "count", { writable: false });
+            const own = Object.getOwnPropertyDescriptor(Base, "count");
+            console.log(own.value, own.writable, own.enumerable, own.configurable);
+            Object.defineProperty(Derived, "count", { writable: false });
+            const inherited = Object.getOwnPropertyDescriptor(Derived, "count");
+            console.log(inherited.value === undefined, inherited.writable,
+                inherited.enumerable, inherited.configurable);
+            console.log((Base as any).count, (Derived as any).count === undefined);
+            """;
+        Assert.Equal("4 false true true\ntrue false false false\n4 true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
     public void RedefiningWritableDescriptorPreservesValueAndAllowsAssignment(ExecutionMode mode)
     {
         const string source = """

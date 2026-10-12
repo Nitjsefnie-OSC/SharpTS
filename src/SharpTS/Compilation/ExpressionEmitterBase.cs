@@ -830,7 +830,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitVariable(Expr.Variable v)
     {
-        if (TryEmitClassDefinitionSelf(v.Name.Lexeme)) return;
+        if (TryEmitClassDefinitionSelf(v)) return;
         if (TryEmitClassDefinitionCapture(v.Name.Lexeme)) return;
         string name = v.Name.Lexeme;
 

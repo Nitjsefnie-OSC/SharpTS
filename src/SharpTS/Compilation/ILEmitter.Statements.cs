@@ -3284,11 +3284,10 @@ public partial class ILEmitter
             EmitGuestClassDefinition(runtimeExpression);
             var definition = IL.DeclareLocal(_ctx.Types.Object);
             IL.Emit(OpCodes.Stloc, definition);
-            if (_ctx.Locals.GetLocal(classStmt.Name.Lexeme) is { } binding)
-            {
-                IL.Emit(OpCodes.Ldloc, definition);
-                IL.Emit(OpCodes.Stloc, binding);
-            }
+            var binding = _ctx.Locals.GetLocal(classStmt.Name.Lexeme)
+                ?? _ctx.Locals.DeclareLocal(classStmt.Name.Lexeme, _ctx.Types.Object);
+            IL.Emit(OpCodes.Ldloc, definition);
+            IL.Emit(OpCodes.Stloc, binding);
             return;
         }
         var scopedClasses = _ctx.BlockScopedClassBuilders;

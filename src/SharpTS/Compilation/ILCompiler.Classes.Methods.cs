@@ -1103,7 +1103,7 @@ public partial class ILCompiler
         // Check for method-level "use strict" directive
         ctx.IsStrictMode = true;
         // ES2022 Private Class Elements support
-        ctx.CurrentClassName = typeBuilder.Name;
+        ctx.CurrentClassName = typeBuilder.FullName;
         ctx.CurrentClassBuilder = typeBuilder;
         ctx.EmittingTypeBuilder = typeBuilder;
         SetupSyncMethodFunctionDisplayClass(ctx, il, method);

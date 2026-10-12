@@ -637,7 +637,7 @@ public partial class ILCompiler
         ctx.IsStrictMode = true;
         // ES2022 Private Class Elements support for generator methods (a private generator threads
         // its QUALIFIED class name so nested private member access resolves under modules — #720).
-        ctx.CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.Name;
+        ctx.CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.FullName;
         ctx.CurrentClassBuilder = methodBuilder.DeclaringType as TypeBuilder;
         ApplyClassDefinitionStateMachineContext(ctx, methodBuilder, isInstanceMethod);
         // Captured outer variables are read live (by reference), not snapshotted (#541).

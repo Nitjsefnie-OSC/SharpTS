@@ -592,7 +592,9 @@ public partial class ILCompiler
                     CollectArrowsFromExpr(expression);
                 var previousClassName = _currentCollectClassName;
                 var previousStaticClassContextDeclaration = _currentCollectStaticClassContext;
-                _currentCollectClassName = c.Name.Lexeme;
+                _currentCollectClassName = GetQualifiedClassDeclarationName(c);
+                if (previousClassName != null)
+                    _classes.LexicalEnclosingClasses[_currentCollectClassName] = previousClassName;
                 foreach (var method in c.Methods)
                 {
                     // Skip overload signatures (no body)
@@ -785,9 +787,9 @@ public partial class ILCompiler
                 {
                     if (_currentCollectStaticClassContext)
                         _arrowsInStaticClassContext.Add(af);
-                    _async.ArrowEnclosingClassNames[af] = GetDefinitionContext().GetQualifiedClassName(_currentCollectClassName);
+                    _async.ArrowEnclosingClassNames[af] = _currentCollectClassName;
                     if (_classes.Declarations.Any(c =>
-                        c.Name.Lexeme == _currentCollectClassName
+                        GetQualifiedClassDeclarationName(c) == _currentCollectClassName
                         && c.SuperclassExpr is Expr.ClassExpr
                         {
                             Methods.Count: 0,
@@ -1106,9 +1108,8 @@ public partial class ILCompiler
                 var previousStaticClassContextExpression = _currentCollectStaticClassContext;
                 if (previousClassNameCE != null)
                 {
-                    _classExprs.EnclosingClass[ce] = previousClassNameCE.StartsWith("$ClassExpr_", StringComparison.Ordinal)
-                        ? previousClassNameCE
-                        : GetDefinitionContext().GetQualifiedClassName(previousClassNameCE);
+                    _classExprs.EnclosingClass[ce] = previousClassNameCE;
+                    _classes.LexicalEnclosingClasses[_classExprs.Names[ce]] = previousClassNameCE;
                 }
                 _currentCollectClassName = _classExprs.Names[ce];
                 // Method/accessor bodies are separate callables — an inner function

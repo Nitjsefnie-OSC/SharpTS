@@ -103,15 +103,18 @@ public abstract partial class ExpressionEmitterBase
 
     protected bool TryEmitDefinitionPrivateField(Expr receiverExpression, Token token, Expr? assignedValue = null)
     {
-        if (Ctx.CurrentClassName is not { } owner || Ctx.CurrentClassExpr is not { } expression) return false;
+        if (Ctx.CurrentClassName is not { } current || Ctx.CurrentClassExpr == null) return false;
         string name = token.Lexeme.TrimStart('#');
+        string owner = Ctx.ResolvePrivateFieldOwner(current, name);
+        var expression = Ctx.ClassExprBuilders?.FirstOrDefault(entry => entry.Value.FullName == owner).Key;
+        if (expression == null) return false;
         var declaration = Ctx.ClassRegistry?.GetPrivateElements(owner);
         if (declaration == null) return false;
         bool isStatic = declaration.StaticFields.ContainsKey(name);
         if (!isStatic && !declaration.FieldNames.Contains(name)) return false;
         var receiver = SpillGenericPrivateOperand(receiverExpression);
         var value = assignedValue == null ? null : SpillGenericPrivateOperand(assignedValue);
-        var definition = EmitDefinitionPrivateBrandCheck(receiver, name, isStatic);
+        var definition = EmitDefinitionPrivateBrandCheck(receiver, name, isStatic, owner);
         if (isStatic)
         {
             IL.Emit(OpCodes.Ldloc, definition);
@@ -186,7 +189,7 @@ public abstract partial class ExpressionEmitterBase
 
     private void EmitPrivateMethodValue(PrivateMethodValue value, string owner, string name, LocalBuilder receiver)
     {
-        var definition = value.Definition == null ? null : EmitDefinitionPrivateBrandCheck(receiver, name, value.Source.IsStatic);
+        var definition = value.Definition == null ? null : EmitDefinitionPrivateBrandCheck(receiver, name, value.Source.IsStatic, owner);
         if (value.Source.IsStatic && definition == null)
         {
             EmitOrdinaryStaticPrivateBrandCheck(owner, receiver, name);
@@ -206,9 +209,10 @@ public abstract partial class ExpressionEmitterBase
         SetStackUnknown();
     }
 
-    private LocalBuilder EmitDefinitionPrivateBrandCheck(LocalBuilder receiver, string name, bool isStatic)
+    private LocalBuilder EmitDefinitionPrivateBrandCheck(LocalBuilder receiver, string name, bool isStatic, string? owner = null)
     {
-        if (!TryEmitOwnedClassDefinition()) throw new InvalidOperationException("Private access requires its lexical class definition.");
+        owner ??= Ctx.CurrentClassName!;
+        if (!TryEmitPrivateInOwnerDefinition(owner)) throw new InvalidOperationException("Private access requires its lexical class definition.");
         var definition = IL.DeclareLocal(Ctx.Runtime!.ClassDefinitions.Type);
         IL.Emit(OpCodes.Stloc, definition);
         var invalid = IL.DefineLabel();
@@ -216,7 +220,7 @@ public abstract partial class ExpressionEmitterBase
         if (isStatic) IL.Emit(OpCodes.Ldloc, receiver);
         else
         {
-            var expression = Ctx.CurrentClassExpr ?? Ctx.ClassExprBuilders!.First(entry => ReferenceEquals(entry.Value, Ctx.CurrentClassBuilder)).Key;
+            var expression = Ctx.ClassExprBuilders!.First(entry => entry.Value.FullName == owner).Key;
             var factory = Ctx.ClassExprFactories![expression];
             var field = Ctx.ClassExprDefinitionFields![expression];
             var reference = factory.Template.IsGenericType ? EmitterTypeHelpers.ResolveField(factory.Template, field) : field;

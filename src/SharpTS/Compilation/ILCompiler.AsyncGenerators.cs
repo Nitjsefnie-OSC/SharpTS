@@ -244,7 +244,7 @@ public partial class ILCompiler
         ctx.IsStrictMode = true;
         // ES2022 Private Class Elements support for async generator methods (a private async
         // generator threads its QUALIFIED class name so nested private member access resolves — #720).
-        ctx.CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.Name;
+        ctx.CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.FullName;
         ctx.CurrentClassBuilder = methodBuilder.DeclaringType as TypeBuilder;
         ApplyClassDefinitionStateMachineContext(ctx, methodBuilder, isInstanceMethod);
         // Entry-point display class for captured top-level variables

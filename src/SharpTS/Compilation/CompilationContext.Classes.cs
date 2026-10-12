@@ -75,6 +75,17 @@ public partial class CompilationContext
         {
             _currentClassName = value;
             _currentClassShortName = value?.Split('.').Last().Split('_').Last();
+            if (LexicalEnclosingClasses != null)
+            {
+                List<string> enclosing = [];
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                while (value != null && LexicalEnclosingClasses.TryGetValue(value, out var owner) && seen.Add(owner))
+                {
+                    enclosing.Add(owner);
+                    value = owner;
+                }
+                EnclosingClassNames = enclosing;
+            }
         }
     }
 
@@ -86,6 +97,9 @@ public partial class CompilationContext
 
     /// <summary>Lexically enclosing classes whose private names remain visible.</summary>
     public IReadOnlyList<string>? EnclosingClassNames { get; set; }
+
+    /// <summary>Immediate lexical owners keyed by the emitted identities of declarations and expressions.</summary>
+    public IReadOnlyDictionary<string, string>? LexicalEnclosingClasses { get; set; }
 
     public string ResolvePrivateFieldOwner(string fallbackClassName, string fieldName)
     {

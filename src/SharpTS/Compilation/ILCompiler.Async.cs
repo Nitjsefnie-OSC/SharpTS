@@ -1725,7 +1725,7 @@ public partial class ILCompiler
         // ES2022 Private Class Elements support for async methods. currentClassName lets a private
         // method pass its QUALIFIED class name (the ClassRegistry keys private members by it), so
         // nested private member access inside the async body resolves under module compilation.
-        ctx.CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.Name;
+        ctx.CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.FullName;
         ctx.CurrentClassBuilder = methodBuilder.DeclaringType as TypeBuilder;
         ApplyClassDefinitionStateMachineContext(ctx, methodBuilder, isInstanceMethod);
         // Entry-point display class for captured top-level variables

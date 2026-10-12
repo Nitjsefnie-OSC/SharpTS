@@ -589,15 +589,6 @@ public partial class ILCompiler
         ctx.CurrentClassBuilder = typeBuilder;
         ctx.EmittingTypeBuilder = typeBuilder;
         ctx.CurrentClassName = className;
-        List<string> enclosingClasses = [];
-        var lexicalExpression = classExpr;
-        while (_classExprs.EnclosingClass.TryGetValue(lexicalExpression, out var enclosingClassName))
-        {
-            enclosingClasses.Add(enclosingClassName);
-            lexicalExpression = _classExprs.Names.FirstOrDefault(entry => entry.Value == enclosingClassName).Key;
-            if (lexicalExpression is null) break;
-        }
-        ctx.EnclosingClassNames = enclosingClasses;
         ctx.CurrentSuperclassName = _classExprs.Superclass.GetValueOrDefault(classExpr);
         ctx.PropertyBackingFields = _typedInterop.PropertyBackingFields;
         ctx.ClassProperties = _typedInterop.ClassProperties;

@@ -8,6 +8,8 @@ public abstract partial class ExpressionEmitterBase
     protected bool IsStaticPrivateReceiver(Expr receiver) =>
         receiver is Expr.Variable variable &&
         (variable.Name.Lexeme == Ctx.CurrentClassShortName ||
+         (Ctx.TypeMap?.Get(receiver) is SharpTS.TypeSystem.TypeInfo.Class constructor
+          && Ctx.EnclosingClassNames?.Contains(Ctx.ResolveClassName(constructor, variable.Name.Lexeme)) == true) ||
          Ctx.TypeMap?.Get(receiver) is SharpTS.TypeSystem.TypeInfo.GenericClass) ||
         receiver is Expr.This && !Ctx.IsInstanceMethod;
 

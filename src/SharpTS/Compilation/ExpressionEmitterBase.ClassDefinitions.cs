@@ -65,12 +65,33 @@ public abstract partial class ExpressionEmitterBase
         SetStackUnknown();
     }
 
-    protected bool TryEmitClassDefinitionSelf(string name)
+    protected bool TryEmitClassDefinitionSelf(Expr.Variable variable)
     {
+        string name = variable.Name.Lexeme;
         var expression = Ctx.CurrentClassExpr ?? Ctx.ClassExprBuilders?
             .FirstOrDefault(entry => ReferenceEquals(entry.Value, Ctx.CurrentClassBuilder)).Key;
-        if (expression?.Name?.Lexeme != name) return false;
-        if (!TryEmitOwnedClassDefinition()) return false;
+        if (expression?.Name?.Lexeme == name)
+        {
+            if (!TryEmitOwnedClassDefinition()) return false;
+        }
+        else
+        {
+            // A named enclosing expression has no outer variable declaration to
+            // capture. Its checked constructor binding identifies the lexical
+            // self-name, whose evaluated definition travels in the owner chain.
+            if (Ctx.TryGetParameter(name, out _) || Ctx.Locals.GetLocal(name) != null
+                || GetHoistedVariableField(name) != null
+                || Ctx.CapturedFields?.ContainsKey(name) == true
+                || TryGetClassDefinitionCaptureSlot(name, out _)) return false;
+            var constructor = Ctx.TypeMap?.Get(variable);
+            if (constructor is not (SharpTS.TypeSystem.TypeInfo.Class or SharpTS.TypeSystem.TypeInfo.GenericClass))
+                return false;
+            string owner = Ctx.ResolveClassName(constructor, name);
+            if (Ctx.EnclosingClassNames?.Contains(owner) != true
+                || Ctx.ClassExprBuilders?.Any(entry => entry.Value.FullName == owner
+                    && entry.Key.Name?.Lexeme == name) != true
+                || !TryEmitPrivateInOwnerDefinition(owner)) return false;
+        }
         SetStackUnknown();
         return true;
     }

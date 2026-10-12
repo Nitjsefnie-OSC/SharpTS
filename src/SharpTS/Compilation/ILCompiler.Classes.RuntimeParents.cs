@@ -11,23 +11,50 @@ public partial class ILCompiler
     private readonly Dictionary<TypeBuilder, MethodBuilder> _receiverInitializers = new(ReferenceEqualityComparer.Instance);
     private bool _usesRuntimeParents;
 
+    private bool HasLexicalClassExpressionOwner(Stmt.Class declaration)
+    {
+        object? owner = _classes.DeclarationLexicalOwners.GetValueOrDefault(declaration);
+        while (owner is Stmt.Class parent)
+            owner = _classes.DeclarationLexicalOwners.GetValueOrDefault(parent);
+        return owner is Expr.ClassExpr;
+    }
+
     private bool TryDefineRuntimeClassDeclaration(Stmt.Class declaration)
     {
-        if (declaration.SuperclassExpr == null || declaration.IsDeclare) return false;
         var leaf = Expr.GetSuperclassLeafName(declaration.SuperclassExpr);
-        if (leaf != null && ((_typeMap.Get(declaration.SuperclassExpr) is not TypeSystem.TypeInfo.Any
+        // Declaration decorators and unsupported intrinsic heritage keep their
+        // existing declaration handling; the expression adapter has no class
+        // decorator metadata and must not relax its subclassing diagnostics.
+        bool captureLexicalOwner = HasLexicalClassExpressionOwner(declaration)
+            && declaration.Decorators is not { Count: > 0 }
+            && leaf is not ("Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer");
+        if ((declaration.SuperclassExpr == null && !captureLexicalOwner) || declaration.IsDeclare) return false;
+        if (!captureLexicalOwner && leaf != null && ((_typeMap.Get(declaration.SuperclassExpr!) is not TypeSystem.TypeInfo.Any
             && (_classes.Builders.ContainsKey(GetDefinitionContext().ResolveClassName(leaf)) || _classExprs.VarToClassExpr.ContainsKey(leaf)))
             || Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(leaf)
             || leaf is "Array" or "Promise" or "Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer")) return false;
-        if (declaration.SuperclassExpr is Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 }) return false;
+        if (!captureLexicalOwner && declaration.SuperclassExpr is Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 }) return false;
         var expression = new Expr.ClassExpr(declaration.Name, declaration.TypeParams,
             declaration.SuperclassExpr, declaration.SuperclassTypeArgs, declaration.Methods,
             declaration.Fields, declaration.Accessors, declaration.AutoAccessors, declaration.Interfaces,
             declaration.InterfaceTypeArgs, declaration.IsAbstract, declaration.StaticInitializers);
         _runtimeClassDeclarations.Add(declaration, expression);
-        _usesRuntimeParents = true;
+        _usesRuntimeParents |= declaration.SuperclassExpr != null;
         if (_typeMap.GetClassType(declaration) is { } checkedType) _typeMap.SetClassExprType(expression, checkedType);
         CollectClassExpression(expression);
+        _classExprs.Names[expression] = GetDefinitionContext().GetQualifiedClassName(_classExprs.Names[expression]);
+        if (_classes.DeclarationLexicalOwners.TryGetValue(declaration, out var lexicalOwner))
+        {
+            string ownerName;
+            if (lexicalOwner is Expr.ClassExpr parentExpression)
+            {
+                CollectClassExpression(parentExpression);
+                ownerName = _classExprs.Names[parentExpression];
+            }
+            else ownerName = GetQualifiedClassDeclarationName((Stmt.Class)lexicalOwner);
+            _classExprs.EnclosingClass[expression] = ownerName;
+            _classes.LexicalEnclosingClasses[_classExprs.Names[expression]] = ownerName;
+        }
         DefineClassExpression(expression);
         _classes.BlockScopedBuilders[declaration] = _classExprs.Builders[expression];
         _classes.DeclarationNames[declaration] = _classExprs.Names[expression];
@@ -169,7 +196,8 @@ public partial class ILCompiler
         TypeBuilder owner, MethodBuilder original)
     {
         if (!_usesRuntimeParents) return null;
-        var declaration = _classes.Declarations.FirstOrDefault(source => _classes.DeclarationNames.GetValueOrDefault(source) == owner.FullName);
+        var declaration = _classes.Declarations.FirstOrDefault(source => !_runtimeClassDeclarations.ContainsKey(source)
+            && _classes.DeclarationNames.GetValueOrDefault(source) == owner.FullName);
         var source = declaration?.Methods.FirstOrDefault(source => source.Body != null && source.IsStatic == original.IsStatic && source.Name.Lexeme == original.Name);
         if (source == null || !SupportsReceiverInitialization(declaration!)) return null;
         var type = EmitTypeDefinitions.DefineType(_moduleBuilder, $"$ReceiverMember_{owner.FullName}_{original.Name}_{(source.IsStatic ? "Static" : "Instance")}", TypeAttributes.Public | TypeAttributes.Sealed, _types.Object);

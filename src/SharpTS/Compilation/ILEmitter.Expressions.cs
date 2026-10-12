@@ -47,7 +47,7 @@ public partial class ILEmitter
 
         if (TryEmitDefaultParameterTdz(name))
             return;
-        if (TryEmitClassDefinitionSelf(name)) return;
+        if (TryEmitClassDefinitionSelf(v)) return;
         if (TryEmitClassDefinitionCapture(name)) return;
 
         if (_ctx.LexicalInitializerTdzName == name)

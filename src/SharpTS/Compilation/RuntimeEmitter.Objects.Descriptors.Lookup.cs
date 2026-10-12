@@ -106,6 +106,7 @@ public partial class RuntimeEmitter
 
     private readonly record struct GetOwnDescriptorConstructorFallbackInputs(
         MethodBuilder GetProperty,
+        MethodBuilder ObjectHasOwn,
         TypeBuilder TSFunctionType,
         Type UndefinedType
     );
@@ -582,6 +583,7 @@ public partial class RuntimeEmitter
             il,
             new GetOwnDescriptorConstructorFallbackInputs(
                 inputs.GetProperty,
+                inputs.ObjectHasOwn,
                 inputs.TSFunctionType,
                 inputs.UndefinedType
             ),
@@ -1005,8 +1007,13 @@ public partial class RuntimeEmitter
         Label endLabel
     )
     {
-        // Probe GetProperty: if it returns a non-undefined value, the property
-        // is reachable through our static dispatch — synthesize a descriptor.
+        // Value lookup walks constructor inheritance; descriptors require an own property.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Call, inputs.ObjectHasOwn);
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+
+        // Probe GetProperty after proving ownership to synthesize a descriptor.
         // This catches JS-named constants (Number.MAX_VALUE → System.Double.
         // MaxValue) where reflection on the Type by JS name would miss.
         // Skip null returns since `GetProperty` returns null for unresolved.

@@ -553,6 +553,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notFunctionTypeLabel);
 
+        // Native Error constructors are callable as well as constructible.
+        // Reuse construction's factory so branding, message coercion and cause agree.
+        var notErrorType = il.DefineLabel();
+        var calledError = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.Type);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.Errors.CreateErrorFromTypeOrNull);
+        il.Emit(OpCodes.Stloc, calledError);
+        il.Emit(OpCodes.Ldloc, calledError);
+        il.Emit(OpCodes.Brfalse, notErrorType);
+        il.Emit(OpCodes.Ldloc, calledError);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notErrorType);
+
         // Emitted ECMAScript classes implement $IHasFields and, unlike legacy
         // function constructors, are never callable.  This path is reached by
         // indirect calls such as `Derived.apply(receiver, args)`.

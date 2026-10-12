@@ -268,9 +268,7 @@ public partial class Interpreter
             var asyncIteratorFn = obj.GetBySymbol(SharpTSSymbol.AsyncIterator);
             if (asyncIteratorFn != null)
             {
-                // Bind 'this' if it's an arrow function
-                if (asyncIteratorFn is SharpTSArrowFunction arrowFunc)
-                    asyncIteratorFn = arrowFunc.Bind(obj);
+                asyncIteratorFn = BindMemberCallReceiver(asyncIteratorFn, obj);
 
                 // Call the async iterator function
                 if (asyncIteratorFn is ISharpTSCallable callable)
@@ -288,8 +286,7 @@ public partial class Interpreter
             }
             if (asyncIteratorFn != null)
             {
-                if (asyncIteratorFn is SharpTSArrowFunction arrowFunc)
-                    asyncIteratorFn = arrowFunc.Bind(inst);
+                asyncIteratorFn = BindMemberCallReceiver(asyncIteratorFn, inst);
                 if (asyncIteratorFn is ISharpTSCallable callable)
                     return callable.Call(this, []);
             }

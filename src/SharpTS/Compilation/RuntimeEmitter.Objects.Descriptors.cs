@@ -665,6 +665,7 @@ public partial class RuntimeEmitter
             new DefinePropertyExistingDescriptorInputs(
                 inputs.ArrayStorage,
                 inputs.DescriptorStorage,
+                descriptors.GetOwnPropertyDescriptor,
                 inputs.GetProperty,
                 inputs.HasOwnPropertyHelperMethod,
                 inputs.IHasFieldsInterface,

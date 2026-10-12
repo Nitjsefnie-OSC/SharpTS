@@ -7,32 +7,18 @@ namespace SharpTS.Compilation.Emitters;
 public sealed class ErrorStaticEmitter : IStaticTypeEmitterStrategy
 {
     public bool TryEmitStaticCall(IEmitterContext emitter, string methodName, List<Expr> arguments)
-    {
-        if (methodName != "isError") return false;
-
-        var ctx = emitter.Context;
-        if (arguments.Count > 0)
-        {
-            emitter.EmitExpression(arguments[0]);
-            emitter.EmitBoxIfNeeded(arguments[0]);
-        }
-        else
-        {
-            ctx.IL.Emit(OpCodes.Ldnull);
-        }
-        ctx.IL.Emit(OpCodes.Call, ctx.Runtime!.Errors.IsError);
-        ctx.IL.Emit(OpCodes.Box, ctx.Types.Boolean);
-        return true;
-    }
+        => false;
 
     public bool TryEmitStaticPropertyGet(IEmitterContext emitter, string propertyName)
     {
         if (propertyName != "isError") return false;
         var ctx = emitter.Context;
-        ctx.Types.EmitLoadMethodInfo(ctx.IL, ctx.Runtime!.Errors.IsError);
-        ctx.IL.Emit(OpCodes.Ldstr, "isError");
-        ctx.IL.Emit(OpCodes.Ldc_I4_1);
-        ctx.IL.Emit(OpCodes.Call, ctx.Runtime.FunctionConstruction.GetOrCreate);
+        // Runtime lookup observes descriptor overrides and deletion. Calls use
+        // ordinary receiver-aware invocation so the current property is called.
+        ctx.IL.Emit(OpCodes.Ldtoken, ctx.Runtime!.Errors.Type);
+        ctx.IL.Emit(OpCodes.Call, ctx.Types.TypeGetTypeFromHandle);
+        ctx.IL.Emit(OpCodes.Ldstr, propertyName);
+        ctx.IL.Emit(OpCodes.Call, ctx.Runtime.ObjectRead.Property);
         return true;
     }
 

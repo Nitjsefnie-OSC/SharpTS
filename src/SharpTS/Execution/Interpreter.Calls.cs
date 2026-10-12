@@ -194,6 +194,7 @@ public partial class Interpreter
             callee = TryBindDotNetExtension(receiver, extensionGet.Name.Lexeme, out var extension)
                 ? extension
                 : EvaluateGetOnObject(extensionGet, receiver).ToObject();
+            callee = BindMemberCallReceiver(callee, receiver);
         }
         else if (call.Callee is Expr.Get memberGet)
         {
@@ -489,6 +490,7 @@ public partial class Interpreter
             callee = TryBindDotNetExtension(receiver, extensionGet.Name.Lexeme, out var extension)
                 ? extension
                 : EvaluateGetOnObject(extensionGet, receiver).ToObject();
+            callee = BindMemberCallReceiver(callee, receiver);
         }
         else if (call.Callee is Expr.Get memberGet)
         {

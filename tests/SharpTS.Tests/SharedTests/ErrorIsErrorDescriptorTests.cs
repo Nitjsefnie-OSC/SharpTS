@@ -20,8 +20,7 @@ public class ErrorIsErrorDescriptorTests
             TestHarness.Run(source, mode));
     }
 
-    // Compiled intrinsic descriptor mutation is tracked separately in #2003.
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void IsErrorDescriptorSupportsRedefinitionAndDeletion(ExecutionMode mode)
     {
         const string source = """
@@ -37,5 +36,58 @@ public class ErrorIsErrorDescriptorTests
             console.log(Object.getOwnPropertyDescriptor(Error, "isError") === undefined);
             """;
         Assert.Equal("true\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void PartialDefinitionPreservesIntrinsicValueAndAttributes(ExecutionMode mode)
+    {
+        const string source = """
+            const saved = Error.isError;
+            Object.defineProperty(Error, "isError", { writable: false });
+            const descriptor = Object.getOwnPropertyDescriptor(Error, "isError");
+            console.log(descriptor.value === saved, descriptor.writable,
+                descriptor.enumerable, descriptor.configurable);
+            Object.defineProperty(Error, "isError", { writable: true });
+            console.log(Error.isError === saved, Error.isError(new Error()));
+            """;
+        Assert.Equal("true false false true\ntrue true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void CallsAndValueReadsObserveReplacementAndAccessorDefinitions(ExecutionMode mode)
+    {
+        const string source = """
+            const alias: any = Error;
+            function replacement(value: any) { return value === "replacement"; }
+            Object.defineProperty(Error, "isError", { value: replacement });
+            console.log(Error.isError === replacement, Error["isError"] === replacement,
+                alias.isError === replacement);
+            console.log(Error.isError("replacement"), Error["isError"]("replacement"),
+                alias.isError(new Error()));
+            let reads = 0;
+            Object.defineProperty(Error, "isError", { get() { reads++; return replacement; } });
+            console.log(Error.isError === replacement, Error.isError("replacement"), reads);
+            """;
+        Assert.Equal("true true true\ntrue true false\ntrue true 2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void DeletedMethodIsAbsentAndNewDefinitionUsesNewPropertyDefaults(ExecutionMode mode)
+    {
+        const string source = """
+            const saved = Error.isError;
+            const alias: any = Error;
+            console.log(delete alias.isError);
+            console.log(Error.isError === undefined, Error["isError"] === undefined,
+                alias.isError === undefined, typeof Error.isError);
+            try { Error.isError(new Error()); } catch (error) { console.log(error instanceof TypeError); }
+            Object.defineProperty(Error, "isError", { value: saved });
+            const descriptor = Object.getOwnPropertyDescriptor(Error, "isError");
+            console.log(descriptor.value === saved, descriptor.writable,
+                descriptor.enumerable, descriptor.configurable);
+            console.log(Error.isError(new Error()), Error.hasOwnProperty("isError"));
+            """;
+        Assert.Equal("true\ntrue true true undefined\ntrue\ntrue false false false\ntrue true\n",
+            TestHarness.Run(source, mode));
     }
 }

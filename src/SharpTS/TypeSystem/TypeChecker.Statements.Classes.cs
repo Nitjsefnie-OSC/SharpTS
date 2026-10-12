@@ -542,7 +542,7 @@ public partial class TypeChecker
                     var previousClass = _currentClass;
                     _inStaticBlock = true;
                     _inStaticMethod = true;
-                    _privateInEnclosingClasses.Push(previousClass);
+                    _privateNameEnclosingClasses.Push(previousClass);
                     _currentClass = classTypeForBody;
 
                     try
@@ -556,7 +556,7 @@ public partial class TypeChecker
                     {
                         _inStaticBlock = previousInStaticBlock;
                         _inStaticMethod = previousInStaticMethod;
-                        _privateInEnclosingClasses.Pop();
+                        _privateNameEnclosingClasses.Pop();
                         _currentClass = previousClass;
                     }
                 }
@@ -647,7 +647,7 @@ public partial class TypeChecker
             TypeInfo.Class? prevClass = _currentClass;
 
             _environment = classEnv;
-            _privateInEnclosingClasses.Push(prevClass);
+            _privateNameEnclosingClasses.Push(prevClass);
             _currentClass = classTypeForBody;
 
             // Set when a method's inferred (un-annotated) return type is resolved during the body
@@ -666,7 +666,7 @@ public partial class TypeChecker
             finally
             {
                 _environment = prevEnv;
-                _privateInEnclosingClasses.Pop();
+                _privateNameEnclosingClasses.Pop();
                 _currentClass = prevClass;
             }
 

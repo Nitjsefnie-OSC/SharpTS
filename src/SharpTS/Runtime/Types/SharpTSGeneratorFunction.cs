@@ -19,6 +19,7 @@ public class SharpTSGeneratorFunction : ISharpTSCallable, IReceiverBindable
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    internal bool IsStaticMethod => _declaration.IsStatic;
     internal SharpTSClass? PrivateOwner { get; set; }
     /// <summary>A dynamic receiver was bound (via <see cref="BindToReceiver"/>), so <see cref="Call"/>
     /// binds <c>this</c> to <see cref="_boundThis"/> rather than defaulting it to undefined.</summary>
@@ -54,8 +55,11 @@ public class SharpTSGeneratorFunction : ISharpTSCallable, IReceiverBindable
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
         // Create environment and bind parameters (like a regular function)
-        RuntimeEnvironment environment = new(_closure, strictMode: _declaration.IsPrivate ? true : null) { PrivateClass = PrivateOwner };
-        if (_declaration.IsPrivate)
+        RuntimeEnvironment closure = _declaration.IsStatic
+            ? new RuntimeEnvironment(_closure, strictMode: true) : _closure;
+        RuntimeEnvironment environment = new(closure,
+            strictMode: _declaration.IsPrivate || _declaration.IsStatic ? true : null) { PrivateClass = PrivateOwner };
+        if (_declaration.IsPrivate || _declaration.IsStatic)
         {
             environment.Define("this", _thisBound ? _boundThis : SharpTSUndefined.Instance);
         }
@@ -96,7 +100,8 @@ public class SharpTSGeneratorFunction : ISharpTSCallable, IReceiverBindable
         => new SharpTSGeneratorFunction(_declaration, _closure, thisBound: true, boundThis: receiver) { PrivateOwner = PrivateOwner };
 
     public SharpTSGeneratorFunction BindStatic(SharpTSClass klass)
-        => new(_declaration, _closure, thisBound: true, boundThis: klass, boundSuper: klass.Superclass) { PrivateOwner = PrivateOwner };
+        => new(_declaration, _closure, thisBound: true, boundThis: klass,
+            boundSuper: _declaration.IsStatic ? null : klass.Superclass) { PrivateOwner = PrivateOwner };
 
     public override string ToString() => $"<generator fn {_declaration.Name.Lexeme}>";
 }

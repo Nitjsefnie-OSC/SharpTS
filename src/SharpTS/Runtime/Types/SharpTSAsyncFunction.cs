@@ -38,6 +38,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    internal bool IsStaticMethod => _declaration.IsStatic;
     internal SharpTSClass? PrivateOwner { get; set; }
     private readonly bool _receiverBound;
     // JS: functions (including async) are objects and support property assignment.
@@ -120,8 +121,13 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
     /// </summary>
     public async Task<object?> CallAsync(Interpreter interpreter, List<object?> arguments)
     {
-        RuntimeEnvironment environment = new(_closure, strictMode: _declaration.IsPrivate ? true : null) { PrivateClass = PrivateOwner };
-        if (_declaration.IsPrivate)
+        // Bound async methods already carry the resolver's class `this` scope.
+        // Canonical methods invoked without a receiver need the same scope depth.
+        RuntimeEnvironment closure = _declaration.IsStatic && !_receiverBound
+            ? new RuntimeEnvironment(_closure, strictMode: true) : _closure;
+        RuntimeEnvironment environment = new(closure,
+            strictMode: _declaration.IsPrivate || _declaration.IsStatic ? true : null) { PrivateClass = PrivateOwner };
+        if (_declaration.IsPrivate || _declaration.IsStatic)
         {
             environment.Define("this", _receiverBound && _closure.TryGet("this", out var receiver)
                 ? receiver.ToObject() : SharpTSUndefined.Instance);
@@ -189,6 +195,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
 
     public SharpTSAsyncFunction BindStatic(SharpTSClass klass)
     {
+        if (_declaration.IsStatic) return BindThisValue(klass);
         RuntimeEnvironment environment = new(_closure);
         environment.Define("this", klass);
         if (klass.Superclass != null)

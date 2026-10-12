@@ -856,6 +856,7 @@ public partial class RuntimeEmitter
                     runtime.ObjectRead.Property
                 ),
                 runtime.RegExps,
+                runtime.SymbolAccessors,
                 runtime.Symbols,
                 runtime.FunctionValues.Type,
                 runtime.Sentinels.UndefinedType

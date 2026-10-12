@@ -21,6 +21,7 @@ public partial class RuntimeEmitter
         EmittedPromiseRuntime? Promise,
         ProxyDescriptorCallInputs ProxyDescriptor,
         EmittedRegExpRuntime RegExps,
+        EmittedSymbolAccessorRuntime SymbolAccessors,
         EmittedSymbolRuntime Symbols,
         TypeBuilder TSFunctionType,
         Type UndefinedType
@@ -589,8 +590,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.LookupBuiltInStaticMember);
         il.Emit(OpCodes.Brtrue, trueLabel);
 
-        // Reflection: type.GetField(name, Public|Static) ?? type.GetMethod(name, Public|Static)
-        const System.Reflection.BindingFlags staticPub = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
+        // Constructor inheritance belongs to value lookup, never own-property lookup.
+        const BindingFlags staticPub = BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly;
         var typeLocal2 = il.DeclareLocal(_types.Type);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.Type);
@@ -607,6 +608,32 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4, (int)staticPub);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetProperty", _types.String, typeof(System.Reflection.BindingFlags)));
         il.Emit(OpCodes.Brtrue, trueLabel);
+        // Guest classes declare JavaScript methods as CLR statics. Native
+        // constructor tokens use their explicit JS inventory above, because
+        // BCL methods such as System.Double.Parse are not Number properties.
+        var checkStoredTypeProperties = il.DefineLabel();
+        il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ldloc, typeLocal2);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+        il.Emit(OpCodes.Brfalse, checkStoredTypeProperties);
+        // GetMember handles overloaded static methods without AmbiguousMatchException.
+        il.Emit(OpCodes.Ldloc, typeLocal2);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)MemberTypes.Method);
+        il.Emit(OpCodes.Ldc_I4, (int)staticPub);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMember", _types.String,
+            typeof(MemberTypes), typeof(BindingFlags)));
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        // Computed string method names live in the shared registry under their
+        // evaluated JavaScript key, rather than their synthetic CLR name.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindOwnMethod);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.MarkLabel(checkStoredTypeProperties);
         // PDS check — user-set static properties (e.g. `Object.assign = X`,
         // verifyProperty's isConfigurable round-trip via delete+hasOwn).
         // Without this, propertyHelper sees configurable:true but isConfigurable

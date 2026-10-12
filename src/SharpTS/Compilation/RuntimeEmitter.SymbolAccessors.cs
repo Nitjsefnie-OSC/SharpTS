@@ -60,6 +60,12 @@ public partial class RuntimeEmitter
             _types.Object,
             [_types.Object, _types.Object]);
 
+        symbolAccessors.FindOwnMethod = typeBuilder.DefineMethod(
+            "FindOwnSymbolMethodFor",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]);
+
         // #351 generic-class helpers (forward-declared; bodies filled alongside
         // the Find* bodies). FindSymbol* calls them in its base-chain walk.
         symbolAccessors.RegistryKey = typeBuilder.DefineMethod(
@@ -164,6 +170,19 @@ public partial class RuntimeEmitter
             innerTryGetValue,
             getBaseType,
             getType
+        );
+        EmitFindSymbolAccessorBody(
+            symbolAccessors,
+            symbolAccessors.FindOwnMethod,
+            field,
+            inner,
+            SymMethodInstanceSlot,
+            SymMethodStaticSlot,
+            outerTryGetValue,
+            innerTryGetValue,
+            getBaseType,
+            getType,
+            ownOnly: true
         );
         symbolAccessors.MarkBodiesEmitted();
     }
@@ -505,7 +524,8 @@ public partial class RuntimeEmitter
         MethodInfo outerTryGetValue,
         MethodInfo innerTryGetValue,
         MethodInfo getBaseType,
-        MethodInfo getType
+        MethodInfo getType,
+        bool ownOnly = false
     )
     {
         var il = method.GetILGenerator();
@@ -597,10 +617,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, retIt);
         il.Emit(OpCodes.Pop);
         il.MarkLabel(nextBase);
-        il.Emit(OpCodes.Ldloc, ownerLocal);
-        il.Emit(OpCodes.Callvirt, getBaseType);
-        il.Emit(OpCodes.Stloc, ownerLocal);
-        il.Emit(OpCodes.Br, loopTop);
+        if (ownOnly)
+        {
+            il.Emit(OpCodes.Br, retNull);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldloc, ownerLocal);
+            il.Emit(OpCodes.Callvirt, getBaseType);
+            il.Emit(OpCodes.Stloc, ownerLocal);
+            il.Emit(OpCodes.Br, loopTop);
+        }
 
         il.MarkLabel(retIt);
         // stack: [v]  →  CloseSymbolAccessor(v, closed)

@@ -51,7 +51,7 @@ public sealed class EmittedSymbolRuntimeTests
         var first = new EmittedRuntime();
         var second = new EmittedRuntime();
         Assert.Equal(27, Handles(typeof(EmittedSymbolRuntime)).Length);
-        Assert.Equal(9, Handles(typeof(EmittedSymbolAccessorRuntime)).Length);
+        Assert.Equal(10, Handles(typeof(EmittedSymbolAccessorRuntime)).Length);
         Assert.NotSame(first.Symbols, second.Symbols);
         Assert.NotSame(first.SymbolAccessors, second.SymbolAccessors);
         Assert.Null(typeof(EmittedRuntime).GetProperty(nameof(EmittedRuntime.Symbols))!.SetMethod);
@@ -278,6 +278,8 @@ public sealed class EmittedSymbolRuntimeTests
         Assert.Same(staticGetter, Call(runtime, "FindSymbolGetterFor", typeof(ProbeDerived), symbol));
         Assert.Same(staticSetter, Call(runtime, "FindSymbolSetterFor", typeof(ProbeDerived), symbol));
         Assert.Same(staticMethod, Call(runtime, "FindSymbolMethodFor", typeof(ProbeDerived), symbol));
+        Assert.Same(staticMethod, Call(runtime, "FindOwnSymbolMethodFor", typeof(ProbeOwner), symbol));
+        Assert.Null(Call(runtime, "FindOwnSymbolMethodFor", typeof(ProbeDerived), symbol));
         Call(runtime, "RegisterSymbolAccessor", typeof(ProbeOwner), symbol, null, null, false);
         Assert.Same(getter, Call(runtime, "FindSymbolGetterFor", receiver, symbol));
         Call(runtime, "RegisterSymbolMethod", typeof(ProbeOwner), 1d, method, false);

@@ -55,6 +55,13 @@ public sealed class EmittedSymbolAccessorRuntime
         internal set => SetHandle(ref _findMethod, value);
     }
 
+    private MethodBuilder? _findOwnMethod;
+    public MethodBuilder FindOwnMethod
+    {
+        get => Require(_findOwnMethod);
+        internal set => SetHandle(ref _findOwnMethod, value);
+    }
+
     private MethodBuilder? _registryKey;
     public MethodBuilder RegistryKey
     {
@@ -117,6 +124,7 @@ public sealed class EmittedSymbolAccessorRuntime
         _ = FindSetter;
         _ = RegisterMethod;
         _ = FindMethod;
+        _ = FindOwnMethod;
         _ = RegistryKey;
         _ = ClosedOwner;
         _ = CloseAccessor;

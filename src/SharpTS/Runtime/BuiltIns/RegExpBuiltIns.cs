@@ -1314,7 +1314,7 @@ public static class RegExpBuiltIns
 
         // Step 8: IsConstructor(S) → return S.
         if (species is SharpTSClass
-            or SharpTSFunction
+            or SharpTSFunction { IsConstructible: true }
             or SharpTSBuiltInConstructor
             or BuiltInMethod { IsConstructor: true }
             || species is SharpTSArrowFunction { HasOwnThis: true })

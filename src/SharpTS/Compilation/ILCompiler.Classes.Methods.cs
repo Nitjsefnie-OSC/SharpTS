@@ -804,6 +804,8 @@ public partial class ILCompiler
         // pads omitted optional args with the `undefined` sentinel on the value-call path.
         MarkPadsUndefined(methodBuilder);
         MarkFunctionLength(methodBuilder, method.Parameters);
+        if (!method.IsGenerator)
+            MarkNonConstructible(methodBuilder);
 
         // #720: async/generator private methods must be emitted through a state machine, exactly like
         // their public counterparts — not linearly into __private_<name>, which leaves a bare object on
@@ -1050,6 +1052,8 @@ public partial class ILCompiler
         // instance methods (they all share this builder before the kind-specific branch).
         MarkPadsUndefined(methodBuilder);
         MarkFunctionLength(methodBuilder, method.Parameters);
+        if (!method.IsGenerator)
+            MarkNonConstructible(methodBuilder);
 
         // Apply method-level decorators as .NET attributes
         if (_decoratorMode != DecoratorMode.None)

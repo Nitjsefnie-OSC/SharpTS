@@ -128,7 +128,7 @@ public partial class Interpreter
         // binding `this` to a fresh object whose prototype is Foo.prototype.
         // Without this, `self instanceof Yallist` is false and packages
         // recurse infinitely.
-        if (klass is SharpTSFunction { IsPrivateMethod: false } userFn)
+        if (klass is SharpTSFunction { IsConstructible: true } userFn)
         {
             // Build a new `this` object backed by the function's prototype.
             if (!userFn.TryGetProperty("prototype", out var protoObj))
@@ -362,7 +362,7 @@ public partial class Interpreter
         // Build a fresh `this` with prototype linkage, bind it, then call —
         // so `this instanceof Foo` returns true (Node CJS pattern used by
         // e.g. yallist, EventEmitter sub-classes).
-        if (klass is SharpTSFunction { IsPrivateMethod: false } userFn)
+        if (klass is SharpTSFunction { IsConstructible: true } userFn)
         {
             if (!userFn.TryGetProperty("prototype", out var protoObj))
             {
@@ -1210,7 +1210,7 @@ public partial class Interpreter
             if (fn.TryGetProperty(memberName, out var userProp))
                 return RuntimeValue.FromBoxed(userProp);
             // Lazy-init `fn.prototype` on first access (JS semantics).
-            if (memberName == "prototype")
+            if (memberName == "prototype" && fn.IsConstructible)
             {
                 var proto = CreateFunctionPrototype(fn);
                 fn.SetProperty("prototype", proto);
@@ -1552,7 +1552,7 @@ public partial class Interpreter
     /// </summary>
     internal static bool IsNonConstructorWrapper(object? callable) => callable
         is ISharpTSNonConstructorCallable
-        or SharpTSFunction { IsPrivateMethod: true }
+        or SharpTSFunction { IsConstructible: false }
         or SharpTSArrowFunction { HasOwnThis: false }
         or SharpTSAsyncFunction
         or SharpTSAsyncArrowFunction

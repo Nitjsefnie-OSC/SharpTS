@@ -1002,6 +1002,8 @@ public partial class ILCompiler
         // args with the `undefined` sentinel on the value-call path (covers sync + async).
         MarkPadsUndefined(methodBuilder);
         MarkFunctionLength(methodBuilder, method.Parameters);
+        if (!method.IsGenerator)
+            MarkNonConstructible(methodBuilder);
 
         // Generator methods route through the same state-machine emitters as class declarations (#765).
         // Async generator FIRST since `async *m()` has both IsAsync and IsGenerator set.
@@ -1089,6 +1091,8 @@ public partial class ILCompiler
         // args with the `undefined` sentinel on the value-call path (covers sync + async).
         MarkPadsUndefined(methodBuilder);
         MarkFunctionLength(methodBuilder, method.Parameters);
+        if (!method.IsGenerator)
+            MarkNonConstructible(methodBuilder);
 
         var typeBuilder = _classExprs.Builders[classExpr];
 
@@ -1195,6 +1199,7 @@ public partial class ILCompiler
 
         foreach (var (accessor, methodBuilder) in list)
         {
+            MarkNonConstructible(methodBuilder);
             var il = methodBuilder.GetILGenerator();
             var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, accessor.IsStatic ? null : fieldsField, methodBuilder);
             ctx.IsInstanceMethod = !accessor.IsStatic;
@@ -1312,6 +1317,7 @@ public partial class ILCompiler
 
         if (methodBuilder == null) return;
 
+        MarkNonConstructible(methodBuilder);
         var il = methodBuilder.GetILGenerator();
         var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, fieldsField, methodBuilder);
         ctx.IsInstanceMethod = true;

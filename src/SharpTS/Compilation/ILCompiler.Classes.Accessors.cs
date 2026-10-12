@@ -200,6 +200,7 @@ public partial class ILCompiler
     /// </summary>
     private void EmitAccessorBody(TypeBuilder typeBuilder, Stmt.Accessor accessor, MethodBuilder methodBuilder, FieldInfo fieldsField)
     {
+        MarkNonConstructible(methodBuilder);
         string className = typeBuilder.Name;
 
         // Apply accessor-level decorators as .NET attributes

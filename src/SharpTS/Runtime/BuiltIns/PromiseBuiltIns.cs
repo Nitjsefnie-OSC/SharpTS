@@ -403,7 +403,7 @@ public static class PromiseBuiltIns
     private static bool IsConstructorSpecies(object? value) => value switch
     {
         SharpTSClass => true,
-        SharpTSFunction => true,
+        SharpTSFunction { IsConstructible: true } => true,
         SharpTSArrowFunction arrow => arrow.HasOwnThis,
         SharpTSBuiltInConstructor => true,
         _ => false

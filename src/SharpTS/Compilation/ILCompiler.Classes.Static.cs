@@ -498,6 +498,8 @@ public partial class ILCompiler
         // covers sync, async, and generator (#692) static methods (same builder).
         MarkPadsUndefined(_classes.StaticMethods[className][method.Name.Lexeme]);
         MarkFunctionLength(_classes.StaticMethods[className][method.Name.Lexeme], method.Parameters);
+        if (!method.IsGenerator)
+            MarkNonConstructible(_classes.StaticMethods[className][method.Name.Lexeme]);
 
         // Static async generator methods (#778) hoist their guest receiver without a CLR instance
         // parameter. Checked FIRST since a `static async *m()` has both IsAsync and

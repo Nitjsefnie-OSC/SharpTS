@@ -206,7 +206,10 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, _types.ObjectDefaultCtor); il.Emit(OpCodes.Ret);
         var method = type.DefineMethod("Invoke", MethodAttributes.Public, original.ReturnType,
             [_types.Object, .. source.Parameters.Select(parameter => parameter.IsRest ? _types.ListOfObject : _types.Object)]);
-        MarkExpectsThis(method); MarkNonConstructible(method); MarkPadsUndefined(method);
+        MarkExpectsThis(method);
+        if (!source.IsGenerator)
+            MarkNonConstructible(method);
+        MarkPadsUndefined(method);
         MarkFunctionLength(method, source.Parameters); MarkFunctionName(method, original.Name);
         EmitGuestMethodValueBody(method, source, () =>
         {

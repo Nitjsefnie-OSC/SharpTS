@@ -2158,7 +2158,7 @@ public partial class Interpreter
             else if (method.IsGenerator)
                 func = new SharpTSGeneratorFunction(method, _environment);
             else
-                func = new SharpTSFunction(method, _environment);
+                func = new SharpTSFunction(method, _environment, isConstructible: false);
 
             // Computed method keys (`[Symbol.iterator]()`, `[expr]()`) are evaluated at
             // class-definition time, like computed field keys and accessors. Symbol keys land
@@ -2221,7 +2221,7 @@ public partial class Interpreter
                     accessor.Body,
                     accessor.ReturnType, IsStatic: accessor.IsStatic);
 
-                SharpTSFunction func = new(funcStmt, _environment);
+                SharpTSFunction func = new(funcStmt, _environment, isConstructible: false);
                 bool isGetter = accessor.Kind.Type == TokenType.GET;
 
                 // Computed accessor names (`get [Symbol.toStringTag]()`,

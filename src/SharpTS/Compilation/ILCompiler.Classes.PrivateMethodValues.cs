@@ -91,7 +91,8 @@ public partial class ILCompiler
                 [_types.Object, .. source.Parameters.Select(parameter => parameter.IsRest ? typeof(List<object>) : _types.Object)]);
             method.DefineParameter(1, ParameterAttributes.None, "__this");
             MarkExpectsThis(method);
-            MarkNonConstructible(method);
+            if (!source.IsGenerator)
+                MarkNonConstructible(method);
             MarkPadsUndefined(method);
             MarkFunctionLength(method, source.Parameters);
             MarkFunctionName(method, $"#{name}");

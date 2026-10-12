@@ -459,16 +459,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, inputs.FunctionBindings.BoundCtor);
         il.Emit(OpCodes.Ret);
 
-        // For non-$TSFunction targets (e.g. $FunctionCallWrapper, another
-        // $BoundTSFunction), return a $FunctionBindWrapper. Its Invoke
-        // handles this generically (delegates through InvokeMethodValue with
-        // the wrapped target). We don't capture thisArg/boundArgs in this
-        // wrapper today — that's a narrow gap, but the propertyHelper.js
-        // pattern only chains a single `.bind(thisArg)` (no additional bound
-        // args), and the receiver is set via the wrapper's own dispatch.
+        // Constructor Type values and already-bound callables need the generic
+        // bound function, retaining both receiver and arguments for call/new dispatch.
         il.MarkLabel(notTSFunctionLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Newobj, inputs.FunctionBindings.BindCtor);
+        il.Emit(OpCodes.Ldloc, thisArgLocal);
+        il.Emit(OpCodes.Ldloc, boundArgsLocal);
+        il.Emit(OpCodes.Newobj, inputs.FunctionBindings.AnyCtor);
         il.Emit(OpCodes.Ret);
 
         return method;

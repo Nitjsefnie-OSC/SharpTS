@@ -152,8 +152,7 @@ public class ClassCallableDescriptorTests
             TestHarness.Run(source, mode));
     }
 
-    // Compiled controls have separate failures in #2002, #2004, and #2005.
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void NativeConstructorsRemainCallableAndInheritedMethodsAreNotOwn(ExecutionMode mode)
     {
         const string source = """

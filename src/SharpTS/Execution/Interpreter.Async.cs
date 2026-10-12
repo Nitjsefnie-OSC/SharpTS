@@ -263,6 +263,18 @@ public partial class Interpreter
             return new SharpTSReadableAsyncIterator(readable);
         }
 
+        if (iterable is SharpTSClass klass)
+        {
+            var asyncIteratorFn = GetClassSymbolValue(klass, SharpTSSymbol.AsyncIterator);
+            if (asyncIteratorFn is null or SharpTSUndefined)
+                return null;
+            if (asyncIteratorFn is not ISharpTSCallable)
+                throw new ThrowException(new SharpTSTypeError(
+                    "[Symbol.asyncIterator] must be a function"));
+            asyncIteratorFn = BindMemberCallReceiver(asyncIteratorFn, klass);
+            return ((ISharpTSCallable)asyncIteratorFn!).Call(this, []);
+        }
+
         if (iterable is SharpTSObject obj)
         {
             var asyncIteratorFn = obj.GetBySymbol(SharpTSSymbol.AsyncIterator);

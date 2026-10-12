@@ -888,6 +888,20 @@ public partial class Interpreter
     /// <returns>An enumerable of values if the object has a Symbol.iterator, null otherwise.</returns>
     private IEnumerable<object?>? TryGetSymbolIterator(object? iterable)
     {
+        // Class constructors can implement the protocol through static methods or getters.
+        // Property reads preserve the canonical function; acquisition supplies the receiver.
+        if (iterable is SharpTSClass klass)
+        {
+            var iteratorFn = GetClassSymbolValue(klass, SharpTSSymbol.Iterator);
+            if (iteratorFn is null or SharpTSUndefined)
+                return null;
+            if (iteratorFn is not ISharpTSCallable)
+                throw new ThrowException(new SharpTSTypeError(
+                    "[Symbol.iterator] must be a function"));
+            iteratorFn = BindMemberCallReceiver(iteratorFn, klass)!;
+            return EnumerateWithIteratorProtocol(iteratorFn);
+        }
+
         // Arrays can replace their inherited @@iterator with an own method.
         // Consult that override before falling back to indexed enumeration.
         if (iterable is SharpTSArray array && array.HasSymbolProperty(SharpTSSymbol.Iterator))

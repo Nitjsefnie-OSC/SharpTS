@@ -102,31 +102,16 @@ public partial class CompilationContext
     public IReadOnlyDictionary<string, string>? LexicalEnclosingClasses { get; set; }
 
     public string ResolvePrivateFieldOwner(string fallbackClassName, string fieldName)
-    {
-        if (ClassRegistry?.GetPrivateFieldNames(fallbackClassName)?.Contains(fieldName) == true
-            || ClassRegistry?.TryGetStaticPrivateField(fallbackClassName, fieldName, out _) == true)
-        {
-            return fallbackClassName;
-        }
-
-        if (EnclosingClassNames != null)
-        {
-            foreach (var className in EnclosingClassNames)
-            {
-                if (ClassRegistry?.GetPrivateFieldNames(className)?.Contains(fieldName) == true
-                    || ClassRegistry?.TryGetStaticPrivateField(className, fieldName, out _) == true)
-                {
-                    return className;
-                }
-            }
-        }
-        return fallbackClassName;
-    }
+        => ResolvePrivateNameOwner(fallbackClassName, fieldName);
 
     public string ResolvePrivateMethodOwner(string fallbackClassName, string methodName)
+        => ResolvePrivateNameOwner(fallbackClassName, methodName);
+
+    // Private identifiers share one lexical namespace across fields, methods,
+    // and both class facets. Resolve the name before selecting its member kind.
+    private string ResolvePrivateNameOwner(string fallbackClassName, string name)
     {
-        if (ClassRegistry?.TryGetPrivateMethod(fallbackClassName, methodName, out _) == true
-            || ClassRegistry?.TryGetStaticPrivateMethod(fallbackClassName, methodName, out _) == true)
+        if (DeclaresPrivateName(fallbackClassName, name))
         {
             return fallbackClassName;
         }
@@ -135,8 +120,7 @@ public partial class CompilationContext
         {
             foreach (var className in EnclosingClassNames)
             {
-                if (ClassRegistry?.TryGetPrivateMethod(className, methodName, out _) == true
-                    || ClassRegistry?.TryGetStaticPrivateMethod(className, methodName, out _) == true)
+                if (DeclaresPrivateName(className, name))
                 {
                     return className;
                 }
@@ -144,6 +128,11 @@ public partial class CompilationContext
         }
         return fallbackClassName;
     }
+
+    private bool DeclaresPrivateName(string owner, string name)
+        => ClassRegistry?.GetPrivateElements(owner) is { } elements
+            && (elements.FieldNames.Contains(name) || elements.StaticFields.ContainsKey(name)
+                || elements.Methods.ContainsKey(name) || elements.StaticMethods.ContainsKey(name));
 
     // ============================================
     // @lock Decorator Support: Thread-safe Method Execution

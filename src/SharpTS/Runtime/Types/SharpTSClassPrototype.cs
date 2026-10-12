@@ -25,6 +25,10 @@ public sealed class SharpTSClassPrototype : ISharpTSMutableBuiltIn
     {
         _klass = klass;
         _overlay = new(IsBuiltIn);
+        foreach (var (name, descriptor) in klass.OwnInstanceAccessorDescriptors())
+            _overlay.DefineProperty(name, descriptor);
+        foreach (var (key, descriptor) in klass.OwnInstanceSymbolAccessorDescriptors())
+            _overlay.DefineProperty(key, descriptor);
     }
 
     public SharpTSClass Class => _klass;
@@ -49,6 +53,14 @@ public sealed class SharpTSClassPrototype : ISharpTSMutableBuiltIn
     public bool HasSymbolProperty(SharpTSSymbol key) => _overlay.HasSymbolProperty(key);
     public object? GetBySymbol(SharpTSSymbol key) => _overlay.GetBySymbol(key);
     public void SetBySymbol(SharpTSSymbol key, object? value) => _overlay.SetBySymbol(key, value);
+    internal void DefineDeclaredSymbolAccessor(SharpTSSymbol key, SharpTSPropertyDescriptor descriptor)
+        => _overlay.DefineProperty(key, descriptor);
+    public bool DefineSymbolProperty(SharpTSSymbol key, SharpTSPropertyDescriptor descriptor)
+        => _overlay.DefineProperty(key, descriptor);
+    public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(SharpTSSymbol key)
+        => _overlay.GetOwnPropertyDescriptor(key);
+    public bool DeleteBySymbolStrict(SharpTSSymbol key, bool strictMode)
+        => _overlay.DeleteBySymbolStrict(key, strictMode);
 
     public object? GetMember(string name)
     {

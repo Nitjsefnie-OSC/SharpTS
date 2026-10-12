@@ -211,6 +211,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                         is not (null or SharpTSUndefined),
                 SharpTSObject obj => obj.HasSymbolProperty(sym),
                 SharpTSInstance inst => inst.HasSymbolProperty(sym),
+                SharpTSClass klass => klass.GetOwnStaticSymbolPropertyDescriptor(sym) is not null,
+                SharpTSClassPrototype prototype => prototype.GetOwnPropertyDescriptor(sym) is not null,
                 SharpTSMath math => math.GetOwnPropertyDescriptor(sym) is not null,
                 SharpTSStringPrototype stringPrototype
                     => stringPrototype.GetOwnPropertyDescriptor(sym) is not null,

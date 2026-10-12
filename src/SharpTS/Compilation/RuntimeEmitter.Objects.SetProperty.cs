@@ -1247,6 +1247,23 @@ public partial class RuntimeEmitter
             var newTypeDescriptorLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldloc, existingTypeDescriptorLocal);
             il.Emit(OpCodes.Brfalse, newTypeDescriptorLabel);
+            // Computed static accessors now live in the descriptor store;
+            // invoke their current setter before applying data-slot writability.
+            var existingTypeSetter = il.DeclareLocal(_types.Object);
+            var existingTypeData = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, existingTypeDescriptorLocal);
+            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, existingTypeSetter);
+            il.Emit(OpCodes.Ldloc, existingTypeSetter);
+            il.Emit(OpCodes.Brfalse, existingTypeData);
+            il.Emit(OpCodes.Ldloc, existingTypeSetter);
+            il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+            il.Emit(OpCodes.Brtrue, typeSetSkipLabel);
+            EmitInvokePdsSetterWithValueAndReturn(il, inputs.InvokeMethodValue, existingTypeSetter);
+            il.MarkLabel(existingTypeData);
+            il.Emit(OpCodes.Ldloc, existingTypeDescriptorLocal);
+            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
+            il.Emit(OpCodes.Brtrue, typeSetSkipLabel);
             il.Emit(OpCodes.Ldloc, existingTypeDescriptorLocal);
             il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorWritable.GetGetMethod()!);
             il.Emit(OpCodes.Brfalse, typeSetSkipLabel);

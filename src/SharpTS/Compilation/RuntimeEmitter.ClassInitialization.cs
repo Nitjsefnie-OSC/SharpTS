@@ -5,7 +5,8 @@ namespace SharpTS.Compilation;
 
 public partial class RuntimeEmitter
 {
-    private void EmitRunClassDefinition(TypeBuilder typeBuilder, EmittedClassInitializationRuntime initialization)
+    private void EmitRunClassDefinition(TypeBuilder typeBuilder, EmittedClassInitializationRuntime initialization,
+        Type userClassInterface)
     {
         // RunClassDefinition(Type): CLR wraps exceptions escaping a type
         // initializer in TypeInitializationException. JavaScript class
@@ -22,6 +23,13 @@ public partial class RuntimeEmitter
             var initializationException = il.DeclareLocal(typeof(TypeInitializationException));
             var returnLabel = il.DefineLabel();
             var throwLabel = il.DefineLabel();
+
+            var constructorOwner = il.DeclareLocal(_types.Type);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stloc, constructorOwner);
+            var initializedOwner = EmitStaticMemberLookupOwner(il, constructorOwner, userClassInterface);
+            il.Emit(OpCodes.Ldloc, initializedOwner);
+            il.Emit(OpCodes.Starg_S, (byte)0);
 
             il.BeginExceptionBlock();
             il.Emit(OpCodes.Ldarg_0);

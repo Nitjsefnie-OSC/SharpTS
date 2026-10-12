@@ -745,6 +745,13 @@ public partial class Interpreter
         object? current = obj;
         for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
         {
+            if (current is SharpTSClassPrototype prototype)
+            {
+                if (TryReadDescriptor(prototype.GetOwnPropertyDescriptor(symbol), receiver, out var value))
+                    return value;
+                current = prototype.Class.Superclass?.Prototype ?? (object)GetObjectPrototype();
+                continue;
+            }
             if (current is SharpTSObject record)
             {
                 if (record.TryGetSymbolAccessor(symbol, out var getter, out _))

@@ -124,6 +124,13 @@ public static class ReflectBuiltIns
             "deleteProperty" => BuiltInMethod.CreateV2("deleteProperty", 2, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.deleteProperty requires a target object.");
+                if (args[1].ToObject() is SharpTSSymbol symbol)
+                {
+                    if (target is SharpTSClass klassBySymbol)
+                        return RuntimeValue.FromBoolean(klassBySymbol.DeleteStaticSymbolProperty(symbol, false));
+                    if (target is SharpTSClassPrototype prototypeBySymbol)
+                        return RuntimeValue.FromBoolean(prototypeBySymbol.DeleteBySymbolStrict(symbol, false));
+                }
                 var propertyKey = args[1].ToObject()?.ToString() ?? "";
                 switch (target)
                 {

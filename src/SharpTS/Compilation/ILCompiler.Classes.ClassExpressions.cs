@@ -64,10 +64,12 @@ public partial class ILCompiler
 
         // Handle generic type parameters FIRST (before resolving superclass type args)
         GenericTypeParameterBuilder[]? classGenericParams = null;
+        Type[] canonicalArguments = [];
         if (classExpr.TypeParams != null && classExpr.TypeParams.Count > 0)
         {
             string[] typeParamNames = classExpr.TypeParams.Select(tp => tp.Name.Lexeme).ToArray();
             classGenericParams = typeBuilder.DefineGenericParameters(typeParamNames);
+            canonicalArguments = Enumerable.Repeat(_types.Object, classGenericParams.Length).ToArray();
 
             // Apply constraints
             for (int i = 0; i < classExpr.TypeParams.Count; i++)
@@ -76,6 +78,7 @@ public partial class ILCompiler
                 if (constraint != null)
                 {
                     Type constraintType = ResolveConstraintType(constraint);
+                    canonicalArguments[i] = constraintType;
                     if (constraintType.IsInterface)
                         classGenericParams[i].SetInterfaceConstraints(constraintType);
                     else
@@ -84,7 +87,7 @@ public partial class ILCompiler
             }
         }
 
-        _classes.GenericParameters.Declare(typeBuilder, classGenericParams ?? []);
+        _classes.GenericParameters.Declare(typeBuilder, classGenericParams ?? [], canonicalArguments);
 
         EmitTypeDefinitions.AddInterfaceImplementation(typeBuilder, _runtime.ClassDefinitions.InstanceInterface);
         var definitionField = typeBuilder.DefineField("$definition", _types.Object, FieldAttributes.Assembly);

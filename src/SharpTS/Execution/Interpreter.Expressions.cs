@@ -976,6 +976,7 @@ public partial class Interpreter
         (SharpTSObject sharpObj, _) => new IndexTarget.ObjectString(sharpObj, ToPropertyKeyString(index)),
         (SharpTSInstance instance, _) => new IndexTarget.InstanceString(instance, ToPropertyKeyString(index)),
         (SharpTSGlobalThis globalThis, string globalKey) => new IndexTarget.GlobalThis(globalThis, globalKey),
+        (SharpTSClassPrototype prototype, SharpTSSymbol symbol) => new IndexTarget.ClassPrototypeSymbol(prototype, symbol),
         (ISharpTSMutableBuiltIn builtInPrototype, _) =>
             new IndexTarget.BuiltInPrototypeString(
                 builtInPrototype, ToPropertyKeyString(index)),
@@ -1373,6 +1374,7 @@ public partial class Interpreter
             // after ToPropertyKey normalization.
             IndexTarget.ClassString t => EvaluateGetOnClass(t.Target, t.Key),
             IndexTarget.ClassSymbol t => GetClassSymbolValue(t.Target, t.Key),
+            IndexTarget.ClassPrototypeSymbol t => GetSymbolPropertyValue(t.Target, t.Key),
             IndexTarget.GlobalThis t => ResolveGlobalThisRead(t.Target, t.Key),
             IndexTarget.BuiltInPrototypeString t => ReadBuiltInPrototypeIndex(t.Target, t.Key),
             IndexTarget.HeadersString t => (object?)t.Target.Get(t.Key) ?? SharpTSUndefined.Instance,
@@ -1454,6 +1456,11 @@ public partial class Interpreter
     {
         object? own = instance.GetBySymbol(symbol);
         if (own != null) return own;
+        if (instance.GetClass().HasInstanceAccessorDeclaration(symbol))
+        {
+            return TryReadDescriptor(instance.GetClass().FindInstanceAccessorDescriptor(symbol), instance, out var value)
+                ? value : SharpTSUndefined.Instance;
+        }
         // Declared symbol-keyed method (`[Symbol.iterator]() {...}`) — returned bound, like a
         // normal method read (`instance[Symbol.iterator]` yields the callable).
         if (instance.GetClass().FindSymbolMethod(symbol) is { } method)
@@ -1473,6 +1480,8 @@ public partial class Interpreter
     /// </summary>
     private object? GetClassSymbolValue(SharpTSClass klass, SharpTSSymbol symbol)
     {
+        if (TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), klass, out var accessorValue))
+            return accessorValue;
         if (klass.FindStaticSymbolGetter(symbol) is { } getter)
         {
             return getter.BindStatic(klass).Call(this, []);
@@ -1860,7 +1869,8 @@ public partial class Interpreter
                 // write lands in _fields while reads keep hitting the getter, silently
                 // desynchronizing the two (#290). Plain data writes stay on SetRawField so the
                 // defineProperty `writable:false` flag continues to be honored.
-                if (t.Target.GetClass().FindSetter(t.Key) != null
+                if (t.Target.GetClass().HasInstanceAccessorDeclaration(t.Key)
+                    || t.Target.GetClass().FindSetter(t.Key) != null
                     || t.Target.GetClass().HasInstanceAutoAccessor(t.Key))
                 {
                     // Set/SetStrict invoke the setter only when the instance has an interpreter
@@ -1876,6 +1886,16 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.InstanceSymbol t:
+                if (!t.Target.HasSymbolProperty(t.Key) && t.Target.GetClass().HasInstanceAccessorDeclaration(t.Key))
+                {
+                    if (!TryAssignThroughDescriptor(t.Target.GetClass().FindInstanceAccessorDescriptor(t.Key),
+                            t.Target, t.Key.ToString(), value, strictMode))
+                    {
+                        if (strictMode) t.Target.SetBySymbolStrict(t.Key, value, strictMode);
+                        else t.Target.SetBySymbol(t.Key, value);
+                    }
+                    break;
+                }
                 // A declared symbol-keyed setter (`set [Symbol.x](v)`) intercepts
                 // assignment unless shadowed by an own symbol data property.
                 if (t.Target.GetBySymbol(t.Key) == null
@@ -1895,12 +1915,20 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.ClassSymbol t:
+                if (TryAssignThroughDescriptor(t.Target.FindStaticSymbolAccessorDescriptor(t.Key),
+                        t.Target, t.Key.ToString(), value, strictMode)) break;
                 if (t.Target.FindStaticSymbolSetter(t.Key) is { } staticSymSetter)
                 {
                     staticSymSetter.BindStatic(t.Target).Call(this, [value]);
                     break;
                 }
                 t.Target.SetStaticBySymbol(t.Key, value);
+                break;
+
+            case IndexTarget.ClassPrototypeSymbol t:
+                if (!TryAssignThroughDescriptor(t.Target.GetOwnPropertyDescriptor(t.Key),
+                        t.Target, t.Key.ToString(), value, strictMode))
+                    t.Target.SetBySymbol(t.Key, value);
                 break;
 
             case IndexTarget.GlobalThis t:

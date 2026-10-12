@@ -43,7 +43,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, owner);
         il.Emit(OpCodes.Stloc, methodOwnerLocal);
         // TypeScript class type parameters are erased for static members.
-        // Reflect over the object-instantiated owner without changing the
+        // Respect their CLR bounds when choosing the canonical owner, without changing the
         // constructor value used as the descriptor/prototype identity.
         var methodOwnerReady = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, methodOwnerLocal);
@@ -65,6 +65,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericArguments"));
         il.Emit(OpCodes.Stloc, argumentsLocal);
         var argumentIndex = il.DeclareLocal(_types.Int32);
+        var argumentType = il.DeclareLocal(_types.Type);
+        var constraints = il.DeclareLocal(_types.MakeArrayType(_types.Type));
+        var remainingBounds = il.DeclareLocal(_types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, argumentIndex);
         var fillArguments = il.DefineLabel();
@@ -73,8 +76,46 @@ public partial class RuntimeEmitter
         il.MarkLabel(fillArguments);
         il.Emit(OpCodes.Ldloc, argumentsLocal);
         il.Emit(OpCodes.Ldloc, argumentIndex);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, argumentType);
+        il.Emit(OpCodes.Ldloc, argumentsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, remainingBounds);
+        var followConstraint = il.DefineLabel();
+        var useObject = il.DefineLabel();
+        var storeArgument = il.DefineLabel();
+        il.MarkLabel(followConstraint);
+        il.Emit(OpCodes.Ldloc, argumentType);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsGenericParameter")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, storeArgument);
+        // A valid parameter chain cannot visit more parameters than its owner.
+        // Bound the walk without introducing a generic collection dependency.
+        il.Emit(OpCodes.Ldloc, remainingBounds);
+        il.Emit(OpCodes.Brfalse, useObject);
+        il.Emit(OpCodes.Ldloc, remainingBounds);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, remainingBounds);
+        il.Emit(OpCodes.Ldloc, argumentType);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericParameterConstraints"));
+        il.Emit(OpCodes.Stloc, constraints);
+        il.Emit(OpCodes.Ldloc, constraints);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Brfalse, useObject);
+        il.Emit(OpCodes.Ldloc, constraints);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, argumentType);
+        il.Emit(OpCodes.Br, followConstraint);
+        il.MarkLabel(useObject);
         il.Emit(OpCodes.Ldtoken, _types.Object);
         il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Stloc, argumentType);
+        il.MarkLabel(storeArgument);
+        il.Emit(OpCodes.Ldloc, argumentsLocal);
+        il.Emit(OpCodes.Ldloc, argumentIndex);
+        il.Emit(OpCodes.Ldloc, argumentType);
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Ldloc, argumentIndex);
         il.Emit(OpCodes.Ldc_I4_1);

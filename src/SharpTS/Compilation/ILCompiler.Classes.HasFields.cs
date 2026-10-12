@@ -1153,6 +1153,64 @@ public partial class ILCompiler
     }
     private void EmitComputedInstanceGetterFallback(ILGenerator il)
     {
+        // Computed declaration accessors are installed as live prototype
+        // descriptors. Read that state before the legacy method registry so
+        // replacement, setter-only accessors, and data values stay authoritative.
+        var prototype = il.DeclareLocal(_types.Object);
+        var descriptor = il.DeclareLocal(_runtime.DescriptorStorage.DescriptorType);
+        var nextPrototype = il.DefineLabel();
+        var descriptorLoop = il.DefineLabel();
+        var noDescriptor = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _runtime.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.MarkLabel(descriptorLoop);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Brfalse, noDescriptor);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _runtime.DescriptorStorage.GetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descriptor);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Brfalse, nextPrototype);
+        var descriptorGetter = il.DeclareLocal(_types.Object);
+        var dataDescriptor = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, _runtime.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, descriptorGetter);
+        il.Emit(OpCodes.Ldloc, descriptorGetter);
+        il.Emit(OpCodes.Brfalse, dataDescriptor);
+        var invokeDescriptorGetter = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descriptorGetter);
+        il.Emit(OpCodes.Isinst, _runtime.Sentinels.UndefinedType);
+        il.Emit(OpCodes.Brfalse, invokeDescriptorGetter);
+        il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(invokeDescriptorGetter);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, descriptorGetter);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, _runtime.Invocation.Method);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(dataDescriptor);
+        var descriptorValue = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, _runtime.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, descriptorValue);
+        il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(descriptorValue);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, _runtime.DescriptorStorage.DescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(nextPrototype);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Call, _runtime.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.Emit(OpCodes.Br, descriptorLoop);
+        il.MarkLabel(noDescriptor);
+
         var missing = il.DefineLabel();
         var getter = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);

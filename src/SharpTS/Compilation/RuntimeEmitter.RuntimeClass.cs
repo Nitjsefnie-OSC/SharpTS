@@ -247,6 +247,7 @@ public partial class RuntimeEmitter
             runtime.ClassPrototypes,
             runtime.ObjectPrototypes,
             runtime.DescriptorStorage,
+            runtime.ObjectFields.Interface,
             classPrototypeCacheField
         );
 
@@ -254,7 +255,7 @@ public partial class RuntimeEmitter
         EmitCancellationExceptionFactory(typeBuilder, runtime.Cancellation);
         runtime.Cancellation.CompleteEmission();
 
-        EmitRunClassDefinition(typeBuilder, runtime.ClassInitialization);
+        EmitRunClassDefinition(typeBuilder, runtime.ClassInitialization, runtime.ObjectFields.Interface);
         runtime.ClassInitialization.CompleteEmission();
 
         // Static field for Random

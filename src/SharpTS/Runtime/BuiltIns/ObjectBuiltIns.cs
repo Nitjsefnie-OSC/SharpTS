@@ -591,8 +591,12 @@ public static partial class ObjectBuiltIns
                     return target;
                 // `Object.defineProperty(Error.prototype, Symbol.toStringTag, …)` and friends.
                 case SharpTSClassPrototype symClassProto:
-                    if (descriptorHasValue)
-                        symClassProto.SetBySymbol(symKey, descriptor.Value);
+                    if (!symClassProto.DefineSymbolProperty(symKey, descriptor))
+                        throw new ThrowException(new SharpTSTypeError("Cannot redefine symbol property"));
+                    return target;
+                case SharpTSClass symClass:
+                    if (!symClass.DefineStaticSymbolProperty(symKey, descriptor))
+                        throw new ThrowException(new SharpTSTypeError("Cannot redefine symbol property"));
                     return target;
                 default:
                     break;
@@ -1087,6 +1091,10 @@ public static partial class ObjectBuiltIns
     {
         switch (target)
         {
+            case SharpTSClass klass when klass.GetOwnStaticSymbolPropertyDescriptor(key) is { } descriptor:
+                return descriptor.ToObject();
+            case SharpTSClassPrototype prototype when prototype.GetOwnPropertyDescriptor(key) is { } descriptor:
+                return descriptor.ToObject();
             case SharpTSObject obj when obj.GetOwnPropertyDescriptor(key) is { } descriptor:
                 return descriptor.ToObject();
             case SharpTSInstance inst when inst.HasSymbolProperty(key):

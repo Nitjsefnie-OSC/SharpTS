@@ -43,6 +43,7 @@ public abstract record IndexTarget
     /// </summary>
     public sealed record ClassString(SharpTSClass Target, string Key) : IndexTarget;
     public sealed record ClassSymbol(SharpTSClass Target, SharpTSSymbol Key) : IndexTarget;
+    public sealed record ClassPrototypeSymbol(SharpTSClassPrototype Target, SharpTSSymbol Key) : IndexTarget;
 
     // Get-only targets
     public sealed record EnumReverse(SharpTSEnum Target, double Index) : IndexTarget;

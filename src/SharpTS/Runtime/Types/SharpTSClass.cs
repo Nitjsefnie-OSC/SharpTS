@@ -19,7 +19,7 @@ namespace SharpTS.Runtime.Types;
 /// </remarks>
 /// <seealso cref="SharpTSInstance"/>
 /// <seealso cref="SharpTSFunction"/>
-public class SharpTSClass(
+public partial class SharpTSClass(
     string name,
     SharpTSClass? superclass,
     Dictionary<string, ISharpTSCallable> methods,
@@ -324,7 +324,9 @@ public class SharpTSClass(
     }
 
     internal SharpTSPropertyDescriptor? GetOwnStaticPropertyDescriptor(string name)
-        => name == "prototype"
+    {
+        MaterializeStaticAccessors();
+        return name == "prototype"
             ? new SharpTSPropertyDescriptor(Prototype, writable: false, enumerable: false, configurable: false)
                 { HasValue = true }
             : _staticPropertyObject?.GetOwnPropertyDescriptor(name)
@@ -334,12 +336,13 @@ public class SharpTSClass(
                 : !_deletedStaticMethods.Contains(name) && _staticMethods.TryGetValue(name, out var method)
                     ? SharpTSPropertyDescriptor.ForMethod(method)
                     : null);
+    }
 
     internal SharpTSPropertyDescriptor? FindStaticPropertyDescriptor(string name)
         => name == "prototype"
             ? GetOwnStaticPropertyDescriptor(name)
             : HasOwnStaticMember(name)
-                ? _staticPropertyObject?.GetOwnPropertyDescriptor(name)
+                ? GetOwnStaticPropertyDescriptor(name)
                 : Superclass?.FindStaticPropertyDescriptor(name);
 
     internal bool HasOwnStaticMember(string name)
@@ -347,13 +350,13 @@ public class SharpTSClass(
             || _staticProperties.ContainsKey(name)
             || _staticPropertyObject?.GetOwnPropertyDescriptor(name) is not null
             || !_deletedStaticMethods.Contains(name) && _staticMethods.ContainsKey(name)
-            || _staticGetters.ContainsKey(name)
-            || _staticSetters.ContainsKey(name)
+            || !_staticAccessorsMaterialized && (_staticGetters.ContainsKey(name) || _staticSetters.ContainsKey(name))
             || _staticAutoAccessorStorage.ContainsKey(name);
 
     internal bool DeleteStaticProperty(string name)
     {
         if (name == "prototype") return false;
+        MaterializeStaticAccessors();
         if (_staticPropertyObject is not null && !_staticPropertyObject.DeleteProperty(name))
             return false;
         _staticProperties.Remove(name);
@@ -373,6 +376,7 @@ public class SharpTSClass(
                 && !(descriptor.HasEnumerable && descriptor.Enumerable)
                 && !(descriptor.HasConfigurable && descriptor.Configurable)
                 && (!descriptor.HasValue || PropertySemantics.SameValue(descriptor.Value, Prototype));
+        MaterializeStaticAccessors();
         _staticPropertyObject ??= new SharpTSObject(_staticProperties);
         if (!_staticPropertyObject.DefineProperty(name, descriptor))
             return false;
@@ -389,6 +393,11 @@ public class SharpTSClass(
 
     public void SetStaticBySymbol(SharpTSSymbol symbol, object? value)
     {
+        if (_staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol) is not null)
+        {
+            _staticSymbolAccessorObject.SetBySymbol(symbol, value);
+            return;
+        }
         (_staticSymbolProperties ??= [])[symbol] = value;
     }
 
@@ -431,6 +440,11 @@ public class SharpTSClass(
             case (false, true): (_symbolGetters ??= [])[symbol] = func; break;
             case (false, false): (_symbolSetters ??= [])[symbol] = func; break;
         }
+        var descriptor = OwnSymbolAccessorDescriptor(symbol, isStatic);
+        if (isStatic)
+            (_staticSymbolAccessorObject ??= new SharpTSObject([])).DefineProperty(symbol, descriptor!);
+        else
+            _prototype?.DefineDeclaredSymbolAccessor(symbol, descriptor!);
     }
 
     public SharpTSFunction? FindSymbolGetter(SharpTSSymbol symbol)
@@ -440,10 +454,12 @@ public class SharpTSClass(
         => _symbolSetters?.GetValueOrDefault(symbol) ?? Superclass?.FindSymbolSetter(symbol);
 
     public SharpTSFunction? FindStaticSymbolGetter(SharpTSSymbol symbol)
-        => _staticSymbolGetters?.GetValueOrDefault(symbol) ?? Superclass?.FindStaticSymbolGetter(symbol);
+        => FindStaticSymbolAccessorDescriptor(symbol) is { } descriptor
+            ? descriptor.Get as SharpTSFunction : null;
 
     public SharpTSFunction? FindStaticSymbolSetter(SharpTSSymbol symbol)
-        => _staticSymbolSetters?.GetValueOrDefault(symbol) ?? Superclass?.FindStaticSymbolSetter(symbol);
+        => FindStaticSymbolAccessorDescriptor(symbol) is { } descriptor
+            ? descriptor.Set as SharpTSFunction : null;
 
     // Symbol-keyed declared methods (`[Symbol.iterator]() {...}`, the generator
     // `*[Symbol.iterator]()` / async `async *[Symbol.asyncIterator]()` forms, and the
@@ -514,18 +530,22 @@ public class SharpTSClass(
 
     public SharpTSFunction? FindStaticGetter(string name)
     {
-        if (_staticGetters.TryGetValue(name, out var getter)) return getter;
+        MaterializeStaticAccessors();
+        if (_staticPropertyObject?.GetOwnPropertyDescriptor(name) is { } descriptor)
+            return descriptor.Get as SharpTSFunction;
         return Superclass?.FindStaticGetter(name);
     }
 
     public SharpTSFunction? FindStaticSetter(string name)
     {
-        if (_staticSetters.TryGetValue(name, out var setter)) return setter;
+        MaterializeStaticAccessors();
+        if (_staticPropertyObject?.GetOwnPropertyDescriptor(name) is { } descriptor)
+            return descriptor.Set as SharpTSFunction;
         return Superclass?.FindStaticSetter(name);
     }
 
-    public bool HasStaticGetter(string name) => _staticGetters.ContainsKey(name) || (Superclass?.HasStaticGetter(name) ?? false);
-    public bool HasStaticSetter(string name) => _staticSetters.ContainsKey(name) || (Superclass?.HasStaticSetter(name) ?? false);
+    public bool HasStaticGetter(string name) => FindStaticGetter(name) != null;
+    public bool HasStaticSetter(string name) => FindStaticSetter(name) != null;
 
     #region ES2022 Private Class Elements
 

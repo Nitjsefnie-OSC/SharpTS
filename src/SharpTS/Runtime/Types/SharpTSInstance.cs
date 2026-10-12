@@ -195,6 +195,16 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public object? Get(Token name)
     {
         string propName = name.Lexeme;
+        if (!_fields.ContainsKey(propName) && _getters?.ContainsKey(propName) != true
+            && _setters?.ContainsKey(propName) != true && _klass.HasInstanceAccessorDeclaration(propName))
+        {
+            var descriptor = _klass.FindInstanceAccessorDescriptor(propName);
+            if (descriptor is { HasGet: true } or { HasSet: true })
+                return descriptor.Get is { } getter
+                    ? BuiltIns.FunctionBuiltIns.CallWithThis(_interpreter!, getter, this, [])
+                    : SharpTSUndefined.Instance;
+            return descriptor == null ? SharpTSUndefined.Instance : descriptor.Value;
+        }
 
         // Check cache first
         if (!_lookupCache.TryGetValue(propName, out PropertyResolution? resolution))
@@ -248,6 +258,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public void Set(Token name, object? value)
     {
         string propName = name.Lexeme;
+        if (TrySetClassAccessor(propName, value, false)) return;
 
         if (_setters?.TryGetValue(propName, out var ownSetter) == true)
         {
@@ -310,6 +321,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public void SetStrict(Token name, object? value, bool strictMode)
     {
         string propName = name.Lexeme;
+        if (TrySetClassAccessor(propName, value, strictMode)) return;
 
         if (_setters?.TryGetValue(propName, out var ownSetter) == true)
         {
@@ -365,6 +377,29 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         _fields[propName] = value;
 
         _lookupCache.TryAdd(propName, new PropertyResolution { Type = ResolutionType.Field });
+    }
+
+    private bool TrySetClassAccessor(string name, object? value, bool strictMode)
+    {
+        if (_fields.ContainsKey(name) || _getters?.ContainsKey(name) == true || _setters?.ContainsKey(name) == true
+            || !_klass.HasInstanceAccessorDeclaration(name)) return false;
+        var descriptor = _klass.FindInstanceAccessorDescriptor(name);
+        if (descriptor is not ({ HasGet: true } or { HasSet: true }))
+        {
+            if (descriptor is { HasWritable: true, Writable: false })
+            {
+                if (strictMode) throw StrictModeErrors.TypeError($"Cannot assign to read only property '{name}'");
+                return true;
+            }
+            if (strictMode) SetRawFieldStrict(name, value, strictMode);
+            else SetRawField(name, value);
+            return true;
+        }
+        if (descriptor.Set is { } setter)
+            BuiltIns.FunctionBuiltIns.CallWithThis(_interpreter!, setter, this, [value]);
+        else if (strictMode)
+            throw StrictModeErrors.TypeError($"Cannot set property '{name}' which has only a getter");
+        return true;
     }
 
     public bool HasProperty(string name)

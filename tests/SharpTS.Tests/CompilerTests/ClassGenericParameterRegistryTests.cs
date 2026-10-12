@@ -19,13 +19,18 @@ public sealed class ClassGenericParameterRegistryTests
         var parameters = first.DefineGenericParameters("T", "U").ToArray();
         var other = second.DefineGenericParameters("T");
         var registry = new ClassGenericParameterRegistry();
-        registry.Declare(first, parameters);
+        Type[] canonicalArguments = [typeof(string), typeof(object)];
+        registry.Declare(first, parameters, canonicalArguments);
         registry.Declare(second, other);
         var declared = registry.Require(first);
         parameters[0] = other[0];
+        canonicalArguments[0] = typeof(double);
         Assert.Same(first.GetGenericArguments()[0], declared[0]);
         Assert.Same(second.GetGenericArguments()[0], registry.Require(second)[0]);
+        Assert.Same(typeof(string), registry.RequireCanonicalArguments(first)[0]);
+        Assert.Same(typeof(object), registry.RequireCanonicalArguments(second)[0]);
         Assert.Throws<NotSupportedException>(() => ((IList<GenericTypeParameterBuilder>)declared).Clear());
+        Assert.Throws<NotSupportedException>(() => ((IList<Type>)registry.RequireCanonicalArguments(first)).Clear());
         registry.CompleteEmission([first, second]);
         Assert.True(registry.IsComplete);
         Assert.Same(declared, registry.Require(first));
@@ -47,6 +52,8 @@ public sealed class ClassGenericParameterRegistryTests
         Assert.Throws<InvalidOperationException>(() => registry.Declare(owner, []));
         Assert.Throws<InvalidOperationException>(() => registry.Declare(owner, foreignParameters));
         Assert.Throws<InvalidOperationException>(() => registry.Declare(owner, [parameters[1], parameters[0]]));
+        Assert.Throws<InvalidOperationException>(() => registry.Declare(owner, parameters, [typeof(string)]));
+        Assert.Throws<InvalidOperationException>(() => registry.RequireCanonicalArguments(owner));
         Assert.Throws<InvalidOperationException>(() => registry.Require(owner));
         registry.Declare(owner, parameters);
         Assert.Throws<InvalidOperationException>(() => registry.Declare(owner, parameters));

@@ -633,6 +633,7 @@ public partial class ILCompiler
         var ctx = CreateModuleMemberContext(il, smBuilder.MoveNextMethod);
         ctx.FieldsField = fieldsField;
         ctx.IsInstanceMethod = isInstanceMethod;
+        ctx.IsStaticSuperContext = !isInstanceMethod;
         ctx.IsStrictMode = true;
         // ES2022 Private Class Elements support for generator methods (a private generator threads
         // its QUALIFIED class name so nested private member access resolves under modules — #720).

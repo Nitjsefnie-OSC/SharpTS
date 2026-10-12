@@ -61,6 +61,7 @@ public partial class ILCompiler
         ctx.EmittingTypeBuilder = typeBuilder;
         ctx.CurrentClassName = qualifiedClassName; // Required for static member access via 'this'
         ctx.IsStaticConstructorContext = true;
+        ctx.IsStaticSuperContext = true;
         ApplyCapturedTopLevelVariableAccess(ctx);
 
         // Add class generic type parameters to context (required for static blocks in generic classes)
@@ -133,6 +134,7 @@ public partial class ILCompiler
             ctx.EmittingTypeBuilder = typeBuilder;
             ctx.CurrentClassName = qualifiedClassName;
             ctx.IsStaticConstructorContext = true;
+            ctx.IsStaticSuperContext = true;
             ApplyCapturedTopLevelVariableAccess(ctx);
             emitter = new ILEmitter(ctx);
         }
@@ -533,6 +535,7 @@ public partial class ILCompiler
         var ctx = CreateModuleMemberContext(il, methodBuilder);
         ctx.IsStrictMode = true;
         ctx.CurrentClassBuilder = typeBuilder;
+        ctx.IsStaticSuperContext = true;
         ctx.EmittingTypeBuilder = typeBuilder;
         ApplyLockDecoratorFields(ctx);
         // ES2022 Private Class Elements support

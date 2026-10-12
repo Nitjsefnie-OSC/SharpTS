@@ -126,7 +126,8 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         RuntimeEnvironment closure = _declaration.IsStatic && !_receiverBound
             ? new RuntimeEnvironment(_closure, strictMode: true) : _closure;
         RuntimeEnvironment environment = new(closure,
-            strictMode: _declaration.IsPrivate || _declaration.IsStatic ? true : null) { PrivateClass = PrivateOwner };
+            strictMode: _declaration.IsPrivate || _declaration.IsStatic ? true : null)
+            { PrivateClass = PrivateOwner, StaticSuper = _declaration.IsStatic };
         if (_declaration.IsPrivate || _declaration.IsStatic)
         {
             environment.Define("this", _receiverBound && _closure.TryGet("this", out var receiver)

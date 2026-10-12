@@ -14,6 +14,7 @@ public partial class ILCompiler
         ctx.EmittingTypeBuilder = _programType;
         ctx.ClassDefinitionParameterIndex = 0;
         ctx.ClassDefinitionThisParameterIndex = 0;
+        ctx.IsStaticSuperContext = true;
         var emitter = new ILEmitter(ctx);
         var storage = _runtime.DescriptorStorage;
         foreach (var value in _classes.PrivateElements.Require(_classExprs.Names[expression]).MethodValues.Values)

@@ -1140,6 +1140,7 @@ public partial class ILCompiler
         var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, null, methodBuilder);
         ctx.ClassDefinitionParameterIndex = 0;
         ctx.IsInstanceMethod = false;
+        ctx.IsStaticSuperContext = true;
         SetupSyncMethodFunctionDisplayClass(ctx, il, method);
 
         // Define parameters with typed parameter types from method signature (starting at index 0 for static)
@@ -1206,6 +1207,7 @@ public partial class ILCompiler
             var il = methodBuilder.GetILGenerator();
             var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, accessor.IsStatic ? null : fieldsField, methodBuilder);
             ctx.IsInstanceMethod = !accessor.IsStatic;
+            ctx.IsStaticSuperContext = accessor.IsStatic;
             if (accessor.IsStatic) ctx.ClassDefinitionParameterIndex = 0;
 
             if (accessor.Kind.Type == TokenType.SET && accessor.SetterParam != null)

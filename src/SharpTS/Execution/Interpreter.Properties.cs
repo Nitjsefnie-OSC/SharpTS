@@ -1576,8 +1576,11 @@ public partial class Interpreter
         or BuiltInMethod { IsConstructor: false };
 
     private object? EvaluateGetOnClass(SharpTSClass klass, string memberName)
+        => EvaluateGetOnClass(klass, memberName, klass);
+
+    private object? EvaluateGetOnClass(SharpTSClass klass, string memberName, object? receiver)
     {
-        if (TryReadDescriptor(klass.FindStaticPropertyDescriptor(memberName), klass, out var definedValue))
+        if (TryReadDescriptor(klass.FindStaticPropertyDescriptor(memberName), receiver, out var definedValue))
             return definedValue;
         // ECMA-262: every class has exactly one `prototype` (an ordinary object whose
         // props are the instance methods + constructor back-ref). Without this,
@@ -1600,7 +1603,7 @@ public partial class Interpreter
         var staticGetter = klass.FindStaticGetter(memberName);
         if (staticGetter != null)
         {
-            return staticGetter.BindStatic(klass).CallBoxed(this, []);
+            return staticGetter.BindThis(receiver).CallBoxed(this, []);
         }
 
         // Try static method
@@ -2017,7 +2020,7 @@ public partial class Interpreter
 
     private bool TryReadDescriptor(
         SharpTSPropertyDescriptor? descriptor,
-        object receiver,
+        object? receiver,
         out object? value)
     {
         if (descriptor is null)

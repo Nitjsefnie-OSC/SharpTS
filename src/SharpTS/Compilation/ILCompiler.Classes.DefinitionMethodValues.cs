@@ -28,7 +28,7 @@ public partial class ILCompiler
         MarkPadsUndefined(method);
         MarkFunctionLength(method, parameters);
         MarkFunctionName(method, original.Name);
-        _classExprs.DefinitionMethods.Add(method, (expression, field));
+        _classExprs.DefinitionMethods.Add(method, (expression, field, original.IsStatic));
 
         Stmt.Function? source = expression.Methods.FirstOrDefault(source =>
             source.ComputedKey == null && source.IsStatic == original.IsStatic && source.Name.Lexeme == original.Name);
@@ -47,6 +47,7 @@ public partial class ILCompiler
             var ctx = CreateClassExpressionContext(method.GetILGenerator(), expression, _classExprs.Builders[expression], null, method);
             ctx.EmittingTypeBuilder = type;
             ctx.IsInstanceMethod = !source.IsStatic;
+            ctx.IsStaticSuperContext = source.IsStatic;
             ctx.ClassDefinitionOwnerField = field;
             ctx.GuestThisVariableName = "__this";
             ctx.HasGuestReceiver = true;

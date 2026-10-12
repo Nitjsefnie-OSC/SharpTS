@@ -13,6 +13,10 @@ public sealed class InheritedSuperMethodSignatureTests
     [InlineData("generic-chain-argument", "class A<T> {value(x:T):T{return x;}}class B<U> extends A<U> {}class C extends B<number> {read(){return super.value('bad');}}", "TS2345")]
     [InlineData("missing", "class A {value(){return 1;}}class B extends A {}class C extends B {read(){return super.missing();}}", "TS2339")]
     [InlineData("private", "class A {private value(){return 1;}}class B extends A {}class C extends B {read(){return super.value();}}", "TS2341")]
+    [InlineData("static-argument", "class A {static value(x:number){return x;}}class B extends A {}class C extends B {static read(){return super.value('bad');}}", "TS2345")]
+    [InlineData("static-private", "class A {private static value(){return 1;}}class B extends A {static read(){return super.value();}}", "TS2341")]
+    [InlineData("static-instance-only", "class A {value(){return 1;}}class B extends A {static read(){return super.value();}}", "TS2339")]
+    [InlineData("instance-static-only", "class A {static value(){return 1;}}class B extends A {read(){return super.value();}}", "TS2339")]
     public void InheritedSuperLookupPreservesSignaturesAndAccess(string name, string source, string code)
     {
         var statements = new Parser(new Lexer(source).ScanTokens()).ParseOrThrow();

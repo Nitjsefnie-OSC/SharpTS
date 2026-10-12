@@ -60,6 +60,11 @@ public partial class AsyncArrowMoveNextEmitter
 
     protected override void EmitSuper(Expr.Super s)
     {
+        if (_ctx!.IsStaticSuperContext)
+        {
+            base.EmitSuper(s);
+            return;
+        }
         // Use the same lexical receiver loader as this/direct super calls,
         // including standalone capture fields and outer async state machines.
         EmitThis();

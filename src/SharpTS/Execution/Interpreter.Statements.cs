@@ -2205,7 +2205,7 @@ public partial class Interpreter
                     null,  // No this type annotation
                     accessor.SetterParam != null ? [accessor.SetterParam] : [],
                     accessor.Body,
-                    accessor.ReturnType);
+                    accessor.ReturnType, IsStatic: accessor.IsStatic);
 
                 SharpTSFunction func = new(funcStmt, _environment);
                 bool isGetter = accessor.Kind.Type == TokenType.GET;
@@ -2373,7 +2373,8 @@ public partial class Interpreter
         {
             // Create temporary environment with 'this' bound to the class
             // Also make the class name available so code like Foo.x works
-            var staticEnv = new RuntimeEnvironment(_environment, strictMode: true) { PrivateClass = klass };
+            var staticEnv = new RuntimeEnvironment(_environment, strictMode: true)
+                { PrivateClass = klass, StaticSuper = true };
             staticEnv.Define("this", klass);
             staticEnv.Define(classStmt.Name.Lexeme, klass);
 

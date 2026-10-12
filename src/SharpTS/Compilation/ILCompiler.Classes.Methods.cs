@@ -835,6 +835,7 @@ public partial class ILCompiler
         ctx.IsStrictMode = true;
         ctx.FieldsField = isStatic ? null : fieldsField;
         ctx.IsInstanceMethod = !isStatic;
+        ctx.IsStaticSuperContext = isStatic;
         ctx.CurrentClassBuilder = typeBuilder;
         ctx.EmittingTypeBuilder = typeBuilder;
         // ES2022 Private Class Elements support

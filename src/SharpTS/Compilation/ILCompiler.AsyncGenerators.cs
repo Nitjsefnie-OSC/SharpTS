@@ -240,6 +240,7 @@ public partial class ILCompiler
         var ctx = CreateModuleMemberContext(il, smBuilder.MoveNextAsyncMethod);
         ctx.FieldsField = fieldsField;
         ctx.IsInstanceMethod = isInstanceMethod;
+        ctx.IsStaticSuperContext = !isInstanceMethod;
         ctx.IsStrictMode = true;
         // ES2022 Private Class Elements support for async generator methods (a private async
         // generator threads its QUALIFIED class name so nested private member access resolves — #720).

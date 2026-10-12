@@ -648,6 +648,8 @@ public partial class ILCompiler
             functionHoistedFields[name] = field;
         foreach (var (name, field) in outerBuilder.HoistedLocals)
             functionHoistedFields[name] = field;
+        if (functionHoistedFields.TryGetValue("__classDefinition", out var definitionParameter))
+            functionHoistedFields[CompilationContext.SuperOwnerCaptureName] = definitionParameter;
 
         // Sort arrows by nesting level to ensure parents are defined before children
         var sortedArrows = asyncArrows.OrderBy(a => a.NestingLevel).ToList();
@@ -667,13 +669,9 @@ public partial class ILCompiler
             // Create a dedicated analyzer for this arrow's await points
             var arrowAnalysis = AnalyzeAsyncArrow(arrowInfo.Arrow);
             var captures = new HashSet<string>(arrowInfo.Captures);
-            if (arrowInfo.ParentArrow is not null)
-            {
-                // The suspension analyzer starts with the root function's declarations.
-                // Lexical closure analysis also records bindings declared by an intermediate
-                // arrow, which a nested arrow must access through its parent's frame.
-                captures.UnionWith(_closures.Analyzer.GetCaptures(arrowInfo.Arrow));
-            }
+            // Closure analysis includes intermediate lexical bindings and the
+            // evaluated class definition required by static super closures.
+            captures.UnionWith(_closures.Analyzer.GetCaptures(arrowInfo.Arrow));
 
             // Create state machine builder for the async arrow
             var arrowBuilder = new AsyncArrowStateMachineBuilder(
@@ -1377,6 +1375,8 @@ public partial class ILCompiler
 
         // Create a new context for arrow MoveNext emission
         var ctx = CreateNestedAsyncArrowContext(il, parentCtx, arrowBuilder.MoveNextMethod);
+        if (arrowBuilder.CapturedFieldMap.ContainsKey(CompilationContext.SuperOwnerCaptureName))
+            ctx.ClassDefinitionVariableName = CompilationContext.SuperOwnerCaptureName;
 
         if (EmitDebugSymbols)
         {
@@ -1429,6 +1429,15 @@ public partial class ILCompiler
         arrowEmitter.EmitMoveNext(bodyStatements, ctx, _types.Object, arrow.Parameters);
     }
 
+    private FieldBuilder? GetAsyncClassDefinitionOwnerField(MethodBuilder method, bool isInstanceMethod)
+    {
+        if (_classExprs.DefinitionMethods.TryGetValue(method, out var carrier))
+            return carrier.Definition;
+        if (!isInstanceMethod) return null;
+        var expression = _classExprs.Builders.FirstOrDefault(entry => ReferenceEquals(entry.Value, method.DeclaringType)).Key;
+        return expression == null ? null : _classExprs.DefinitionFields[expression];
+    }
+
     private void EmitAsyncStubMethod(
         MethodBuilder stubMethod,
         AsyncStateMachineBuilder smBuilder,
@@ -1476,6 +1485,16 @@ public partial class ILCompiler
                 }
             }
             il.Emit(OpCodes.Stfld, smBuilder.ThisField);
+        }
+
+        if (smBuilder.HoistedLocals.TryGetValue(CompilationContext.SuperOwnerCaptureName, out var superOwner)
+            && GetAsyncClassDefinitionOwnerField(stubMethod, isInstanceMethod) is { } definitionOwner)
+        {
+            il.Emit(OpCodes.Ldloca, smLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, EmitterTypeHelpers.SelfFieldReference(definitionOwner));
+            il.Emit(OpCodes.Castclass, _runtime.ClassDefinitions.Type);
+            il.Emit(OpCodes.Stfld, superOwner);
         }
 
         // Copy @lock field references to state machine if this method has @lock decorator
@@ -1643,6 +1662,9 @@ public partial class ILCompiler
             hoistedParameterTypes: GetStableAsyncParameterFieldTypes(method),
             hasDynamicThis: !isInstanceMethod && _classExprs.Builders.Values.Any(builder => ReferenceEquals(builder, methodBuilder.DeclaringType))
         );
+        if (GetAsyncClassDefinitionOwnerField(methodBuilder, isInstanceMethod) != null)
+            smBuilder.HoistedLocals[CompilationContext.SuperOwnerCaptureName] = smBuilder.StateMachineType.DefineField(
+                "<>__superOwner", _runtime.ClassDefinitions.Type, FieldAttributes.Public);
         RegisterStateMachine(
             methodBuilder,
             smBuilder.StateMachineType,
@@ -1695,6 +1717,7 @@ public partial class ILCompiler
             || BodyDeclaresUseStrict(method.Body);
         ctx.FieldsField = fieldsField;
         ctx.IsInstanceMethod = isInstanceMethod;
+        ctx.IsStaticSuperContext = !isInstanceMethod;
         ctx.AsyncArrowBuilders = _async.ArrowBuilders;
         ctx.AsyncArrowOuterBuilders = _async.ArrowOuterBuilders;
         ctx.AsyncArrowParentBuilders = _async.ArrowParentBuilders;
@@ -1894,7 +1917,16 @@ public partial class ILCompiler
             ctx.AsyncArrowParentBuilders = _async.ArrowParentBuilders;
             // ES2022 Private Class Elements support
             ctx.CurrentClassName = enclosingClassName;
+            ctx.IsStaticSuperContext = _arrowsInStaticClassContext.Contains(arrow);
             ctx.CurrentClassBuilder = enclosingClassBuilder;
+            if (ctx.CurrentClassBuilder == null && enclosingClassName != null)
+            {
+                ctx.CurrentClassExpr = _classExprs.Names.FirstOrDefault(entry => entry.Value == enclosingClassName).Key;
+                if (ctx.CurrentClassExpr != null)
+                    ctx.CurrentClassBuilder = _classExprs.Builders.GetValueOrDefault(ctx.CurrentClassExpr);
+            }
+            if (arrowBuilder.StandaloneCaptureFields.ContainsKey(CompilationContext.SuperOwnerCaptureName))
+                ctx.ClassDefinitionVariableName = CompilationContext.SuperOwnerCaptureName;
             ctx.HasGuestReceiver = _guestReceiverArrows.Contains(arrow);
             ApplyCapturedTopLevelVariableAccess(ctx);
             // #1222: lets the shadow-capture check distinguish a #1201-lifted binding

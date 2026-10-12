@@ -223,6 +223,9 @@ public partial class Interpreter
         else
         {
             callee = (await ctx.EvaluateExprAsync(call.Callee)).ToObject();
+            if (call.Callee is Expr.Super { Method: not null } && _environment.StaticSuper)
+                callee = BindMemberCallReceiver(callee,
+                    _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject());
         }
 
         // Optional call: return undefined if callee is nullish.
@@ -515,6 +518,9 @@ public partial class Interpreter
         else
         {
             callee = Evaluate(call.Callee);
+            if (call.Callee is Expr.Super { Method: not null } && _environment.StaticSuper)
+                callee = BindMemberCallReceiver(callee,
+                    _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject());
         }
 
         // Optional call: return undefined if callee is nullish.

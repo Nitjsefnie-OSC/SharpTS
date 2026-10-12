@@ -242,6 +242,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             ? new RuntimeEnvironment(closure, strictMode: true)
             : new RuntimeEnvironment(closure);
         environment.PrivateClass = PrivateOwner;
+        environment.StaticSuper = _declaration.IsStatic;
 
         // JS calling convention: if `this` isn't bound by a receiver
         // (bare call `foo()`), it defaults to the global object in
@@ -362,6 +363,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             ? new RuntimeEnvironment(closure, strictMode: true)
             : new RuntimeEnvironment(closure);
         environment.PrivateClass = PrivateOwner;
+        environment.StaticSuper = _declaration.IsStatic;
 
         // See Call() for rationale on bound-this and default-this.
         if (_hasBoundThis)

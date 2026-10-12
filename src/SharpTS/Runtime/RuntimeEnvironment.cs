@@ -22,6 +22,15 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     private RuntimeValue _directBindingValue;
     private bool _hasDirectBinding;
     private SharpTSClass? _privateClass;
+    private bool? _staticSuper;
+
+    // The super facet follows the lexical method, including through arrows;
+    // rebinding this must not change which parent member is selected.
+    internal bool StaticSuper
+    {
+        get => _staticSuper ?? Enclosing?.StaticSuper ?? false;
+        set => _staticSuper = value;
+    }
 
     // Private names follow the method's lexical declaration across receiver
     // rebinding, closures and suspension. This does not add a variable scope.

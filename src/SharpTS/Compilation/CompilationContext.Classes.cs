@@ -24,6 +24,9 @@ public partial class CompilationContext
     public FieldInfo? FieldsField { get; set; }
     public bool IsInstanceMethod { get; set; }
 
+    /// <summary>The lexical super home is the class constructor rather than its prototype.</summary>
+    public bool IsStaticSuperContext { get; set; }
+
     /// <summary>
     /// Primitive-returning non-virtual method companions keyed by qualified class
     /// and JavaScript method name. Only analyzer-marked exact receiver calls may

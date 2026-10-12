@@ -8,8 +8,8 @@ public abstract partial class ExpressionEmitterBase
 {
     protected bool TryEmitGuestSuperCall(Expr.Call call)
     {
-        if (!Ctx.HasGuestReceiver || call.Callee is not Expr.Super { Method: not null } super
-            || super.Method.Lexeme == "constructor") return false;
+        if ((!Ctx.HasGuestReceiver && !Ctx.IsStaticSuperContext) || call.Callee is not Expr.Super { Method: not null } super
+            || (!Ctx.IsStaticSuperContext && super.Method.Lexeme == "constructor")) return false;
         var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
         EmitGuestSuperValue(super.Method.Lexeme, receiver);
         EmitGuestMethodInvocation(receiver, call.Arguments);
@@ -26,7 +26,7 @@ public abstract partial class ExpressionEmitterBase
         }
         IL.Emit(OpCodes.Ldloc, receiver);
         IL.Emit(OpCodes.Ldstr, name);
-        IL.Emit(Ctx.IsInstanceMethod ? OpCodes.Ldc_I4_0 : OpCodes.Ldc_I4_1);
+        IL.Emit(Ctx.IsStaticSuperContext || !Ctx.IsInstanceMethod ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.ClassDefinitions.ReadSuper);
         SetStackUnknown();
     }
@@ -149,12 +149,37 @@ public abstract partial class ExpressionEmitterBase
     protected bool TryGetClassDefinitionCaptureSlot(string name, out int slot)
     {
         slot = -1;
-        if (Ctx.TryGetParameter(name, out _) || Ctx.Locals.GetLocal(name) != null || GetHoistedVariableField(name) != null) return false;
+        if (HasClassDefinitionCaptureShadow(name)) return false;
         var expression = Ctx.CurrentClassExpr ?? Ctx.ClassExprBuilders?
             .FirstOrDefault(entry => ReferenceEquals(entry.Value, Ctx.CurrentClassBuilder)).Key;
         if (expression == null || Ctx.ClassExprCaptureSlots?.TryGetValue(expression, out var captures) != true
             || !captures!.TryGetValue(name, out slot)) return false;
         return true;
+    }
+
+    private bool HasClassDefinitionCaptureShadow(string name)
+    {
+        if (Ctx.TryGetParameter(name, out _) || Ctx.Locals.GetLocal(name) != null
+            || Ctx.CellBindingLocals.ContainsKey(name) || GetHoistedVariableField(name) != null
+            || Ctx.CapturedFields?.ContainsKey(name) == true) return true;
+
+        // Restoring an arrow's lexical class must not hide its live closure
+        // storage. Shared captures can live behind a display-class reference
+        // instead of a same-named field on the arrow itself.
+        string functionName = Ctx.CurrentArrowFunctionDCFieldRenames?.GetValueOrDefault(name) ?? name;
+        if (Ctx.CapturedFunctionLocals?.Contains(functionName) == true
+            && Ctx.FunctionDisplayClassFields?.ContainsKey(functionName) == true
+            && (Ctx.FunctionDisplayClassLocal != null || Ctx.CurrentArrowFunctionDCField != null)) return true;
+        if (Ctx.CapturedArrowLocals?.Contains(name) == true
+            && Ctx.ArrowScopeDisplayClassFields?.ContainsKey(name) == true
+            && Ctx.ArrowScopeDisplayClassLocal != null) return true;
+        if (Ctx.ParentArrowCapturedLocals?.Contains(name) == true
+            && Ctx.ParentArrowScopeDisplayClassFields?.ContainsKey(name) == true
+            && Ctx.CurrentArrowScopeDCField != null) return true;
+        if (Ctx.ExtraArrowScopeBindings?.ContainsKey(name) == true) return true;
+        return Ctx.CurrentArrowEntryPointDCField != null
+            && Ctx.CapturedTopLevelVars?.Contains(name) == true
+            && Ctx.EntryPointDisplayClassFields?.ContainsKey(name) == true;
     }
 
     protected bool TryEmitStoreClassDefinitionCapture(string name)

@@ -7,6 +7,19 @@ namespace SharpTS.Compilation;
 
 public partial class RuntimeEmitter
 {
+    private void EmitCachedStaticMethodValue(ILGenerator il, GetPropertyInputs inputs, LocalBuilder method)
+    {
+        // Static methods are unbound function objects. Share the direct-reference
+        // cache while retaining the method's JS length metadata (defaults/rest).
+        il.Emit(OpCodes.Ldloc, method);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, method);
+        il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);
+        il.Emit(OpCodes.Callvirt, inputs.TSFunctionLengthGetter);
+        il.Emit(OpCodes.Call, inputs.TSFunctionGetOrCreate);
+    }
+
     private LocalBuilder EmitStaticMemberLookupOwner(ILGenerator il, LocalBuilder owner, Type userClassInterface)
     {
         var methodOwnerLocal = il.DeclareLocal(_types.Type);
@@ -119,6 +132,7 @@ public partial class RuntimeEmitter
         ConstructorBuilder TSFunctionCtorWithCache,
         FieldBuilder TSFunctionExpectsThisField,
         MethodBuilder TSFunctionGetOrCreate,
+        MethodBuilder TSFunctionLengthGetter,
         MethodBuilder TSFunctionInvokeWithThis,
         TypeBuilder TSFunctionType,
         MethodBuilder TSNamespaceGet,
@@ -2426,11 +2440,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, staticMethodLocal);
             il.Emit(OpCodes.Brfalse, noStaticMethodLabel);
 
-            // Found a static method — wrap in $TSFunction(null, methodInfo) so callers
-            // invoking it through InvokeValue/InvokeMethodValue treat it as a callable.
-            il.Emit(OpCodes.Ldnull);
-            il.Emit(OpCodes.Ldloc, staticMethodLocal);
-            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);
+            EmitCachedStaticMethodValue(il, inputs, staticMethodLocal);
             il.Emit(OpCodes.Ret);
 
             il.MarkLabel(noStaticMethodLabel);
@@ -2612,9 +2622,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, baseStaticMethodLocal);
             var noBaseStaticMethodLabel = il.DefineLabel();
             il.Emit(OpCodes.Brfalse, noBaseStaticMethodLabel);
-            il.Emit(OpCodes.Ldnull);
-            il.Emit(OpCodes.Ldloc, baseStaticMethodLocal);
-            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);
+            EmitCachedStaticMethodValue(il, inputs, baseStaticMethodLocal);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noBaseStaticMethodLabel);
 

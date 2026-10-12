@@ -219,6 +219,7 @@ public partial class ILCompiler
         ctx.IsStrictMode = true;
         ctx.FieldsField = fieldsField;
         ctx.IsInstanceMethod = !accessor.IsStatic;
+        ctx.IsStaticSuperContext = accessor.IsStatic;
         ctx.CurrentClassName = className;
         ctx.CurrentClassBuilder = typeBuilder;
         ctx.EmittingTypeBuilder = typeBuilder;

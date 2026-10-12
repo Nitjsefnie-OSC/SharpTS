@@ -181,6 +181,7 @@ public partial class ILCompiler
             ctx.CurrentClassExpr = owner.Expression;
             ctx.CurrentClassBuilder = _classExprs.Builders[owner.Expression];
             ctx.ClassDefinitionOwnerField = owner.Definition;
+            ctx.IsStaticSuperContext = owner.IsStatic;
             ctx.GuestThisVariableName = "__this";
             foreach (var parameter in owner.Expression.TypeParams ?? [])
                 ctx.GenericTypeParameters[parameter.Name.Lexeme] = _types.Object;
@@ -310,6 +311,8 @@ public partial class ILCompiler
             IsStrictMode = parentCtx.IsStrictMode,
             // ES2022 Private Class Elements support - inherit from parent context
             CurrentClassName = parentCtx.CurrentClassName,
+            IsStaticSuperContext = parentCtx.IsStaticSuperContext,
+            CurrentClassExpr = parentCtx.CurrentClassExpr,
             EnclosingClassNames = parentCtx.EnclosingClassNames,
             CurrentClassBuilder = parentCtx.CurrentClassBuilder,
             HasGuestReceiver = parentCtx.HasGuestReceiver,

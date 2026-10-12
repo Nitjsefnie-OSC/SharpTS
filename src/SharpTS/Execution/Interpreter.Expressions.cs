@@ -415,6 +415,9 @@ public partial class Interpreter
         // (Array subclass instances) are SharpTSArrays — bind generically.
         object? thisReceiver = _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject();
 
+        if (expr.Method != null && _environment.StaticSuper)
+            return RuntimeValue.FromBoxed(EvaluateGetOnClass(superclass, expr.Method.Lexeme, thisReceiver));
+
         // super() with null Method means constructor call
         string methodName = expr.Method?.Lexeme ?? "constructor";
         ISharpTSCallable? method = superclass.FindMethod(methodName);
@@ -2206,7 +2209,7 @@ public partial class Interpreter
                         null,
                         accessor.SetterParam != null ? [accessor.SetterParam] : [],
                         accessor.Body,
-                        accessor.ReturnType);
+                        accessor.ReturnType, IsStatic: accessor.IsStatic);
 
                     SharpTSFunction func = new(funcStmt, _environment);
                     bool isGetter = accessor.Kind.Type == TokenType.GET;
@@ -2317,7 +2320,8 @@ public partial class Interpreter
             {
                 // Create temporary environment with 'this' bound to the class
                 // Also make the class name available so code like Foo.x works
-                var staticEnv = new RuntimeEnvironment(_environment, strictMode: true) { PrivateClass = klass };
+                var staticEnv = new RuntimeEnvironment(_environment, strictMode: true)
+                    { PrivateClass = klass, StaticSuper = true };
                 staticEnv.Define("this", klass);
                 if (classExpr.Name != null)
                 {

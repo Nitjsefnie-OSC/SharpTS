@@ -108,7 +108,7 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Stsfld, cache);
                 il.Emit(OpCodes.Ret);
             }
-            else _classExprs.DefinitionMethods.Add(method, (expression, definition!));
+            else _classExprs.DefinitionMethods.Add(method, (expression, definition!, source.IsStatic));
             _classes.PrivateElements.DeclareMethodValue(className, name,
                 new PrivateMethodValue(type, constructor, method, cache, initializer, source, definition));
             _privateMethodValueOwners.Add(method, (className, owner, declaration));
@@ -147,6 +147,7 @@ public partial class ILCompiler
         ctx.CurrentClassBuilder = owner.Owner;
         ctx.IsStrictMode = true;
         ctx.IsInstanceMethod = !_classes.PrivateElements.Require(owner.Name).MethodValues.Values.First(value => value.Method == method).Source.IsStatic;
+        ctx.IsStaticSuperContext = !ctx.IsInstanceMethod;
         ctx.GuestThisVariableName = "__this";
         ctx.HasGuestReceiver = true;
         foreach (var parameter in owner.Source.TypeParams ?? []) ctx.GenericTypeParameters[parameter.Name.Lexeme] = _types.Object;

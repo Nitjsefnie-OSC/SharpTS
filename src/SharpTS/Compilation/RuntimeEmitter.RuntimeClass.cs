@@ -1253,6 +1253,7 @@ public partial class RuntimeEmitter
                 runtime.FunctionConstruction.CachedConstructor,
                 runtime.FunctionValues.ExpectsThisField,
                 runtime.FunctionConstruction.GetOrCreate,
+                runtime.FunctionValues.LengthGetter,
                 runtime.FunctionValues.InvokeWithThis,
                 runtime.FunctionValues.Type,
                 runtime.Namespaces.Get,

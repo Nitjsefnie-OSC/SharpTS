@@ -590,6 +590,7 @@ public partial class RuntimeEmitter
                 runtime.Invocation,
                 runtime.TypedArrays,
                 runtime.TextEncoding,
+                runtime.Sentinels.UndefinedInstance,
                 runtime.Errors
             )
         );
@@ -605,6 +606,7 @@ public partial class RuntimeEmitter
                 runtime.Invocation,
                 runtime.TypedArrays,
                 runtime.TextEncoding,
+                runtime.Sentinels.UndefinedInstance,
                 runtime.Errors
             )
         );

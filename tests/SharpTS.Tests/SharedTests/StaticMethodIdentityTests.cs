@@ -94,17 +94,40 @@ public sealed class StaticMethodIdentityTests
         Assert.Equal("true true\ntrue true\ntrue true\ntrue\ntrue true\ntrue true\ntrue true true\ntrue\n", TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void PlainMethodsDefaultOmittedReceiverToUndefined()
+    [Theory, ModeData]
+    public void PlainMethodsDefaultOmittedReceiverToUndefined(ExecutionMode mode)
     {
-        // Compiled absent call/apply receivers become null, tracked in #2016.
         const string source = """
             class C { static receiver() { return this; } }
             const receiver: any = C.receiver;
             console.log(receiver.call() === undefined, receiver.apply() === undefined, receiver.bind()() === undefined);
             """;
 
-        Assert.Equal("true true true\n", TestHarness.RunInterpreted(source));
+        Assert.Equal("true true true\n", TestHarness.Run(source, mode));
+    }
+
+    internal const string BorrowedApplySource = """
+        class C { static receiver() { return this; } }
+        const f: any = C.receiver;
+        const prototype: any = Function.prototype;
+        console.log(f.call() === undefined, f.apply() === undefined, f.bind()() === undefined);
+        console.log(prototype.apply.call(f) === undefined,
+            Reflect.apply(prototype.apply, f, []) === undefined,
+            prototype.call.call(f) === undefined);
+        console.log(prototype.apply.call(f, null) === null,
+            Reflect.apply(prototype.apply, f, [undefined, null]) === undefined,
+            Reflect.apply(prototype.apply, f, [7, []]) === 7);
+        console.log(Reflect.apply(prototype.apply, f, ["value", []]) === "value",
+            Reflect.apply(prototype.apply, f, [false, []]) === false,
+            f.bind()() === undefined, f.bind(null)() === null);
+        """;
+
+    internal const string BorrowedApplyExpected = "true true true\ntrue true true\ntrue true true\ntrue true true true\n";
+
+    [Theory, ModeData]
+    public void BorrowedApplyDefaultsItsReceiverWithoutChangingExplicitValues(ExecutionMode mode)
+    {
+        Assert.Equal(BorrowedApplyExpected, TestHarness.Run(BorrowedApplySource, mode));
     }
 
     [Theory, ModeData]
@@ -169,10 +192,9 @@ public sealed class StaticMethodIdentityTests
         Assert.Equal("true true true\n" + string.Concat(Enumerable.Repeat("true true\ntrue true\ntrue\ntrue true true\ntrue true true\ntrue\n", 3)), TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void AsyncAndGeneratorMethodsDefaultOmittedReceiverToUndefined()
+    [Theory, ModeData]
+    public void AsyncAndGeneratorMethodsDefaultOmittedReceiverToUndefined(ExecutionMode mode)
     {
-        // Compiled omitted call/apply receivers are tracked separately in #2016.
         const string source = """
             class Base {
                 static async asynchronous() { await Promise.resolve(0); return this; }
@@ -190,7 +212,7 @@ public sealed class StaticMethodIdentityTests
             }
             run();
             """;
-        Assert.Equal("true true true\ntrue true true\ntrue true true\n", TestHarness.RunInterpreted(source));
+        Assert.Equal("true true true\ntrue true true\ntrue true true\n", TestHarness.Run(source, mode));
     }
 
     [Fact]

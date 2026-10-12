@@ -286,6 +286,7 @@ public class SharpTSClass(
 
     public object? GetStaticProperty(string name)
     {
+        if (name == "prototype") return Prototype;
         if (_staticProperties.TryGetValue(name, out var value))
         {
             return value;
@@ -296,6 +297,7 @@ public class SharpTSClass(
 
     public bool HasStaticProperty(string name)
     {
+        if (name == "prototype") return true;
         if (_staticProperties.ContainsKey(name))
         {
             return true;
@@ -322,7 +324,10 @@ public class SharpTSClass(
     }
 
     internal SharpTSPropertyDescriptor? GetOwnStaticPropertyDescriptor(string name)
-        => _staticPropertyObject?.GetOwnPropertyDescriptor(name)
+        => name == "prototype"
+            ? new SharpTSPropertyDescriptor(Prototype, writable: false, enumerable: false, configurable: false)
+                { HasValue = true }
+            : _staticPropertyObject?.GetOwnPropertyDescriptor(name)
             ?? (_staticProperties.TryGetValue(name, out var value)
                 ? new SharpTSPropertyDescriptor(value, writable: true, enumerable: true, configurable: true)
                     { HasValue = true }
@@ -331,12 +336,15 @@ public class SharpTSClass(
                     : null);
 
     internal SharpTSPropertyDescriptor? FindStaticPropertyDescriptor(string name)
-        => HasOwnStaticMember(name)
-            ? _staticPropertyObject?.GetOwnPropertyDescriptor(name)
-            : Superclass?.FindStaticPropertyDescriptor(name);
+        => name == "prototype"
+            ? GetOwnStaticPropertyDescriptor(name)
+            : HasOwnStaticMember(name)
+                ? _staticPropertyObject?.GetOwnPropertyDescriptor(name)
+                : Superclass?.FindStaticPropertyDescriptor(name);
 
     internal bool HasOwnStaticMember(string name)
-        => _staticProperties.ContainsKey(name)
+        => name == "prototype"
+            || _staticProperties.ContainsKey(name)
             || _staticPropertyObject?.GetOwnPropertyDescriptor(name) is not null
             || !_deletedStaticMethods.Contains(name) && _staticMethods.ContainsKey(name)
             || _staticGetters.ContainsKey(name)
@@ -345,6 +353,7 @@ public class SharpTSClass(
 
     internal bool DeleteStaticProperty(string name)
     {
+        if (name == "prototype") return false;
         if (_staticPropertyObject is not null && !_staticPropertyObject.DeleteProperty(name))
             return false;
         _staticProperties.Remove(name);
@@ -356,6 +365,14 @@ public class SharpTSClass(
 
     internal bool DefineStaticProperty(string name, SharpTSPropertyDescriptor descriptor)
     {
+        // The intrinsic slot is separate from mutable statics. Compatible
+        // redefinitions preserve its identity without creating an overlay.
+        if (name == "prototype")
+            return !descriptor.HasGet && !descriptor.HasSet
+                && !(descriptor.HasWritable && descriptor.Writable)
+                && !(descriptor.HasEnumerable && descriptor.Enumerable)
+                && !(descriptor.HasConfigurable && descriptor.Configurable)
+                && (!descriptor.HasValue || PropertySemantics.SameValue(descriptor.Value, Prototype));
         _staticPropertyObject ??= new SharpTSObject(_staticProperties);
         if (!_staticPropertyObject.DefineProperty(name, descriptor))
             return false;

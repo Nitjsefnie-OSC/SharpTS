@@ -138,6 +138,8 @@ public static class ReflectBuiltIns
                             return RuntimeValue.False;
                         inst.DeleteField(propertyKey);
                         return RuntimeValue.True;
+                    case SharpTSClass klass:
+                        return RuntimeValue.FromBoolean(klass.DeleteStaticProperty(propertyKey));
                     case Dictionary<string, object?> dict:
                         if ((PropertyDescriptorStore.IsFrozen(dict) || PropertyDescriptorStore.IsSealed(dict))
                             && dict.ContainsKey(propertyKey))
@@ -295,6 +297,8 @@ public static class ReflectBuiltIns
                             return RuntimeValue.FromBoolean(inst.DefineProperty(propertyKey, descriptor));
                         case SharpTSArray arr:
                             return RuntimeValue.FromBoolean(arr.DefineProperty(propertyKey, descriptor));
+                        case SharpTSClass klass:
+                            return RuntimeValue.FromBoolean(klass.DefineStaticProperty(propertyKey, descriptor));
                         default:
                             return RuntimeValue.False;
                     }

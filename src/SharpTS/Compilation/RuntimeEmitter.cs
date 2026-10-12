@@ -211,6 +211,7 @@ public partial class RuntimeEmitter
         // IsDefined read that backstops the (ref-asm-fragile) parameter-name check. (#738)
         EmitExpectsThisAttribute(moduleBuilder, runtime.FunctionAttributes);
         EmitSourceParametersAttribute(moduleBuilder, runtime.FunctionAttributes);
+        EmitGuestConstructorFactoryAttribute(moduleBuilder, runtime.DynamicConstruction);
         runtime.FunctionAttributes.CompleteEmission();
 
         if (features.CompactObjectRecordStableIteratorShapes.Count > 0)
@@ -721,6 +722,7 @@ public partial class RuntimeEmitter
             runtime.DynamicConstruction,
             new ConstructDynamicValueInputs(
                 runtime.ClassDefinitions,
+                runtime.DynamicConstruction,
                 runtime.BoxedPrimitives,
                 runtime.Errors,
                 runtime.FunctionConstruction,

@@ -108,6 +108,13 @@ Use `-Suite Core`, `-Suite Gui`, or `-Suite Standalone` for focused work,
 `-DescribeOnly` prints the exact partitions from an existing build without
 running them. `-ShardCount 1` reduces standalone resource usage.
 
+Core tests use xUnit's conservative parallel scheduler with the default CPU-based
+collection limit. It bounds unfinished collections so awaited test continuations
+can release synchronization gates promptly. The aggressive scheduler lets later
+collections displace those continuations and can deadlock a blocking test gate
+until its watchdog expires on small CI runners. Keep the conservative scheduler;
+see [xUnit's parallel scheduling guidance](https://xunit.net/docs/running-tests-in-parallel).
+
 Plain `dotnet test` remains supported and includes all coverage, but its 1,200+
 standalone cases run sequentially inside one xUnit class and can add tens of
 minutes with little default console output. Add `--logger 'console;verbosity=normal'`

@@ -48,11 +48,9 @@ public sealed class StaticMethodIdentityTests
         Assert.Equal(string.Concat(Enumerable.Repeat("true false\n", 4)), TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void SymbolMethodsKeepIdentityAcrossReadsAndInheritance()
+    [Theory, ModeData]
+    public void SymbolMethodsKeepIdentityAcrossReadsAndInheritance(ExecutionMode mode)
     {
-        // Interpreter symbol-read identity control. Compiled static symbol reads
-        // currently create fresh callable wrappers, tracked separately in #2017.
         const string source = """
             const plain = Symbol("plain"), asynchronous = Symbol("async");
             const generator = Symbol("generator"), asyncGenerator = Symbol("asyncGenerator");
@@ -69,7 +67,7 @@ public sealed class StaticMethodIdentityTests
             }
             """;
 
-        Assert.Equal(string.Concat(Enumerable.Repeat("true true\n", 4)), TestHarness.RunInterpreted(source));
+        Assert.Equal(string.Concat(Enumerable.Repeat("true true\n", 4)), TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

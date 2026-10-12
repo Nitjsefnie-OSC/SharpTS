@@ -5,7 +5,12 @@ namespace SharpTS.TypeSystem;
 
 public partial class TypeChecker
 {
-    private readonly Stack<TypeInfo.Class?> _privateInEnclosingClasses = [];
+    private readonly Stack<TypeInfo.Class?> _privateNameEnclosingClasses = [];
+
+    private TypeInfo.Class? FindLexicalPrivateOwner(string name) =>
+        new[] { _currentClass }.Concat(_privateNameEnclosingClasses).FirstOrDefault(candidate => candidate is not null
+            && (candidate.PrivateFieldTypes.ContainsKey(name) || candidate.StaticPrivateFieldTypes.ContainsKey(name)
+                || candidate.PrivateMethodTypes.ContainsKey(name) || candidate.StaticPrivateMethodTypes.ContainsKey(name)));
 
     internal TypeInfo VisitPrivateIn(Expr.PrivateIn expr)
     {
@@ -16,9 +21,7 @@ public partial class TypeChecker
         if (_currentClass == null)
             throw new TypeCheckException("Private identifiers are not allowed outside class bodies.", tsCode: "TS18016");
         string name = expr.Name.Lexeme;
-        var owner = new[] { _currentClass }.Concat(_privateInEnclosingClasses).FirstOrDefault(candidate => candidate is not null
-            && (candidate.PrivateFieldTypes.ContainsKey(name) || candidate.StaticPrivateFieldTypes.ContainsKey(name)
-                || candidate.PrivateMethodTypes.ContainsKey(name) || candidate.StaticPrivateMethodTypes.ContainsKey(name)));
+        var owner = FindLexicalPrivateOwner(name);
         if (owner is null)
             throw new TypeCheckException($"Private name '{name}' does not exist on class '{_currentClass.Name}'.", tsCode: "TS2339");
         _typeMap.SetPrivateInOwner(expr.Name, owner);

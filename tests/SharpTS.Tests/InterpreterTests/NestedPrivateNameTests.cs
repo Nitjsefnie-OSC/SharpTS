@@ -106,8 +106,7 @@ public class NestedPrivateNameTests
         Assert.Equal("42 42\n43 43\ntrue\ntrue\ntrue\n43\n", RunJavaScript(source));
     }
 
-    // The checker currently rejects enclosing private names (#2001). Test262
-    // covers both engines without checking; these exercise the interpreter API.
+    // These exercise the interpreter API without the checker, as Test262 does.
     private static string RunJavaScript(string source)
     {
         var statements = new Parser(new Lexer(source).ScanTokens()).ParseOrThrow();

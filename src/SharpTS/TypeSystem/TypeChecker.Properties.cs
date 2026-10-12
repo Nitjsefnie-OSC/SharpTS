@@ -1337,28 +1337,31 @@ public partial class TypeChecker
 
         // For 'this' access, verify we have the private field
         string fieldName = get.Name.Lexeme;
+        var owner = FindLexicalPrivateOwner(fieldName);
+        if (owner is null)
+            throw new TypeCheckException($" Private field '{fieldName}' does not exist on class '{_currentClass.Name}'.", tsCode: "TS2339");
 
-        // Look up in current class's private fields (NOT inherited - private fields are not inherited)
-        if (_currentClass.PrivateFieldTypes.TryGetValue(fieldName, out var fieldType))
+        // Select the nearest lexical declaration before checking the member kind.
+        if (owner.PrivateFieldTypes.TryGetValue(fieldName, out var fieldType))
         {
-            ObservePrivateSourceMemberSelection(get.Name, objType, _currentClass, MemberFacet.PrivateInstance);
+            ObservePrivateSourceMemberSelection(get.Name, objType, owner, MemberFacet.PrivateInstance);
             return fieldType;
         }
-        if (_currentClass.PrivateMethodTypes.TryGetValue(fieldName, out var methodType))
+        if (owner.PrivateMethodTypes.TryGetValue(fieldName, out var methodType))
         {
-            ObservePrivateSourceMemberSelection(get.Name, objType, _currentClass, MemberFacet.PrivateInstance);
+            ObservePrivateSourceMemberSelection(get.Name, objType, owner, MemberFacet.PrivateInstance);
             return methodType;
         }
-        if (_currentClass.StaticPrivateMethodTypes.TryGetValue(fieldName, out var staticMethodType))
+        if (owner.StaticPrivateMethodTypes.TryGetValue(fieldName, out var staticMethodType))
         {
-            ObservePrivateSourceMemberSelection(get.Name, objType, _currentClass, MemberFacet.PrivateStatic);
+            ObservePrivateSourceMemberSelection(get.Name, objType, owner, MemberFacet.PrivateStatic);
             return staticMethodType;
         }
 
         // Check static private fields if accessing on the class itself
-        if (IsStaticPrivateConstructor(objType) && _currentClass.StaticPrivateFieldTypes.TryGetValue(fieldName, out var staticFieldType))
+        if (IsStaticPrivateConstructor(objType, owner) && owner.StaticPrivateFieldTypes.TryGetValue(fieldName, out var staticFieldType))
         {
-            ObservePrivateSourceMemberSelection(get.Name, objType, _currentClass, MemberFacet.PrivateStatic);
+            ObservePrivateSourceMemberSelection(get.Name, objType, owner, MemberFacet.PrivateStatic);
             return staticFieldType;
         }
 
@@ -1387,17 +1390,20 @@ public partial class TypeChecker
         TypeInfo objType = CheckExpr(set.Object);
         TypeInfo valueType = CheckExpr(set.Value);
         string fieldName = set.Name.Lexeme;
+        var owner = FindLexicalPrivateOwner(fieldName);
+        if (owner is null)
+            throw new TypeCheckException($" Private field '{fieldName}' does not exist on class '{_currentClass.Name}'.", tsCode: "TS2339");
 
-        // Look up in current class's private fields (NOT inherited)
+        // An inner declaration shadows all enclosing declarations of the same name.
         TypeInfo? fieldType = null;
-        if (_currentClass.PrivateFieldTypes.TryGetValue(fieldName, out var pf))
+        if (owner.PrivateFieldTypes.TryGetValue(fieldName, out var pf))
         {
-            ObservePrivateSourceMemberSelection(set.Name, objType, _currentClass, MemberFacet.PrivateInstance);
+            ObservePrivateSourceMemberSelection(set.Name, objType, owner, MemberFacet.PrivateInstance);
             fieldType = pf;
         }
-        else if (IsStaticPrivateConstructor(objType) && _currentClass.StaticPrivateFieldTypes.TryGetValue(fieldName, out var spf))
+        else if (IsStaticPrivateConstructor(objType, owner) && owner.StaticPrivateFieldTypes.TryGetValue(fieldName, out var spf))
         {
-            ObservePrivateSourceMemberSelection(set.Name, objType, _currentClass, MemberFacet.PrivateStatic);
+            ObservePrivateSourceMemberSelection(set.Name, objType, owner, MemberFacet.PrivateStatic);
             fieldType = spf;
         }
 
@@ -1436,15 +1442,18 @@ public partial class TypeChecker
 
         TypeInfo objType = CheckExpr(call.Object);
         string methodName = call.Name.Lexeme;
+        var owner = FindLexicalPrivateOwner(methodName);
+        if (owner is null)
+            throw new TypeCheckException($" Private method '{methodName}' does not exist on class '{_currentClass.Name}'.", tsCode: "TS2339");
 
-        // Look up in current class's private methods (NOT inherited)
+        // Private names follow lexical nesting, never superclass lookup.
         TypeInfo? methodType = null;
         MemberFacet selectedFacet = MemberFacet.PrivateInstance;
-        if (_currentClass.PrivateMethodTypes.TryGetValue(methodName, out var pm))
+        if (owner.PrivateMethodTypes.TryGetValue(methodName, out var pm))
         {
             methodType = pm;
         }
-        else if (IsStaticPrivateConstructor(objType) && _currentClass.StaticPrivateMethodTypes.TryGetValue(methodName, out var spm))
+        else if (IsStaticPrivateConstructor(objType, owner) && owner.StaticPrivateMethodTypes.TryGetValue(methodName, out var spm))
         {
             methodType = spm;
             selectedFacet = MemberFacet.PrivateStatic;
@@ -1460,10 +1469,10 @@ public partial class TypeChecker
         {
             throw new TypeCheckException($" Private member '{methodName}' is not a method.", tsCode: "TS2349");
         }
-        if (EditorFacts.IsEnabled && HasPrivateSourceOwner(objType, _currentClass.Core.DeclarationId,
+        if (EditorFacts.IsEnabled && HasPrivateSourceOwner(objType, owner.Core.DeclarationId,
                 selectedFacet == MemberFacet.PrivateStatic))
             RecordEditorCallCandidates(funcType);
-        RecordPrivateSourceMemberRead(call, call.Name, objType, _currentClass, selectedFacet);
+        RecordPrivateSourceMemberRead(call, call.Name, objType, owner, selectedFacet);
 
         // Check argument count
         if (call.Arguments.Count < funcType.RequiredParams)
@@ -1505,8 +1514,8 @@ public partial class TypeChecker
     // Generic constructor aliases retain their declaration identity. Accepting
     // every generic class here would expose another declaration's same-spelled
     // private member through the current class's metadata.
-    private bool IsStaticPrivateConstructor(TypeInfo type) =>
+    private bool IsStaticPrivateConstructor(TypeInfo type, TypeInfo.Class owner) =>
         type is TypeInfo.Class ||
-        type is TypeInfo.GenericClass generic && _currentClass != null &&
-        SourceDerivesFromDeclaration(generic, _currentClass.Core.DeclarationId);
+        type is TypeInfo.GenericClass generic &&
+        SourceDerivesFromDeclaration(generic, owner.Core.DeclarationId);
 }

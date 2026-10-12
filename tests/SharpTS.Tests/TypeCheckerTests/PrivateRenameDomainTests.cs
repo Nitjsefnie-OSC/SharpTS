@@ -161,6 +161,29 @@ public sealed class PrivateRenameDomainTests
         Assert.False(Query(value, "selected").IsAvailable);
     }
 
+    [Fact]
+    public void NestedPrivateReadsResolveToTheirLexicalDeclarations()
+    {
+        var value = Check("""
+            class Outer {
+                /*outer*/#value: number = 1;
+                make() { return class Inner {
+                    /*inner*/#inner: number = 2;
+                    read(outer: Outer): number { return outer./*readOuter*/#value + this./*readInner*/#inner; }
+                }; }
+            }
+            """);
+        Clean(value);
+        var outer = value.Members.FindResolution(value.Document, Offset(value.Document.Text, "outer"));
+        var inner = value.Members.FindResolution(value.Document, Offset(value.Document.Text, "inner"));
+        Assert.True(outer.IsResolved);
+        Assert.True(inner.IsResolved);
+        Assert.Same(Assert.Single(outer.Candidates), Assert.Single(value.Members.FindResolution(
+            value.Document, Offset(value.Document.Text, "readOuter")).Candidates));
+        Assert.Same(Assert.Single(inner.Candidates), Assert.Single(value.Members.FindResolution(
+            value.Document, Offset(value.Document.Text, "readInner")).Candidates));
+    }
+
     [Theory]
     [InlineData("this.#missing;")]
     [InlineData("candidate.#value;")]

@@ -284,7 +284,7 @@ public partial class TypeChecker
     {
         bool anyInferredFieldTypeResolved = false;
         var previousClass = _currentClass;
-        _privateInEnclosingClasses.Push(previousClass);
+        _privateNameEnclosingClasses.Push(previousClass);
         _currentClass = classTypeForBody;
         try
         {
@@ -318,7 +318,7 @@ public partial class TypeChecker
         }
         finally
         {
-            _privateInEnclosingClasses.Pop();
+            _privateNameEnclosingClasses.Pop();
             _currentClass = previousClass;
         }
     }

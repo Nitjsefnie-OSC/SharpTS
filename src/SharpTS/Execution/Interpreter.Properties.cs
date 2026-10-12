@@ -1605,14 +1605,7 @@ public partial class Interpreter
 
         // Try static method
         ISharpTSCallable? staticMethod = klass.FindStaticMethod(memberName);
-        if (staticMethod != null) return staticMethod switch
-        {
-            SharpTSFunction fn => fn.BindStatic(klass),
-            SharpTSAsyncFunction afn => afn.BindStatic(klass),
-            SharpTSGeneratorFunction gfn => gfn.BindStatic(klass),
-            SharpTSAsyncGeneratorFunction agfn => agfn.BindStatic(klass),
-            _ => staticMethod,
-        };
+        if (staticMethod != null) return staticMethod;
 
         // Try static property
         if (klass.HasStaticProperty(memberName))
@@ -1755,12 +1748,17 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Applies both receiver-binding passes to a member-call callee
+    /// Supplies the dynamic receiver to a member-call callee
     /// (<c>obj.m()</c> / <c>obj[k]()</c>). Returns the callee unchanged when neither applies.
     /// </summary>
     private static object? BindMemberCallReceiver(object? callee, object? receiver)
     {
         if (receiver is null) return callee;
+        // Class static methods are canonical function objects on property reads.
+        // Only a member call supplies their dynamic receiver, including when a
+        // method is inherited or copied onto an ordinary object.
+        if (callee is ISharpTSCallable callable)
+            callee = FunctionBuiltIns.BindStaticReceiver(callable, receiver) ?? callee;
         callee = TryBindReceiverForMethodAccess(callee, receiver) ?? callee;
         return TryBindUnboundBuiltInReceiver(callee, receiver) ?? callee;
     }

@@ -1474,10 +1474,11 @@ public partial class Interpreter
         {
             return getter.BindStatic(klass).Call(this, []);
         }
-        // Declared static symbol-keyed method (`static [Symbol.iterator]() {...}`) — bound to the class.
+        // Symbol-keyed methods are canonical data-property values. Their dynamic
+        // receiver is supplied only when the method is actually invoked.
         if (klass.FindStaticSymbolMethod(symbol) is { } method)
         {
-            return SharpTSClass.BindStaticMethod(method, klass);
+            return method;
         }
         return klass.TryGetStaticBySymbol(symbol, out var value)
             ? value ?? SharpTSUndefined.Instance

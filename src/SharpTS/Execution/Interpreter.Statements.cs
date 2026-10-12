@@ -831,8 +831,7 @@ public partial class Interpreter
         if (iteratorFn == null) return false;
 
         // Bind 'this' and call to get the iterator object.
-        if (iteratorFn is SharpTSArrowFunction arrowFn && thisForBind != null)
-            iteratorFn = arrowFn.Bind(thisForBind);
+        iteratorFn = BindMemberCallReceiver(iteratorFn, thisForBind);
 
         object? iterator = iteratorFn is ISharpTSCallable callableIter
             ? callableIter.Call(this, [])
@@ -897,8 +896,7 @@ public partial class Interpreter
             if (iteratorFn is not ISharpTSCallable)
                 throw new ThrowException(new SharpTSTypeError(
                     "[Symbol.iterator] must be a function"));
-            if (TryBindReceiverForMethodAccess(iteratorFn, array) is { } boundIteratorFn)
-                iteratorFn = boundIteratorFn;
+            iteratorFn = BindMemberCallReceiver(iteratorFn, array)!;
             return EnumerateWithIteratorProtocol(iteratorFn);
         }
 
@@ -923,10 +921,7 @@ public partial class Interpreter
                         "[Symbol.iterator] must be a function"));
                 // Bind 'this' to the object for a function expression / object method shorthand,
                 // including generator forms (`[Symbol.iterator]: function*(){ this... }`, #775).
-                if (TryBindReceiverForMethodAccess(iteratorFn, obj) is { } boundIteratorFn)
-                {
-                    iteratorFn = boundIteratorFn;
-                }
+                iteratorFn = BindMemberCallReceiver(iteratorFn, obj)!;
                 return EnumerateWithIteratorProtocol(iteratorFn);
             }
         }
@@ -948,10 +943,7 @@ public partial class Interpreter
                         "[Symbol.iterator] must be a function"));
                 // Bind 'this' to the instance for a function expression / object method shorthand,
                 // including generator forms (#775).
-                if (TryBindReceiverForMethodAccess(iteratorFn, inst) is { } boundIteratorFn)
-                {
-                    iteratorFn = boundIteratorFn;
-                }
+                iteratorFn = BindMemberCallReceiver(iteratorFn, inst)!;
                 return EnumerateWithIteratorProtocol(iteratorFn);
             }
         }

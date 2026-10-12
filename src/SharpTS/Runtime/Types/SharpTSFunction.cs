@@ -60,6 +60,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
     internal bool IsPrivateMethod => _declaration.IsPrivate;
+    internal bool IsStaticMethod => _declaration.IsStatic;
     internal SharpTSClass? PrivateOwner { get; set; }
     // `this` value stored on the function itself (from BindThis) rather than in an
     // extra closure scope — otherwise the resolver's scope-distance count wouldn't
@@ -220,7 +221,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     public int Arity() => _arity;
 
     internal bool IsStrict
-        => _declaration.IsPrivate || _closure.IsStrictMode
+        => _declaration.IsPrivate || _declaration.IsStatic || _closure.IsStrictMode
             || (_declaration.Body is not null
                 && Parsing.DirectivePrologue.HasUseStrict(_declaration.Body));
 
@@ -233,9 +234,13 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
 
         // Check for function-level "use strict" directive
         bool functionStrict = IsStrict;
+        // The resolver includes a class `this` scope between a static method's
+        // body and its lexical closure. Preserve it for both member and bare calls.
+        RuntimeEnvironment closure = _declaration.IsStatic
+            ? new RuntimeEnvironment(_closure, strictMode: true) : _closure;
         RuntimeEnvironment environment = functionStrict
-            ? new RuntimeEnvironment(_closure, strictMode: true)
-            : new RuntimeEnvironment(_closure);
+            ? new RuntimeEnvironment(closure, strictMode: true)
+            : new RuntimeEnvironment(closure);
         environment.PrivateClass = PrivateOwner;
 
         // JS calling convention: if `this` isn't bound by a receiver
@@ -247,7 +252,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         {
             environment.Define("this", _boundThis);
         }
-        else if (!_closure.TryGet("this", out _))
+        else if (_declaration.IsStatic || !_closure.TryGet("this", out _))
         {
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
@@ -289,6 +294,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
 
     public SharpTSFunction Bind(SharpTSInstance instance)
     {
+        if (_declaration.IsStatic) return BindThis(instance);
         RuntimeEnvironment environment = new(_closure);
         environment.Define("this", instance);
 
@@ -308,6 +314,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     /// </summary>
     public SharpTSFunction BindStatic(SharpTSClass klass)
     {
+        if (_declaration.IsStatic) return BindThis(klass);
         RuntimeEnvironment environment = new(_closure);
         environment.Define("this", klass);
         if (klass.Superclass != null)
@@ -349,9 +356,11 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         }
 
         bool functionStrict = IsStrict;
+        RuntimeEnvironment closure = _declaration.IsStatic
+            ? new RuntimeEnvironment(_closure, strictMode: true) : _closure;
         RuntimeEnvironment environment = functionStrict
-            ? new RuntimeEnvironment(_closure, strictMode: true)
-            : new RuntimeEnvironment(_closure);
+            ? new RuntimeEnvironment(closure, strictMode: true)
+            : new RuntimeEnvironment(closure);
         environment.PrivateClass = PrivateOwner;
 
         // See Call() for rationale on bound-this and default-this.
@@ -359,7 +368,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         {
             environment.Define("this", _boundThis);
         }
-        else if (!_closure.TryGet("this", out _))
+        else if (_declaration.IsStatic || !_closure.TryGet("this", out _))
         {
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);

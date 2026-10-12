@@ -105,7 +105,7 @@ public static class FunctionBuiltIns
             throw new ThrowException(new SharpTSTypeError(
                 "Function.prototype.bind called on incompatible receiver"));
 
-        var thisArg = args.Length > 0 ? args[0].ToObject() : null;
+        var thisArg = args.Length > 0 ? args[0].ToObject() : DefaultThisArgument(callable);
         var boundArgs = new List<object?>(Math.Max(0, args.Length - 1));
         for (int i = 1; i < args.Length; i++)
             boundArgs.Add(args[i].ToObject());
@@ -129,7 +129,7 @@ public static class FunctionBuiltIns
         var callable = receiver.ToObject() as ISharpTSCallable
             ?? throw new Exception("Runtime Error: call invoked on non-function.");
 
-        var thisArg = args.Length > 0 ? args[0].ToObject() : null;
+        var thisArg = args.Length > 0 ? args[0].ToObject() : DefaultThisArgument(callable);
         var callArgs = new List<object?>(Math.Max(0, args.Length - 1));
         for (int i = 1; i < args.Length; i++)
             callArgs.Add(args[i].ToObject());
@@ -146,7 +146,7 @@ public static class FunctionBuiltIns
         var callable = receiver.ToObject() as ISharpTSCallable
             ?? throw new Exception("Runtime Error: apply invoked on non-function.");
 
-        var thisArg = args.Length > 0 ? args[0].ToObject() : null;
+        var thisArg = args.Length > 0 ? args[0].ToObject() : DefaultThisArgument(callable);
         var argsArray = args.Length > 1 ? args[1].ToObject() : null;
 
         List<object?> callArgs;
@@ -184,6 +184,26 @@ public static class FunctionBuiltIns
     public static object? CallWithThis(Interpreter interp, ISharpTSCallable callable, object? thisArg, List<object?> args)
         => InvokeWithThis(interp, callable, thisArg, args);
 
+    // Canonical static methods are strict and distinguish an absent receiver
+    // from explicit null. Other callables retain their existing normalization.
+    private static object? DefaultThisArgument(ISharpTSCallable callable)
+        => callable is SharpTSFunction { IsStaticMethod: true }
+            or SharpTSAsyncFunction { IsStaticMethod: true }
+            or SharpTSGeneratorFunction { IsStaticMethod: true }
+            or SharpTSAsyncGeneratorFunction { IsStaticMethod: true }
+                ? SharpTSUndefined.Instance : null;
+
+    /// <summary>Preserves an exact receiver for an interpreted class static method.</summary>
+    internal static ISharpTSCallable? BindStaticReceiver(ISharpTSCallable callable, object? receiver)
+        => callable switch
+        {
+            SharpTSFunction fn when fn.IsStaticMethod => fn.BindThis(receiver),
+            SharpTSAsyncFunction fn when fn.IsStaticMethod => fn.BindThisValue(receiver),
+            SharpTSGeneratorFunction fn when fn.IsStaticMethod => fn.BindToReceiver(receiver!),
+            SharpTSAsyncGeneratorFunction fn when fn.IsStaticMethod => fn.BindToReceiver(receiver!),
+            _ => null,
+        };
+
     private static object? InvokeWithThis(Interpreter interp, ISharpTSCallable callable, object? thisArg, List<object?> args)
     {
         if (callable is SharpTSClass klass)
@@ -193,6 +213,9 @@ public static class FunctionBuiltIns
 
         if (callable is SharpTSTextDecoder.TextDecoderDecodeMethod decode)
             return decode.CallWithReceiver(thisArg, args);
+
+        if (BindStaticReceiver(callable, thisArg) is { } staticMethod)
+            return staticMethod.Call(interp, args);
 
         // Arrow functions ignore thisArg
         if (callable is SharpTSArrowFunction arrow && !arrow.HasOwnThis)
@@ -442,6 +465,11 @@ public class BoundFunction : ISharpTSCallable
             return RuntimeValue.FromBoxed(proxy.TrapApply(
                 _thisArg, CallableInterop.ToBoxedList(combined), interpreter));
 
+        // Static methods preserve the exact strict receiver, including null
+        // and primitives, rather than using a synthetic instance wrapper.
+        if (!_ignoreThisArg && FunctionBuiltIns.BindStaticReceiver(_target, _thisArg) is { } staticMethod)
+            return staticMethod.CallV2(interpreter, combined);
+
         // Delegate to target's V2 path if available
         if (!_ignoreThisArg && _thisArg != null)
         {
@@ -495,6 +523,9 @@ public class BoundFunction : ISharpTSCallable
 
         if (!_ignoreThisArg && _target is SharpTSProxy proxy)
             return proxy.TrapApply(_thisArg, combinedArgs, interpreter);
+
+        if (!_ignoreThisArg && FunctionBuiltIns.BindStaticReceiver(_target, _thisArg) is { } staticMethod)
+            return staticMethod.Call(interpreter, combinedArgs);
 
         // Handle binding 'this' for the target function
         if (!_ignoreThisArg && _thisArg != null)

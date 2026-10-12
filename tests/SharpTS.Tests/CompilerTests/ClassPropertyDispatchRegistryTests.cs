@@ -14,6 +14,8 @@ public sealed class ClassPropertyDispatchRegistryTests
         var (owner, declaration) = NewDeclaration();
         registry.Declare("C", owner, declaration);
         Assert.Same(declaration, registry.Require("C"));
+        Assert.True(registry.TryGet(owner, out var byOwner));
+        Assert.Same(declaration, byOwner);
         Assert.Throws<InvalidOperationException>(registry.CompleteEmission);
         Assert.Throws<InvalidOperationException>(() => registry.MarkBodiesEmitted("C"));
         EmitBodies(declaration, includeHasProperty: false);
@@ -40,6 +42,7 @@ public sealed class ClassPropertyDispatchRegistryTests
         var second = NewDeclaration();
         Assert.Equal(first.Owner.Name, second.Owner.Name);
         Assert.False(registry.TryGet("C", out _));
+        Assert.False(registry.TryGet(first.Owner, out _));
         Assert.Throws<InvalidOperationException>(() => registry.Require("C"));
         Assert.Throws<InvalidOperationException>(() => registry.MarkBodiesEmitted("C"));
         Assert.Throws<InvalidOperationException>(() => registry.Declare("C", first.Owner, second.Declaration));
@@ -53,6 +56,10 @@ public sealed class ClassPropertyDispatchRegistryTests
         registry.Declare("other.C", second.Owner, second.Declaration);
         Assert.Same(first.Declaration, registry.Require("C"));
         Assert.Same(second.Declaration, registry.Require("other.C"));
+        Assert.True(registry.TryGet(first.Owner, out var firstByOwner));
+        Assert.True(registry.TryGet(second.Owner, out var secondByOwner));
+        Assert.Same(first.Declaration, firstByOwner);
+        Assert.Same(second.Declaration, secondByOwner);
         var separate = new ClassPropertyDispatchRegistry();
         Assert.False(separate.Contains("C"));
         separate.CompleteEmission();

@@ -586,7 +586,7 @@ public partial class ILCompiler
         // so inherited members resolve under dynamic dispatch (else fall back to
         // returning $Undefined).
         il.MarkLabel(returnNullLabel);
-        EmitGetPropertyBaseFallthrough(il, ResolveBaseStubClassName(classStmt), _classes.Builders[className].BaseType);
+        EmitGetPropertyBaseFallthrough(il, _classes.Builders[className].BaseType);
     }
 
     /// <summary>
@@ -947,7 +947,7 @@ public partial class ILCompiler
         // so inherited members resolve under dynamic dispatch (else fall back to
         // returning $Undefined).
         il.MarkLabel(returnNullLabel);
-        EmitGetPropertyBaseFallthrough(il, ResolveBaseStubClassName(classExpr), _classExprs.Builders[classExpr].BaseType);
+        EmitGetPropertyBaseFallthrough(il, _classExprs.Builders[classExpr].BaseType);
     }
 
     /// <summary>
@@ -962,9 +962,14 @@ public partial class ILCompiler
     /// $Undefined when the base is System.Object or a built-in (no emitted
     /// $IHasFields stub).
     /// </summary>
-    private void EmitGetPropertyBaseFallthrough(ILGenerator il, string? baseClassName, Type? baseType)
+    private void EmitGetPropertyBaseFallthrough(ILGenerator il, Type? baseType)
     {
-        if (baseClassName != null && _classes.PropertyDispatch.TryGet(baseClassName, out var baseStubs))
+        // A guest runtime parent may not be a CLR base. Only an actual base
+        // owner can receive this nonvirtual call; guest inheritance is read
+        // through the prototype fallback before reaching this branch.
+        var baseDefinition = baseType?.IsConstructedGenericType == true
+            ? baseType.GetGenericTypeDefinition() : baseType;
+        if (baseDefinition is TypeBuilder owner && _classes.PropertyDispatch.TryGet(owner, out var baseStubs))
         {
             // return base.GetProperty(name);  — non-virtual `call` to the
             // specific base implementation (not callvirt, which would recurse
@@ -1048,44 +1053,6 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(skipLabel);
-    }
-
-    /// <summary>
-    /// Resolves the emitted base class name (a $IHasFields stub key) for a class
-    /// declaration's GetProperty inheritance fallthrough, or null when the base
-    /// is System.Object / a built-in without a stub.
-    /// </summary>
-    private string? ResolveBaseStubClassName(Stmt.Class classStmt)
-    {
-        if (classStmt.SuperclassExpr == null)
-            return null;
-        var leaf = Expr.GetSuperclassLeafName(classStmt.SuperclassExpr);
-        if (leaf == null)
-            return null;
-        var resolved = GetDefinitionContext().ResolveClassName(leaf);
-        return _classes.PropertyDispatch.Contains(resolved) ? resolved : null;
-    }
-
-    /// <summary>
-    /// Resolves the emitted base class name (a $IHasFields stub key) for a class
-    /// expression's GetProperty inheritance fallthrough. The superclass may be
-    /// another class expression bound to a variable or a class declaration.
-    /// </summary>
-    private string? ResolveBaseStubClassName(Expr.ClassExpr classExpr)
-    {
-        if (!_classExprs.Superclass.TryGetValue(classExpr, out var superName) || superName == null)
-            return null;
-
-        string? baseClassName;
-        if (ResolveClassExpressionParent(classExpr) is { } parentExpr
-            && _classExprs.Names.TryGetValue(parentExpr, out var generatedName))
-            baseClassName = generatedName;
-        else
-            baseClassName = GetDefinitionContext().ResolveClassName(superName);
-
-        return baseClassName != null && _classes.PropertyDispatch.Contains(baseClassName)
-            ? baseClassName
-            : null;
     }
 
     /// <summary>

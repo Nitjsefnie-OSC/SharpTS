@@ -77,11 +77,17 @@ public abstract partial class ExpressionEmitterBase
 
     private void EmitOrdinaryStaticPrivateBrandCheck(string owner, LocalBuilder receiver, string name)
     {
-        Ctx.ClassRegistry!.TryGetClass(owner, out var builder);
+        var declaration = Ctx.ClassRegistry!.GetPrivateElements(owner)
+            ?? throw new InvalidOperationException("Static private member has no declaration owner.");
+        var builder = declaration.StaticMethods.TryGetValue(name, out var method)
+            ? method.DeclaringType!
+            : declaration.StaticFields.TryGetValue(name, out var field)
+                ? field.DeclaringType!
+                : throw new InvalidOperationException("Static private member has no emitted owner.");
         var invalid = IL.DefineLabel();
         var valid = IL.DefineLabel();
         IL.Emit(OpCodes.Ldloc, receiver);
-        if (builder!.IsGenericTypeDefinition)
+        if (builder.IsGenericTypeDefinition)
         {
             var constructor = IL.DeclareLocal(Types.Type);
             IL.Emit(OpCodes.Isinst, Types.Type);
@@ -174,13 +180,13 @@ public abstract partial class ExpressionEmitterBase
         return true;
     }
 
-    protected bool TryEmitDefinitionPrivateCall(Expr.CallPrivate call)
+    protected bool TryEmitBrandedPrivateCall(Expr.CallPrivate call)
     {
         if (Ctx.CurrentClassName is not { } current) return false;
         string name = call.Name.Lexeme.TrimStart('#');
         string owner = Ctx.ResolvePrivateMethodOwner(current, name);
         var value = Ctx.ClassRegistry?.GetPrivateMethodValue(owner, name);
-        if (value?.Definition == null) return false;
+        if (value is null || (value.Definition == null && !value.Source.IsStatic)) return false;
         var receiver = SpillGenericPrivateOperand(call.Object);
         EmitPrivateMethodValue(value, owner, name, receiver);
         EmitGuestMethodInvocation(receiver, call.Arguments);

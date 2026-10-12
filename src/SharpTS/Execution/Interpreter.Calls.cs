@@ -1160,6 +1160,11 @@ public partial class Interpreter
 
     private object EvaluateInstanceof(object? left, object? right)
     {
+        // Bound functions delegate to their target, including through repeated
+        // bindings. Their own prototype property does not participate.
+        if (right is BoundFunction bound)
+            return EvaluateInstanceof(left, bound.Target);
+
         // `x instanceof Object` — the `Object` global resolves to the namespace
         // singleton (no SharpTSClass on the RHS), so brand-check structurally:
         // every non-primitive guest value is an Object. Mirrors ECMA-262

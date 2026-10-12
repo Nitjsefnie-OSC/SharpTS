@@ -31,6 +31,7 @@ public partial class RuntimeEmitter
         EmittedClassPrototypeRuntime ClassPrototypes,
         EmittedAbortRuntime? Abort,
         EmittedBoxedPrimitiveRuntime BoxedPrimitives,
+        EmittedFunctionBindingRuntime FunctionBindings,
         MethodBuilder GetFunctionMethod,
         EmittedObjectPrototypeRuntime ObjectPrototypes,
         EmittedPromiseRuntime? Promise,
@@ -658,6 +659,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, falseLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, falseLabel);
+
+        // Delegate through each bound target so ordinary constructor prototype
+        // lookup remains live and repeated bindings retain target identity.
+        foreach (var (boundType, targetField) in new[]
+        {
+            (inputs.FunctionBindings.BoundType, inputs.FunctionBindings.BoundTargetField),
+            (inputs.FunctionBindings.AnyType, inputs.FunctionBindings.AnyTargetField)
+        })
+        {
+            var notBound = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Isinst, boundType);
+            il.Emit(OpCodes.Brfalse, notBound);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Castclass, boundType);
+            il.Emit(OpCodes.Ldfld, targetField);
+            il.Emit(OpCodes.Call, method);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notBound);
+        }
 
         // A plain Dictionary RHS is never a constructor — letting it reach the
         // IsAssignableFrom fallback matched EVERY dict-shaped value (object

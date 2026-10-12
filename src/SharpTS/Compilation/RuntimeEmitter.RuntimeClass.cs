@@ -925,6 +925,7 @@ public partial class RuntimeEmitter
                 runtime.ClassPrototypes,
                 runtime.Abort,
                 runtime.BoxedPrimitives,
+                runtime.FunctionBindings,
                 runtime.FunctionIntrospection.GetProperty,
                 runtime.ObjectPrototypes,
                 runtime.Promise,

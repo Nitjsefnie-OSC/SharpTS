@@ -7,6 +7,23 @@ namespace SharpTS.Compilation;
 
 public partial class RuntimeEmitter
 {
+    private void EmitSkipNativeConstructorClrStatics(ILGenerator il, LocalBuilder owner, Label skip)
+    {
+        // These BCL types represent JavaScript constructors in value position.
+        // Other CLR types and emitted native types keep their reflected members.
+        Type[] constructors = [_types.Double, _types.String, _types.Boolean, _types.Object,
+            _types.IListOfObject, _types.DictionaryObjectObject, _types.HashSetOfObject,
+            _types.ConditionalWeakTableObjectObject, _types.WeakReferenceObject,
+            _types.ObjectArray, _types.TaskOfObject, _types.BigInteger];
+        foreach (var constructor in constructors)
+        {
+            il.Emit(OpCodes.Ldloc, owner);
+            il.Emit(OpCodes.Ldtoken, constructor);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Beq, skip);
+        }
+    }
+
     private void EmitCachedStaticMethodValue(ILGenerator il, GetPropertyInputs inputs, LocalBuilder method)
     {
         // Static methods are unbound function objects. Share the direct-reference
@@ -2425,6 +2442,9 @@ public partial class RuntimeEmitter
 
             const BindingFlags staticPublic = BindingFlags.Public | BindingFlags.Static;
 
+            var skipNativeClrStatics = il.DefineLabel();
+            EmitSkipNativeConstructorClrStatics(il, typeLocal, skipNativeClrStatics);
+
             // Static method: SafeGetMethod(type, name, Public|Static).
             // SafeGetMethod handles AmbiguousMatchException deterministically, which matters
             // because user-declared statics can collide with inherited Type overloads.
@@ -2464,6 +2484,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
 
             il.MarkLabel(noStaticFieldLabel);
+            il.MarkLabel(skipNativeClrStatics);
 
             // Function.prototype.name: JS spec — classes expose their declared name as
             // `Foo.name === "Foo"`. Without this, `Class.name` falls through to Undefined

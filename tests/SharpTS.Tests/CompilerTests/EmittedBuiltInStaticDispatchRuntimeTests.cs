@@ -114,6 +114,17 @@ public sealed class EmittedBuiltInStaticDispatchRuntimeTests
             Check(typeof(double), "isFinite", runtime.Numbers.IsFinite, 1);
             Check(typeof(double), "isInteger", runtime.Numbers.IsInteger, 1);
             Check(typeof(double), "isSafeInteger", runtime.Numbers.IsSafeInteger, 1);
+            var getProperty = type.GetMethod(runtime.ObjectRead.Property.Name)!;
+            object? Read(Type target, string name) => getProperty.Invoke(null, [Resolve(target), name]);
+            Assert.Equal(double.MaxValue, Assert.IsType<double>(lookup.Invoke(null, [typeof(double), "MAX_VALUE"])));
+            Assert.True(double.IsNaN(Assert.IsType<double>(Read(typeof(double), "NaN"))));
+            Assert.Equal("$Undefined", Read(typeof(double), "Parse")!.GetType().Name);
+            var days = Read(typeof(DateTime), "DaysInMonth")!;
+            Assert.Equal("DaysInMonth", days.GetType().GetProperty("Name")!.GetValue(days));
+            Assert.Same(days, Read(typeof(DateTime), "DaysInMonth"));
+            Assert.Equal(31, days.GetType().GetMethod("Invoke", [typeof(object[])])!
+                .Invoke(days, [new object[] { 2026, 1 }]));
+            Assert.Equal(DateTime.MinValue, Assert.IsType<DateTime>(Read(typeof(DateTime), "MinValue")));
             Check(typeof(string), "fromCharCode", runtime.Strings.FromCharCode, 1);
             Check(typeof(string), "fromCodePoint", runtime.Strings.FromCodePoint, 1);
             Check(typeof(string), "raw", runtime.Templates.Raw, 1);

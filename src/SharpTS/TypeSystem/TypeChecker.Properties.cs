@@ -1537,6 +1537,8 @@ public partial class TypeChecker
     // private member through the current class's metadata.
     private bool IsStaticPrivateConstructor(TypeInfo type, TypeInfo.Class owner) =>
         type is TypeInfo.Class ||
+        type is TypeInfo.MutableClass mutable && mutable.DeclarationId != 0 &&
+        mutable.DeclarationId == owner.Core.DeclarationId ||
         type is TypeInfo.GenericClass generic &&
         SourceDerivesFromDeclaration(generic, owner.Core.DeclarationId);
 }

@@ -301,7 +301,7 @@ public partial class Interpreter
     /// tsc/node and the compiled <c>NewOnFunction</c> path. Centralizes the decision
     /// so every construct-return site stays consistent.
     /// </summary>
-    private static bool IsConstructorReturnObject(object? result) => result switch
+    internal static bool IsConstructorReturnObject(object? result) => result switch
     {
         null => false,
         SharpTSUndefined => false,

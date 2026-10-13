@@ -73,6 +73,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Castclass, _runtime.ClassDefinitions.Type);
             il.Emit(OpCodes.Newobj, target);
+            il.Emit(OpCodes.Call, _runtime.DynamicConstruction.ResolveClassReturn);
             il.Emit(OpCodes.Ret);
         }
         string name = expression.Name?.Lexeme

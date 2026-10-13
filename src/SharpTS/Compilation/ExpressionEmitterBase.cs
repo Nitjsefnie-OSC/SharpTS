@@ -1750,6 +1750,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             }
 
             IL.Emit(OpCodes.Newobj, targetCtor);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
             SetStackUnknown();
         }
         else
@@ -1862,6 +1863,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             EmitOmittedArgument(ctorParams[i].ParameterType);
 
         IL.Emit(OpCodes.Newobj, classExprCtor);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
         SetStackUnknown();
     }
 

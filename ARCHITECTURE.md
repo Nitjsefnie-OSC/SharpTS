@@ -618,6 +618,16 @@ receive exact peer metadata, preserving proxy construction, prototype links,
 return-object precedence, ambient receiver restoration, boxed and RegExp
 construction, and the existing non-constructor policy.
 
+Class constructors retain CLR void signatures. `DynamicConstruction` owns their
+completion recorder and result selector: valued returns stay in a constructor-local
+slot until all `finally` clauses finish, then publish into a lazily allocated,
+weak-keyed table. Guest construction callers select returned objects by identity;
+base primitives keep the allocated receiver, while derived constructors accept
+only objects or undefined. The table and completion data are emitted BCL-only
+implementation state and never become JavaScript properties. Constructors that
+can replace instances, including their descendants, use object slots and dynamic
+member dispatch at observable boundaries.
+
 Required `Invocation` owns dynamic value, receiver-aware and zero-argument
 call helpers. The Method shell keeps its original forward-declaration location;
 completion follows all three original bodies and checks the delayed Method body.

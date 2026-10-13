@@ -129,6 +129,7 @@ public partial class ILCompiler
         Type self = owner.IsGenericTypeDefinition
             ? EmitGenerics.MakeGenericType(owner, owner.GetGenericArguments()) : owner;
         il.Emit(OpCodes.Newobj, self == owner ? constructor : EmitterTypeHelpers.ResolveConstructor(self, constructor));
+        il.Emit(OpCodes.Call, _runtime.DynamicConstruction.ResolveClassReturn);
         if (!publishesArguments)
         {
             il.Emit(OpCodes.Ret);

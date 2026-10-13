@@ -19,6 +19,8 @@ public partial class ILEmitter
             _ctx.ILBuilder.MarkLabel(_ctx.ReturnLabel);
             if (_ctx.ReturnValueLocal != null)
                 IL.Emit(OpCodes.Ldloc, _ctx.ReturnValueLocal);
+            if (_ctx.CapturesClassConstructorReturn)
+                PublishClassConstructorReturnCompletion();
             IL.Emit(OpCodes.Ret);
         }
     }

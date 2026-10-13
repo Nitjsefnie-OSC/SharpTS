@@ -2192,6 +2192,7 @@ public abstract partial class ExpressionEmitterBase
         // Use ResolvedClassType so chained call returns (whose type was captured while the
         // class was still a MutableClass) resolve to the frozen Class here.
         var receiverType = Ctx.TypeMap?.Get(receiver);
+        if (Ctx.TypeMapper.IsDynamicClassInstance(receiverType)) return false;
         if (receiverType is TypeSystem.TypeInfo.Instance instance)
         {
             simpleClassName = instance.ResolvedClassType switch

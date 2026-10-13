@@ -88,6 +88,7 @@ public partial class ILCompiler
         // inside a ctor body defaults to object and emits `ldnull` before
         // the `ret`, producing an invalid method.
         ctx.CurrentMethodReturnType = typeof(void);
+        ConfigureClassConstructorReturns(ctx, constructor, classStmt.SuperclassExpr != null);
 
         // Add class generic type parameters to context
         if (_classes.GenericParameters.Require(typeBuilder) is { Count: > 0 } classGenericParams)
@@ -257,6 +258,9 @@ public partial class ILCompiler
             il.Emit(OpCodes.Call, _types.ObjectDefaultCtor);
         }
 
+        if (constructor?.Body?.Any(ContainsSuperCall) != true)
+            InitializeClassConstructorReceiver(ctx, il);
+
         // Emit instance field initializers to backing fields (before constructor body)
         bool deferPrivateInitialization = constructor?.Body != null
             && classStmt.SuperclassExpr != null
@@ -329,6 +333,11 @@ public partial class ILCompiler
                 }
             }
 
+            if (ctx.CapturesClassConstructorReturn)
+            {
+                emitter.EmitClassConstructorFallthrough();
+                il.Emit(OpCodes.Ret);
+            }
             emitter.FinalizeReturns();
         }
 

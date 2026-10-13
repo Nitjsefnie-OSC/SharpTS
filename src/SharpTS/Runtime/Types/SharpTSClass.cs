@@ -127,10 +127,24 @@ public partial class SharpTSClass(
         ISharpTSCallable? constructor = FindMethod("constructor");
         if (constructor != null)
         {
-            BindMethod(constructor, instance).Call(interpreter, arguments);
+            var result = BindMethod(constructor, instance).Call(interpreter, arguments);
+            return ResolveConstructorReturn(result, instance);
         }
 
         return instance;
+    }
+
+    protected object? ResolveConstructorReturn(object? result, object receiver)
+    {
+        if (Interpreter.IsConstructorReturnObject(result)) return result;
+        // An implicit derived constructor forwards the ancestor's completion;
+        // primitive handling follows the constructor that actually ran.
+        var owner = this;
+        while (!owner._methods.ContainsKey("constructor") && owner.Superclass != null)
+            owner = owner.Superclass;
+        if (owner.Superclass != null && result is not SharpTSUndefined)
+            throw new ThrowException(new SharpTSTypeError("Derived constructors may only return object or undefined"));
+        return receiver;
     }
 
     /// <summary>

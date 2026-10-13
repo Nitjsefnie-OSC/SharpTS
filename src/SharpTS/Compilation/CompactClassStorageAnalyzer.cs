@@ -57,6 +57,7 @@ internal static class CompactClassStorageAnalyzer
 
     private static bool IsLayoutCandidate(Stmt.Class statement) =>
         statement.SuperclassExpr is null
+        && !ILCompiler.ClassConstructorMayReplace(statement.Methods)
         && statement.TypeParams is null or { Count: 0 }
         && !statement.IsAbstract
         && !statement.IsDeclare

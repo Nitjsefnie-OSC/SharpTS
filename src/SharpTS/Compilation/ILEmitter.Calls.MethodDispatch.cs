@@ -739,6 +739,8 @@ public partial class ILEmitter
             && classTag is Stmt.Class)
             return false;
 
+        if (_ctx.TypeMapper.IsDynamicClassInstance(receiverType)) return false;
+
         // Only handle Instance types (e.g., let p: Person = ...)
         if (receiverType is not TypeSystem.TypeInfo.Instance instance)
             return false;

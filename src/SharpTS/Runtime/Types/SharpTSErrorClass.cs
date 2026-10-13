@@ -218,7 +218,8 @@ public class SharpTSErrorClass : SharpTSClass
         if (hasUserConstructor && constructor != null)
         {
             // User-defined constructor — super() in body will call ErrorConstructorCallable
-            BindMethod(constructor, instance).Call(interpreter, arguments);
+            var result = BindMethod(constructor, instance).Call(interpreter, arguments);
+            return ResolveConstructorReturn(result, instance);
         }
         else
         {

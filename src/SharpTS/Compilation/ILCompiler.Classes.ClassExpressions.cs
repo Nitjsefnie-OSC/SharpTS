@@ -27,6 +27,8 @@ public partial class ILCompiler
     private void DefineClassExpression(Expr.ClassExpr classExpr)
     {
         if (_classExprs.Builders.ContainsKey(classExpr)) return;
+        if (ClassConstructorMayReplace(classExpr.Methods) && _typeMap.GetClassExprType(classExpr) is { } replacementClass)
+            _typeMapper.RegisterDynamicClassInstance(replacementClass.Core.DeclarationId);
         if (ResolveClassExpressionParent(classExpr) is { } parent && !ReferenceEquals(parent, classExpr))
             DefineClassExpression(parent);
         string className = _classExprs.Names[classExpr];
@@ -675,6 +677,8 @@ public partial class ILCompiler
         il.Emit(OpCodes.Stfld, EmitterTypeHelpers.SelfFieldReference(_classExprs.DefinitionFields[classExpr]));
         var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, fieldsField, ctorBuilder);
         ctx.IsInstanceMethod = true;
+        ctx.CurrentMethodReturnType = _types.Void;
+        ConfigureClassConstructorReturns(ctx, constructor, classExpr.SuperclassExpr != null);
 
         // Add generic type parameters to context
         if (_classes.GenericParameters.Require(typeBuilder) is { Count: > 0 } genericParams)
@@ -777,6 +781,8 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Call, fallbackCtor);
             }
         }
+        if (!hasExplicitSuperCall)
+            InitializeClassConstructorReceiver(ctx, il);
         if (constructor != null)
         {
             // Define parameters with typed parameter types from constructor signature
@@ -822,6 +828,11 @@ public partial class ILCompiler
         if (!initializersEmitted)
             EmitInstanceFieldInitializers();
 
+        if (ctx.CapturesClassConstructorReturn)
+        {
+            emitter.EmitClassConstructorFallthrough();
+            il.Emit(OpCodes.Ret);
+        }
         emitter.FinalizeReturns();
 
         il.Emit(OpCodes.Ret);

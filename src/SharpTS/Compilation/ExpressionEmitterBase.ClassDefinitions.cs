@@ -72,6 +72,7 @@ public abstract partial class ExpressionEmitterBase
             .FirstOrDefault(entry => ReferenceEquals(entry.Value, Ctx.CurrentClassBuilder)).Key;
         if (expression?.Name?.Lexeme == name)
         {
+            if (HasClassDefinitionCaptureShadow(name)) return false;
             if (!TryEmitOwnedClassDefinition()) return false;
         }
         else
@@ -178,7 +179,7 @@ public abstract partial class ExpressionEmitterBase
         return true;
     }
 
-    private bool HasClassDefinitionCaptureShadow(string name)
+    protected bool HasClassDefinitionCaptureShadow(string name)
     {
         if (Ctx.TryGetParameter(name, out _) || Ctx.Locals.GetLocal(name) != null
             || Ctx.CellBindingLocals.ContainsKey(name) || GetHoistedVariableField(name) != null

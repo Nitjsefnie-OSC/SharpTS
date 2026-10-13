@@ -2692,20 +2692,25 @@ public partial class TypeChecker
             {
                 foreach (var accessor in classExpr.Accessors)
                 {
-                    string propName = accessor.Name.Lexeme;
+                    string? propName = accessor.ComputedKey != null
+                        ? TryGetWellKnownSymbolMemberName(accessor.ComputedKey)
+                        : accessor.Name.Lexeme;
+                    if (propName is null) continue;
+                    if (accessor.IsStatic)
+                        mutableClass.StaticFieldAccess[propName] = accessor.Access;
                     if (accessor.Kind.Type == TokenType.GET)
                     {
                         TypeInfo getterRetType = accessor.ReturnType != null
                             ? ResolveAnnotation(accessor.ReturnType, accessor.ReturnTypeNode, accessor, EditorAnnotationSlot.Return)!
-                            : TypeInfo.Any.Shared;
-                        mutableClass.Getters[propName] = getterRetType;
+                            : accessor.IsStatic ? TypeInfo.Inferred.Shared : TypeInfo.Any.Shared;
+                        (accessor.IsStatic ? mutableClass.StaticGetters : mutableClass.Getters)[propName] = getterRetType;
                     }
                     else
                     {
                         TypeInfo paramType = accessor.SetterParam?.Type != null
                             ? ResolveAnnotation(accessor.SetterParam.Type, accessor.SetterParam.TypeAnnotationNode, accessor.SetterParam)!
-                            : TypeInfo.Any.Shared;
-                        mutableClass.Setters[propName] = paramType;
+                            : accessor.IsStatic ? TypeInfo.Inferred.Shared : TypeInfo.Any.Shared;
+                        (accessor.IsStatic ? mutableClass.StaticSetters : mutableClass.Setters)[propName] = paramType;
                     }
                 }
 
@@ -2715,6 +2720,7 @@ public partial class TypeChecker
                     if (!IsCompatible(mutableClass.Getters[propName], mutableClass.Setters[propName]))
                         throw new TypeCheckException($" Getter and setter for '{propName}' have incompatible types.", tsCode: "TS2380");
                 }
+                ValidateStaticAccessorPairs(mutableClass);
             }
         }
 
@@ -2992,71 +2998,8 @@ public partial class TypeChecker
                 }
             }
 
-            // Check accessor bodies
-            if (classExpr.Accessors != null)
-            {
-                foreach (var accessor in classExpr.Accessors)
-                {
-                    TypeEnvironment accessorEnv = new TypeEnvironment(_environment);
-                    RegisterEditorScope(accessor, accessorEnv, EditorScopeKind.Function);
-                    TypeInfo accessorReturnType;
-
-                    if (accessor.Kind.Type == TokenType.GET)
-                    {
-                        accessorReturnType = classTypeForBody.Getters[accessor.Name.Lexeme];
-                    }
-                    else
-                    {
-                        accessorReturnType = TypeInfo.Void.Shared;
-                        if (accessor.SetterParam != null)
-                        {
-                            TypeInfo setterParamType = classTypeForBody.Setters[accessor.Name.Lexeme];
-                            DeclareParameterValue(
-                                accessorEnv,
-                                accessor.SetterParam,
-                                setterParamType);
-                        }
-                    }
-
-                    TypeEnvironment previousEnvAcc = _environment;
-                    TypeInfo? previousReturnAcc = _currentFunctionReturnType;
-                    int previousLoopDepthAcc = _loopDepth;
-                    int previousSwitchDepthAcc = _switchDepth;
-                    var previousActiveLabelsAcc = new Dictionary<string, ActiveLabel>(_activeLabels);
-                    bool previousInStaticAcc = _inStaticMethod;
-
-                    _environment = accessorEnv;
-                    MarkEditorBodyEntered(accessor);
-                    _currentFunctionReturnType = accessorReturnType;
-                    _loopDepth = 0;
-                    _switchDepth = 0;
-                    _activeLabels.Clear();
-                    _inStaticMethod = accessor.IsStatic;
-                    PushDefiniteAssignmentScope();
-
-                    try
-                    {
-                        foreach (var bodyStmt in accessor.Body)
-                            CheckStmt(bodyStmt);
-
-                        // #367/#372: object-slot number/boolean-typed locals and returns that may hold
-                        // the undefined sentinel. The setter parameter always uses an object slot.
-                        MarkUndefinedReachableNumericSlots(accessor.Body);
-                    }
-                    finally
-                    {
-                        PopDefiniteAssignmentScope();
-                        _environment = previousEnvAcc;
-                        _currentFunctionReturnType = previousReturnAcc;
-                        _loopDepth = previousLoopDepthAcc;
-                        _switchDepth = previousSwitchDepthAcc;
-                        _activeLabels.Clear();
-                        foreach (var kvp in previousActiveLabelsAcc)
-                            _activeLabels[kvp.Key] = kvp.Value;
-                        _inStaticMethod = previousInStaticAcc;
-                    }
-                }
-            }
+            anyInferredMethodReturnResolved |= CheckClassAccessorBodies(
+                classExpr.Accessors, mutableClass, recoverComputedSymbolDiagnostics: false);
 
             // Check field initializers
             foreach (var field in classExpr.Fields.Where(f => f.Initializer != null))

@@ -395,16 +395,18 @@ public partial class TypeChecker
                 }
 
                 string propName = canonicalName;
+                if (accessor.IsStatic)
+                    mutableClass.StaticFieldAccess[propName] = accessor.Access;
 
                 if (accessor.Kind.Type == TokenType.GET)
                 {
                     TypeInfo getterRetType = accessor.ReturnType != null
                         ? ResolveAnnotation(accessor.ReturnType, accessor.ReturnTypeNode, accessor, EditorAnnotationSlot.Return)!
                         : TypeInfo.Inferred.Shared;
-                    mutableClass.Getters[propName] = getterRetType;
+                    (accessor.IsStatic ? mutableClass.StaticGetters : mutableClass.Getters)[propName] = getterRetType;
 
                     // Track abstract getters
-                    if (accessor.IsAbstract)
+                    if (accessor.IsAbstract && !accessor.IsStatic)
                     {
                         mutableClass.AbstractGetters.Add(propName);
                     }
@@ -414,10 +416,10 @@ public partial class TypeChecker
                     TypeInfo paramType = accessor.SetterParam?.Type != null
                         ? ResolveAnnotation(accessor.SetterParam.Type, accessor.SetterParam.TypeAnnotationNode, accessor.SetterParam)!
                         : TypeInfo.Inferred.Shared;
-                    mutableClass.Setters[propName] = paramType;
+                    (accessor.IsStatic ? mutableClass.StaticSetters : mutableClass.Setters)[propName] = paramType;
 
                     // Track abstract setters
-                    if (accessor.IsAbstract)
+                    if (accessor.IsAbstract && !accessor.IsStatic)
                     {
                         mutableClass.AbstractSetters.Add(propName);
                     }
@@ -442,6 +444,7 @@ public partial class TypeChecker
                     throw new TypeCheckException($" Getter and setter for '{propName}' have incompatible types.", tsCode: "TS2380");
                 }
             }
+            ValidateStaticAccessorPairs(mutableClass);
         }
     }
 
@@ -661,7 +664,7 @@ public partial class TypeChecker
                 anyInferredMethodReturnResolved = CheckClassMethodBodies(
                     classStmt, classTypeForBody, mutableClass, prevEnv, recoverComputedSymbolDiagnostics);
                 anyInferredMethodReturnResolved |= CheckClassAccessorBodies(
-                    classStmt, mutableClass, recoverComputedSymbolDiagnostics);
+                    classStmt.Accessors, mutableClass, recoverComputedSymbolDiagnostics);
             }
             finally
             {
@@ -970,15 +973,15 @@ public partial class TypeChecker
     }
 
     private bool CheckClassAccessorBodies(
-        Stmt.Class classStmt,
+        List<Stmt.Accessor>? accessors,
         TypeInfo.MutableClass mutableClass,
         bool recoverComputedSymbolDiagnostics)
     {
         bool anyInferredMethodReturnResolved = false;
         // Check accessor bodies
-        if (classStmt.Accessors != null)
+        if (accessors != null)
         {
-            foreach (var accessor in classStmt.Accessors)
+            foreach (var accessor in accessors)
             {
                 TypeEnvironment accessorEnv = new TypeEnvironment(_environment);
                 RegisterEditorScope(accessor, accessorEnv, EditorScopeKind.Function);
@@ -986,11 +989,13 @@ public partial class TypeChecker
                     ? TryGetWellKnownSymbolMemberName(accessor.ComputedKey)
                     : accessor.Name.Lexeme;
 
+                var getters = accessor.IsStatic ? mutableClass.StaticGetters : mutableClass.Getters;
+                var setters = accessor.IsStatic ? mutableClass.StaticSetters : mutableClass.Setters;
                 TypeInfo accessorReturnType;
                 if (accessor.Kind.Type == TokenType.GET)
                 {
                     accessorReturnType = accessorName != null
-                        ? mutableClass.Getters[accessorName]
+                        ? getters[accessorName]
                         : (accessor.ReturnType != null ? ResolveAnnotation(accessor.ReturnType, accessor.ReturnTypeNode, accessor, EditorAnnotationSlot.Return)! : TypeInfo.Any.Shared);
                 }
                 else
@@ -1001,7 +1006,7 @@ public partial class TypeChecker
                     if (accessor.SetterParam != null)
                     {
                         TypeInfo setterParamType = accessorName != null
-                            ? mutableClass.Setters[accessorName]
+                            ? setters[accessorName]
                             : (accessor.SetterParam.Type != null ? ResolveAnnotation(accessor.SetterParam.Type, accessor.SetterParam.TypeAnnotationNode, accessor.SetterParam)! : TypeInfo.Any.Shared);
                         DeclareParameterValue(
                             accessorEnv,
@@ -1050,16 +1055,17 @@ public partial class TypeChecker
                         TypeInfo inferred = distinct.Count == 0
                             ? TypeInfo.Void.Shared
                             : CollapseOrCreateUnion(distinct);
-                        mutableClass.Getters[accessorName] = inferred;
+                        getters[accessorName] = inferred;
 
                         // An unannotated setter parameter is contextually typed from its getter.
-                        var pairedSetter = classStmt.Accessors.FirstOrDefault(candidate =>
+                        var pairedSetter = accessors.FirstOrDefault(candidate =>
                             candidate.Kind.Type == TokenType.SET
+                            && candidate.IsStatic == accessor.IsStatic
                             && (candidate.ComputedKey != null
                                 ? TryGetWellKnownSymbolMemberName(candidate.ComputedKey)
                                 : candidate.Name.Lexeme) == accessorName);
-                        if (pairedSetter?.SetterParam?.Type == null)
-                            mutableClass.Setters[accessorName] = inferred;
+                        if (pairedSetter is not null && pairedSetter.SetterParam?.Type == null)
+                            setters[accessorName] = inferred;
                         anyInferredMethodReturnResolved = true;
                     }
 
@@ -1084,6 +1090,7 @@ public partial class TypeChecker
                 }
             }
         }
+        ValidateStaticAccessorPairs(mutableClass);
         return anyInferredMethodReturnResolved;
     }
 
@@ -1453,21 +1460,26 @@ public partial class TypeChecker
                 }
 
                 if (!TryResolveAmbientMember(
-                        () => accessor.ReturnType != null
-                            ? ResolveAnnotation(accessor.ReturnType, accessor.ReturnTypeNode, accessor, EditorAnnotationSlot.Return)!
-                            : TypeInfo.Any.Shared,
+                        () => accessor.Kind.Type == TokenType.SET && accessor.IsStatic
+                            ? ResolveAnnotation(accessor.SetterParam?.Type, accessor.SetterParam?.TypeAnnotationNode, accessor.SetterParam!) ?? TypeInfo.Any.Shared
+                            : accessor.ReturnType != null
+                                ? ResolveAnnotation(accessor.ReturnType, accessor.ReturnTypeNode, accessor, EditorAnnotationSlot.Return)!
+                                : TypeInfo.Any.Shared,
                         out TypeInfo accessorType))
                     continue;
 
                 if (accessor.Kind.Type == TokenType.GET)
                 {
-                    mutableClass.Getters[accessor.Name.Lexeme] = accessorType;
+                    (accessor.IsStatic ? mutableClass.StaticGetters : mutableClass.Getters)[accessor.Name.Lexeme] = accessorType;
                 }
                 else
                 {
-                    mutableClass.Setters[accessor.Name.Lexeme] = accessorType;
+                    (accessor.IsStatic ? mutableClass.StaticSetters : mutableClass.Setters)[accessor.Name.Lexeme] = accessorType;
                 }
+                if (accessor.IsStatic)
+                    mutableClass.StaticFieldAccess[accessor.Name.Lexeme] = accessor.Access;
             }
+            PublishStaticAccessorTypes(mutableClass);
         }
 
         // Publish the generic constructor surface for ambient classes too. Previously

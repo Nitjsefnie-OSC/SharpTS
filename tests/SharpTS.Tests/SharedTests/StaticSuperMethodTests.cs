@@ -133,9 +133,6 @@ public class StaticSuperMethodTests
             console.log(derived.read() === Derived);
             console.log(derived.read.call(receiver) === receiver);
             """;
-        // Static accessor types are currently stored on the instance facet (#2035).
-        // Exercise receiver-aware runtime lookup independently of that checker gap.
-        Assert.Equal("true\ntrue\n", TestHarness.RunModules(
-            new Dictionary<string, string> { ["main.ts"] = source }, "main.ts", mode, allowTypeErrors: true));
+        Assert.Equal("true\ntrue\n", TestHarness.Run(source, mode));
     }
 }

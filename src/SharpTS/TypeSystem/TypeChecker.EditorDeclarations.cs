@@ -70,10 +70,10 @@ public partial class TypeChecker
         foreach (var accessor in accessors)
         {
             if (accessor.ComputedKey is not null) continue;
-            // The existing core accessor maps do not separate static/instance collisions.
-            bool collision = accessors.Any(other => other.IsStatic != accessor.IsStatic && other.Name.Lexeme == accessor.Name.Lexeme);
-            Record(accessor, accessor.Name, collision ? null : accessor.Kind.Type == TokenType.GET
-                ? core?.Getters.GetValueOrDefault(accessor.Name.Lexeme) : core?.Setters.GetValueOrDefault(accessor.Name.Lexeme));
+            var types = accessor.IsStatic
+                ? accessor.Kind.Type == TokenType.GET ? core?.StaticProperties : core?.StaticSetterTypes
+                : accessor.Kind.Type == TokenType.GET ? core?.Getters : core?.Setters;
+            Record(accessor, accessor.Name, types?.GetValueOrDefault(accessor.Name.Lexeme));
         }
         foreach (var accessor in autoAccessors)
             Record(accessor, accessor.Name, accessor.IsStatic ? core?.StaticProperties.GetValueOrDefault(accessor.Name.Lexeme) :

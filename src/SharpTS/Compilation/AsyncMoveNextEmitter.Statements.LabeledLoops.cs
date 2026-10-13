@@ -127,15 +127,9 @@ public partial class AsyncMoveNextEmitter
         string varName = GetBindingStorageName(f, f.Variable.Lexeme);
         var varField = _builder.GetVariableField(varName);
 
-        EmitExpression(f.Iterable);
-        EnsureBoxed();
-
-        var getEnumerator = typeof(System.Collections.IEnumerable).GetMethod("GetEnumerator")!;
         var moveNext = typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!;
         var current = typeof(System.Collections.IEnumerator).GetProperty("Current")!.GetGetMethod()!;
-
-        _il.Emit(OpCodes.Castclass, typeof(System.Collections.IEnumerable));
-        _il.Emit(OpCodes.Callvirt, getEnumerator);
+        EmitSynchronousForOfEnumerator(f.Iterable);
 
         Action loadEnumerator = StoreForOfEnumerator(f);
 

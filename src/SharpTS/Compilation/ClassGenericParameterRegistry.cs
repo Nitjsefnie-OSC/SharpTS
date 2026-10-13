@@ -11,6 +11,8 @@ public sealed class ClassGenericParameterRegistry
 {
     private readonly Dictionary<TypeBuilder, IReadOnlyList<GenericTypeParameterBuilder>> _parameters =
         new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<TypeBuilder, IReadOnlyList<Type>> _canonicalArguments =
+        new(ReferenceEqualityComparer.Instance);
 
     public bool IsComplete { get; private set; }
 
@@ -18,15 +20,24 @@ public sealed class ClassGenericParameterRegistry
         => _parameters.TryGetValue(owner, out var parameters) ? parameters
             : throw new InvalidOperationException("Class generic parameters have not been declared.");
 
-    internal void Declare(TypeBuilder owner, IEnumerable<GenericTypeParameterBuilder> parameters)
+    internal IReadOnlyList<Type> RequireCanonicalArguments(TypeBuilder owner)
+        => _canonicalArguments.TryGetValue(owner, out var arguments) ? arguments
+            : throw new InvalidOperationException("Class canonical generic arguments have not been declared.");
+
+    internal void Declare(TypeBuilder owner, IEnumerable<GenericTypeParameterBuilder> parameters,
+        IEnumerable<Type>? canonicalArguments = null)
     {
         EnsureMutable();
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(parameters);
         var snapshot = parameters.ToArray();
         Validate(owner, snapshot);
+        var arguments = canonicalArguments?.ToArray() ?? snapshot.Select(_ => typeof(object)).ToArray();
+        if (arguments.Length != snapshot.Length || arguments.Any(argument => argument is null))
+            throw new InvalidOperationException("Class canonical generic argument arity does not match its owner.");
         if (!_parameters.TryAdd(owner, Array.AsReadOnly(snapshot)))
             throw new InvalidOperationException("Class generic parameters are already declared.");
+        _canonicalArguments.Add(owner, Array.AsReadOnly(arguments));
     }
 
     internal void CompleteEmission(IEnumerable<TypeBuilder> owners)

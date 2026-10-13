@@ -10,6 +10,27 @@ public sealed class EmittedDynamicConstructionRuntime
     public bool IsComplete { get; private set; }
     private bool _functionBodyEmitted;
 
+    private TypeBuilder? _factoryAttributeType;
+    public TypeBuilder FactoryAttributeType
+    {
+        get => Require(_factoryAttributeType);
+        internal set => SetHandle(ref _factoryAttributeType, value);
+    }
+
+    private ConstructorBuilder? _factoryAttributeConstructor;
+    public ConstructorBuilder FactoryAttributeConstructor
+    {
+        get => Require(_factoryAttributeConstructor);
+        internal set => SetHandle(ref _factoryAttributeConstructor, value);
+    }
+
+    private FieldBuilder? _factoryAttributeName;
+    public FieldBuilder FactoryAttributeName
+    {
+        get => Require(_factoryAttributeName);
+        internal set => SetHandle(ref _factoryAttributeName, value);
+    }
+
     private MethodBuilder? _function;
     public MethodBuilder Function
     {
@@ -56,6 +77,9 @@ public sealed class EmittedDynamicConstructionRuntime
         EnsureMutable();
         _ = Function;
         _ = Value;
+        _ = FactoryAttributeType;
+        _ = FactoryAttributeConstructor;
+        _ = FactoryAttributeName;
         if (!_functionBodyEmitted)
             throw new InvalidOperationException("Dynamic construction function body has not been emitted.");
         IsComplete = true;

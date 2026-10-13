@@ -200,6 +200,7 @@ public partial class ILCompiler
     /// </summary>
     private void EmitAccessorBody(TypeBuilder typeBuilder, Stmt.Accessor accessor, MethodBuilder methodBuilder, FieldInfo fieldsField)
     {
+        MarkNonConstructible(methodBuilder);
         string className = typeBuilder.Name;
 
         // Apply accessor-level decorators as .NET attributes
@@ -219,6 +220,7 @@ public partial class ILCompiler
         ctx.IsStrictMode = true;
         ctx.FieldsField = fieldsField;
         ctx.IsInstanceMethod = !accessor.IsStatic;
+        ctx.IsStaticSuperContext = accessor.IsStatic;
         ctx.CurrentClassName = className;
         ctx.CurrentClassBuilder = typeBuilder;
         ctx.EmittingTypeBuilder = typeBuilder;

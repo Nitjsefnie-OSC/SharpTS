@@ -1035,11 +1035,11 @@ public partial class RuntimeEmitter
     /// below).
     /// </summary>
     /// <remarks>
-    /// Generic Promise subclasses (#351): the static <c>@@species</c> accessor is
-    /// registered under the open generic definition (MyP`1) while the receiver's
-    /// runtime type is closed (MyP&lt;object&gt;); FindSymbolGetterFor reconciles
-    /// the two (SymbolRegistryKey/CloseSymbolAccessor) and a species naming a
-    /// generic subclass is closed via SymbolClosedOwner before construction.
+    /// Generic Promise subclasses (#351): static <c>@@species</c> descriptors are
+    /// stored under the open generic definition (MyP`1) while the receiver's
+    /// runtime type is closed (MyP&lt;object&gt;). SymbolRegistryKey reconciles the
+    /// storage owner; accessors receive the actual closed constructor. A species
+    /// naming a generic subclass is closed via SymbolClosedOwner before construction.
     /// A species that is NOT a $Promise subclass (a general guest constructor)
     /// is routed to <see cref="EmittedPromiseRuntime.NewPromiseCapabilityResultMethod"/>
     /// (#349): the (object)→PromiseFromExecutor task-adoption path below only
@@ -1119,7 +1119,7 @@ public partial class RuntimeEmitter
         // which constructs it or throws TypeError (§7.3.22 step 5, #390).
         EmitSpeciesValueRouting(il, runtime, speciesValLocal, returnResultLabel, generalFromValueLabel);
 
-        // #349: no declared static @@species accessor — consult the expando
+        // #349: consult live declared descriptors and the expando
         // assigned via `(C as any)[Symbol.species] = …` (#262), which the
         // interpreter (ResolveSpeciesConstructor → TryGetStaticBySymbol) reads but
         // compiled mode previously ignored. The expando is stored in the per-Type
@@ -1165,12 +1165,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, expandoLoopLabel);
 
         il.MarkLabel(haveExpandoLabel);
-        // Expando assignments now carry an ordinary data descriptor. Promise
-        // support is emitted before GetIndex, so unwrap its Value directly at
-        // this early dependency boundary.
+        // Declared accessors and expando assignments share live descriptors.
+        // Promise support precedes GetIndex, so use the already-declared
+        // invocation handle to read an accessor with the actual constructor.
         var expandoDescriptorLocal = il.DeclareLocal(
             runtime.DescriptorStorage.DescriptorType);
         var expandoValueReadyLabel = il.DefineLabel();
+        var expandoDataLabel = il.DefineLabel();
+        var expandoUndefinedLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, expandoValLocal);
         il.Emit(OpCodes.Isinst, runtime.DescriptorStorage.DescriptorType);
         il.Emit(OpCodes.Stloc, expandoDescriptorLocal);
@@ -1178,7 +1180,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, expandoValueReadyLabel);
         il.Emit(OpCodes.Ldloc, expandoDescriptorLocal);
         il.Emit(OpCodes.Callvirt,
+            runtime.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, getterLocal);
+        il.Emit(OpCodes.Ldloc, getterLocal);
+        il.Emit(OpCodes.Brfalse, expandoDataLabel);
+        il.Emit(OpCodes.Ldloc, getterLocal);
+        il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
+        il.Emit(OpCodes.Brtrue, expandoUndefinedLabel);
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldloc, getterLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, runtime.Invocation.Method);
+        il.Emit(OpCodes.Stloc, expandoValLocal);
+        il.Emit(OpCodes.Br, expandoValueReadyLabel);
+
+        il.MarkLabel(expandoDataLabel);
+        il.Emit(OpCodes.Ldloc, expandoDescriptorLocal);
+        il.Emit(OpCodes.Callvirt,
+            runtime.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, expandoUndefinedLabel);
+        il.Emit(OpCodes.Ldloc, expandoDescriptorLocal);
+        il.Emit(OpCodes.Callvirt,
             runtime.DescriptorStorage.DescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, expandoValLocal);
+        il.Emit(OpCodes.Br, expandoValueReadyLabel);
+
+        il.MarkLabel(expandoUndefinedLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.Sentinels.UndefinedInstance);
         il.Emit(OpCodes.Stloc, expandoValLocal);
         il.MarkLabel(expandoValueReadyLabel);
         // speciesVal = expandoVal; speciesType = expandoVal as Type;

@@ -9,6 +9,13 @@ public sealed class EmittedFunctionBindingRuntime
     internal EmittedFunctionBindingRuntime() { }
     public bool IsComplete { get; private set; }
 
+    private MethodBuilder? _captureName;
+    public MethodBuilder CaptureName
+    {
+        get => Require(_captureName);
+        internal set => SetHandle(ref _captureName, value);
+    }
+
     private TypeBuilder? _boundType;
     public TypeBuilder BoundType
     {
@@ -51,6 +58,13 @@ public sealed class EmittedFunctionBindingRuntime
         internal set => SetHandle(ref _boundArgumentsField, value);
     }
 
+    private FieldBuilder? _boundNameField;
+    public FieldBuilder BoundNameField
+    {
+        get => Require(_boundNameField);
+        internal set => SetHandle(ref _boundNameField, value);
+    }
+
     private TypeBuilder? _anyType;
     public TypeBuilder AnyType
     {
@@ -84,6 +98,13 @@ public sealed class EmittedFunctionBindingRuntime
     {
         get => Require(_anyArgumentsField);
         internal set => SetHandle(ref _anyArgumentsField, value);
+    }
+
+    private FieldBuilder? _anyNameField;
+    public FieldBuilder AnyNameField
+    {
+        get => Require(_anyNameField);
+        internal set => SetHandle(ref _anyNameField, value);
     }
 
     private TypeBuilder? _bindType;
@@ -170,17 +191,20 @@ public sealed class EmittedFunctionBindingRuntime
     internal void CompleteEmission()
     {
         EnsureMutable();
+        _ = CaptureName;
         _ = BoundType;
         _ = BoundCtor;
         _ = BoundInvoke;
         _ = BoundInvokeWithThis;
         _ = BoundTargetField;
         _ = BoundArgumentsField;
+        _ = BoundNameField;
         _ = AnyType;
         _ = AnyCtor;
         _ = AnyInvoke;
         _ = AnyTargetField;
         _ = AnyArgumentsField;
+        _ = AnyNameField;
         _ = BindType;
         _ = BindCtor;
         _ = BindInvoke;

@@ -888,6 +888,20 @@ public partial class Interpreter
     /// <returns>An enumerable of values if the object has a Symbol.iterator, null otherwise.</returns>
     private IEnumerable<object?>? TryGetSymbolIterator(object? iterable)
     {
+        // Class constructors can implement the protocol through static methods or getters.
+        // Property reads preserve the canonical function; acquisition supplies the receiver.
+        if (iterable is SharpTSClass klass)
+        {
+            var iteratorFn = GetClassSymbolValue(klass, SharpTSSymbol.Iterator);
+            if (iteratorFn is null or SharpTSUndefined)
+                return null;
+            if (iteratorFn is not ISharpTSCallable)
+                throw new ThrowException(new SharpTSTypeError(
+                    "[Symbol.iterator] must be a function"));
+            iteratorFn = BindMemberCallReceiver(iteratorFn, klass)!;
+            return EnumerateWithIteratorProtocol(iteratorFn);
+        }
+
         // Arrays can replace their inherited @@iterator with an own method.
         // Consult that override before falling back to indexed enumeration.
         if (iterable is SharpTSArray array && array.HasSymbolProperty(SharpTSSymbol.Iterator))
@@ -2144,7 +2158,7 @@ public partial class Interpreter
             else if (method.IsGenerator)
                 func = new SharpTSGeneratorFunction(method, _environment);
             else
-                func = new SharpTSFunction(method, _environment);
+                func = new SharpTSFunction(method, _environment, isConstructible: false);
 
             // Computed method keys (`[Symbol.iterator]()`, `[expr]()`) are evaluated at
             // class-definition time, like computed field keys and accessors. Symbol keys land
@@ -2205,9 +2219,9 @@ public partial class Interpreter
                     null,  // No this type annotation
                     accessor.SetterParam != null ? [accessor.SetterParam] : [],
                     accessor.Body,
-                    accessor.ReturnType);
+                    accessor.ReturnType, IsStatic: accessor.IsStatic);
 
-                SharpTSFunction func = new(funcStmt, _environment);
+                SharpTSFunction func = new(funcStmt, _environment, isConstructible: false);
                 bool isGetter = accessor.Kind.Type == TokenType.GET;
 
                 // Computed accessor names (`get [Symbol.toStringTag]()`,
@@ -2373,7 +2387,8 @@ public partial class Interpreter
         {
             // Create temporary environment with 'this' bound to the class
             // Also make the class name available so code like Foo.x works
-            var staticEnv = new RuntimeEnvironment(_environment, strictMode: true) { PrivateClass = klass };
+            var staticEnv = new RuntimeEnvironment(_environment, strictMode: true)
+                { PrivateClass = klass, StaticSuper = true };
             staticEnv.Define("this", klass);
             staticEnv.Define(classStmt.Name.Lexeme, klass);
 

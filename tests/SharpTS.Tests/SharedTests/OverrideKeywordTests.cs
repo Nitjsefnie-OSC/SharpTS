@@ -157,7 +157,7 @@ public class OverrideKeywordTests
             }
             let d = new Derived();
             d.value = 10;
-            console.log(d.value);
+            console.log(d._val);
             """;
         var output = TestHarness.Run(source, mode);
         Assert.Equal("20\n", output);

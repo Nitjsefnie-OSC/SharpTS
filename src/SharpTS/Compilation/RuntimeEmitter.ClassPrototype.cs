@@ -16,6 +16,7 @@ public partial class RuntimeEmitter
         EmittedClassPrototypeRuntime classPrototypes,
         EmittedObjectPrototypeRuntime objectPrototypes,
         EmittedDescriptorStorageRuntime descriptorStorage,
+        Type userClassInterface,
         FieldBuilder cacheField
     )
     {
@@ -48,6 +49,16 @@ public partial class RuntimeEmitter
             var il = getMethod.GetILGenerator();
             var prototypeLocal = il.DeclareLocal(_types.Object);
             var useObjectPrototype = il.DefineLabel();
+
+            // A bare generic constructor is represented by its open Type token.
+            // Its JavaScript prototype belongs to the existing erased instantiation,
+            // while closed CLR instance types retain their own registered identities.
+            var constructorOwner = il.DeclareLocal(_types.Type);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stloc, constructorOwner);
+            var prototypeOwner = EmitStaticMemberLookupOwner(il, constructorOwner, userClassInterface);
+            il.Emit(OpCodes.Ldloc, prototypeOwner);
+            il.Emit(OpCodes.Starg_S, (byte)0);
 
             il.Emit(OpCodes.Ldsfld, cacheField);
             il.Emit(OpCodes.Ldarg_0);

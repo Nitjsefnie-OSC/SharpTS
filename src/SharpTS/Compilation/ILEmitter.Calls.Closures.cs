@@ -124,7 +124,8 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Dup);
                 IL.Emit(OpCodes.Ldc_I4, i);
                 var captureName = captureOrder[i];
-                if (arrowBuilder.StandaloneLiveCaptureFields.TryGetValue(captureName, out var liveField))
+                if (captureName == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+                else if (arrowBuilder.StandaloneLiveCaptureFields.TryGetValue(captureName, out var liveField))
                 {
                     StandaloneAsyncCaptureEmitter.EmitReference(IL, _ctx, liveField, captureName);
                 }
@@ -384,7 +385,12 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Dup); // Keep display class on stack
 
             // Load the captured variable's current value
-            if (capturedVar == "this")
+            if (capturedVar == CompilationContext.SuperOwnerCaptureName)
+            {
+                if (!TryEmitOwnedClassDefinition())
+                    throw new InvalidOperationException("A static super closure requires its lexical class definition.");
+            }
+            else if (capturedVar == "this")
             {
                 // `this` is lexically captured from the enclosing non-arrow scope.
                 // Snapshot it via the shared resolver so the capture matches a bare

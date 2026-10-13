@@ -247,6 +247,7 @@ public partial class RuntimeEmitter
             runtime.ClassPrototypes,
             runtime.ObjectPrototypes,
             runtime.DescriptorStorage,
+            runtime.ObjectFields.Interface,
             classPrototypeCacheField
         );
 
@@ -254,7 +255,7 @@ public partial class RuntimeEmitter
         EmitCancellationExceptionFactory(typeBuilder, runtime.Cancellation);
         runtime.Cancellation.CompleteEmission();
 
-        EmitRunClassDefinition(typeBuilder, runtime.ClassInitialization);
+        EmitRunClassDefinition(typeBuilder, runtime.ClassInitialization, runtime.ObjectFields.Interface);
         runtime.ClassInitialization.CompleteEmission();
 
         // Static field for Random
@@ -819,6 +820,7 @@ public partial class RuntimeEmitter
         // ECMA-262 §20.1.3.2 step 1's ToPropertyKey).
         EmitGetSymbolDict(typeBuilder, runtime.Symbols, symbolStorageField);
         EmitIsSymbol(typeBuilder, runtime.Symbols);
+        EmitSymbolMethodName(typeBuilder, runtime.Symbols);
         // The shared built-in static inventory is consumed by HasOwnProperty
         // as well as GetProperty. Reserve its method token before either body;
         // the implementation is still filled later after its backing methods.
@@ -907,6 +909,7 @@ public partial class RuntimeEmitter
                 runtime.Sentinels.UndefinedType
             )
         );  // For bind/call/apply on functions
+        EmitBoundFunctionName(runtime.FunctionBindings.CaptureName, runtime.FunctionIntrospection.GetProperty);
         // Pre-define IsBoxedPrimitiveOfType shell so InstanceOf can reference
         // it. Body emitted later (after the prototype singletons are defined).
         DefineIsBoxedPrimitiveOfTypeShell(typeBuilder, runtime.BoxedPrimitives);
@@ -925,6 +928,7 @@ public partial class RuntimeEmitter
                 runtime.ClassPrototypes,
                 runtime.Abort,
                 runtime.BoxedPrimitives,
+                runtime.FunctionBindings,
                 runtime.FunctionIntrospection.GetProperty,
                 runtime.ObjectPrototypes,
                 runtime.Promise,
@@ -1253,6 +1257,7 @@ public partial class RuntimeEmitter
                 runtime.FunctionConstruction.CachedConstructor,
                 runtime.FunctionValues.ExpectsThisField,
                 runtime.FunctionConstruction.GetOrCreate,
+                runtime.FunctionValues.LengthGetter,
                 runtime.FunctionValues.InvokeWithThis,
                 runtime.FunctionValues.Type,
                 runtime.Namespaces.Get,
@@ -1502,6 +1507,10 @@ public partial class RuntimeEmitter
                 runtime.SymbolAccessors,
                 runtime.Symbols,
                 runtime.FunctionConstruction.Constructor,
+                runtime.FunctionConstruction.CachedConstructor,
+                runtime.FunctionConstruction.GetOrCreate,
+                runtime.FunctionValues.NameGetter,
+                runtime.FunctionValues.LengthGetter,
                 runtime.FunctionValues.Type,
                 runtime.TypedArrays,
                 runtime.Sentinels.UndefinedInstance,

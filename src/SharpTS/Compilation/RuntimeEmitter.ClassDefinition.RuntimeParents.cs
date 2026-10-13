@@ -94,7 +94,7 @@ public partial class RuntimeEmitter
         var instanceSuper = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_3); il.Emit(OpCodes.Brfalse, instanceSuper);
         il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, definitions.GetParent); il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, runtime.ObjectRead.Property); il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Call, runtime.Reflect.Get); il.Emit(OpCodes.Ret);
         il.MarkLabel(instanceSuper);
         il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, definitions.GetParent);
         il.Emit(OpCodes.Ldstr, "prototype"); il.Emit(OpCodes.Call, runtime.ObjectRead.Property);

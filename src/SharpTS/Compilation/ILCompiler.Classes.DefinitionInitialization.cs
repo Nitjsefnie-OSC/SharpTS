@@ -14,6 +14,7 @@ public partial class ILCompiler
         ctx.EmittingTypeBuilder = _programType;
         ctx.ClassDefinitionParameterIndex = 0;
         ctx.ClassDefinitionThisParameterIndex = 0;
+        ctx.IsStaticSuperContext = true;
         var emitter = new ILEmitter(ctx);
         var storage = _runtime.DescriptorStorage;
         foreach (var value in _classes.PrivateElements.Require(_classExprs.Names[expression]).MethodValues.Values)
@@ -191,7 +192,8 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Stloc, descriptor);
                 il.MarkLabel(fresh);
             }
-            il.Emit(OpCodes.Ldloc, descriptor);
+            var target = il.DeclareLocal(_types.Object);
+            var methodInfo = il.DeclareLocal(_types.MethodInfo);
             if (isStatic)
             {
                 il.Emit(OpCodes.Ldarg_0);
@@ -207,7 +209,33 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Newobj, value.Constructor);
                 EmitMethodInfoLiteral(il, value.Method, value.Type);
             }
+            il.Emit(OpCodes.Stloc, methodInfo);
+            il.Emit(OpCodes.Stloc, target);
+            il.Emit(OpCodes.Ldloc, target);
+            il.Emit(OpCodes.Ldloc, methodInfo);
             il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.Constructor);
+            var function = il.DeclareLocal(_runtime.FunctionValues.Type);
+            il.Emit(OpCodes.Stloc, function);
+            if (!getter.HasValue)
+            {
+                var ordinaryKey = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, key);
+                il.Emit(OpCodes.Isinst, _runtime.Symbols.Type);
+                il.Emit(OpCodes.Brfalse, ordinaryKey);
+                il.Emit(OpCodes.Ldloc, target);
+                il.Emit(OpCodes.Ldloc, methodInfo);
+                il.Emit(OpCodes.Ldloc, key);
+                il.Emit(OpCodes.Ldloc, function);
+                il.Emit(OpCodes.Callvirt, _runtime.FunctionValues.NameGetter);
+                il.Emit(OpCodes.Call, _runtime.Symbols.MethodName);
+                il.Emit(OpCodes.Ldloc, function);
+                il.Emit(OpCodes.Callvirt, _runtime.FunctionValues.LengthGetter);
+                il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.CachedConstructor);
+                il.Emit(OpCodes.Stloc, function);
+                il.MarkLabel(ordinaryKey);
+            }
+            il.Emit(OpCodes.Ldloc, descriptor);
+            il.Emit(OpCodes.Ldloc, function);
             il.Emit(OpCodes.Callvirt, (getter == true ? storage.DescriptorGetter : getter == false ? storage.DescriptorSetter : storage.DescriptorValue).GetSetMethod()!);
             StoreDescriptor(owner, key, descriptor);
         }

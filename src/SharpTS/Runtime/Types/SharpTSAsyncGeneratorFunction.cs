@@ -20,6 +20,7 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable, IReceiverBindable
     private readonly int _arity;
     internal bool IsStaticMethod => _declaration.IsStatic;
     internal SharpTSClass? PrivateOwner { get; set; }
+    internal string? ComputedName { get; set; }
     /// <summary>A dynamic receiver was bound, so <see cref="Call"/> binds <c>this</c> to
     /// <see cref="_boundThis"/> rather than defaulting it to undefined.</summary>
     private readonly bool _thisBound;
@@ -52,7 +53,8 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable, IReceiverBindable
         RuntimeEnvironment closure = _declaration.IsStatic
             ? new RuntimeEnvironment(_closure, strictMode: true) : _closure;
         RuntimeEnvironment environment = new(closure,
-            strictMode: _declaration.IsPrivate || _declaration.IsStatic ? true : null) { PrivateClass = PrivateOwner };
+            strictMode: _declaration.IsPrivate || _declaration.IsStatic ? true : null)
+            { PrivateClass = PrivateOwner, StaticSuper = _declaration.IsStatic };
         if (_declaration.IsPrivate || _declaration.IsStatic)
         {
             environment.Define("this", _thisBound ? _boundThis : SharpTSUndefined.Instance);
@@ -86,15 +88,15 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable, IReceiverBindable
     /// Creates a bound version with 'this' set for method calls.
     /// </summary>
     public SharpTSAsyncGeneratorFunction Bind(SharpTSInstance instance)
-        => new(_declaration, _closure, thisBound: true, boundThis: instance) { PrivateOwner = PrivateOwner };
+        => new(_declaration, _closure, thisBound: true, boundThis: instance) { PrivateOwner = PrivateOwner, ComputedName = ComputedName };
 
     /// <summary>Binds an arbitrary receiver (object async generator method / <c>.call</c> / <c>.apply</c>) (#775).</summary>
     public ISharpTSCallable BindToReceiver(object receiver)
-        => new SharpTSAsyncGeneratorFunction(_declaration, _closure, thisBound: true, boundThis: receiver) { PrivateOwner = PrivateOwner };
+        => new SharpTSAsyncGeneratorFunction(_declaration, _closure, thisBound: true, boundThis: receiver) { PrivateOwner = PrivateOwner, ComputedName = ComputedName };
 
     public SharpTSAsyncGeneratorFunction BindStatic(SharpTSClass klass)
         => new(_declaration, _closure, thisBound: true, boundThis: klass,
-            boundSuper: _declaration.IsStatic ? null : klass.Superclass) { PrivateOwner = PrivateOwner };
+            boundSuper: _declaration.IsStatic ? null : klass.Superclass) { PrivateOwner = PrivateOwner, ComputedName = ComputedName };
 
     public override string ToString() => $"[async function* {_declaration.Name?.Lexeme ?? "anonymous"}]";
 }

@@ -61,6 +61,7 @@ public partial class ILCompiler
         ctx.EmittingTypeBuilder = typeBuilder;
         ctx.CurrentClassName = qualifiedClassName; // Required for static member access via 'this'
         ctx.IsStaticConstructorContext = true;
+        ctx.IsStaticSuperContext = true;
         ApplyCapturedTopLevelVariableAccess(ctx);
 
         // Add class generic type parameters to context (required for static blocks in generic classes)
@@ -133,6 +134,7 @@ public partial class ILCompiler
             ctx.EmittingTypeBuilder = typeBuilder;
             ctx.CurrentClassName = qualifiedClassName;
             ctx.IsStaticConstructorContext = true;
+            ctx.IsStaticSuperContext = true;
             ApplyCapturedTopLevelVariableAccess(ctx);
             emitter = new ILEmitter(ctx);
         }
@@ -249,8 +251,7 @@ public partial class ILCompiler
     }
 
     /// <summary>
-    /// Emits <c>$Runtime.RegisterSymbolAccessor(typeof(ThisClass), symbol, getter, setter, isStatic)</c>
-    /// for each symbol-keyed accessor recorded for this class (#266).
+    /// Installs live descriptors for each computed accessor on its constructor/prototype.
     /// </summary>
     private void EmitSymbolAccessorRegistrations(ILEmitter emitter, ILGenerator il, TypeBuilder typeBuilder)
     {
@@ -258,38 +259,17 @@ public partial class ILCompiler
         if (list.Count == 0)
             return;
 
-        var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
-
         foreach (var (accessor, method) in list)
         {
             if (_classes.DeferredDefinitions.TryGet(typeBuilder, out _))
                 continue;
-            bool isGetter = accessor.Kind.Type == TokenType.GET;
-
-            // owner: typeof(ThisClass)
-            il.Emit(OpCodes.Ldtoken, typeBuilder);
-            il.Emit(OpCodes.Call, getTypeFromHandle);
-
             // property key: preserve Symbols; coerce every other value exactly as bracket
             // access does (notably null -> "null") before using it as a registry key.
             EmitComputedPropertyKey(emitter, il, accessor.ComputedKey!);
-
-            // getter MethodInfo (or null)
-            if (isGetter)
-                EmitMethodInfoLiteral(il, method, typeBuilder);
-            else
-                il.Emit(OpCodes.Ldnull);
-
-            // setter MethodInfo (or null)
-            if (isGetter)
-                il.Emit(OpCodes.Ldnull);
-            else
-                EmitMethodInfoLiteral(il, method, typeBuilder);
-
-            // isStatic
-            il.Emit(accessor.IsStatic ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
-
-            il.Emit(OpCodes.Call, _runtime.SymbolAccessors.RegisterAccessor);
+            var evaluatedKey = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Stloc, evaluatedKey);
+            EmitDeclaredAccessorDescriptor(il, typeBuilder, accessor, method,
+                () => il.Emit(OpCodes.Ldloc, evaluatedKey));
         }
     }
 
@@ -377,25 +357,30 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Stsfld, keyField);
                 continue;
             }
+            if (isGetter.HasValue)
+            {
+                var accessor = _classes.ComputedMembers.GetAccessors(typeBuilder)
+                    .First(entry => ReferenceEquals(entry.Method, builder)).Accessor;
+                var descriptorOwner = CanonicalGenericClassOwner(typeBuilder);
+                EmitDeclaredAccessorDescriptor(il, typeBuilder, accessor, builder!, () =>
+                {
+                    il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldc_I4, i); il.Emit(OpCodes.Ldelem_Ref);
+                }, descriptorOwner);
+                continue;
+            }
             il.Emit(OpCodes.Ldtoken, typeBuilder);
             il.Emit(OpCodes.Call, getTypeFromHandle);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldc_I4, i);
             il.Emit(OpCodes.Ldelem_Ref);
-            if (isGetter == false)
-                il.Emit(OpCodes.Ldnull);
             EmitMethodInfoLiteral(il, builder!, typeBuilder);
-            if (isGetter == true)
-                il.Emit(OpCodes.Ldnull);
             il.Emit(isStatic ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Call, isGetter.HasValue
-                ? _runtime.SymbolAccessors.RegisterAccessor
-                : _runtime.SymbolAccessors.RegisterMethod);
+            il.Emit(OpCodes.Call, _runtime.SymbolAccessors.RegisterMethod);
         }
 
         il.Emit(OpCodes.Call, typeBuilder.IsGenericTypeDefinition
             ? EmitterTypeHelpers.ResolveMethod(
-                EmitGenerics.MakeGenericType(typeBuilder, typeBuilder.GetGenericArguments().Select(_ => _types.Object).ToArray()), initializer)
+                CanonicalGenericClassOwner(typeBuilder), initializer)
             : initializer);
         il.Emit(OpCodes.Ret);
         var keys = deferred.Select(entry => entry.Key).ToArray();
@@ -496,9 +481,11 @@ public partial class ILCompiler
         // covers sync, async, and generator (#692) static methods (same builder).
         MarkPadsUndefined(_classes.StaticMethods[className][method.Name.Lexeme]);
         MarkFunctionLength(_classes.StaticMethods[className][method.Name.Lexeme], method.Parameters);
+        if (!method.IsGenerator)
+            MarkNonConstructible(_classes.StaticMethods[className][method.Name.Lexeme]);
 
-        // Static async generator methods (#778) use the async generator state machine, set up like a
-        // free function (no `this`). Checked FIRST since a `static async *m()` has both IsAsync and
+        // Static async generator methods (#778) hoist their guest receiver without a CLR instance
+        // parameter. Checked FIRST since a `static async *m()` has both IsAsync and
         // IsGenerator set, so it must not fall into the sync-generator or plain-async branch below.
         if (method.IsGenerator && method.IsAsync)
         {
@@ -507,8 +494,7 @@ public partial class ILCompiler
             return;
         }
 
-        // Static generator methods (#692) use the generator state machine, set up like a free
-        // function (no `this`).
+        // Static generator methods (#692) likewise hoist their guest receiver.
         if (method.IsGenerator && !method.IsAsync)
         {
             var genMethodBuilder = _classes.StaticMethods[className][method.Name.Lexeme];
@@ -533,6 +519,7 @@ public partial class ILCompiler
         var ctx = CreateModuleMemberContext(il, methodBuilder);
         ctx.IsStrictMode = true;
         ctx.CurrentClassBuilder = typeBuilder;
+        ctx.IsStaticSuperContext = true;
         ctx.EmittingTypeBuilder = typeBuilder;
         ApplyLockDecoratorFields(ctx);
         // ES2022 Private Class Elements support
@@ -711,7 +698,8 @@ public partial class ILCompiler
             isInstanceMethod: false,  // Static method!
             hasAsyncArrows: hasAsyncArrows,
             hasLock: hasLock,
-            hoistedParameterTypes: GetStableAsyncParameterFieldTypes(method)
+            hoistedParameterTypes: GetStableAsyncParameterFieldTypes(method),
+            hasDynamicThis: true
         );
 
         if (EmitDebugSymbols)
@@ -751,6 +739,7 @@ public partial class ILCompiler
         var ctx = CreateModuleMemberContext(il, smBuilder.MoveNextMethod);
         ctx.IsStrictMode = true;
         // Static method: IsInstanceMethod stays false (the default).
+        ctx.IsStaticSuperContext = true;
         ctx.CurrentClassBuilder = typeBuilder;
         ctx.EmittingTypeBuilder = typeBuilder;
         ctx.AsyncArrowBuilders = _async.ArrowBuilders;

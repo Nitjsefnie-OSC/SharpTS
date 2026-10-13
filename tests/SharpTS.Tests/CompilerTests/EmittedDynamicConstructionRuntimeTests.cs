@@ -9,7 +9,8 @@ namespace SharpTS.Tests.CompilerTests;
 public sealed class EmittedDynamicConstructionRuntimeTests
 {
     private const BindingFlags Members = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
-    private static PropertyInfo[] Properties => typeof(EmittedDynamicConstructionRuntime).GetProperties().Where(p => p.PropertyType == typeof(MethodBuilder)).ToArray();
+    private static PropertyInfo[] Properties => typeof(EmittedDynamicConstructionRuntime).GetProperties()
+        .Where(p => p.PropertyType != typeof(bool)).ToArray();
     public static IEnumerable<object[]> Declarations => Properties.Select(p => new object[] { p.Name });
 
     [Theory]
@@ -53,7 +54,7 @@ public sealed class EmittedDynamicConstructionRuntimeTests
         {
             var builder = NewAssembly(); var runtime = emitter.EmitAll(builder.DefineDynamicModule("main"), Detect(code));
             var owner = runtime.DynamicConstruction; Assert.True(owners.Add(owner)); Assert.True(owner.IsComplete);
-            foreach (var property in Properties) Assert.Same(builder, ((MethodInfo)property.GetValue(owner)!).Module.Assembly);
+            foreach (var property in Properties) Assert.Same(builder, ((MemberInfo)property.GetValue(owner)!).Module.Assembly);
             var loaded = SaveVerifyLoad(builder); var type = loaded.GetType("$Runtime")!;
             var function = loaded.GetType(runtime.FunctionValues.Type.Name)!;
             var current = function.GetField(runtime.FunctionValues.CurrentThisField.Name, Members)!;
@@ -82,6 +83,10 @@ public sealed class EmittedDynamicConstructionRuntimeTests
                 }
             }
             Assert.Equal(7d, Assert.IsType<HostConstructor>(Construct(owner.Value.Name, typeof(HostConstructor), 7d)).Value);
+            Assert.Equal(3d, Assert.IsType<HostConstructor>(Construct(owner.Value.Name, typeof(HostConstructor), "abc")).Value);
+            object[] values = [1d, 2d];
+            Assert.Same(values, Assert.IsType<HostArrayConstructor>(
+                Construct(owner.Value.Name, typeof(HostArrayConstructor), (object)values)).Values);
             var boxed = Construct(owner.Value.Name, typeof(string), "abc");
             Assert.Equal(3d, type.GetMethod(runtime.ObjectRead.Property.Name)!.Invoke(null, [boxed, "length"]));
             if (runtime.RegExps.Implementation is not null)
@@ -98,7 +103,7 @@ public sealed class EmittedDynamicConstructionRuntimeTests
     [Fact]
     public void OwnerAndHelpersUseExplicitDependencies()
     {
-        Assert.Equal(2, Properties.Length);
+        Assert.Equal(5, Properties.Length);
         Assert.NotSame(new EmittedRuntime().DynamicConstruction, new EmittedRuntime().DynamicConstruction);
         Assert.Null(typeof(EmittedRuntime).GetProperty("DynamicConstruction")!.SetMethod);
         foreach (string old in new[] { "NewOnFunction", "ConstructDynamicValue" }) Assert.Null(typeof(EmittedRuntime).GetProperty(old));
@@ -116,11 +121,24 @@ public sealed class EmittedDynamicConstructionRuntimeTests
     public static object ReturnObject(object __this, object value) => value;
     public static object ReturnPrimitive(object __this) => 7d;
     public static object Fail(object __this) => throw Failure;
-    public sealed class HostConstructor(double value) { public double Value { get; } = value; }
-    private static Dictionary<string, MethodBuilder> NewHandles()
+    public sealed class HostConstructor
+    {
+        public HostConstructor(double value) { Value = value; }
+        public HostConstructor(string value) { Value = value.Length; }
+        public double Value { get; }
+    }
+    public sealed class HostArrayConstructor(object[] values) { public object[] Values { get; } = values; }
+    private static Dictionary<string, MemberInfo> NewHandles()
     {
         var type = NewAssembly().DefineDynamicModule("main").DefineType("Handles");
-        return new[] { "Function", "Value" }.ToDictionary(n => n, n => type.DefineMethod(n, MethodAttributes.Public | MethodAttributes.Static, typeof(object), Type.EmptyTypes));
+        return new Dictionary<string, MemberInfo>
+        {
+            ["Function"] = type.DefineMethod("Function", MethodAttributes.Public | MethodAttributes.Static, typeof(object), Type.EmptyTypes),
+            ["Value"] = type.DefineMethod("Value", MethodAttributes.Public | MethodAttributes.Static, typeof(object), Type.EmptyTypes),
+            ["FactoryAttributeType"] = type,
+            ["FactoryAttributeConstructor"] = type.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, [typeof(string)]),
+            ["FactoryAttributeName"] = type.DefineField("Name", typeof(string), FieldAttributes.Public)
+        };
     }
     private static void Expect<T>(Action action) where T : Exception => Assert.IsType<T>(Assert.Throws<TargetInvocationException>(action).InnerException);
     private static RuntimeFeatureSet Detect(string code) => new RuntimeFeatureDetector().Detect(new Parser(new Lexer(code).ScanTokens()).ParseOrThrow());

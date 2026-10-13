@@ -586,7 +586,7 @@ public partial class ILCompiler
         // so inherited members resolve under dynamic dispatch (else fall back to
         // returning $Undefined).
         il.MarkLabel(returnNullLabel);
-        EmitGetPropertyBaseFallthrough(il, ResolveBaseStubClassName(classStmt), _classes.Builders[className].BaseType);
+        EmitGetPropertyBaseFallthrough(il, _classes.Builders[className].BaseType);
     }
 
     /// <summary>
@@ -947,7 +947,7 @@ public partial class ILCompiler
         // so inherited members resolve under dynamic dispatch (else fall back to
         // returning $Undefined).
         il.MarkLabel(returnNullLabel);
-        EmitGetPropertyBaseFallthrough(il, ResolveBaseStubClassName(classExpr), _classExprs.Builders[classExpr].BaseType);
+        EmitGetPropertyBaseFallthrough(il, _classExprs.Builders[classExpr].BaseType);
     }
 
     /// <summary>
@@ -962,9 +962,14 @@ public partial class ILCompiler
     /// $Undefined when the base is System.Object or a built-in (no emitted
     /// $IHasFields stub).
     /// </summary>
-    private void EmitGetPropertyBaseFallthrough(ILGenerator il, string? baseClassName, Type? baseType)
+    private void EmitGetPropertyBaseFallthrough(ILGenerator il, Type? baseType)
     {
-        if (baseClassName != null && _classes.PropertyDispatch.TryGet(baseClassName, out var baseStubs))
+        // A guest runtime parent may not be a CLR base. Only an actual base
+        // owner can receive this nonvirtual call; guest inheritance is read
+        // through the prototype fallback before reaching this branch.
+        var baseDefinition = baseType?.IsConstructedGenericType == true
+            ? baseType.GetGenericTypeDefinition() : baseType;
+        if (baseDefinition is TypeBuilder owner && _classes.PropertyDispatch.TryGet(owner, out var baseStubs))
         {
             // return base.GetProperty(name);  — non-virtual `call` to the
             // specific base implementation (not callvirt, which would recurse
@@ -1048,44 +1053,6 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(skipLabel);
-    }
-
-    /// <summary>
-    /// Resolves the emitted base class name (a $IHasFields stub key) for a class
-    /// declaration's GetProperty inheritance fallthrough, or null when the base
-    /// is System.Object / a built-in without a stub.
-    /// </summary>
-    private string? ResolveBaseStubClassName(Stmt.Class classStmt)
-    {
-        if (classStmt.SuperclassExpr == null)
-            return null;
-        var leaf = Expr.GetSuperclassLeafName(classStmt.SuperclassExpr);
-        if (leaf == null)
-            return null;
-        var resolved = GetDefinitionContext().ResolveClassName(leaf);
-        return _classes.PropertyDispatch.Contains(resolved) ? resolved : null;
-    }
-
-    /// <summary>
-    /// Resolves the emitted base class name (a $IHasFields stub key) for a class
-    /// expression's GetProperty inheritance fallthrough. The superclass may be
-    /// another class expression bound to a variable or a class declaration.
-    /// </summary>
-    private string? ResolveBaseStubClassName(Expr.ClassExpr classExpr)
-    {
-        if (!_classExprs.Superclass.TryGetValue(classExpr, out var superName) || superName == null)
-            return null;
-
-        string? baseClassName;
-        if (ResolveClassExpressionParent(classExpr) is { } parentExpr
-            && _classExprs.Names.TryGetValue(parentExpr, out var generatedName))
-            baseClassName = generatedName;
-        else
-            baseClassName = GetDefinitionContext().ResolveClassName(superName);
-
-        return baseClassName != null && _classes.PropertyDispatch.Contains(baseClassName)
-            ? baseClassName
-            : null;
     }
 
     /// <summary>
@@ -1186,6 +1153,64 @@ public partial class ILCompiler
     }
     private void EmitComputedInstanceGetterFallback(ILGenerator il)
     {
+        // Computed declaration accessors are installed as live prototype
+        // descriptors. Read that state before the legacy method registry so
+        // replacement, setter-only accessors, and data values stay authoritative.
+        var prototype = il.DeclareLocal(_types.Object);
+        var descriptor = il.DeclareLocal(_runtime.DescriptorStorage.DescriptorType);
+        var nextPrototype = il.DefineLabel();
+        var descriptorLoop = il.DefineLabel();
+        var noDescriptor = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _runtime.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.MarkLabel(descriptorLoop);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Brfalse, noDescriptor);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _runtime.DescriptorStorage.GetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descriptor);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Brfalse, nextPrototype);
+        var descriptorGetter = il.DeclareLocal(_types.Object);
+        var dataDescriptor = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, _runtime.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, descriptorGetter);
+        il.Emit(OpCodes.Ldloc, descriptorGetter);
+        il.Emit(OpCodes.Brfalse, dataDescriptor);
+        var invokeDescriptorGetter = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descriptorGetter);
+        il.Emit(OpCodes.Isinst, _runtime.Sentinels.UndefinedType);
+        il.Emit(OpCodes.Brfalse, invokeDescriptorGetter);
+        il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(invokeDescriptorGetter);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, descriptorGetter);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, _runtime.Invocation.Method);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(dataDescriptor);
+        var descriptorValue = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, _runtime.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, descriptorValue);
+        il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(descriptorValue);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, _runtime.DescriptorStorage.DescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(nextPrototype);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Call, _runtime.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.Emit(OpCodes.Br, descriptorLoop);
+        il.MarkLabel(noDescriptor);
+
         var missing = il.DefineLabel();
         var getter = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);

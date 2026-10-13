@@ -369,8 +369,8 @@ public sealed class ClassRegistry
 
     /// <summary>
     /// When <paramref name="declaringClass"/> is generic, returns its TypeBuilder closed over
-    /// <c>object</c> for every type parameter (matching the type-erased instantiation used everywhere
-    /// else for class statics), so the resolved member token targets a concrete type. Returns null for
+    /// its captured canonical arguments (matching runtime class-static lookup), so the resolved
+    /// member token targets a concrete type satisfying its CLR bounds. Returns null for
     /// non-generic declaring classes, in which case the raw builder/token is already concrete.
     /// </summary>
     private Type? GetClosedGenericDeclaringType(string declaringClass, string requestedClass, TypeBuilder requestedBuilder)
@@ -386,10 +386,8 @@ public sealed class ClassRegistry
         var parameters = _genericParameters.Require(declaringBuilder);
         if (parameters.Count == 0)
             return null;
-        var typeArgs = new Type[parameters.Count];
-        for (int i = 0; i < parameters.Count; i++)
-            typeArgs[i] = typeof(object);
-        return EmitGenerics.MakeGenericType(declaringBuilder, typeArgs);
+        return EmitGenerics.MakeGenericType(declaringBuilder,
+            _genericParameters.RequireCanonicalArguments(declaringBuilder).ToArray());
     }
 
     /// <summary>

@@ -570,7 +570,7 @@ public partial class Interpreter
     {
         if (_numberNamespace is null)
         {
-            _numberNamespace = new();
+            _numberNamespace = new() { RealmPrototypeFactory = GetNumberPrototype };
             // Number.parseInt / Number.parseFloat are aliases of the corresponding
             // global function objects, not merely equivalent implementations.
             _numberNamespace.SetRealmBuiltInAlias(

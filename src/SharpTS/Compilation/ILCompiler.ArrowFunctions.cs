@@ -19,6 +19,7 @@ public partial class ILCompiler
         new(StringComparer.Ordinal);
     private readonly HashSet<Expr.ArrowFunction> _strictArrows = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrowFunction> _arrowsInAnonymousEmptyDerivedClass = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Expr.ArrowFunction> _arrowsInStaticClassContext = new(ReferenceEqualityComparer.Instance);
     // Maps each collected arrow to the module path that owns it (null = script/single-file
     // scope). Set during collection so body emission can restore the correct
     // per-module view of TopLevelStaticVars / captured-top-level-var fields —
@@ -57,6 +58,7 @@ public partial class ILCompiler
     private Expr.ArrowFunction? _currentEnclosingAsyncArrow;
     private Expr.ArrowFunction? _currentParentArrow;
     private string? _currentCollectClassName;
+    private bool _currentCollectStaticClassContext;
     private bool _currentCollectStrict;
     // Explicit block nesting while walking top-level statements. A function
     // declaration inside a top-level block can capture that block's lexical
@@ -218,6 +220,12 @@ public partial class ILCompiler
             {
                 returnType = iteratorResultType;
             }
+            // A static lexical receiver is a constructor value. The checker may
+            // describe a this-returning super method with its class instance type;
+            // its runtime value cannot inhabit that emitted instance return slot.
+            if (_arrowsInStaticClassContext.Contains(arrow) && captures.Contains("this")
+                && (returnType is TypeBuilder || returnType.IsConstructedGenericType))
+                returnType = _types.Object;
             _closures.ArrowReturnTypes[arrow] = returnType;
 
             // For object methods, add __this as the first parameter
@@ -538,6 +546,8 @@ public partial class ILCompiler
                     var previousEnclosingStmt = _currentEnclosingFunctionStmt;
                     var previousCallable = _currentEnclosingCallable;
                     var previousStrict = _currentCollectStrict;
+                    var previousStaticClassContext = _currentCollectStaticClassContext;
+                    _currentCollectStaticClassContext = isClassMember && f.IsStatic;
                     // A nested function declaration is a lambda-lift boundary: an arrow inside it captures
                     // from the function, not the enclosing async arrow. Clear the async-arrow cursor so a
                     // deeper arrow is not mis-attributed to the async arrow's function DC (#838 follow-up).
@@ -574,13 +584,17 @@ public partial class ILCompiler
                     _currentEnclosingCallable = previousCallable;
                     _currentEnclosingAsyncArrow = previousEnclosingAsyncArrowFn;
                     _currentCollectStrict = previousStrict;
+                    _currentCollectStaticClassContext = previousStaticClassContext;
                 }
                 break;
             case Stmt.Class c:
                 foreach (var expression in ClassDefinitionExpressions.Enumerate(c))
                     CollectArrowsFromExpr(expression);
                 var previousClassName = _currentCollectClassName;
-                _currentCollectClassName = c.Name.Lexeme;
+                var previousStaticClassContextDeclaration = _currentCollectStaticClassContext;
+                _currentCollectClassName = GetQualifiedClassDeclarationName(c);
+                if (previousClassName != null)
+                    _classes.LexicalEnclosingClasses[_currentCollectClassName] = previousClassName;
                 foreach (var method in c.Methods)
                 {
                     // Skip overload signatures (no body)
@@ -592,19 +606,27 @@ public partial class ILCompiler
                 // get MethodBuilders instead of EmitArrowFunction's null fallback.
                 foreach (var field in c.Fields)
                 {
+                    _currentCollectStaticClassContext = field.IsStatic;
                     if (field.Initializer != null)
                         CollectArrowsFromExpr(field.Initializer);
                 }
                 if (c.Accessors != null)
                 {
                     foreach (var accessor in c.Accessors)
+                    {
+                        _currentCollectStaticClassContext = accessor.IsStatic;
                         foreach (var statement in accessor.Body)
                             CollectArrowsFromStmt(statement);
+                    }
                 }
                 if (c.StaticInitializers != null)
+                {
+                    _currentCollectStaticClassContext = true;
                     foreach (var block in c.StaticInitializers.OfType<Stmt.StaticBlock>())
                         CollectArrowsFromStmt(block);
+                }
                 _currentCollectClassName = previousClassName;
+                _currentCollectStaticClassContext = previousStaticClassContextDeclaration;
                 break;
             case Stmt.If i:
                 CollectArrowsFromExpr(i.Condition);
@@ -737,6 +759,10 @@ public partial class ILCompiler
                 break;
             case Expr.ArrowFunction af:
                 var captures = _closures.Analyzer.GetCaptures(af);
+                if (_currentCollectClassName != null && _classExprs.Names.ContainsValue(_currentCollectClassName)
+                    && ((_currentCollectStaticClassContext && captures.Contains("this"))
+                        || ArrowUsesClassDefinition(af)))
+                    captures.Add(CompilationContext.SuperOwnerCaptureName);
                 _collectedArrows.Add((af, captures));
                 if (_currentCollectClassName != null || _currentCollectStrict)
                     _strictArrows.Add(af);
@@ -759,9 +785,11 @@ public partial class ILCompiler
                 // by qualified name (simple names like "AST" miss the `$M_index_AST` key).
                 if (_currentCollectClassName != null)
                 {
-                    _async.ArrowEnclosingClassNames[af] = GetDefinitionContext().GetQualifiedClassName(_currentCollectClassName);
+                    if (_currentCollectStaticClassContext)
+                        _arrowsInStaticClassContext.Add(af);
+                    _async.ArrowEnclosingClassNames[af] = _currentCollectClassName;
                     if (_classes.Declarations.Any(c =>
-                        c.Name.Lexeme == _currentCollectClassName
+                        GetQualifiedClassDeclarationName(c) == _currentCollectClassName
                         && c.SuperclassExpr is Expr.ClassExpr
                         {
                             Methods.Count: 0,
@@ -1077,11 +1105,11 @@ public partial class ILCompiler
                 // Collect the class expression for later definition
                 CollectClassExpression(ce);
                 var previousClassNameCE = _currentCollectClassName;
+                var previousStaticClassContextExpression = _currentCollectStaticClassContext;
                 if (previousClassNameCE != null)
                 {
-                    _classExprs.EnclosingClass[ce] = previousClassNameCE.StartsWith("$ClassExpr_", StringComparison.Ordinal)
-                        ? previousClassNameCE
-                        : GetDefinitionContext().GetQualifiedClassName(previousClassNameCE);
+                    _classExprs.EnclosingClass[ce] = previousClassNameCE;
+                    _classes.LexicalEnclosingClasses[_classExprs.Names[ce]] = previousClassNameCE;
                 }
                 _currentCollectClassName = _classExprs.Names[ce];
                 // Method/accessor bodies are separate callables — an inner function
@@ -1099,19 +1127,75 @@ public partial class ILCompiler
                         CollectArrowsFromStmt(method, isClassMember: true);
                 // Collect arrows in field initializers
                 foreach (var field in ce.Fields)
+                {
+                    _currentCollectStaticClassContext = field.IsStatic;
                     if (field.Initializer != null)
                         CollectArrowsFromExpr(field.Initializer);
+                }
                 // Collect arrows in accessor bodies
                 if (ce.Accessors != null)
                     foreach (var accessor in ce.Accessors)
+                    {
+                        _currentCollectStaticClassContext = accessor.IsStatic;
                         foreach (var s in accessor.Body)
                             CollectArrowsFromStmt(s);
+                    }
                 if (ce.StaticInitializers != null)
+                {
+                    _currentCollectStaticClassContext = true;
                     foreach (var block in ce.StaticInitializers.OfType<Stmt.StaticBlock>())
                         CollectArrowsFromStmt(block);
+                }
                 _currentCollectClassName = previousClassNameCE;
+                _currentCollectStaticClassContext = previousStaticClassContextExpression;
                 _currentEnclosingCallable = prevCallableCE;
                 break;
+        }
+    }
+
+    private bool ArrowUsesClassDefinition(Expr.ArrowFunction arrow)
+    {
+        var visitor = new ArrowClassDefinitionVisitor(declaration =>
+            _runtimeClassDeclarations.TryGetValue(declaration, out var expression)
+                && _classExprs.CaptureSlots.TryGetValue(expression, out var slots)
+                && slots.ContainsKey(CompilationContext.PrivateOwnerCaptureName));
+        visitor.Visit(arrow);
+        return visitor.UsesDefinition;
+    }
+
+    private sealed class ArrowClassDefinitionVisitor(Func<Stmt.Class, bool> capturesOwner) : Parsing.Visitors.ControlledAstVisitor
+    {
+        public bool UsesDefinition { get; private set; }
+
+        protected override void BeforeVisit(Expr expression)
+        {
+            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CallPrivate or Expr.PrivateIn)
+            {
+                UsesDefinition = true;
+                StopTraversal();
+            }
+        }
+
+        // Heritage and computed keys execute in the enclosing lexical scope.
+        // A new class's bodies have their own private owner and are collected separately.
+        protected override void VisitClassExpr(Expr.ClassExpr expression)
+        {
+            // The evaluated class also captures this existing owner for its
+            // lexical private-owner chain, independently of its own body uses.
+            UsesDefinition = true;
+            StopTraversal();
+        }
+
+        protected override void VisitClass(Stmt.Class declaration)
+        {
+            if (capturesOwner(declaration))
+            {
+                UsesDefinition = true;
+                StopTraversal();
+                return;
+            }
+            foreach (var definitionExpression in ClassDefinitionExpressions.Enumerate(declaration))
+                Visit(definitionExpression);
         }
     }
 
@@ -1526,8 +1610,17 @@ public partial class ILCompiler
             ? enclosingClassName
             : null;
         ctx.HasGuestReceiver = _guestReceiverArrows.Contains(arrow);
+        ctx.IsStaticSuperContext = _arrowsInStaticClassContext.Contains(arrow);
         if (ctx.CurrentClassName != null)
+        {
             ctx.CurrentClassBuilder = _classes.Builders.GetValueOrDefault(ctx.CurrentClassName);
+            if (ctx.CurrentClassBuilder == null)
+            {
+                ctx.CurrentClassExpr = _classExprs.Names.FirstOrDefault(entry => entry.Value == ctx.CurrentClassName).Key;
+                if (ctx.CurrentClassExpr != null)
+                    ctx.CurrentClassBuilder = _classExprs.Builders.GetValueOrDefault(ctx.CurrentClassExpr);
+            }
+        }
         ctx.CurrentSuperclassIsAnonymousEmptyClass = _arrowsInAnonymousEmptyDerivedClass.Contains(arrow);
         // Entry-point display class for accessing captured top-level variables
         ApplyCapturedTopLevelVariableAccess(ctx);
@@ -1559,6 +1652,8 @@ public partial class ILCompiler
             if (_closures.DisplayClassFields.TryGetValue(arrow, out var fieldMap))
             {
                 ctx.CapturedFields = fieldMap;
+                if (fieldMap.TryGetValue(CompilationContext.SuperOwnerCaptureName, out var superOwner))
+                    ctx.ClassDefinitionOwnerField = superOwner;
             }
             else
             {

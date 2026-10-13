@@ -589,6 +589,7 @@ public partial class ILCompiler
 
         // Emit constructor
         EmitConstructor(typeBuilder, classStmt, fieldsField);
+        EmitDeclaredConstructorFactory(typeBuilder, classStmt, _classes.Constructors[qualifiedClassName]);
         if (_usesRuntimeParents && !typeBuilder.IsGenericTypeDefinition && typeBuilder.BaseType is not { Name: "$Array" or "$Promise" }
             && !_classes.ErrorSubclasses.Contains(qualifiedClassName) && SupportsReceiverInitialization(classStmt))
             EmitReceiverInitializer(typeBuilder, classStmt);
@@ -803,6 +804,8 @@ public partial class ILCompiler
         // pads omitted optional args with the `undefined` sentinel on the value-call path.
         MarkPadsUndefined(methodBuilder);
         MarkFunctionLength(methodBuilder, method.Parameters);
+        if (!method.IsGenerator)
+            MarkNonConstructible(methodBuilder);
 
         // #720: async/generator private methods must be emitted through a state machine, exactly like
         // their public counterparts — not linearly into __private_<name>, which leaves a bare object on
@@ -835,6 +838,7 @@ public partial class ILCompiler
         ctx.IsStrictMode = true;
         ctx.FieldsField = isStatic ? null : fieldsField;
         ctx.IsInstanceMethod = !isStatic;
+        ctx.IsStaticSuperContext = isStatic;
         ctx.CurrentClassBuilder = typeBuilder;
         ctx.EmittingTypeBuilder = typeBuilder;
         // ES2022 Private Class Elements support
@@ -1048,6 +1052,8 @@ public partial class ILCompiler
         // instance methods (they all share this builder before the kind-specific branch).
         MarkPadsUndefined(methodBuilder);
         MarkFunctionLength(methodBuilder, method.Parameters);
+        if (!method.IsGenerator)
+            MarkNonConstructible(methodBuilder);
 
         // Apply method-level decorators as .NET attributes
         if (_decoratorMode != DecoratorMode.None)
@@ -1102,7 +1108,7 @@ public partial class ILCompiler
         // Check for method-level "use strict" directive
         ctx.IsStrictMode = true;
         // ES2022 Private Class Elements support
-        ctx.CurrentClassName = typeBuilder.Name;
+        ctx.CurrentClassName = typeBuilder.FullName;
         ctx.CurrentClassBuilder = typeBuilder;
         ctx.EmittingTypeBuilder = typeBuilder;
         SetupSyncMethodFunctionDisplayClass(ctx, il, method);

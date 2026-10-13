@@ -128,7 +128,7 @@ public partial class Interpreter
         // binding `this` to a fresh object whose prototype is Foo.prototype.
         // Without this, `self instanceof Yallist` is false and packages
         // recurse infinitely.
-        if (klass is SharpTSFunction { IsPrivateMethod: false } userFn)
+        if (klass is SharpTSFunction { IsConstructible: true } userFn)
         {
             // Build a new `this` object backed by the function's prototype.
             if (!userFn.TryGetProperty("prototype", out var protoObj))
@@ -362,7 +362,7 @@ public partial class Interpreter
         // Build a fresh `this` with prototype linkage, bind it, then call —
         // so `this instanceof Foo` returns true (Node CJS pattern used by
         // e.g. yallist, EventEmitter sub-classes).
-        if (klass is SharpTSFunction { IsPrivateMethod: false } userFn)
+        if (klass is SharpTSFunction { IsConstructible: true } userFn)
         {
             if (!userFn.TryGetProperty("prototype", out var protoObj))
             {
@@ -689,6 +689,10 @@ public partial class Interpreter
                     : arrowDescriptor.Value;
             }
 
+            if (current is SharpTSNumberNamespace numberNamespace
+                && TryReadDescriptor(numberNamespace.GetOwnPropertyDescriptor(name), receiver, out var numberValue))
+                return numberValue;
+
             if (current is ISharpTSCallable callable)
             {
                 // Ordinary callables inherit from the realm's mutable
@@ -720,7 +724,7 @@ public partial class Interpreter
                     return objectDescriptor.Value;
                 }
                 return objectPrototype.GetMember(name)
-                    ?? FunctionBuiltIns.GetMember(callable, name)
+                    ?? (callable is SharpTSNumberNamespace ? null : FunctionBuiltIns.GetMember(callable, name))
                     ?? SharpTSUndefined.Instance;
             }
 
@@ -745,6 +749,13 @@ public partial class Interpreter
         object? current = obj;
         for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
         {
+            if (current is SharpTSClassPrototype prototype)
+            {
+                if (TryReadDescriptor(prototype.GetOwnPropertyDescriptor(symbol), receiver, out var value))
+                    return value;
+                current = prototype.Class.Superclass?.Prototype ?? (object)GetObjectPrototype();
+                continue;
+            }
             if (current is SharpTSObject record)
             {
                 if (record.TryGetSymbolAccessor(symbol, out var getter, out _))
@@ -813,6 +824,11 @@ public partial class Interpreter
         return SharpTSUndefined.Instance;
     }
 
+    internal object? GetNumberConstructorSymbolValue(
+        SharpTSNumberNamespace number, SharpTSSymbol symbol, object? receiver)
+        => TryReadDescriptor(number.GetOwnPropertyDescriptor(symbol), receiver, out var value)
+            ? value : SharpTSUndefined.Instance;
+
     /// <summary>
     /// ECMA-262 §7.3.11 HasProperty(O, P): true when <paramref name="obj"/> or
     /// anything on its prototype chain has an own data field OR an accessor
@@ -846,6 +862,12 @@ public partial class Interpreter
             }
             if (obj is SharpTSObjectPrototype objectPrototype)
                 return objectPrototype.GetOwnPropertyDescriptor(name) is not null;
+            if (obj is SharpTSNumberNamespace number)
+            {
+                if (number.HasOwnProperty(name)) return true;
+                obj = GetFunctionPrototype();
+                continue;
+            }
             if (obj is SharpTSObject so)
             {
                 // SharpTSObject.HasProperty covers own fields + getters; add setters
@@ -1046,16 +1068,18 @@ public partial class Interpreter
             }
         }
 
-        // String/Number/Boolean are the same shape — per-realm constructor objects whose
+        if (obj is SharpTSNumberNamespace numberNamespace)
+            return RuntimeValue.FromBoxed(GetPropertyValue(numberNamespace, get.Name.Lexeme));
+
+        // String/Boolean are per-realm constructor objects whose
         // statics carry no receiver semantics. Going through instance-member dispatch would
         // hand out a freshly bound copy per read, so `String.fromCharCode` would not equal
         // the `value` of its own descriptor.
-        if (obj is SharpTSStringNamespace or SharpTSNumberNamespace or SharpTSBooleanNamespace)
+        if (obj is SharpTSStringNamespace or SharpTSBooleanNamespace)
         {
             var nsMember = obj switch
             {
                 SharpTSStringNamespace ns => ns.GetMember(get.Name.Lexeme),
-                SharpTSNumberNamespace ns => ns.GetMember(get.Name.Lexeme),
                 _ => ((SharpTSBooleanNamespace)obj).GetMember(get.Name.Lexeme),
             };
             if (nsMember != null) return RuntimeValue.FromBoxed(nsMember);
@@ -1210,7 +1234,7 @@ public partial class Interpreter
             if (fn.TryGetProperty(memberName, out var userProp))
                 return RuntimeValue.FromBoxed(userProp);
             // Lazy-init `fn.prototype` on first access (JS semantics).
-            if (memberName == "prototype")
+            if (memberName == "prototype" && fn.IsConstructible)
             {
                 var proto = CreateFunctionPrototype(fn);
                 fn.SetProperty("prototype", proto);
@@ -1552,7 +1576,7 @@ public partial class Interpreter
     /// </summary>
     internal static bool IsNonConstructorWrapper(object? callable) => callable
         is ISharpTSNonConstructorCallable
-        or SharpTSFunction { IsPrivateMethod: true }
+        or SharpTSFunction { IsConstructible: false }
         or SharpTSArrowFunction { HasOwnThis: false }
         or SharpTSAsyncFunction
         or SharpTSAsyncArrowFunction
@@ -1576,8 +1600,11 @@ public partial class Interpreter
         or BuiltInMethod { IsConstructor: false };
 
     private object? EvaluateGetOnClass(SharpTSClass klass, string memberName)
+        => EvaluateGetOnClass(klass, memberName, klass);
+
+    private object? EvaluateGetOnClass(SharpTSClass klass, string memberName, object? receiver)
     {
-        if (TryReadDescriptor(klass.FindStaticPropertyDescriptor(memberName), klass, out var definedValue))
+        if (TryReadDescriptor(klass.FindStaticPropertyDescriptor(memberName), receiver, out var definedValue))
             return definedValue;
         // ECMA-262: every class has exactly one `prototype` (an ordinary object whose
         // props are the instance methods + constructor back-ref). Without this,
@@ -1600,7 +1627,7 @@ public partial class Interpreter
         var staticGetter = klass.FindStaticGetter(memberName);
         if (staticGetter != null)
         {
-            return staticGetter.BindStatic(klass).CallBoxed(this, []);
+            return staticGetter.BindThis(receiver).CallBoxed(this, []);
         }
 
         // Try static method
@@ -1754,10 +1781,24 @@ public partial class Interpreter
     private static object? BindMemberCallReceiver(object? callee, object? receiver)
     {
         if (receiver is null) return callee;
-        // Class static methods are canonical function objects on property reads.
-        // Only a member call supplies their dynamic receiver, including when a
-        // method is inherited or copied onto an ordinary object.
-        if (callee is ISharpTSCallable callable)
+        // Raw method data properties preserve function identity on reads.
+        // The member call supplies their receiver, including a prototype or
+        // an ordinary object onto which a method has been copied.
+        if (callee is SharpTSFunction function)
+            callee = function.BindThis(receiver);
+        else if (callee is SharpTSAsyncFunction asyncFunction)
+        {
+            // Instance property reads already install the method's receiver scope.
+            // Binding it again would shift VariableResolver's lexical distances.
+            // Raw prototype method values still need their member-call receiver.
+            if (!asyncFunction.HasBoundReceiver)
+                callee = asyncFunction.BindThisValue(receiver);
+        }
+        else if (callee is SharpTSGeneratorFunction { PrivateOwner: not null } generatorMethod)
+            callee = generatorMethod.BindToReceiver(receiver);
+        else if (callee is SharpTSAsyncGeneratorFunction { PrivateOwner: not null } asyncGeneratorMethod)
+            callee = asyncGeneratorMethod.BindToReceiver(receiver);
+        else if (callee is ISharpTSCallable callable)
             callee = FunctionBuiltIns.BindStaticReceiver(callable, receiver) ?? callee;
         callee = TryBindReceiverForMethodAccess(callee, receiver) ?? callee;
         return TryBindUnboundBuiltInReceiver(callee, receiver) ?? callee;
@@ -2017,7 +2058,7 @@ public partial class Interpreter
 
     private bool TryReadDescriptor(
         SharpTSPropertyDescriptor? descriptor,
-        object receiver,
+        object? receiver,
         out object? value)
     {
         if (descriptor is null)
@@ -2079,6 +2120,9 @@ public partial class Interpreter
     /// </summary>
     private object? EvaluateGetOnFallback(object? obj, string memberName)
     {
+        if (obj is SharpTSNumberNamespace numberNamespace)
+            return GetPropertyValue(numberNamespace, memberName);
+
         if (obj is SharpTSJSON json)
         {
             if (TryReadDescriptor(json.GetOwnPropertyDescriptor(memberName), json, out var ownJsonValue))
@@ -2603,6 +2647,13 @@ public partial class Interpreter
         // (Object/Array/String/Number/Boolean/Function.prototype). Test262 assigns
         // indexed elements and `length` onto them before calling Array.prototype.* with
         // a primitive receiver, and patches them to exercise inherited-property paths.
+        if (obj is SharpTSNumberNamespace numberNamespace)
+        {
+            if (!TryAssignThroughDescriptor(numberNamespace.GetOwnPropertyDescriptor(set.Name.Lexeme),
+                    numberNamespace, set.Name.Lexeme, value, strictMode))
+                numberNamespace.SetExtra(set.Name.Lexeme, value);
+            return value;
+        }
         if (obj is ISharpTSMutableBuiltIn builtInProto)
         {
             builtInProto.SetExtra(set.Name.Lexeme, value);

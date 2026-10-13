@@ -20,7 +20,8 @@ public partial class RuntimeEmitter
 
     private readonly record struct FunctionProtoCallHelperInputs(FieldInfo UndefinedInstance, MethodBuilder InvokeMethodValue);
 
-    private readonly record struct FunctionProtoApplyHelperInputs(Type UndefinedType, MethodBuilder InvokeMethodValue);
+    private readonly record struct FunctionProtoApplyHelperInputs(
+        FieldInfo UndefinedInstance, Type UndefinedType, MethodBuilder InvokeMethodValue);
 
     private readonly record struct FunctionProtoBindHelperInputs(
         EmittedFunctionValueRuntime FunctionValues,
@@ -60,7 +61,7 @@ public partial class RuntimeEmitter
         );
         var applyHelper = EmitFunctionProtoApplyHelper(
             typeBuilder,
-            new FunctionProtoApplyHelperInputs(inputs.UndefinedType, inputs.InvokeMethodValue)
+            new FunctionProtoApplyHelperInputs(inputs.UndefinedInstance, inputs.UndefinedType, inputs.InvokeMethodValue)
         );
         var bindHelper = EmitFunctionProtoBindHelper(
             typeBuilder,
@@ -252,7 +253,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, argsLenLocal);
         il.MarkLabel(afterLenLabel);
 
-        // thisArg = argsLen > 0 ? args[0] : null
+        // thisArg = argsLen > 0 ? args[0] : undefined
         var noThisLabel = il.DefineLabel();
         var afterThisLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, argsLenLocal);
@@ -264,7 +265,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, thisArgLocal);
         il.Emit(OpCodes.Br, afterThisLabel);
         il.MarkLabel(noThisLabel);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
         il.Emit(OpCodes.Stloc, thisArgLocal);
         il.MarkLabel(afterThisLabel);
 

@@ -77,11 +77,18 @@ public partial class TypeChecker
         while (current != null)
         {
             substitutions = ComposeInheritedClassSubs(current, substitutions);
-            if (GetMethods(current)?.TryGetValue(expr.Method.Lexeme, out var methodType) == true)
+            bool isStatic = _inStaticMethod || _inStaticBlock;
+            TypeInfo? methodType = isStatic
+                ? GetStaticMethods(current)?.GetValueOrDefault(expr.Method.Lexeme)
+                    ?? GetStaticProperties(current)?.GetValueOrDefault(expr.Method.Lexeme)
+                : GetMethods(current)?.GetValueOrDefault(expr.Method.Lexeme);
+            if (methodType != null)
             {
-                if (GetMethodAccess(current)?.GetValueOrDefault(expr.Method.Lexeme) == AccessModifier.Private)
+                if (isStatic)
+                    EnforceStaticMemberAccess(current, expr.Method);
+                else if (GetMethodAccess(current)?.GetValueOrDefault(expr.Method.Lexeme) == AccessModifier.Private)
                     throw new TypeCheckException($" Property '{expr.Method.Lexeme}' is private and only accessible within class '{GetClassName(current)}'.", tsCode: "TS2341");
-                ObserveSourceMemberSelection(expr.Method, current, MemberFacet.Instance);
+                ObserveSourceMemberSelection(expr.Method, current, isStatic ? MemberFacet.Static : MemberFacet.Instance);
                 return substitutions.Count == 0 ? methodType : Substitute(methodType, substitutions);
             }
             current = GetSuperclass(current);

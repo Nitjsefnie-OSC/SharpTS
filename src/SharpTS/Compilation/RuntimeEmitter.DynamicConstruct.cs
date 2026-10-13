@@ -7,6 +7,7 @@ public partial class RuntimeEmitter
 {
     private readonly record struct ConstructDynamicValueInputs(
         EmittedClassDefinitionRuntime ClassDefinitions,
+        EmittedDynamicConstructionRuntime DynamicConstruction,
         EmittedBoxedPrimitiveRuntime BoxedPrimitives,
         EmittedErrorRuntime Errors,
         EmittedFunctionConstructionRuntime FunctionConstruction,
@@ -17,6 +18,24 @@ public partial class RuntimeEmitter
         Type UndefinedType
     );
 
+    private void EmitGuestConstructorFactoryAttribute(ModuleBuilder module, EmittedDynamicConstructionRuntime construction)
+    {
+        var type = module.DefineType("$GuestConstructorFactory", TypeAttributes.Public | TypeAttributes.Sealed, typeof(Attribute));
+        var name = type.DefineField("Name", _types.String, FieldAttributes.Public | FieldAttributes.InitOnly);
+        var constructor = type.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, [_types.String]);
+        var il = constructor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(Attribute).GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null)!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, name);
+        il.Emit(OpCodes.Ret);
+        construction.FactoryAttributeType = type;
+        construction.FactoryAttributeConstructor = constructor;
+        construction.FactoryAttributeName = name;
+        type.CreateType();
+    }
+
     /// <summary>
     /// Emits ConstructDynamicValue: (object ctor, object[] args) → object.
     ///
@@ -26,7 +45,8 @@ public partial class RuntimeEmitter
     /// namespace singleton (`const I = Intl; new I.NumberFormat(...)`), or any
     /// expression callee (`new (getCtor())()`). Mirrors ReflectConstruct's
     /// target dispatch (#224):
-    ///   - System.Type → Activator.CreateInstance(type, args)
+    ///   - marked guest System.Type → source-aware constructor factory
+    ///   - native/CLR System.Type → Activator.CreateInstance(type, args)
     ///   - plain object / null / undefined → TypeError "not a constructor"
     ///   - everything else ($TSFunction etc.) → NewOnFunction, the shared JS
     ///     `new` protocol (fresh `this`, return-object-wins, IsConstructor
@@ -148,13 +168,47 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notFunctionType);
 
-        // System.Type (built-in or user class reference) → Activator.CreateInstance(type, args)
+        // System.Type → marked guest factory or native/CLR overload binding.
         var notTypeLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Brfalse, notTypeLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.Type);
+        var constructorType = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Stloc, constructorType);
+
+        // Only emitted guest classes carry this factory. Its source-aware adapter
+        // supplies defaults/rest slots without changing CLR/native overload binding.
+        var useClrConstructor = il.DefineLabel();
+        var attributes = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldloc, constructorType);
+        il.Emit(OpCodes.Ldtoken, inputs.DynamicConstruction.FactoryAttributeType);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(System.Reflection.MemberInfo), "GetCustomAttributes", _types.Type, _types.Boolean));
+        il.Emit(OpCodes.Stloc, attributes);
+        il.Emit(OpCodes.Ldloc, attributes);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Brfalse, useClrConstructor);
+        il.Emit(OpCodes.Ldtoken, typeof(Func<object[], object>));
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ldloc, constructorType);
+        il.Emit(OpCodes.Ldloc, attributes);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Castclass, inputs.DynamicConstruction.FactoryAttributeType);
+        il.Emit(OpCodes.Ldfld, inputs.DynamicConstruction.FactoryAttributeName);
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Call, _types.GetMethod(typeof(Delegate), "CreateDelegate", _types.Type, typeof(MethodInfo)));
+        il.Emit(OpCodes.Castclass, typeof(Func<object[], object>));
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Func<object[], object>), "Invoke", _types.ObjectArray));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(useClrConstructor);
+        il.Emit(OpCodes.Ldloc, constructorType);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, _types.GetMethod(typeof(Activator), "CreateInstance", _types.Type, _types.ObjectArray));
         il.Emit(OpCodes.Ret);

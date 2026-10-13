@@ -234,16 +234,12 @@ public partial class ILCompiler
 
         Dictionary<string, MethodBuilder>? instanceMethods = null;
         Dictionary<string, MethodBuilder>? staticMethods = null;
-        Dictionary<string, MethodBuilder>? staticGetters = null;
-        Dictionary<string, MethodBuilder>? staticSetters = null;
         foreach (var (className, builder) in _classes.Builders)
         {
             if (ReferenceEquals(builder, typeBuilder))
             {
                 _classes.InstanceMethods.TryGetValue(className, out instanceMethods);
                 _classes.StaticMethods.TryGetValue(className, out staticMethods);
-                _classes.StaticGetters.TryGetValue(className, out staticGetters);
-                _classes.StaticSetters.TryGetValue(className, out staticSetters);
                 break;
             }
         }
@@ -299,40 +295,17 @@ public partial class ILCompiler
             }
         }
 
-        var staticAccessorNames = new HashSet<string>(StringComparer.Ordinal);
-        if (staticGetters != null)
-            staticAccessorNames.UnionWith(staticGetters.Keys);
-        if (staticSetters != null)
-            staticAccessorNames.UnionWith(staticSetters.Keys);
-        foreach (var accessorName in staticAccessorNames)
+        var declaration = _classes.Declarations.FirstOrDefault(source => !_runtimeClassDeclarations.ContainsKey(source)
+            && _classes.DeclarationNames.GetValueOrDefault(source) == typeBuilder.FullName);
+        foreach (var accessor in (declaration?.Accessors ?? []).Where(accessor => accessor.ComputedKey == null))
         {
-            var descriptorLocal = il.DeclareLocal(_runtime.DescriptorStorage.DescriptorType);
-            il.Emit(OpCodes.Newobj, _runtime.DescriptorStorage.DescriptorConstructor);
-            il.Emit(OpCodes.Stloc, descriptorLocal);
-            if (staticGetters?.GetValueOrDefault(accessorName) is { } getter)
-            {
-                il.Emit(OpCodes.Ldloc, descriptorLocal);
-                EmitStaticFunction(getter);
-                il.Emit(OpCodes.Callvirt, _runtime.DescriptorStorage.DescriptorGetter.GetSetMethod()!);
-            }
-            if (staticSetters?.GetValueOrDefault(accessorName) is { } setter)
-            {
-                il.Emit(OpCodes.Ldloc, descriptorLocal);
-                EmitStaticFunction(setter);
-                il.Emit(OpCodes.Callvirt, _runtime.DescriptorStorage.DescriptorSetter.GetSetMethod()!);
-            }
-            il.Emit(OpCodes.Ldloc, descriptorLocal);
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Callvirt, _runtime.DescriptorStorage.DescriptorEnumerable.GetSetMethod()!);
-            il.Emit(OpCodes.Ldloc, descriptorLocal);
-            il.Emit(OpCodes.Ldc_I4_1);
-            il.Emit(OpCodes.Callvirt, _runtime.DescriptorStorage.DescriptorConfigurable.GetSetMethod()!);
-            il.Emit(OpCodes.Ldtoken, selfType);
-            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-            il.Emit(OpCodes.Ldstr, accessorName);
-            il.Emit(OpCodes.Ldloc, descriptorLocal);
-            il.Emit(OpCodes.Call, _runtime.DescriptorStorage.DefineProperty);
-            il.Emit(OpCodes.Pop);
+            // A later data method replaces both halves of an earlier accessor.
+            if (declaration!.Methods.Any(method => method.Body != null && !method.IsPrivate && method.ComputedKey == null
+                    && method.IsStatic == accessor.IsStatic && (method.IsStatic || method.Name.Lexeme != "constructor")
+                    && method.Name.Lexeme == accessor.Name.Lexeme && method.Name.Start > accessor.Name.Start)) continue;
+            if (_classes.AccessorBuilders.TryGetValue(accessor, out var accessorMethod))
+                EmitDeclaredAccessorDescriptor(il, typeBuilder, accessor, accessorMethod,
+                    () => il.Emit(OpCodes.Ldstr, accessor.Name.Lexeme));
         }
 
         void EmitStaticDataDescriptor(string propertyName, MethodBuilder methodBuilder)

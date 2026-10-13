@@ -1448,6 +1448,9 @@ public partial class ILCompiler
         foreach (var statement in statements)
             collector.Visit(statement);
 
+        foreach (var (declaration, owner) in collector.LexicalOwners)
+            _classes.DeclarationLexicalOwners[declaration] = owner;
+
         foreach (var classStmt in collector.Declarations)
         {
             if (!_classes.Declarations.Contains(classStmt))
@@ -1466,7 +1469,9 @@ public partial class ILCompiler
     private sealed class ClassDeclarationCollector : Parsing.Visitors.AstVisitorBase
     {
         private readonly HashSet<Stmt.Class> _seen = new(ReferenceEqualityComparer.Instance);
+        private object? _lexicalOwner;
         public List<Stmt.Class> Declarations { get; } = [];
+        public Dictionary<Stmt.Class, object> LexicalOwners { get; } = new(ReferenceEqualityComparer.Instance);
 
         protected override void VisitClass(Stmt.Class stmt)
         {
@@ -1474,14 +1479,13 @@ public partial class ILCompiler
                 return;
 
             Declarations.Add(stmt);
+            if (_lexicalOwner != null) LexicalOwners[stmt] = _lexicalOwner;
 
-            if (stmt.SuperclassExpr != null)
-                Visit(stmt.SuperclassExpr);
+            foreach (var expression in ClassDefinitionExpressions.Enumerate(stmt))
+                Visit(expression);
 
-            foreach (var method in stmt.Methods)
-                if (method.ComputedKey != null)
-                    Visit(method.ComputedKey);
-
+            var previousOwner = _lexicalOwner;
+            _lexicalOwner = stmt;
             base.VisitClass(stmt);
 
             if (stmt.AutoAccessors != null)
@@ -1491,6 +1495,21 @@ public partial class ILCompiler
             if (stmt.StaticInitializers != null)
                 foreach (var statement in stmt.StaticInitializers)
                     Visit(statement);
+            _lexicalOwner = previousOwner;
+        }
+
+        protected override void VisitClassExpr(Expr.ClassExpr expression)
+        {
+            foreach (var definitionExpression in ClassDefinitionExpressions.Enumerate(expression))
+                Visit(definitionExpression);
+            var previousOwner = _lexicalOwner;
+            _lexicalOwner = expression;
+            base.VisitClassExpr(expression);
+            foreach (var accessor in expression.AutoAccessors ?? [])
+                VisitAutoAccessor(accessor);
+            foreach (var statement in expression.StaticInitializers ?? [])
+                Visit(statement);
+            _lexicalOwner = previousOwner;
         }
     }
 

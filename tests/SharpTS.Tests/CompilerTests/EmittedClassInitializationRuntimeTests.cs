@@ -81,11 +81,14 @@ public sealed class EmittedClassInitializationRuntimeTests
     [Fact]
     public void EmissionHelperUsesOnlyItsOwnerAndCompletesAfterItsBody()
     {
-        var builder = NewAssembly(); var type = builder.DefineDynamicModule("main").DefineType("Scoped", TypeAttributes.Public);
+        var builder = NewAssembly(); var module = builder.DefineDynamicModule("main");
+        var type = module.DefineType("Scoped", TypeAttributes.Public);
+        var userClassInterface = module.DefineType("UserClass", TypeAttributes.Public | TypeAttributes.Interface | TypeAttributes.Abstract);
+        userClassInterface.CreateType();
         var owner = new EmittedRuntime().ClassInitialization;
         var helper = typeof(RuntimeEmitter).GetMethod("EmitRunClassDefinition", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        Assert.Equal(new[] { typeof(TypeBuilder), typeof(EmittedClassInitializationRuntime) }, helper.GetParameters().Select(p => p.ParameterType));
-        helper.Invoke(new RuntimeEmitter(TypeProvider.Runtime), [type, owner]);
+        Assert.Equal(new[] { typeof(TypeBuilder), typeof(EmittedClassInitializationRuntime), typeof(Type) }, helper.GetParameters().Select(p => p.ParameterType));
+        helper.Invoke(new RuntimeEmitter(TypeProvider.Runtime), [type, owner, userClassInterface]);
         Assert.False(owner.IsComplete); owner.CompleteEmission(); Assert.True(owner.IsComplete);
         type.CreateType(); SaveVerifyLoad(builder).GetType("Scoped")!.GetMethod("RunClassDefinition")!.Invoke(null, [typeof(object)]);
         Assert.NotSame(owner, new EmittedRuntime().ClassInitialization);

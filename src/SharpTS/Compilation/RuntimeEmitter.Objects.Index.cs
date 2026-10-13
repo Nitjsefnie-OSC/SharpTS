@@ -56,6 +56,10 @@ public partial class RuntimeEmitter
         EmittedSymbolAccessorRuntime SymbolAccessors,
         EmittedSymbolRuntime Symbols,
         ConstructorBuilder TSFunctionCtor,
+        ConstructorBuilder TSFunctionCachedCtor,
+        MethodBuilder TSFunctionGetOrCreate,
+        MethodBuilder TSFunctionNameGetter,
+        MethodBuilder TSFunctionLengthGetter,
         TypeBuilder TSFunctionType,
         EmittedTypedArrayRuntime TypedArrays,
         FieldInfo UndefinedInstance,
@@ -339,12 +343,9 @@ public partial class RuntimeEmitter
             il.MarkLabel(noSymGetterLabel);
         }
 
-        // #647/#755: computed symbol-keyed method (`[Symbol.iterator]() {...}`). Reading the member
-        // returns a receiver-bound callable — `new $TSFunction(obj, method)` — so a standalone
-        // `obj[Symbol.iterator]()` keeps `this`. InvokeWithThis uses the bound `_target` for an
-        // instance method (and null for a static one), mirroring the string-key method path
-        // (GetFieldsProperty). for...of / spread / for-await pass the receiver themselves, so they
-        // worked even when this returned the raw MethodInfo.
+        // Registered static methods share an unbound callable across constructor
+        // reads. Instance methods retain the receiver-bound wrapper used by
+        // their existing symbol dispatch path.
         {
             var noSymMethodLabel = il.DefineLabel();
             var symMethodLocal = il.DeclareLocal(_types.Object);
@@ -354,10 +355,51 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Stloc, symMethodLocal);
             il.Emit(OpCodes.Ldloc, symMethodLocal);
             il.Emit(OpCodes.Brfalse, noSymMethodLabel);
+
+            var instanceMethod = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, _types.Type);
+            il.Emit(OpCodes.Brfalse, instanceMethod);
+            il.Emit(OpCodes.Ldloc, symMethodLocal);
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.MethodInfo, "IsStatic")!.GetGetMethod()!);
+            il.Emit(OpCodes.Brfalse, instanceMethod);
+
+            // Derive metadata through the ordinary constructor so defaults/rest
+            // lengths and function-name attributes match the existing wrapper.
+            var staticValue = il.DeclareLocal(inputs.TSFunctionType);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, symMethodLocal);
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);
+            il.Emit(OpCodes.Stloc, staticValue);
+            il.Emit(OpCodes.Ldloc, symMethodLocal);
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloc, staticValue);
+            il.Emit(OpCodes.Callvirt, inputs.TSFunctionNameGetter);
+            il.Emit(OpCodes.Call, inputs.Symbols.MethodName);
+            il.Emit(OpCodes.Ldloc, staticValue);
+            il.Emit(OpCodes.Callvirt, inputs.TSFunctionLengthGetter);
+            il.Emit(OpCodes.Call, inputs.TSFunctionGetOrCreate);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(instanceMethod);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, symMethodLocal);
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);
+            il.Emit(OpCodes.Stloc, staticValue);
             il.Emit(OpCodes.Ldarg_0);                          // obj — receiver to bind
             il.Emit(OpCodes.Ldloc, symMethodLocal);            // found MethodInfo (typed object)
             il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);   // new $TSFunction(obj, method)
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloc, staticValue);
+            il.Emit(OpCodes.Callvirt, inputs.TSFunctionNameGetter);
+            il.Emit(OpCodes.Call, inputs.Symbols.MethodName);
+            il.Emit(OpCodes.Ldloc, staticValue);
+            il.Emit(OpCodes.Callvirt, inputs.TSFunctionLengthGetter);
+            il.Emit(OpCodes.Newobj, inputs.TSFunctionCachedCtor);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noSymMethodLabel);
         }

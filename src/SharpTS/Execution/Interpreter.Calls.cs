@@ -223,6 +223,9 @@ public partial class Interpreter
         else
         {
             callee = (await ctx.EvaluateExprAsync(call.Callee)).ToObject();
+            if (call.Callee is Expr.Super { Method: not null } && _environment.StaticSuper)
+                callee = BindMemberCallReceiver(callee,
+                    _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject());
         }
 
         // Optional call: return undefined if callee is nullish.
@@ -515,6 +518,9 @@ public partial class Interpreter
         else
         {
             callee = Evaluate(call.Callee);
+            if (call.Callee is Expr.Super { Method: not null } && _environment.StaticSuper)
+                callee = BindMemberCallReceiver(callee,
+                    _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject());
         }
 
         // Optional call: return undefined if callee is nullish.
@@ -1154,6 +1160,11 @@ public partial class Interpreter
 
     private object EvaluateInstanceof(object? left, object? right)
     {
+        // Bound functions delegate to their target, including through repeated
+        // bindings. Their own prototype property does not participate.
+        if (right is BoundFunction bound)
+            return EvaluateInstanceof(left, bound.Target);
+
         // `x instanceof Object` — the `Object` global resolves to the namespace
         // singleton (no SharpTSClass on the RHS), so brand-check structurally:
         // every non-primitive guest value is an Object. Mirrors ECMA-262

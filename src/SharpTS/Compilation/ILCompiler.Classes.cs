@@ -155,10 +155,12 @@ public partial class ILCompiler
 
         // Handle generic type parameters FIRST (before resolving superclass type args)
         GenericTypeParameterBuilder[]? classGenericParams = null;
+        Type[] canonicalArguments = [];
         if (classStmt.TypeParams != null && classStmt.TypeParams.Count > 0)
         {
             string[] typeParamNames = classStmt.TypeParams.Select(tp => tp.Name.Lexeme).ToArray();
             classGenericParams = typeBuilder.DefineGenericParameters(typeParamNames);
+            canonicalArguments = Enumerable.Repeat(_types.Object, classGenericParams.Length).ToArray();
 
             // Apply constraints
             for (int i = 0; i < classStmt.TypeParams.Count; i++)
@@ -167,6 +169,7 @@ public partial class ILCompiler
                 if (constraint != null)
                 {
                     Type constraintType = ResolveConstraintType(constraint);
+                    canonicalArguments[i] = constraintType;
                     if (constraintType.IsInterface)
                         classGenericParams[i].SetInterfaceConstraints(constraintType);
                     else
@@ -175,7 +178,7 @@ public partial class ILCompiler
             }
         }
 
-        _classes.GenericParameters.Declare(typeBuilder, classGenericParams ?? []);
+        _classes.GenericParameters.Declare(typeBuilder, classGenericParams ?? [], canonicalArguments);
 
         // NOW resolve the base type (may use our generic params for type arguments)
         Type? baseType = null;

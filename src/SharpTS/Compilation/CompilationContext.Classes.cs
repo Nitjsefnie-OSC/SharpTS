@@ -24,6 +24,9 @@ public partial class CompilationContext
     public FieldInfo? FieldsField { get; set; }
     public bool IsInstanceMethod { get; set; }
 
+    /// <summary>The lexical super home is the class constructor rather than its prototype.</summary>
+    public bool IsStaticSuperContext { get; set; }
+
     /// <summary>
     /// Primitive-returning non-virtual method companions keyed by qualified class
     /// and JavaScript method name. Only analyzer-marked exact receiver calls may
@@ -72,6 +75,17 @@ public partial class CompilationContext
         {
             _currentClassName = value;
             _currentClassShortName = value?.Split('.').Last().Split('_').Last();
+            if (LexicalEnclosingClasses != null)
+            {
+                List<string> enclosing = [];
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                while (value != null && LexicalEnclosingClasses.TryGetValue(value, out var owner) && seen.Add(owner))
+                {
+                    enclosing.Add(owner);
+                    value = owner;
+                }
+                EnclosingClassNames = enclosing;
+            }
         }
     }
 
@@ -84,32 +98,20 @@ public partial class CompilationContext
     /// <summary>Lexically enclosing classes whose private names remain visible.</summary>
     public IReadOnlyList<string>? EnclosingClassNames { get; set; }
 
-    public string ResolvePrivateFieldOwner(string fallbackClassName, string fieldName)
-    {
-        if (ClassRegistry?.GetPrivateFieldNames(fallbackClassName)?.Contains(fieldName) == true
-            || ClassRegistry?.TryGetStaticPrivateField(fallbackClassName, fieldName, out _) == true)
-        {
-            return fallbackClassName;
-        }
+    /// <summary>Immediate lexical owners keyed by the emitted identities of declarations and expressions.</summary>
+    public IReadOnlyDictionary<string, string>? LexicalEnclosingClasses { get; set; }
 
-        if (EnclosingClassNames != null)
-        {
-            foreach (var className in EnclosingClassNames)
-            {
-                if (ClassRegistry?.GetPrivateFieldNames(className)?.Contains(fieldName) == true
-                    || ClassRegistry?.TryGetStaticPrivateField(className, fieldName, out _) == true)
-                {
-                    return className;
-                }
-            }
-        }
-        return fallbackClassName;
-    }
+    public string ResolvePrivateFieldOwner(string fallbackClassName, string fieldName)
+        => ResolvePrivateNameOwner(fallbackClassName, fieldName);
 
     public string ResolvePrivateMethodOwner(string fallbackClassName, string methodName)
+        => ResolvePrivateNameOwner(fallbackClassName, methodName);
+
+    // Private identifiers share one lexical namespace across fields, methods,
+    // and both class facets. Resolve the name before selecting its member kind.
+    private string ResolvePrivateNameOwner(string fallbackClassName, string name)
     {
-        if (ClassRegistry?.TryGetPrivateMethod(fallbackClassName, methodName, out _) == true
-            || ClassRegistry?.TryGetStaticPrivateMethod(fallbackClassName, methodName, out _) == true)
+        if (DeclaresPrivateName(fallbackClassName, name))
         {
             return fallbackClassName;
         }
@@ -118,8 +120,7 @@ public partial class CompilationContext
         {
             foreach (var className in EnclosingClassNames)
             {
-                if (ClassRegistry?.TryGetPrivateMethod(className, methodName, out _) == true
-                    || ClassRegistry?.TryGetStaticPrivateMethod(className, methodName, out _) == true)
+                if (DeclaresPrivateName(className, name))
                 {
                     return className;
                 }
@@ -127,6 +128,11 @@ public partial class CompilationContext
         }
         return fallbackClassName;
     }
+
+    private bool DeclaresPrivateName(string owner, string name)
+        => ClassRegistry?.GetPrivateElements(owner) is { } elements
+            && (elements.FieldNames.Contains(name) || elements.StaticFields.ContainsKey(name)
+                || elements.Methods.ContainsKey(name) || elements.StaticMethods.ContainsKey(name));
 
     // ============================================
     // @lock Decorator Support: Thread-safe Method Execution

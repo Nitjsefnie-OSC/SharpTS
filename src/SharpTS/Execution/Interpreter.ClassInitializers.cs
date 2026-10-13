@@ -10,7 +10,8 @@ public partial class Interpreter
     {
         var environment = new RuntimeEnvironment(owner.InitializerEnvironment ?? _environment)
         {
-            PrivateClass = owner
+            PrivateClass = owner,
+            StaticSuper = receiver is SharpTSClass
         };
         environment.Define("this", receiver);
         if (owner.Superclass is { } parent) environment.Define("super", parent);

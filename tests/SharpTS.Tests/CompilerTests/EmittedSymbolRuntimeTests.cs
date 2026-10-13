@@ -50,7 +50,7 @@ public sealed class EmittedSymbolRuntimeTests
     {
         var first = new EmittedRuntime();
         var second = new EmittedRuntime();
-        Assert.Equal(27, Handles(typeof(EmittedSymbolRuntime)).Length);
+        Assert.Equal(28, Handles(typeof(EmittedSymbolRuntime)).Length);
         Assert.Equal(10, Handles(typeof(EmittedSymbolAccessorRuntime)).Length);
         Assert.NotSame(first.Symbols, second.Symbols);
         Assert.NotSame(first.SymbolAccessors, second.SymbolAccessors);
@@ -315,6 +315,7 @@ public sealed class EmittedSymbolRuntimeTests
             "EmitSymbolPrototypeDescription",
             "EmitGetSymbolDict",
             "EmitIsSymbol",
+            "EmitSymbolMethodName",
             "EmitTSSymbolClass",
         ];
         foreach (string name in helpers)

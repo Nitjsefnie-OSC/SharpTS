@@ -581,8 +581,8 @@ public partial class ILCompiler
         if (isInstanceMethod && (_classExprs.DefinitionMethods.ContainsKey(methodBuilder) || _classExprs.Builders.Values.Any(builder => ReferenceEquals(builder, methodBuilder.DeclaringType))))
             analysis = analysis with { UsesThis = true };
 
-        // Build state machine type. A static generator method (#692) has no `this`/instance fields, so it
-        // is set up like a free function (isInstanceMethod: false, static stub). The type name uses the
+        // Static methods capture their call-time guest receiver from the runtime,
+        // while instance methods capture arg0. The type name uses the
         // MethodBuilder's (mangled) name so a private generator's `#p` lexeme doesn't put a `#` in it (#720).
         var smBuilder = new GeneratorStateMachineBuilder(_moduleBuilder, _types, _generators.StateMachineCounter++);
         ConfigureDebugStateMachineOwner(smBuilder, (TypeBuilder)methodBuilder.DeclaringType!, methodBuilder.Name);
@@ -592,7 +592,7 @@ public partial class ILCompiler
             analysis,
             isInstanceMethod: isInstanceMethod,
             runtime: _runtime,
-            hasDynamicThis: !isInstanceMethod && _classExprs.Builders.Values.Any(builder => ReferenceEquals(builder, methodBuilder.DeclaringType))
+            hasDynamicThis: !isInstanceMethod
         );
         RegisterStateMachine(
             methodBuilder,
@@ -633,10 +633,11 @@ public partial class ILCompiler
         var ctx = CreateModuleMemberContext(il, smBuilder.MoveNextMethod);
         ctx.FieldsField = fieldsField;
         ctx.IsInstanceMethod = isInstanceMethod;
+        ctx.IsStaticSuperContext = !isInstanceMethod;
         ctx.IsStrictMode = true;
         // ES2022 Private Class Elements support for generator methods (a private generator threads
         // its QUALIFIED class name so nested private member access resolves under modules — #720).
-        ctx.CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.Name;
+        ctx.CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.FullName;
         ctx.CurrentClassBuilder = methodBuilder.DeclaringType as TypeBuilder;
         ApplyClassDefinitionStateMachineContext(ctx, methodBuilder, isInstanceMethod);
         // Captured outer variables are read live (by reference), not snapshotted (#541).

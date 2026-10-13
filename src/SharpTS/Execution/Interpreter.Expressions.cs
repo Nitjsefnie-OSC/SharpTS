@@ -415,6 +415,9 @@ public partial class Interpreter
         // (Array subclass instances) are SharpTSArrays — bind generically.
         object? thisReceiver = _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject();
 
+        if (expr.Method != null && _environment.StaticSuper)
+            return RuntimeValue.FromBoxed(EvaluateGetOnClass(superclass, expr.Method.Lexeme, thisReceiver));
+
         // super() with null Method means constructor call
         string methodName = expr.Method?.Lexeme ?? "constructor";
         ISharpTSCallable? method = superclass.FindMethod(methodName);
@@ -973,6 +976,7 @@ public partial class Interpreter
         (SharpTSObject sharpObj, _) => new IndexTarget.ObjectString(sharpObj, ToPropertyKeyString(index)),
         (SharpTSInstance instance, _) => new IndexTarget.InstanceString(instance, ToPropertyKeyString(index)),
         (SharpTSGlobalThis globalThis, string globalKey) => new IndexTarget.GlobalThis(globalThis, globalKey),
+        (SharpTSClassPrototype prototype, SharpTSSymbol symbol) => new IndexTarget.ClassPrototypeSymbol(prototype, symbol),
         (ISharpTSMutableBuiltIn builtInPrototype, _) =>
             new IndexTarget.BuiltInPrototypeString(
                 builtInPrototype, ToPropertyKeyString(index)),
@@ -1370,6 +1374,7 @@ public partial class Interpreter
             // after ToPropertyKey normalization.
             IndexTarget.ClassString t => EvaluateGetOnClass(t.Target, t.Key),
             IndexTarget.ClassSymbol t => GetClassSymbolValue(t.Target, t.Key),
+            IndexTarget.ClassPrototypeSymbol t => GetSymbolPropertyValue(t.Target, t.Key),
             IndexTarget.GlobalThis t => ResolveGlobalThisRead(t.Target, t.Key),
             IndexTarget.BuiltInPrototypeString t => ReadBuiltInPrototypeIndex(t.Target, t.Key),
             IndexTarget.HeadersString t => (object?)t.Target.Get(t.Key) ?? SharpTSUndefined.Instance,
@@ -1449,19 +1454,13 @@ public partial class Interpreter
     /// </summary>
     private object? GetInstanceSymbolValue(SharpTSInstance instance, SharpTSSymbol symbol)
     {
-        object? own = instance.GetBySymbol(symbol);
-        if (own != null) return own;
-        // Declared symbol-keyed method (`[Symbol.iterator]() {...}`) — returned bound, like a
-        // normal method read (`instance[Symbol.iterator]` yields the callable).
-        if (instance.GetClass().FindSymbolMethod(symbol) is { } method)
-        {
-            return SharpTSClass.BindMethod(method, instance);
-        }
-        if (instance.GetClass().FindSymbolGetter(symbol) is { } getter)
-        {
-            return getter.Bind(instance).Call(this, []);
-        }
-        return SharpTSUndefined.Instance;
+        if (instance.HasSymbolProperty(symbol)) return instance.GetBySymbol(symbol);
+        var descriptor = instance.GetClass().FindInstanceSymbolPropertyDescriptor(symbol);
+        if (!TryReadDescriptor(descriptor, instance, out var value)) return SharpTSUndefined.Instance;
+        // Instance method reads retain their existing binding behavior. The
+        // prototype itself exposes the canonical unbound descriptor value.
+        return descriptor is { HasValue: true } && value is ISharpTSCallable method
+            ? SharpTSClass.BindMethod(method, instance) : value;
     }
 
     /// <summary>
@@ -1470,6 +1469,8 @@ public partial class Interpreter
     /// </summary>
     private object? GetClassSymbolValue(SharpTSClass klass, SharpTSSymbol symbol)
     {
+        if (TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), klass, out var accessorValue))
+            return accessorValue;
         if (klass.FindStaticSymbolGetter(symbol) is { } getter)
         {
             return getter.BindStatic(klass).Call(this, []);
@@ -1580,7 +1581,10 @@ public partial class Interpreter
         if (obj is ISharpTSSymbolPropertyBag symbolBag
             && index is SharpTSSymbol bagSymbol)
         {
-            symbolBag.SetBySymbolStrict(bagSymbol, value, strictMode);
+            if (obj is not SharpTSNumberNamespace symbolNumber
+                || !TryAssignThroughDescriptor(symbolNumber.GetOwnPropertyDescriptor(bagSymbol),
+                    symbolNumber, bagSymbol.ToString(), value, strictMode))
+                symbolBag.SetBySymbolStrict(bagSymbol, value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
 
@@ -1694,7 +1698,7 @@ public partial class Interpreter
         // writability. Other keys on a callable (user-stored fn[k] = v) aren't
         // supported here either; let them fall through to the spec-conformant
         // error.
-        if (obj is ISharpTSCallable && obj is not SharpTSFunction
+        if (obj is ISharpTSCallable && obj is not (SharpTSFunction or SharpTSNumberNamespace)
             && index?.ToString() is "name" or "length")
         {
             if (strictMode)
@@ -1857,7 +1861,8 @@ public partial class Interpreter
                 // write lands in _fields while reads keep hitting the getter, silently
                 // desynchronizing the two (#290). Plain data writes stay on SetRawField so the
                 // defineProperty `writable:false` flag continues to be honored.
-                if (t.Target.GetClass().FindSetter(t.Key) != null
+                if (t.Target.GetClass().HasInstanceAccessorDeclaration(t.Key)
+                    || t.Target.GetClass().FindSetter(t.Key) != null
                     || t.Target.GetClass().HasInstanceAutoAccessor(t.Key))
                 {
                     // Set/SetStrict invoke the setter only when the instance has an interpreter
@@ -1873,9 +1878,23 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.InstanceSymbol t:
+                if (!t.Target.HasSymbolProperty(t.Key))
+                {
+                    var descriptor = t.Target.GetClass().FindInstanceSymbolPropertyDescriptor(t.Key);
+                    if (TryAssignThroughDescriptor(descriptor, t.Target, t.Key.ToString(), value, strictMode))
+                        break;
+                    // A removed declared accessor must not reappear through
+                    // the immutable declaration table below.
+                    if (t.Target.GetClass().HasInstanceAccessorDeclaration(t.Key))
+                    {
+                        if (strictMode) t.Target.SetBySymbolStrict(t.Key, value, strictMode);
+                        else t.Target.SetBySymbol(t.Key, value);
+                        break;
+                    }
+                }
                 // A declared symbol-keyed setter (`set [Symbol.x](v)`) intercepts
                 // assignment unless shadowed by an own symbol data property.
-                if (t.Target.GetBySymbol(t.Key) == null
+                if (!t.Target.HasSymbolProperty(t.Key)
                     && t.Target.GetClass().FindSymbolSetter(t.Key) is { } symSetter)
                 {
                     symSetter.Bind(t.Target).Call(this, [value]);
@@ -1892,6 +1911,8 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.ClassSymbol t:
+                if (TryAssignThroughDescriptor(t.Target.FindStaticSymbolAccessorDescriptor(t.Key),
+                        t.Target, t.Key.ToString(), value, strictMode)) break;
                 if (t.Target.FindStaticSymbolSetter(t.Key) is { } staticSymSetter)
                 {
                     staticSymSetter.BindStatic(t.Target).Call(this, [value]);
@@ -1900,12 +1921,21 @@ public partial class Interpreter
                 t.Target.SetStaticBySymbol(t.Key, value);
                 break;
 
+            case IndexTarget.ClassPrototypeSymbol t:
+                if (!TryAssignThroughDescriptor(t.Target.GetOwnPropertyDescriptor(t.Key),
+                        t.Target, t.Key.ToString(), value, strictMode))
+                    t.Target.SetBySymbol(t.Key, value);
+                break;
+
             case IndexTarget.GlobalThis t:
                 t.Target.SetProperty(t.Key, value);
                 break;
 
             case IndexTarget.BuiltInPrototypeString t:
-                t.Target.SetExtra(t.Key, value);
+                if (t.Target is not SharpTSNumberNamespace indexedNumber
+                    || !TryAssignThroughDescriptor(indexedNumber.GetOwnPropertyDescriptor(t.Key),
+                        indexedNumber, t.Key, value, strictMode))
+                    t.Target.SetExtra(t.Key, value);
                 break;
 
             default:
@@ -2160,7 +2190,7 @@ public partial class Interpreter
                 else if (method.IsGenerator)
                     func = new SharpTSGeneratorFunction(method, _environment);
                 else
-                    func = new SharpTSFunction(method, _environment);
+                    func = new SharpTSFunction(method, _environment, isConstructible: false);
 
                 // Computed method keys (`[Symbol.iterator]()`) — symbol keys land in the symbol-method
                 // table; other keys fold to a string-named method (parallels the class-declaration path).
@@ -2206,9 +2236,9 @@ public partial class Interpreter
                         null,
                         accessor.SetterParam != null ? [accessor.SetterParam] : [],
                         accessor.Body,
-                        accessor.ReturnType);
+                        accessor.ReturnType, IsStatic: accessor.IsStatic);
 
-                    SharpTSFunction func = new(funcStmt, _environment);
+                    SharpTSFunction func = new(funcStmt, _environment, isConstructible: false);
                     bool isGetter = accessor.Kind.Type == TokenType.GET;
                     string nameKey = accessor.Name.Lexeme;
 
@@ -2317,7 +2347,8 @@ public partial class Interpreter
             {
                 // Create temporary environment with 'this' bound to the class
                 // Also make the class name available so code like Foo.x works
-                var staticEnv = new RuntimeEnvironment(_environment, strictMode: true) { PrivateClass = klass };
+                var staticEnv = new RuntimeEnvironment(_environment, strictMode: true)
+                    { PrivateClass = klass, StaticSuper = true };
                 staticEnv.Define("this", klass);
                 if (classExpr.Name != null)
                 {

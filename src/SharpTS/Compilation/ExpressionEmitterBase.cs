@@ -800,6 +800,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitSuper(Expr.Super s)
     {
+        if (Ctx.IsStaticSuperContext)
+        {
+            var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
+            EmitGuestSuperValue(s.Method?.Lexeme ?? "constructor", receiver);
+            return;
+        }
         var thisField = GetThisField();
         if (thisField != null)
         {
@@ -824,7 +830,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitVariable(Expr.Variable v)
     {
-        if (TryEmitClassDefinitionSelf(v.Name.Lexeme)) return;
+        if (TryEmitClassDefinitionSelf(v)) return;
         if (TryEmitClassDefinitionCapture(v.Name.Lexeme)) return;
         string name = v.Name.Lexeme;
 
@@ -1180,7 +1186,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitCallPrivate(Expr.CallPrivate cp)
     {
-        if (TryEmitDefinitionPrivateCall(cp)) return;
+        if (TryEmitBrandedPrivateCall(cp)) return;
         if (TryEmitGenericPrivateCall(cp))
             return;
         string methodName = cp.Name.Lexeme;
@@ -2016,7 +2022,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE so the
                 // closure shares this iteration's cell (the cell local is repointed to a fresh
                 // box each iteration). Checked first; cell bindings are never hoisted fields.
-                if (Ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
+                if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+                else if (Ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
                 {
                     IL.Emit(OpCodes.Ldloc, cellLocal);
                 }

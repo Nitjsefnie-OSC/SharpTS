@@ -1,0 +1,34 @@
+using SharpTS.Tests.SharedTests;
+using Xunit;
+
+namespace SharpTS.Tests.CompilerTests;
+
+public partial class StandaloneDllTests
+{
+    [Theory]
+    [InlineData("issue")]
+    [InlineData("metadata")]
+    [InlineData("receivers")]
+    public void Isolated_Issue2017StaticSymbolMethods_PreserveCanonicalValues(string name)
+    {
+        var (source, expected) = name switch
+        {
+            "issue" => (StaticSymbolMethodIdentityTests.IssueSource, "true\ntrue\n"),
+            "metadata" => (StaticSymbolMethodIdentityTests.MetadataSource,
+                string.Concat(Enumerable.Repeat("true true 1 1\n", 4))),
+            _ => (StaticSymbolMethodIdentityTests.ReceiverSource, StaticSymbolMethodIdentityTests.ReceiverExpected)
+        };
+        using var directory = IntegrationTests.CliTestHelper.CreateTempDirectory();
+        var path = directory.CreateFile("main.ts", source);
+        var output = directory.GetPath("static-symbol-" + name + ".dll");
+        var compile = IntegrationTests.CliTestHelper.RunCli(
+            $"--no-tsconfig --compile \"{path}\" -o \"{output}\" --standalone --verify",
+            directory.Path, TimeSpan.FromSeconds(60));
+        Assert.True(compile.ExitCode == 0, compile.StandardOutput + compile.StandardError);
+        Assert.Contains("IL verification passed.", compile.StandardOutput);
+        Assert.DoesNotContain("SharpTS", GetAssemblyReferences(output));
+        Assert.False(File.Exists(directory.GetPath("SharpTS.dll")));
+        Assert.Equal(expected, ExecuteCompiledDllIsolated(output, timeoutMs: 30000,
+            verifyStandardError: error => Assert.Empty(error), standardInput: ""));
+    }
+}

@@ -1057,9 +1057,7 @@ public partial class Interpreter
             SharpTSStringNamespace when name == "prototype" =>
                 DeleteNonConfigurableClassPrototype(name, strictMode),
             SharpTSStringNamespace stringNamespace => stringNamespace.DeleteProperty(name),
-            SharpTSNumberNamespace when name == "prototype" =>
-                DeleteNonConfigurableClassPrototype(name, strictMode),
-            SharpTSNumberNamespace numberNamespace => numberNamespace.DeleteProperty(name),
+            SharpTSNumberNamespace numberNamespace => numberNamespace.DeletePropertyStrict(name, strictMode),
             SharpTSBooleanNamespace when name == "prototype" =>
                 DeleteNonConfigurableClassPrototype(name, strictMode),
             SharpTSBooleanNamespace booleanNamespace => booleanNamespace.DeleteProperty(name),
@@ -1117,8 +1115,11 @@ public partial class Interpreter
             {
                 SharpTSObject tsObj => tsObj.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSInstance tsInst => tsInst.DeleteBySymbolStrict(symbol, strictMode),
+                SharpTSClass klass => klass.DeleteStaticSymbolProperty(symbol, strictMode),
+                SharpTSClassPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSArray array => array.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSMath math => math.DeleteBySymbolStrict(symbol, strictMode),
+                SharpTSNumberNamespace number => number.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSStringPrototype stringPrototype
                     => stringPrototype.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSJSON json => json.DeleteBySymbolStrict(symbol, strictMode),

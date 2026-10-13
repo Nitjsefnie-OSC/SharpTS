@@ -12,9 +12,9 @@ namespace SharpTS.Compilation;
 /// and then accessed for a static member (<c>A.isArray</c>), the generic
 /// <c>$Runtime.GetProperty</c> Type branch reflects for real .NET statics and
 /// finds nothing (<c>IList&lt;object&gt;</c>, <c>double</c>, <c>string</c> have
-/// no matching static methods). This helper supplies the same <c>$TSFunction</c>
-/// wrapper that the compile-time registry would have emitted at the bare
-/// <c>Array.isArray</c> site.
+/// no matching JavaScript members). This helper supplies explicit constants and
+/// the same <c>$TSFunction</c> wrappers that the compile-time registry would emit
+/// at a bare <c>Array.isArray</c> site.
 ///
 /// Lodash hits this heavily: <c>var Array = context.Array; var isArray = Array.isArray;</c>
 /// inside <c>runInContext</c> — without runtime dispatch the local <c>isArray</c>
@@ -117,6 +117,36 @@ public partial class RuntimeEmitter
         EmitLookup(_types.Double, "isFinite",      inputs.Numbers.IsFinite, 1);
         EmitLookup(_types.Double, "isInteger",     inputs.Numbers.IsInteger, 1);
         EmitLookup(_types.Double, "isSafeInteger", inputs.Numbers.IsSafeInteger, 1);
+
+        // Number's constants are JavaScript own properties, not CLR field names.
+        // In particular NaN must remain readable when native CLR probes are skipped.
+        var skipNumberConstants = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Double);
+        il.Emit(OpCodes.Call, getTypeFromHandle);
+        il.Emit(OpCodes.Call, strEquals);
+        il.Emit(OpCodes.Brfalse, skipNumberConstants);
+        void EmitNumberConstant(string name, double value)
+        {
+            var skip = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, stringOpEq);
+            il.Emit(OpCodes.Brfalse, skip);
+            il.Emit(OpCodes.Ldc_R8, value);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(skip);
+        }
+        EmitNumberConstant("MAX_VALUE", double.MaxValue);
+        EmitNumberConstant("MIN_VALUE", double.Epsilon);
+        EmitNumberConstant("NaN", double.NaN);
+        EmitNumberConstant("POSITIVE_INFINITY", double.PositiveInfinity);
+        EmitNumberConstant("NEGATIVE_INFINITY", double.NegativeInfinity);
+        EmitNumberConstant("MAX_SAFE_INTEGER", 9007199254740991.0);
+        EmitNumberConstant("MIN_SAFE_INTEGER", -9007199254740991.0);
+        EmitNumberConstant("EPSILON", 2.220446049250313e-16);
+        il.MarkLabel(skipNumberConstants);
 
         // String.* — bare `String` identifier resolves to typeof(string).
         EmitLookup(_types.String, "fromCharCode",  inputs.StringFromCharCode, 1);

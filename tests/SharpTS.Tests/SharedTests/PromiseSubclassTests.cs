@@ -366,6 +366,42 @@ public class PromiseSubclassTests
     }
 
     [Theory, ModeData]
+    public void Species_InheritedAccessorUsesActualConstructorReceiver(ExecutionMode mode)
+    {
+        var source = """
+            class Base extends Promise<number> {
+                static get [Symbol.species]() { return this as any; }
+            }
+            class Derived extends Base {}
+            async function main() {
+                const q = Derived.resolve(1).then(v => v + 1);
+                console.log(q instanceof Derived, q instanceof Base, await q);
+            }
+            main();
+            """;
+
+        Assert.Equal("true true 2\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void CompiledSpecies_SetterOnlyDescriptorFallsBackToPromise()
+    {
+        var source = """
+            class MyP extends Promise<number> {}
+            Object.defineProperty(MyP, Symbol.species, { set: function(value: any) {} });
+            async function main() {
+                const q = MyP.resolve(1).then(v => v + 1);
+                console.log(q instanceof MyP, q instanceof Promise, await q);
+            }
+            main();
+            """;
+
+        // The original interpreter ignores setter-only species shadowing;
+        // this control covers the compiled descriptor read repaired here.
+        Assert.Equal("false true 2\n", TestHarness.Run(source, ExecutionMode.Compiled));
+    }
+
+    [Theory, ModeData]
     public void Species_CatchAndFinallyFollowSpecies(ExecutionMode mode)
     {
         // catch (= then(undefined, onRejected)) and finally also route their

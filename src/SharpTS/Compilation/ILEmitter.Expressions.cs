@@ -47,7 +47,7 @@ public partial class ILEmitter
 
         if (TryEmitDefaultParameterTdz(name))
             return;
-        if (TryEmitClassDefinitionSelf(name)) return;
+        if (TryEmitClassDefinitionSelf(v)) return;
         if (TryEmitClassDefinitionCapture(name)) return;
 
         if (_ctx.LexicalInitializerTdzName == name)
@@ -875,6 +875,12 @@ public partial class ILEmitter
 
     protected override void EmitSuper(Expr.Super s)
     {
+        if (_ctx.IsStaticSuperContext)
+        {
+            var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
+            EmitGuestSuperValue(s.Method?.Lexeme ?? "constructor", receiver);
+            return;
+        }
         // Super method values use the lexical receiver, including arrow captures.
         // Note: super() constructor calls are handled in EmitCall, not here
         EmitThis();

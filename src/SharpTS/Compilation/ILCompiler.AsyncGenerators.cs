@@ -190,8 +190,8 @@ public partial class ILCompiler
         if (isInstanceMethod && (_classExprs.DefinitionMethods.ContainsKey(methodBuilder) || _classExprs.Builders.Values.Any(builder => ReferenceEquals(builder, methodBuilder.DeclaringType))))
             analysis = analysis with { UsesThis = true };
 
-        // Build state machine type. A static async generator method (#778) has no `this`/instance fields,
-        // so it is set up like a free function (isInstanceMethod: false, static stub). Use the
+        // Static methods capture their call-time guest receiver from the runtime,
+        // while instance methods capture arg0. Use the
         // MethodBuilder's (mangled) name rather than method.Name.Lexeme so a private async generator's
         // `#p` lexeme doesn't put a `#` in the name.
         var smBuilder = new AsyncGeneratorStateMachineBuilder(_moduleBuilder, _types, _asyncGenerators.StateMachineCounter++);
@@ -202,7 +202,7 @@ public partial class ILCompiler
             analysis,
             isInstanceMethod: isInstanceMethod,
             runtime: _runtime,
-            hasDynamicThis: !isInstanceMethod && _classExprs.Builders.Values.Any(builder => ReferenceEquals(builder, methodBuilder.DeclaringType))
+            hasDynamicThis: !isInstanceMethod
         );
         RegisterStateMachine(
             methodBuilder,
@@ -240,10 +240,11 @@ public partial class ILCompiler
         var ctx = CreateModuleMemberContext(il, smBuilder.MoveNextAsyncMethod);
         ctx.FieldsField = fieldsField;
         ctx.IsInstanceMethod = isInstanceMethod;
+        ctx.IsStaticSuperContext = !isInstanceMethod;
         ctx.IsStrictMode = true;
         // ES2022 Private Class Elements support for async generator methods (a private async
         // generator threads its QUALIFIED class name so nested private member access resolves — #720).
-        ctx.CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.Name;
+        ctx.CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.FullName;
         ctx.CurrentClassBuilder = methodBuilder.DeclaringType as TypeBuilder;
         ApplyClassDefinitionStateMachineContext(ctx, methodBuilder, isInstanceMethod);
         // Entry-point display class for captured top-level variables

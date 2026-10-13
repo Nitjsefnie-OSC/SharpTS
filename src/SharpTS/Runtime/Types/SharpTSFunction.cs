@@ -59,7 +59,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
-    internal bool IsPrivateMethod => _declaration.IsPrivate;
+    internal bool IsConstructible { get; }
     internal bool IsStaticMethod => _declaration.IsStatic;
     internal SharpTSClass? PrivateOwner { get; set; }
     // `this` value stored on the function itself (from BindThis) rather than in an
@@ -73,14 +73,21 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     private SharpTSObject _properties = new([]);
 
     public SharpTSFunction(Stmt.Function declaration, RuntimeEnvironment closure)
-        : this(declaration, closure, boundThis: null, hasBoundThis: false)
+        : this(declaration, closure, isConstructible: true)
     {
     }
 
-    private SharpTSFunction(Stmt.Function declaration, RuntimeEnvironment closure, object? boundThis, bool hasBoundThis)
+    internal SharpTSFunction(Stmt.Function declaration, RuntimeEnvironment closure, bool isConstructible)
+        : this(declaration, closure, isConstructible, boundThis: null, hasBoundThis: false)
+    {
+    }
+
+    private SharpTSFunction(Stmt.Function declaration, RuntimeEnvironment closure, bool isConstructible,
+        object? boundThis, bool hasBoundThis)
     {
         _declaration = declaration;
         _closure = closure;
+        IsConstructible = isConstructible;
         _boundThis = boundThis;
         _hasBoundThis = hasBoundThis;
         _arity = declaration.IsPrivate
@@ -95,11 +102,12 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             value: (double)_arity, configurable: true));
         _properties.DefineProperty("name", new SharpTSPropertyDescriptor(
             value: name, configurable: true));
-        _properties.DefineProperty("prototype", new SharpTSPropertyDescriptor(
-            value: Interpreter.CreateFunctionPrototype(this),
-            writable: true,
-            enumerable: false,
-            configurable: false));
+        if (IsConstructible)
+            _properties.DefineProperty("prototype", new SharpTSPropertyDescriptor(
+                value: Interpreter.CreateFunctionPrototype(this),
+                writable: true,
+                enumerable: false,
+                configurable: false));
     }
 
     /// <summary>JS function-as-object property access.</summary>
@@ -242,6 +250,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             ? new RuntimeEnvironment(closure, strictMode: true)
             : new RuntimeEnvironment(closure);
         environment.PrivateClass = PrivateOwner;
+        environment.StaticSuper = _declaration.IsStatic;
 
         // JS calling convention: if `this` isn't bound by a receiver
         // (bare call `foo()`), it defaults to the global object in
@@ -305,7 +314,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             environment.Define("super", superclass);
         }
 
-        return ShareObjectState(new SharpTSFunction(_declaration, environment));
+        return ShareObjectState(new SharpTSFunction(_declaration, environment, IsConstructible));
     }
 
     /// <summary>
@@ -321,7 +330,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         {
             environment.Define("super", klass.Superclass);
         }
-        return ShareObjectState(new SharpTSFunction(_declaration, environment));
+        return ShareObjectState(new SharpTSFunction(_declaration, environment, IsConstructible));
     }
 
     /// <summary>
@@ -331,7 +340,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     public SharpTSFunction BindThis(object? thisValue)
     {
         return ShareObjectState(new SharpTSFunction(
-            _declaration, _closure, boundThis: thisValue, hasBoundThis: true));
+            _declaration, _closure, IsConstructible, boundThis: thisValue, hasBoundThis: true));
     }
 
     private SharpTSFunction ShareObjectState(SharpTSFunction bound)
@@ -362,6 +371,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             ? new RuntimeEnvironment(closure, strictMode: true)
             : new RuntimeEnvironment(closure);
         environment.PrivateClass = PrivateOwner;
+        environment.StaticSuper = _declaration.IsStatic;
 
         // See Call() for rationale on bound-this and default-this.
         if (_hasBoundThis)

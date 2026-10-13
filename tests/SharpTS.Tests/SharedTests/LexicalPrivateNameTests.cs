@@ -76,8 +76,7 @@ public sealed class LexicalPrivateNameTests
         Assert.Equal("inner true false\ntrue\n", TestHarness.Run(source, mode));
     }
 
-    // The compiler separately loses the generic outer private owner in nested declarations.
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void NestedDeclarationsFindGenericOuterStaticNames(ExecutionMode mode)
     {
         const string source = """

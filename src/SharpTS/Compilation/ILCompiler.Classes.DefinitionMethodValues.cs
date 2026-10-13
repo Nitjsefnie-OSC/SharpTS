@@ -24,11 +24,10 @@ public partial class ILCompiler
             [_types.Object, .. parameters.Select(parameter => parameter.IsRest ? _types.ListOfObject : _types.Object)]);
         method.DefineParameter(1, ParameterAttributes.None, "__this");
         MarkExpectsThis(method);
-        MarkNonConstructible(method);
         MarkPadsUndefined(method);
         MarkFunctionLength(method, parameters);
         MarkFunctionName(method, original.Name);
-        _classExprs.DefinitionMethods.Add(method, (expression, field));
+        _classExprs.DefinitionMethods.Add(method, (expression, field, original.IsStatic));
 
         Stmt.Function? source = expression.Methods.FirstOrDefault(source =>
             source.ComputedKey == null && source.IsStatic == original.IsStatic && source.Name.Lexeme == original.Name);
@@ -42,11 +41,14 @@ public partial class ILCompiler
                 original.Name == $"{(accessor.Kind.Type == TokenType.GET ? "get" : "set")}_{NamingConventions.ToPascalCase(accessor.Name.Lexeme)}");
             source = new Stmt.Function(accessor.Name, null, null, parameters.ToList(), accessor.Body, null, IsStatic: accessor.IsStatic);
         }
+        if (!source.IsGenerator)
+            MarkNonConstructible(method);
         EmitGuestMethodValueBody(method, source, () =>
         {
             var ctx = CreateClassExpressionContext(method.GetILGenerator(), expression, _classExprs.Builders[expression], null, method);
             ctx.EmittingTypeBuilder = type;
             ctx.IsInstanceMethod = !source.IsStatic;
+            ctx.IsStaticSuperContext = source.IsStatic;
             ctx.ClassDefinitionOwnerField = field;
             ctx.GuestThisVariableName = "__this";
             ctx.HasGuestReceiver = true;

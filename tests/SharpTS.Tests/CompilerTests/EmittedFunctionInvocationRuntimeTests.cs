@@ -119,7 +119,7 @@ public sealed class EmittedFunctionInvocationRuntimeTests
         var first = new EmittedRuntime(); var second = new EmittedRuntime();
         Assert.NotSame(first.FunctionValues, second.FunctionValues); Assert.NotSame(first.Arguments, second.Arguments); Assert.NotSame(first.FunctionBindings, second.FunctionBindings);
         foreach (string name in new[] { "FunctionValues", "Arguments", "FunctionBindings" }) Assert.Null(typeof(EmittedRuntime).GetProperty(name)!.SetMethod);
-        foreach (string name in new[] { "EmitArgumentsContextClass", "EmitArgumentsTypeDefinition", "EmitTSFunctionClass", "EmitTSFunctionAdjustArgsHelper", "EmitTSFunctionConvertArgsHelper", "EmitTSFunctionCoercePrimitivesHelper", "EmitFunctionConstructor", "EmitTSFunctionInvokeWithThis0", "EmitBoundTSFunctionClass", "EmitBoundAnyFunctionClass", "EmitFunctionBindWrapperClass", "EmitFunctionCallWrapperClass", "EmitFunctionApplyWrapperClass", "EmitDispatchToTarget" })
+        foreach (string name in new[] { "EmitArgumentsContextClass", "EmitArgumentsTypeDefinition", "EmitTSFunctionClass", "EmitTSFunctionAdjustArgsHelper", "EmitTSFunctionConvertArgsHelper", "EmitTSFunctionCoercePrimitivesHelper", "EmitFunctionConstructor", "EmitTSFunctionInvokeWithThis0", "DefineBoundFunctionName", "EmitBoundFunctionName", "EmitBoundTSFunctionClass", "EmitBoundAnyFunctionClass", "EmitFunctionBindWrapperClass", "EmitFunctionCallWrapperClass", "EmitFunctionApplyWrapperClass", "EmitDispatchToTarget" })
         {
             var method = typeof(RuntimeEmitter).GetMethod(name, Members)!;
             Assert.DoesNotContain(method.GetParameters(), p => p.ParameterType == typeof(EmittedRuntime) || p.ParameterType == typeof(RuntimeFeatureSet));
@@ -136,7 +136,13 @@ public sealed class EmittedFunctionInvocationRuntimeTests
         var invoke = function.DefineMethod("InvokeWithThis", MethodAttributes.Public, typeof(object), [typeof(object), typeof(object[])]);
         invoke.GetILGenerator().Emit(OpCodes.Ldarg_1); invoke.GetILGenerator().Emit(OpCodes.Ret); function.CreateType();
         var values = new EmittedFunctionValueRuntime { Type = function, InvokeWithThis = invoke };
-        var bindings = new EmittedFunctionBindingRuntime();
+        var captureType = module.DefineType("BindingName", TypeAttributes.Public);
+        var captureName = captureType.DefineMethod("CaptureName", MethodAttributes.Public | MethodAttributes.Static,
+            typeof(string), [typeof(object)]);
+        captureName.GetILGenerator().Emit(OpCodes.Ldstr, "bound ");
+        captureName.GetILGenerator().Emit(OpCodes.Ret);
+        captureType.CreateType();
+        var bindings = new EmittedFunctionBindingRuntime { CaptureName = captureName };
         typeof(RuntimeEmitter).GetMethod("EmitBoundTSFunctionClass", Members)!.Invoke(new RuntimeEmitter(TypeProvider.Runtime), [module, bindings, values]);
         Assert.True(bindings.BoundType.IsCreated()); Assert.NotNull(bindings.BoundInvoke); Assert.NotNull(bindings.BoundInvokeWithThis);
         Assert.False(bindings.IsComplete); Assert.Throws<InvalidOperationException>(bindings.CompleteEmission);

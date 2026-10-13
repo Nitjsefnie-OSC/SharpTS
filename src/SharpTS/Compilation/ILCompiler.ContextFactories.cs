@@ -100,6 +100,7 @@ public partial class ILCompiler
             ClassExprEnclosingClasses = _classExprs.EnclosingClass,
             DeferredClassDefinitions = _classes.DeferredDefinitions,
             BlockScopedClassBuilders = _classes.BlockScopedBuilders,
+            LexicalEnclosingClasses = _classes.LexicalEnclosingClasses,
             ClassRegistry = GetClassRegistry(),
             DotNetNamespace = _modules.CurrentDotNetNamespace,
             ModuleNames = _modules.Names,
@@ -181,6 +182,7 @@ public partial class ILCompiler
             ctx.CurrentClassExpr = owner.Expression;
             ctx.CurrentClassBuilder = _classExprs.Builders[owner.Expression];
             ctx.ClassDefinitionOwnerField = owner.Definition;
+            ctx.IsStaticSuperContext = owner.IsStatic;
             ctx.GuestThisVariableName = "__this";
             foreach (var parameter in owner.Expression.TypeParams ?? [])
                 ctx.GenericTypeParameters[parameter.Name.Lexeme] = _types.Object;
@@ -309,7 +311,10 @@ public partial class ILCompiler
             DeferredClassDefinitions = parentCtx.DeferredClassDefinitions,
             IsStrictMode = parentCtx.IsStrictMode,
             // ES2022 Private Class Elements support - inherit from parent context
+            LexicalEnclosingClasses = parentCtx.LexicalEnclosingClasses,
             CurrentClassName = parentCtx.CurrentClassName,
+            IsStaticSuperContext = parentCtx.IsStaticSuperContext,
+            CurrentClassExpr = parentCtx.CurrentClassExpr,
             EnclosingClassNames = parentCtx.EnclosingClassNames,
             CurrentClassBuilder = parentCtx.CurrentClassBuilder,
             HasGuestReceiver = parentCtx.HasGuestReceiver,

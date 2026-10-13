@@ -64,10 +64,12 @@ public partial class ILCompiler
 
         // Handle generic type parameters FIRST (before resolving superclass type args)
         GenericTypeParameterBuilder[]? classGenericParams = null;
+        Type[] canonicalArguments = [];
         if (classExpr.TypeParams != null && classExpr.TypeParams.Count > 0)
         {
             string[] typeParamNames = classExpr.TypeParams.Select(tp => tp.Name.Lexeme).ToArray();
             classGenericParams = typeBuilder.DefineGenericParameters(typeParamNames);
+            canonicalArguments = Enumerable.Repeat(_types.Object, classGenericParams.Length).ToArray();
 
             // Apply constraints
             for (int i = 0; i < classExpr.TypeParams.Count; i++)
@@ -76,6 +78,7 @@ public partial class ILCompiler
                 if (constraint != null)
                 {
                     Type constraintType = ResolveConstraintType(constraint);
+                    canonicalArguments[i] = constraintType;
                     if (constraintType.IsInterface)
                         classGenericParams[i].SetInterfaceConstraints(constraintType);
                     else
@@ -84,7 +87,7 @@ public partial class ILCompiler
             }
         }
 
-        _classes.GenericParameters.Declare(typeBuilder, classGenericParams ?? []);
+        _classes.GenericParameters.Declare(typeBuilder, classGenericParams ?? [], canonicalArguments);
 
         EmitTypeDefinitions.AddInterfaceImplementation(typeBuilder, _runtime.ClassDefinitions.InstanceInterface);
         var definitionField = typeBuilder.DefineField("$definition", _types.Object, FieldAttributes.Assembly);
@@ -589,15 +592,6 @@ public partial class ILCompiler
         ctx.CurrentClassBuilder = typeBuilder;
         ctx.EmittingTypeBuilder = typeBuilder;
         ctx.CurrentClassName = className;
-        List<string> enclosingClasses = [];
-        var lexicalExpression = classExpr;
-        while (_classExprs.EnclosingClass.TryGetValue(lexicalExpression, out var enclosingClassName))
-        {
-            enclosingClasses.Add(enclosingClassName);
-            lexicalExpression = _classExprs.Names.FirstOrDefault(entry => entry.Value == enclosingClassName).Key;
-            if (lexicalExpression is null) break;
-        }
-        ctx.EnclosingClassNames = enclosingClasses;
         ctx.CurrentSuperclassName = _classExprs.Superclass.GetValueOrDefault(classExpr);
         ctx.PropertyBackingFields = _typedInterop.PropertyBackingFields;
         ctx.ClassProperties = _typedInterop.ClassProperties;
@@ -1011,6 +1005,8 @@ public partial class ILCompiler
         // args with the `undefined` sentinel on the value-call path (covers sync + async).
         MarkPadsUndefined(methodBuilder);
         MarkFunctionLength(methodBuilder, method.Parameters);
+        if (!method.IsGenerator)
+            MarkNonConstructible(methodBuilder);
 
         // Generator methods route through the same state-machine emitters as class declarations (#765).
         // Async generator FIRST since `async *m()` has both IsAsync and IsGenerator set.
@@ -1098,6 +1094,8 @@ public partial class ILCompiler
         // args with the `undefined` sentinel on the value-call path (covers sync + async).
         MarkPadsUndefined(methodBuilder);
         MarkFunctionLength(methodBuilder, method.Parameters);
+        if (!method.IsGenerator)
+            MarkNonConstructible(methodBuilder);
 
         var typeBuilder = _classExprs.Builders[classExpr];
 
@@ -1140,6 +1138,7 @@ public partial class ILCompiler
         var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, null, methodBuilder);
         ctx.ClassDefinitionParameterIndex = 0;
         ctx.IsInstanceMethod = false;
+        ctx.IsStaticSuperContext = true;
         SetupSyncMethodFunctionDisplayClass(ctx, il, method);
 
         // Define parameters with typed parameter types from method signature (starting at index 0 for static)
@@ -1203,9 +1202,11 @@ public partial class ILCompiler
 
         foreach (var (accessor, methodBuilder) in list)
         {
+            MarkNonConstructible(methodBuilder);
             var il = methodBuilder.GetILGenerator();
             var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, accessor.IsStatic ? null : fieldsField, methodBuilder);
             ctx.IsInstanceMethod = !accessor.IsStatic;
+            ctx.IsStaticSuperContext = accessor.IsStatic;
             if (accessor.IsStatic) ctx.ClassDefinitionParameterIndex = 0;
 
             if (accessor.Kind.Type == TokenType.SET && accessor.SetterParam != null)
@@ -1319,6 +1320,7 @@ public partial class ILCompiler
 
         if (methodBuilder == null) return;
 
+        MarkNonConstructible(methodBuilder);
         var il = methodBuilder.GetILGenerator();
         var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, fieldsField, methodBuilder);
         ctx.IsInstanceMethod = true;

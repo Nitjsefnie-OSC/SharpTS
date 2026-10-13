@@ -135,6 +135,48 @@ public sealed class AsyncLocalClassDeclarationTests
     }
 
     [Theory, ModeData]
+    public void AwaitedStringAccessors_UseLiveDescriptorsAcrossDefinitions(ExecutionMode mode)
+    {
+        const string source = """
+            function strictWrite(owner: any, value: any) {
+                "use strict";
+                owner.value = value;
+            }
+            async function run() {
+                class C {
+                    get [await Promise.resolve("value")]() { return 5; }
+                    static set [await Promise.resolve("value")](v: any) { console.log("initial", v); }
+                }
+                const instance: any = new C();
+                const owner: any = C;
+                const prototype: any = C.prototype;
+                console.log(instance.value);
+                strictWrite(owner, 4);
+                Object.defineProperty(prototype, "value", { value: 7, writable: true, configurable: true });
+                console.log(instance.value);
+                delete prototype.value;
+                console.log(typeof instance.value);
+                Object.defineProperty(prototype, "value", { get: function() { return 9; }, configurable: true });
+                console.log(instance.value);
+                Object.defineProperty(prototype, "value", { get: undefined, configurable: true });
+                console.log(typeof instance.value);
+                Object.defineProperty(owner, "value", {
+                    set: function(v: any) { console.log("replacement", v); }, configurable: true
+                });
+                strictWrite(owner, 6);
+                Object.defineProperty(owner, "value", { set: undefined, configurable: true });
+                owner.value = 7;
+                delete owner.value;
+                owner.value = 8;
+                console.log(owner.value);
+            }
+            run().then(() => run()).then(() => {}, e => console.log("rejected", e.message));
+            """;
+        const string expected = "5\ninitial 4\n7\nundefined\n9\nundefined\nreplacement 6\n8\n";
+        Assert.Equal(expected + expected, TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
     public void RejectedFieldKey_IsCaughtWithoutRunningStaticInitializer(ExecutionMode mode)
     {
         const string source = """

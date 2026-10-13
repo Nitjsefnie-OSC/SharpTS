@@ -24,6 +24,9 @@ internal sealed class ClassPropertyDispatchRegistry
         return declaration is not null;
     }
 
+    internal bool TryGet(TypeBuilder owner, [NotNullWhen(true)] out ClassPropertyDispatch? declaration)
+        => _declarations.TryGetValue(owner, out declaration);
+
     internal ClassPropertyDispatch Require(string name)
         => TryGet(name, out var declaration) ? declaration
             : throw new InvalidOperationException($"Class property dispatch has not been declared for '{name}'.");

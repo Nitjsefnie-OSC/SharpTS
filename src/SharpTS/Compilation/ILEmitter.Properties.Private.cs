@@ -232,7 +232,7 @@ public partial class ILEmitter
     /// </summary>
     protected override void EmitCallPrivate(Expr.CallPrivate cp)
     {
-        if (TryEmitDefinitionPrivateCall(cp)) return;
+        if (TryEmitBrandedPrivateCall(cp)) return;
         if (TryEmitGenericPrivateCall(cp))
             return;
         // Get the method name without the # prefix

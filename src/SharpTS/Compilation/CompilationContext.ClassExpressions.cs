@@ -31,6 +31,7 @@ public partial class CompilationContext
     public Dictionary<Expr.ClassExpr, string?>? ClassExprSuperclass { get; set; }
     public Dictionary<Expr.ClassExpr, Dictionary<string, int>>? ClassExprCaptureSlots { get; set; }
     internal const string PrivateOwnerCaptureName = "'privateOwner";
+    internal const string SuperOwnerCaptureName = "'superOwner";
     internal IReadOnlyDictionary<Expr.ClassExpr, string>? ClassExprEnclosingClasses { get; set; }
 
     // Current class expression being compiled

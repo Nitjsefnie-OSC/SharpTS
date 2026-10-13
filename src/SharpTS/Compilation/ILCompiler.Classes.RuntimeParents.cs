@@ -22,6 +22,9 @@ public partial class ILCompiler
     private bool TryDefineRuntimeClassDeclaration(Stmt.Class declaration)
     {
         var leaf = Expr.GetSuperclassLeafName(declaration.SuperclassExpr);
+        bool expressionOwnedParent = ResolveClassExpressionParent(
+            _typeMap.GetClassType(declaration)?.Superclass, declaration.SuperclassExpr) != null;
+        if (expressionOwnedParent && declaration.Decorators is { Count: > 0 }) return false;
         // Declaration decorators and unsupported intrinsic heritage keep their
         // existing declaration handling; the expression adapter has no class
         // decorator metadata and must not relax its subclassing diagnostics.
@@ -30,7 +33,7 @@ public partial class ILCompiler
             && leaf is not ("Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer");
         if ((declaration.SuperclassExpr == null && !captureLexicalOwner) || declaration.IsDeclare) return false;
         if (!captureLexicalOwner && leaf != null && ((_typeMap.Get(declaration.SuperclassExpr!) is not TypeSystem.TypeInfo.Any
-            && (_classes.Builders.ContainsKey(GetDefinitionContext().ResolveClassName(leaf)) || _classExprs.VarToClassExpr.ContainsKey(leaf)))
+            && _classes.Builders.ContainsKey(GetDefinitionContext().ResolveClassName(leaf)) && !expressionOwnedParent)
             || Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(leaf)
             || leaf is "Array" or "Promise" or "Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer")) return false;
         if (!captureLexicalOwner && declaration.SuperclassExpr is Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 }) return false;

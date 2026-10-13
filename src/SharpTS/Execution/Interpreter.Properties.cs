@@ -693,6 +693,12 @@ public partial class Interpreter
                 && TryReadDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(name), receiver, out var primitiveValue))
                 return primitiveValue;
 
+            if (current is SharpTSObjectNamespace objectNamespace
+                && TryReadDescriptor(
+                    ObjectBuiltIns.OwnPropertyDescriptorOf(this, objectNamespace, name),
+                    receiver, out var objectConstructorValue))
+                return objectConstructorValue;
+
             if (current is ISharpTSCallable callable)
             {
                 // Ordinary callables inherit from the realm's mutable
@@ -1075,6 +1081,9 @@ public partial class Interpreter
         // which binds BuiltInMethod and breaks identity with descriptor.value.
         if (obj is SharpTSObjectNamespace objectNamespace)
         {
+            if (TryReadDescriptor(objectNamespace.GetOwnPropertyDescriptor(get.Name.Lexeme),
+                    objectNamespace, out var descriptorValue))
+                return RuntimeValue.FromBoxed(descriptorValue);
             if (objectNamespace.HasOwnProperty(get.Name.Lexeme)
                 && objectNamespace.GetMember(get.Name.Lexeme) is { } ownMember)
             {

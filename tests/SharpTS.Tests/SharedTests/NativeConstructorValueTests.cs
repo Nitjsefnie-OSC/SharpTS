@@ -47,10 +47,9 @@ public sealed class NativeConstructorValueTests
         Assert.Equal(FunctionPrototypeExpected, TestHarness.Run(FunctionPrototypeSource, mode));
     }
 
-    [Fact]
-    public void CompiledStoredNativeDescriptorsExpandosAndDeletionsWinOverStaticInventory()
+    [Theory, ModeData]
+    public void StoredNativeDescriptorsExpandosAndDeletionsWinOverStaticInventory(ExecutionMode mode)
     {
-        // The interpreter's Object namespace does not yet read a redefined keys accessor.
         const string source = """
             const O: any = Object;
             O.ReferenceEquals = () => 17;
@@ -65,7 +64,7 @@ public sealed class NativeConstructorValueTests
             O.keys = original;
             console.log(O.keys({ x: 1 }).join(","));
             """;
-        Assert.Equal("17 true\nundefined\nchanged\nundefined\nx\n", TestHarness.Run(source, ExecutionMode.Compiled));
+        Assert.Equal("17 true\nundefined\nchanged\nundefined\nx\n", TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

@@ -167,6 +167,12 @@ public static class ReflectBuiltIns
             "get" => BuiltInMethod.CreateV2("get", 2, 3, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.get requires a target object.");
+                if (target is SharpTSObjectNamespace objectNamespace && args[1].ToObject() is not SharpTSSymbol)
+                {
+                    object? objectReceiver = args.Length > 2 ? args[2].ToObject() : target;
+                    return RuntimeValue.FromBoxed(interpreter.GetPropertyValue(objectNamespace,
+                        interpreter.ToPropertyKeyString(args[1].ToObject()), objectReceiver));
+                }
                 if (target is ISharpTSPrimitiveConstructor primitiveConstructor)
                 {
                     object? primitiveReceiver = args.Length > 2 ? args[2].ToObject() : target;

@@ -279,7 +279,7 @@ public partial class RuntimeEmitter
     private void EmitSymbolGenericHelperBodies(EmittedSymbolAccessorRuntime symbolAccessors)
     {
         var isConstructedGeneric = _types.GetProperty(_types.Type, "IsConstructedGenericType")!.GetGetMethod()!;
-        var isGenericTypeDef = _types.GetProperty(_types.Type, "IsGenericTypeDefinition")!.GetGetMethod()!;
+        var isGenericType = _types.GetProperty(_types.Type, "IsGenericType")!.GetGetMethod()!;
         var getGenericTypeDef = _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition");
         var getGenericArgs = _types.GetMethodNoParams(_types.Type, "GetGenericArguments");
         var makeGenericType = _types.GetMethod(_types.Type, "MakeGenericType", _types.MakeArrayType(_types.Type));
@@ -307,19 +307,25 @@ public partial class RuntimeEmitter
         }
 
         // ---- SymbolClosedOwner(Type owner) ----
-        // An open generic definition (a bare generic class reference, e.g. MyP`1)
-        // has no instantiation; close it on `object` for each type parameter so it
-        // can drive cctor execution and reflective Invoke. Closed/non-generic
-        // owners pass through.
+        // Open definitions and partially open base types (Base<T> reached from
+        // Derived<T>) need a closed owner for initialization and invocation.
+        // Normalize both to their definition before erasing type parameters.
+        // Closed/non-generic owners pass through.
         {
             var il = symbolAccessors.ClosedOwner.GetILGenerator();
-            var notOpenDef = il.DefineLabel();
+            var closedOwner = il.DefineLabel();
             var argsLocal = il.DeclareLocal(_types.MakeArrayType(_types.Type));
             var iLocal = il.DeclareLocal(_types.Int32);
 
             il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Callvirt, isGenericTypeDef);
-            il.Emit(OpCodes.Brfalse, notOpenDef);
+            il.Emit(OpCodes.Callvirt, isGenericType);
+            il.Emit(OpCodes.Brfalse, closedOwner);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, containsGenericParams);
+            il.Emit(OpCodes.Brfalse, closedOwner);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, getGenericTypeDef);
+            il.Emit(OpCodes.Starg_S, (byte)0);
 
             // var args = owner.GetGenericArguments();
             il.Emit(OpCodes.Ldarg_0);
@@ -355,7 +361,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, makeGenericType);
             il.Emit(OpCodes.Ret);
 
-            il.MarkLabel(notOpenDef);
+            il.MarkLabel(closedOwner);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ret);
         }

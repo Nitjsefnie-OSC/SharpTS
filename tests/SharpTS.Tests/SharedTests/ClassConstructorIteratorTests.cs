@@ -54,6 +54,59 @@ public sealed class ClassConstructorIteratorTests
         run();
         """;
 
+    public const string GenericReceiverSource = """
+        class Base<T> {
+            static *[Symbol.iterator]() { yield this; }
+            static async *[Symbol.asyncIterator]() { await Promise.resolve(0); yield this; }
+        }
+        class Derived<T> extends Base<T> {}
+        class Override<T> extends Base<T> {
+            static *[Symbol.iterator]() { yield this; }
+            static async *[Symbol.asyncIterator]() { await Promise.resolve(0); yield this; }
+        }
+        const base: any = Base, derived: any = Derived, overridden: any = Override;
+        for (const constructor of [base, derived, overridden]) {
+            for (const value of constructor) console.log(value === constructor);
+        }
+        async function run() {
+            for (const constructor of [base, derived, overridden]) {
+                for await (const value of constructor) console.log(value === constructor);
+            }
+        }
+        run();
+        """;
+
+    public const string AcquisitionReceiverSource = """
+        let syncCalls = 0, asyncCalls = 0;
+        function* syncValues(owner: any) { yield owner; }
+        async function* asyncValues(owner: any) { await Promise.resolve(0); yield owner; }
+        class C {
+            static [Symbol.iterator](value: any = undefined) {
+                syncCalls++;
+                console.log(this === iterable, value === undefined);
+                return syncValues(this);
+            }
+            static [Symbol.asyncIterator](value: any = undefined) {
+                asyncCalls++;
+                console.log(this === iterable, value === undefined);
+                return asyncValues(this);
+            }
+        }
+        const iterable: any = C;
+        for (const value of iterable) console.log(value === iterable);
+        console.log([...iterable][0] === iterable);
+        const [first] = iterable;
+        console.log(first === iterable);
+        console.log(Array.from(iterable)[0] === iterable);
+        function* delegated(owner: any) { yield* owner; }
+        console.log(delegated(iterable).next().value === iterable);
+        async function run() {
+            for await (const value of iterable) console.log(value === iterable);
+            console.log(syncCalls, asyncCalls);
+        }
+        run();
+        """;
+
     public const string GetterSource = """
         function* syncValues() { yield 42; }
         async function* asyncValues() { yield 43; }
@@ -121,15 +174,27 @@ public sealed class ClassConstructorIteratorTests
         => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[1], row[2], mode }));
 
+    public static IEnumerable<object[]> ReceiverCases()
+    {
+        yield return ["inherited", InheritedReceiverSource, string.Concat(Enumerable.Repeat("true\n", 6))];
+        yield return ["generic", GenericReceiverSource, string.Concat(Enumerable.Repeat("true\n", 6))];
+        yield return ["acquisition", AcquisitionReceiverSource,
+            string.Concat(Enumerable.Repeat("true true\ntrue\n", 6)) + "5 1\n"];
+    }
+
+    public static IEnumerable<object[]> ReceiverParityCases()
+        => ReceiverCases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            .Select(mode => new object[] { row[1], row[2], mode }));
+
     [Theory, MemberData(nameof(ParityCases))]
     public void ConstructorProtocolsUseTheClassReceiver(
         string source, string expected, ExecutionMode mode)
         => Assert.Equal(expected, TestHarness.Run(source, mode));
 
-    [Fact]
-    public void InterpreterBindsInheritedMethodsToTheAcquiredConstructor()
-        => Assert.Equal("true\ntrue\ntrue\ntrue\ntrue\ntrue\n",
-            TestHarness.Run(InheritedReceiverSource, ExecutionMode.Interpreted));
+    [Theory, MemberData(nameof(ReceiverParityCases))]
+    public void ProtocolMethodsReceiveTheAcquiredConstructor(
+        string source, string expected, ExecutionMode mode)
+        => Assert.Equal(expected, TestHarness.Run(source, mode));
 
     [Fact]
     public void InterpreterInvokesInheritedIteratorGettersWithTheConstructor()

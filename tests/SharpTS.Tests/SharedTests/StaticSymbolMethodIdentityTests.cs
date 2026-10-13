@@ -133,6 +133,24 @@ public sealed class StaticSymbolMethodIdentityTests
     }
 
     [Theory, ModeData]
+    public void InheritedGenericMethodsKeepTheirIdentityAndReceiveTheSelectedConstructor(ExecutionMode mode)
+    {
+        const string source = """
+            const key = Symbol("method");
+            class Base<T> { static [key](value: any) { return [this, value]; } }
+            class Derived<T> extends Base<T> {}
+            class Closed extends Base<number> {}
+            const base: any = Base, derived: any = Derived, closed: any = Closed;
+            const method: any = derived[key];
+            console.log(method === base[key]);
+            console.log(base[key](1)[0] === base, derived[key](2)[0] === derived,
+                closed[key](3)[0] === closed, method.call(derived, 4)[0] === derived);
+            console.log(method.apply(closed, [5])[1], method.bind(derived, 6)()[1]);
+            """;
+        Assert.Equal("true\ntrue true true true\n5 6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
     public void OverridesAndUnrelatedMethodsHaveDistinctIdentities(ExecutionMode mode)
     {
         const string source = """

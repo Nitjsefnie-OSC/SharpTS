@@ -155,7 +155,7 @@ public partial class Interpreter
         // wrapper depends on this — without it, `new Test262Error("x")` is
         // null and every assert.* throws "Only instances and objects have
         // properties" instead of the spec'd Test262Error.
-        if (klass is SharpTSArrowFunction userArrowFn && userArrowFn.HasOwnThis)
+        if (klass is SharpTSArrowFunction { IsConstructible: true } userArrowFn)
         {
             // Function expressions have prototype too — lazy-create on first read.
             if (!userArrowFn.TryGetProperty("prototype", out var protoObj))
@@ -266,7 +266,7 @@ public partial class Interpreter
             var result = bound.CallBoxed(this, [.. args]);
             return IsConstructorReturnObject(result) ? result : newThis;
         }
-        if (callable is SharpTSArrowFunction arrowFn && arrowFn.HasOwnThis)
+        if (callable is SharpTSArrowFunction { IsConstructible: true } arrowFn)
         {
             if (!arrowFn.TryGetProperty("prototype", out var protoObj))
             {
@@ -379,7 +379,7 @@ public partial class Interpreter
         // SharpTSFunction case above. The Test262 harness's Test262Error
         // wrapper relies on this (`new Test262Error("...")`); without the
         // case, every assert.* throw lands as null instead of a usable error.
-        if (klass is SharpTSArrowFunction userArrowFn && userArrowFn.HasOwnThis)
+        if (klass is SharpTSArrowFunction { IsConstructible: true } userArrowFn)
         {
             if (!userArrowFn.TryGetProperty("prototype", out var protoObj))
             {
@@ -1253,7 +1253,7 @@ public partial class Interpreter
             // walks the prototype chain looking for ctor.prototype, so
             // without this lazy init `obj instanceof FnExpr` always
             // returns false.
-            if (memberName == "prototype" && arrowFn.HasOwnThis)
+            if (memberName == "prototype" && arrowFn.IsConstructible)
             {
                 var proto = CreateFunctionPrototype(arrowFn);
                 arrowFn.SetProperty("prototype", proto);
@@ -1577,7 +1577,7 @@ public partial class Interpreter
     internal static bool IsNonConstructorWrapper(object? callable) => callable
         is ISharpTSNonConstructorCallable
         or SharpTSFunction { IsConstructible: false }
-        or SharpTSArrowFunction { HasOwnThis: false }
+        or SharpTSArrowFunction { IsConstructible: false }
         or SharpTSAsyncFunction
         or SharpTSAsyncArrowFunction
         or SharpTSGeneratorFunction

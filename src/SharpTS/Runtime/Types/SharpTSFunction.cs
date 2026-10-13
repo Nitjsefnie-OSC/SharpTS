@@ -454,6 +454,9 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
     /// </summary>
     public bool HasOwnThis { get; }
 
+    /// <summary>Ordinary function expressions support construction; methods and arrows do not.</summary>
+    public bool IsConstructible => HasOwnThis && !_declaration.IsMethod;
+
     public SharpTSArrowFunction(Expr.ArrowFunction declaration, RuntimeEnvironment closure, bool hasOwnThis = false)
         : this(declaration, closure, hasOwnThis, boundThis: null, hasBoundThis: false)
     {
@@ -494,7 +497,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             value: (double)_arity, configurable: true));
         _properties.DefineProperty("name", new SharpTSPropertyDescriptor(
             value: name, configurable: true));
-        if (HasOwnThis)
+        if (IsConstructible)
         {
             _properties.DefineProperty("prototype", new SharpTSPropertyDescriptor(
                 value: Interpreter.CreateFunctionPrototype(this),

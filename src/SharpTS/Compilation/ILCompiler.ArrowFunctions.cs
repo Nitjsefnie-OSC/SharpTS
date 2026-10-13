@@ -470,7 +470,7 @@ public partial class ILCompiler
             MarkPadsUndefined(_closures.ArrowMethods[arrow]);
             MarkFunctionLength(_closures.ArrowMethods[arrow], arrow.Parameters);
             MarkFunctionName(_closures.ArrowMethods[arrow], arrow.Name?.Lexeme ?? "");
-            if (!arrow.HasOwnThis)
+            if (!arrow.HasOwnThis || arrow.IsMethod)
                 MarkNonConstructible(_closures.ArrowMethods[arrow]);
         }
     }

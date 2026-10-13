@@ -56,6 +56,7 @@ internal readonly record struct GeneratorResume(GeneratorResumeKind Kind, object
 /// <seealso cref="SharpTSIteratorResult"/>
 public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategorized
 {
+    internal object? Prototype { get; init; }
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Generator;
     private readonly List<Stmt> _body;

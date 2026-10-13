@@ -2018,12 +2018,12 @@ public partial class Interpreter
         if (functionStmt.IsGenerator && functionStmt.IsAsync)
         {
             // Async generator: async function* foo() { yield await ... }
-            SharpTSAsyncGeneratorFunction asyncGenFunction = new(functionStmt, _environment);
+            SharpTSAsyncGeneratorFunction asyncGenFunction = new(functionStmt, _environment, creationRealm: this);
             _environment.Define(functionStmt.Name.Lexeme, asyncGenFunction);
         }
         else if (functionStmt.IsGenerator)
         {
-            SharpTSGeneratorFunction generatorFunction = new(functionStmt, _environment);
+            SharpTSGeneratorFunction generatorFunction = new(functionStmt, _environment, creationRealm: this);
             _environment.Define(functionStmt.Name.Lexeme, generatorFunction);
         }
         else if (functionStmt.IsAsync)
@@ -2172,11 +2172,11 @@ public partial class Interpreter
             // Create the appropriate function type based on async/generator flags
             ISharpTSCallable func;
             if (method.IsGenerator && method.IsAsync)
-                func = new SharpTSAsyncGeneratorFunction(method, _environment);
+                func = new SharpTSAsyncGeneratorFunction(method, _environment, creationRealm: this);
             else if (method.IsAsync)
                 func = new SharpTSAsyncFunction(method, _environment);
             else if (method.IsGenerator)
-                func = new SharpTSGeneratorFunction(method, _environment);
+                func = new SharpTSGeneratorFunction(method, _environment, creationRealm: this);
             else
                 func = new SharpTSFunction(method, _environment, isConstructible: false);
 

@@ -126,6 +126,12 @@ public static class ReflectBuiltIns
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.deleteProperty requires a target object.");
                 if (args[1].ToObject() is SharpTSSymbol symbol)
                 {
+                    if (target is ISharpTSGeneratorFunctionValue generatorBySymbol)
+                    {
+                        var properties = generatorBySymbol.FunctionProperties.GetProperties(interpreter);
+                        return RuntimeValue.FromBoolean(!properties.HasSymbolProperty(symbol)
+                            || properties.DeleteBySymbolStrict(symbol, false));
+                    }
                     if (target is SharpTSClass klassBySymbol)
                         return RuntimeValue.FromBoolean(klassBySymbol.DeleteStaticSymbolProperty(symbol, false));
                     if (target is SharpTSClassPrototype prototypeBySymbol)
@@ -153,6 +159,8 @@ public static class ReflectBuiltIns
                         return RuntimeValue.FromBoolean(klass.DeleteStaticProperty(propertyKey));
                     case ISharpTSPrimitiveConstructor primitiveConstructor:
                         return RuntimeValue.FromBoolean(primitiveConstructor.DeleteProperty(propertyKey));
+                    case ISharpTSGeneratorFunctionValue generator:
+                        return RuntimeValue.FromBoolean(generator.FunctionProperties.GetProperties(interpreter).DeleteProperty(propertyKey));
                     case Dictionary<string, object?> dict:
                         if ((PropertyDescriptorStore.IsFrozen(dict) || PropertyDescriptorStore.IsSealed(dict))
                             && dict.ContainsKey(propertyKey))
@@ -209,9 +217,11 @@ public static class ReflectBuiltIns
                     interpreter, target, propertyKey, value, receiver));
             }),
 
-            "getPrototypeOf" => BuiltInMethod.CreateV2("getPrototypeOf", 1, static (_, _, args) =>
+            "getPrototypeOf" => BuiltInMethod.CreateV2("getPrototypeOf", 1, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.getPrototypeOf requires a target object.");
+                if (target is ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator)
+                    return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
                 return RuntimeValue.FromBoxed(target switch
                 {
                     SharpTSObject obj => obj.Prototype,
@@ -244,6 +254,7 @@ public static class ReflectBuiltIns
                     SharpTSObject obj => obj.IsExtensible,
                     SharpTSInstance inst => inst.IsExtensible,
                     SharpTSArray arr => arr.IsExtensible,
+                    ISharpTSGeneratorFunctionValue generator => generator.FunctionProperties.OwnProperties.IsExtensible,
                     ISharpTSCallable callable => PropertyDescriptorStore.IsExtensible(callable),
                     Dictionary<string, object?> dict => PropertyDescriptorStore.IsExtensible(dict),
                     _ => false
@@ -266,6 +277,9 @@ public static class ReflectBuiltIns
                     case SharpTSArray arr:
                         arr.PreventExtensions();
                         break;
+                    case ISharpTSGeneratorFunctionValue generator:
+                        generator.FunctionProperties.OwnProperties.PreventExtensions();
+                        break;
                     case ISharpTSCallable callable:
                         PropertyDescriptorStore.PreventExtensions(callable);
                         break;
@@ -279,6 +293,15 @@ public static class ReflectBuiltIns
             "getOwnPropertyDescriptor" => BuiltInMethod.CreateV2("getOwnPropertyDescriptor", 2, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.getOwnPropertyDescriptor requires a target object.");
+                if (target is ISharpTSGeneratorFunctionValue generator)
+                {
+                    var generatorDescriptor = args[1].ToObject() is SharpTSSymbol symbol
+                        ? generator.FunctionProperties.GetProperties(interpreter).GetOwnPropertyDescriptor(symbol)
+                        : ObjectBuiltIns.OwnPropertyDescriptorOf(interpreter, target,
+                            interpreter.ToPropertyKeyString(args[1].ToObject()));
+                    return generatorDescriptor is null ? RuntimeValue.Undefined
+                        : RuntimeValue.FromObject(generatorDescriptor.ToObject());
+                }
                 if (target is ISharpTSPrimitiveConstructor primitiveConstructor)
                 {
                     var primitiveDescriptor = args[1].ToObject() is SharpTSSymbol symbol
@@ -305,7 +328,8 @@ public static class ReflectBuiltIns
             "defineProperty" => BuiltInMethod.CreateV2("defineProperty", 3, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.defineProperty requires a target object.");
-                var propertyKey = target is ISharpTSPrimitiveConstructor && args[1].ToObject() is not SharpTSSymbol
+                var propertyKey = (target is ISharpTSPrimitiveConstructor or ISharpTSGeneratorFunctionValue)
+                    && args[1].ToObject() is not SharpTSSymbol
                     ? interpreter.ToPropertyKeyString(args[1].ToObject())
                     : args[1].ToObject()?.ToString() ?? "";
                 var descriptorArg = args[2].ToObject() ?? throw new Exception("TypeError: Property description must be an object");
@@ -342,6 +366,11 @@ public static class ReflectBuiltIns
                             return RuntimeValue.FromBoolean(arr.DefineProperty(propertyKey, descriptor));
                         case SharpTSClass klass:
                             return RuntimeValue.FromBoolean(klass.DefineStaticProperty(propertyKey, descriptor));
+                        case ISharpTSGeneratorFunctionValue generator:
+                            var properties = generator.FunctionProperties.GetProperties(interpreter);
+                            return RuntimeValue.FromBoolean(args[1].ToObject() is SharpTSSymbol generatorSymbol
+                                ? properties.DefineProperty(generatorSymbol, descriptor)
+                                : properties.DefineProperty(propertyKey, descriptor));
                         default:
                             return RuntimeValue.False;
                     }
@@ -371,6 +400,12 @@ public static class ReflectBuiltIns
                     case ISharpTSPrimitiveConstructor primitiveConstructor:
                         keys.AddRange(primitiveConstructor.OwnStringKeys().Cast<object?>());
                         keys.AddRange(primitiveConstructor.GetSymbolPropertyNames().Cast<object?>());
+                        break;
+                    case ISharpTSGeneratorFunctionValue generator:
+                        keys.AddRange(new object?[] { "length", "name" });
+                        keys.AddRange(generator.FunctionProperties.GetProperties(interpreter).OwnVisibleStringKeys()
+                            .Where(key => key is not ("name" or "length")).Cast<object?>());
+                        keys.AddRange(generator.FunctionProperties.OwnProperties.GetSymbolPropertyNames().Cast<object?>());
                         break;
                     case SharpTSArray array:
                         keys.AddRange(array.OwnStringKeys().Select(k => (object?)k));

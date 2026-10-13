@@ -1076,6 +1076,8 @@ public partial class Interpreter
                 DeleteBuiltInConstructorProperty(constructor, name),
             IBuiltInFunctionMetadata builtInFn => builtInFn.DeleteMetadataProperty(name),
             SharpTSFunction function => function.DeleteProperty(name),
+            ISharpTSGeneratorFunctionValue generatorFunction => generatorFunction.FunctionProperties
+                .GetProperties(this).DeletePropertyStrict(name, strictMode),
             SharpTSArrowFunction arrow => arrow.DeleteProperty(name),
             Dictionary<string, object?> dict => dict.Remove(name),
             _ => true // Deleting non-existent property on primitive returns true
@@ -1105,6 +1107,12 @@ public partial class Interpreter
         // Handle symbol keys
         if (key is SharpTSSymbol symbol)
         {
+            if (obj is ISharpTSGeneratorFunctionValue generator)
+            {
+                var properties = generator.FunctionProperties.GetProperties(this);
+                return !properties.HasSymbolProperty(symbol)
+                    || properties.DeleteBySymbolStrict(symbol, strictMode);
+            }
             return obj switch
             {
                 SharpTSObject tsObj => tsObj.DeleteBySymbolStrict(symbol, strictMode),

@@ -602,6 +602,22 @@ public partial class Interpreter
             if (current is SharpTSProxy proxy)
                 return proxy.TrapGet(name, this, receiver);
 
+            if (current is ISharpTSGeneratorFunctionValue generatorFunction)
+            {
+                if (TryReadDescriptor(generatorFunction.FunctionProperties.GetProperties(this)
+                        .GetOwnPropertyDescriptor(name), receiver, out var ownValue))
+                    return ownValue;
+                if (name is "name" or "length")
+                    return FunctionBuiltIns.GetMember(generatorFunction, name);
+                current = generatorFunction.FunctionProperties.GetFunctionPrototype(this);
+                continue;
+            }
+            if (current is SharpTSGenerator or SharpTSAsyncGenerator)
+            {
+                current = ObjectBuiltIns.PrototypeOf(this, current);
+                continue;
+            }
+
             if (current is bool)
             {
                 var prototype = GetBooleanPrototype();
@@ -749,6 +765,19 @@ public partial class Interpreter
         object? current = obj;
         for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
         {
+            if (current is ISharpTSGeneratorFunctionValue generatorFunction)
+            {
+                if (TryReadDescriptor(generatorFunction.FunctionProperties.GetProperties(this)
+                        .GetOwnPropertyDescriptor(symbol), receiver, out var ownValue))
+                    return ownValue;
+                current = generatorFunction.FunctionProperties.GetFunctionPrototype(this);
+                continue;
+            }
+            if (current is SharpTSGenerator or SharpTSAsyncGenerator)
+            {
+                current = ObjectBuiltIns.PrototypeOf(this, current);
+                continue;
+            }
             if (current is SharpTSClassPrototype prototype)
             {
                 if (TryReadDescriptor(prototype.GetOwnPropertyDescriptor(symbol), receiver, out var value))
@@ -1070,6 +1099,9 @@ public partial class Interpreter
 
         if (obj is ISharpTSPrimitiveConstructor primitiveConstructor)
             return RuntimeValue.FromBoxed(GetPropertyValue(primitiveConstructor, get.Name.Lexeme));
+
+        if (obj is ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator)
+            return RuntimeValue.FromBoxed(GetPropertyValue(obj, get.Name.Lexeme));
 
         var category = TypeCategoryResolver.ClassifyRuntime(obj);
         string memberName = get.Name.Lexeme;
@@ -2558,6 +2590,14 @@ public partial class Interpreter
         if (obj is SharpTSAsyncArrowFunction asyncArrowFn)
         {
             asyncArrowFn.SetProperty(set.Name.Lexeme, value);
+            return value;
+        }
+        if (obj is ISharpTSGeneratorFunctionValue generatorFunction)
+        {
+            var properties = generatorFunction.FunctionProperties.GetProperties(this);
+            if (!TryAssignThroughDescriptor(properties.GetOwnPropertyDescriptor(set.Name.Lexeme),
+                    obj, set.Name.Lexeme, value, strictMode))
+                properties.SetPropertyStrict(set.Name.Lexeme, value, strictMode);
             return value;
         }
         if (obj is BoundFunction boundFunction)

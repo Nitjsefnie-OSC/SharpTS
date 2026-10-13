@@ -37,6 +37,7 @@ namespace SharpTS.Runtime.Types;
 /// <seealso cref="SharpTSGenerator"/>
 public class SharpTSAsyncGenerator : ITypeCategorized
 {
+    internal object? Prototype { get; init; }
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.AsyncGenerator;
 

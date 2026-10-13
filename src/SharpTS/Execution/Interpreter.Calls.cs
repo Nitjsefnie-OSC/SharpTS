@@ -1119,12 +1119,18 @@ public partial class Interpreter
     /// </summary>
     private bool InstanceOfByPrototype(object? left, ISharpTSCallable ctor)
     {
+        if (!IsJsObject(left)) return false;
         object? protoObj = ctor switch
         {
             SharpTSFunction fn when fn.TryGetProperty("prototype", out var p) => p,
             SharpTSArrowFunction af when af.TryGetProperty("prototype", out var p2) => p2,
+            ISharpTSGeneratorFunctionValue generator => generator.FunctionProperties.GetProperties(this).GetProperty("prototype"),
+            BuiltInMethod { OwnProperties: { } properties } when properties.TryGetValue("prototype", out var prototype)
+                => prototype,
             _ => null,
         };
+        if (ctor is ISharpTSGeneratorFunctionValue && IsJsObject(left) && !IsJsObject(protoObj))
+            throw new ThrowException(new SharpTSTypeError("Function has a non-object prototype in instanceof"));
         if (protoObj is null) return false;
         object? current = left;
         for (int i = 0; i < 64 && current is not (null or SharpTSUndefined); i++)
@@ -1261,6 +1267,11 @@ public partial class Interpreter
         // [[Construct]] result is checked via `instanceof species`.
         if (right is SharpTSArrowFunction arrCtor && arrCtor.HasOwnThis)
             return InstanceOfByPrototype(left, arrCtor);
+        if (right is ISharpTSGeneratorFunctionValue generatorConstructor)
+            return InstanceOfByPrototype(left, generatorConstructor);
+        if (right is BuiltInMethod { OwnProperties: { } own } intrinsicConstructor
+            && own.ContainsKey("prototype"))
+            return InstanceOfByPrototype(left, intrinsicConstructor);
 
         if (right is not SharpTSClass targetClass)
             return false;

@@ -195,11 +195,10 @@ public sealed class ClassMethodPrototypeTests
         Assert.Equal(2, inspected);
     }
 
-    [Fact]
-    public void CompiledGeneratorMethodsKeepPrototypeWithoutConstruction()
+    [Theory, ModeData]
+    public void GeneratorMethodsKeepPrototypeWithoutConstruction(ExecutionMode mode)
     {
-        // Interpreter generator functions currently lack their own prototype property (#2059).
         Assert.Equal(string.Concat(Enumerable.Repeat("true object\ntrue\ntrue\ntrue\n", 8)),
-            TestHarness.Run(GeneratorControlsSource, ExecutionMode.Compiled));
+            TestHarness.Run(GeneratorControlsSource, mode));
     }
 }

@@ -475,7 +475,7 @@ public partial class Interpreter
             // creating function. Dispatched before the plain-async branch so an async generator
             // expression that closes over a block-scoped binding (left in place by GeneratorArrowLifter)
             // runs natively rather than being mishandled as a plain async function (#734).
-            func = new SharpTSAsyncArrowGeneratorFunction(arrow, closure, arrow.HasOwnThis);
+            func = new SharpTSAsyncArrowGeneratorFunction(arrow, closure, arrow.HasOwnThis, creationRealm: this);
         }
         else if (arrow.IsAsync)
         {
@@ -485,7 +485,7 @@ public partial class Interpreter
         {
             // Generator function expressions - wrap in a generator-creating function
             // Note: This uses a different wrapper than Stmt.Function generators
-            func = new SharpTSArrowGeneratorFunction(arrow, closure, arrow.HasOwnThis);
+            func = new SharpTSArrowGeneratorFunction(arrow, closure, arrow.HasOwnThis, creationRealm: this);
         }
         else
         {
@@ -1153,8 +1153,9 @@ public partial class Interpreter
                 return RuntimeValue.FromBoxed(symbolBag.GetBySymbol(bagSymbol));
         }
 
-        if (obj is SharpTSGenerator && ReferenceEquals(index, SharpTSSymbol.Iterator))
-            return RuntimeValue.FromObject(GeneratorBuiltIns.IteratorMethod);
+        if (obj is ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator
+            && index is SharpTSSymbol generatorSymbol)
+            return RuntimeValue.FromBoxed(GetSymbolPropertyValue(obj, generatorSymbol));
 
         // JS functions are objects — bracket access reads user properties.
         if (obj is SharpTSFunction fn)
@@ -1575,6 +1576,22 @@ public partial class Interpreter
         }
 
         // JS functions are objects — support bracket property assignment.
+        if (obj is ISharpTSGeneratorFunctionValue generatorFunction)
+        {
+            var properties = generatorFunction.FunctionProperties.GetProperties(this);
+            if (index is SharpTSSymbol symbol)
+            {
+                if (!TryAssignThroughDescriptor(properties.GetOwnPropertyDescriptor(symbol), obj, symbol.ToString(), value, strictMode))
+                    properties.SetBySymbolStrict(symbol, value, strictMode);
+            }
+            else
+            {
+                string key = ToPropertyKeyString(index);
+                if (!TryAssignThroughDescriptor(properties.GetOwnPropertyDescriptor(key), obj, key, value, strictMode))
+                    properties.SetPropertyStrict(key, value, strictMode);
+            }
+            return RuntimeValue.FromBoxed(value);
+        }
         if (obj is SharpTSFunction fn)
         {
             // Symbol-keyed assignment (`fn[Symbol.species] = ...`) routes to
@@ -2170,11 +2187,11 @@ public partial class Interpreter
                 // Create the appropriate function type based on async/generator flags
                 ISharpTSCallable func;
                 if (method.IsAsync && method.IsGenerator)
-                    func = new SharpTSAsyncGeneratorFunction(method, _environment);
+                    func = new SharpTSAsyncGeneratorFunction(method, _environment, creationRealm: this);
                 else if (method.IsAsync)
                     func = new SharpTSAsyncFunction(method, _environment);
                 else if (method.IsGenerator)
-                    func = new SharpTSGeneratorFunction(method, _environment);
+                    func = new SharpTSGeneratorFunction(method, _environment, creationRealm: this);
                 else
                     func = new SharpTSFunction(method, _environment, isConstructible: false);
 

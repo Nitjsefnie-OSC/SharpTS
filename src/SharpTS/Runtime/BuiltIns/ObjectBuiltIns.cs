@@ -152,6 +152,11 @@ public static partial class ObjectBuiltIns
                     yield return new(k,
                         includeValues && arrowFn.TryGetProperty(k, out var av) ? av : null);
                 yield break;
+            case ISharpTSGeneratorFunctionValue generator:
+                foreach (var key in generator.FunctionProperties.GetProperties(interpreter).OwnEnumerableKeys().ToList())
+                    yield return new(key,
+                        includeValues ? interpreter.GetPropertyValue(generator, key) : null);
+                yield break;
             case ISharpTSPrimitiveConstructor primitiveConstructor:
                 foreach (var key in primitiveConstructor.OwnEnumerableKeys().ToList())
                     yield return new(key,
@@ -362,6 +367,15 @@ public static partial class ObjectBuiltIns
                     foreach (var symbol in source.GetSymbolPropertyNames())
                         SetAssignedSymbol(interpreter, target, symbol, source.GetBySymbol(symbol));
                     break;
+                case ISharpTSGeneratorFunctionValue source:
+                    var properties = source.FunctionProperties.GetProperties(interpreter);
+                    foreach (var symbol in properties.GetSymbolPropertyNames().ToList())
+                    {
+                        if (properties.GetOwnPropertyDescriptor(symbol)?.Enumerable != true) continue;
+                        SetAssignedSymbol(interpreter, target, symbol,
+                            interpreter.GetSymbolPropertyValue(source, symbol));
+                    }
+                    break;
             }
         }
         return target;
@@ -384,6 +398,18 @@ public static partial class ObjectBuiltIns
                 break;
             case SharpTSObject obj: obj.SetBySymbolStrict(symbol, value, strictMode: true); break;
             case SharpTSInstance instance: instance.SetBySymbolStrict(symbol, value, strictMode: true); break;
+            case ISharpTSGeneratorFunctionValue generator:
+                var properties = generator.FunctionProperties.GetProperties(interpreter);
+                if (properties.TryGetSymbolAccessor(symbol, out _, out var generatorSetter))
+                {
+                    if (generatorSetter is null)
+                        throw new ThrowException(new SharpTSTypeError(
+                            $"Cannot set symbol property '{symbol}' which has only a getter"));
+                    FunctionBuiltIns.CallWithThis(interpreter, generatorSetter, generator, [value]);
+                }
+                else
+                    properties.SetBySymbolStrict(symbol, value, strictMode: true);
+                break;
             default: throw new ThrowException(new SharpTSTypeError(
                 $"Object.assign target does not support symbol properties ({target.GetType().Name})"));
         }
@@ -411,6 +437,9 @@ public static partial class ObjectBuiltIns
                 arrow.FreezeOwnProperties();
                 PropertyDescriptorStore.Freeze(arrow);
                 return RuntimeValue.FromObject(arrow);
+            case ISharpTSGeneratorFunctionValue generator:
+                generator.FunctionProperties.OwnProperties.Freeze();
+                return RuntimeValue.FromObject(generator);
             case SharpTSDate date:
                 date.FreezeOwnProperties();
                 PropertyDescriptorStore.Freeze(date);
@@ -454,6 +483,9 @@ public static partial class ObjectBuiltIns
                 arrow.SealOwnProperties();
                 PropertyDescriptorStore.Seal(arrow);
                 return RuntimeValue.FromObject(arrow);
+            case ISharpTSGeneratorFunctionValue generator:
+                generator.FunctionProperties.OwnProperties.Seal();
+                return RuntimeValue.FromObject(generator);
             case SharpTSDate date:
                 date.SealOwnProperties();
                 PropertyDescriptorStore.Seal(date);
@@ -483,6 +515,7 @@ public static partial class ObjectBuiltIns
             SharpTSObject obj => obj.IsFrozen,
             SharpTSInstance inst => inst.IsFrozen,
             SharpTSArray arr => arr.IsFrozen,
+            ISharpTSGeneratorFunctionValue generator => generator.FunctionProperties.OwnProperties.IsFrozen,
             Dictionary<string, object?> dict => PropertyDescriptorStore.IsFrozen(dict),
             System.Collections.IDictionary idict => PropertyDescriptorStore.IsFrozen(idict),
             _ when args[0].Kind == ValueKind.Object && arg is not null
@@ -499,6 +532,7 @@ public static partial class ObjectBuiltIns
             SharpTSObject obj => obj.IsSealed,
             SharpTSInstance inst => inst.IsSealed,
             SharpTSArray arr => arr.IsSealed,
+            ISharpTSGeneratorFunctionValue generator => generator.FunctionProperties.OwnProperties.IsSealed,
             Dictionary<string, object?> dict => PropertyDescriptorStore.IsSealed(dict),
             System.Collections.IDictionary idict => PropertyDescriptorStore.IsSealed(idict),
             _ when args[0].Kind == ValueKind.Object && arg is not null
@@ -549,6 +583,10 @@ public static partial class ObjectBuiltIns
             bool isAccessor = descriptor.Get != null || descriptor.Set != null;
             switch (target)
             {
+                case ISharpTSGeneratorFunctionValue generator:
+                    if (!generator.FunctionProperties.GetProperties(interpreter).DefineProperty(symKey, descriptor))
+                        throw new ThrowException(new SharpTSTypeError("Cannot redefine symbol property"));
+                    return target;
                 case SharpTSObject symObj:
                     if (!symObj.DefineProperty(symKey, descriptor))
                     {
@@ -721,6 +759,9 @@ public static partial class ObjectBuiltIns
                 break;
             case SharpTSArrowFunction arrow:
                 success = arrow.DefineProperty(propertyKey, descriptor);
+                break;
+            case ISharpTSGeneratorFunctionValue generator:
+                success = generator.FunctionProperties.GetProperties(interpreter).DefineProperty(propertyKey, descriptor);
                 break;
             case BoundFunction bound:
                 success = bound.DefineProperty(propertyKey, descriptor);
@@ -923,8 +964,11 @@ public static partial class ObjectBuiltIns
                 => meta.HasMetadataProperty(propertyKey)
                     ? GetCallableMetaDescriptor((ISharpTSCallable)meta, propertyKey)
                     : null,
+            ISharpTSGeneratorFunctionValue generator when generator.FunctionProperties.GetProperties(interpreter)
+                .GetOwnPropertyDescriptor(propertyKey) is { } generatorDescriptor => generatorDescriptor,
             ISharpTSCallable callable when propertyKey is "name" or "length"
                 => GetCallableMetaDescriptor(callable, propertyKey),
+            ISharpTSGeneratorFunctionValue => null,
             SharpTSFunction fn => GetFunctionOwnPropertyDescriptor(fn, propertyKey),
             SharpTSArrowFunction arrow => GetFunctionOwnPropertyDescriptor(arrow, propertyKey),
             BoundFunction bound => bound.GetOwnPropertyDescriptor(propertyKey)
@@ -1123,6 +1167,9 @@ public static partial class ObjectBuiltIns
     {
         switch (target)
         {
+            case ISharpTSGeneratorFunctionValue generator
+                when generator.FunctionProperties.OwnProperties.GetOwnPropertyDescriptor(key) is { } descriptor:
+                return descriptor.ToObject();
             case SharpTSClass klass when klass.GetOwnStaticSymbolPropertyDescriptor(key) is { } descriptor:
                 return descriptor.ToObject();
             case SharpTSClassPrototype prototype when prototype.GetOwnPropertyDescriptor(key) is { } descriptor:
@@ -1231,7 +1278,7 @@ public static partial class ObjectBuiltIns
         // keys and read every descriptor through Get before applying it. The
         // carrier may be any object kind (function, array/arguments, Math,
         // Date, RegExp, JSON, …), and accessor reads bind `this` to that carrier.
-        var entries = OwnEnumerableKeysForDefineProperties(props)
+        var entries = OwnEnumerableKeysForDefineProperties(interpreter, props)
             .Select(key => new KeyValuePair<string, object?>(
                 key, ReadDefinePropertiesValue(interpreter, props, key)))
             .ToList();
@@ -1244,7 +1291,7 @@ public static partial class ObjectBuiltIns
         return target;
     }
 
-    private static IEnumerable<string> OwnEnumerableKeysForDefineProperties(object props)
+    private static IEnumerable<string> OwnEnumerableKeysForDefineProperties(Interpreter interpreter, object props)
         => props switch
         {
             SharpTSObject obj => OwnEnumerablePropertyKeys(obj),
@@ -1258,6 +1305,7 @@ public static partial class ObjectBuiltIns
             SharpTSError error => error.OwnEnumerableKeys(),
             SharpTSFunction function => function.PropertyKeys,
             SharpTSArrowFunction arrow => arrow.PropertyKeys,
+            ISharpTSGeneratorFunctionValue generator => generator.FunctionProperties.GetProperties(interpreter).OwnEnumerableKeys().ToList(),
             ISharpTSCallable => [],
             _ => throw new ThrowException(new SharpTSTypeError(
                 "Property descriptions must be an object")),
@@ -1280,6 +1328,7 @@ public static partial class ObjectBuiltIns
             SharpTSError error => error.GetOwnPropertyDescriptor(key),
             SharpTSFunction function => function.GetOwnPropertyDescriptor(key),
             SharpTSArrowFunction arrow => arrow.GetOwnPropertyDescriptor(key),
+            ISharpTSGeneratorFunctionValue generator => generator.FunctionProperties.GetProperties(interpreter).GetOwnPropertyDescriptor(key),
             _ => null,
         };
 
@@ -1328,6 +1377,9 @@ public static partial class ObjectBuiltIns
             SharpTSArray arr => GetOwnPropertyNamesFromArray(arr),
             SharpTSRegExp regex => regex.OwnStringKeys().Cast<object?>().ToList(),
             SharpTSProxy proxy => proxy.TrapOwnPropertyKeys(interpreter),
+            ISharpTSGeneratorFunctionValue generator => new object?[] { "length", "name" }
+                .Concat(generator.FunctionProperties.GetProperties(interpreter).OwnVisibleStringKeys().Cast<object?>())
+                .Concat(generator.FunctionProperties.OwnProperties.GetSymbolPropertyNames().Cast<object?>()).Distinct().ToList(),
             Dictionary<string, object?> dict => dict.Keys.Cast<object?>().ToList(),
             _ => []
         };
@@ -1382,6 +1434,8 @@ public static partial class ObjectBuiltIns
                 .Where(metadata.HasMetadataProperty)
                 .Select(k => (object?)k)
                 .ToList(),
+            ISharpTSGeneratorFunctionValue generator => new object?[] { "length", "name" }
+                .Concat(generator.FunctionProperties.GetProperties(interpreter).OwnVisibleStringKeys().Cast<object?>()).Distinct().ToList(),
             Dictionary<string, object?> dict => dict.Keys.Select(k => (object?)k).ToList(),
             _ => []
         };
@@ -1673,6 +1727,9 @@ public static partial class ObjectBuiltIns
             case SharpTSArrowFunction arrow:
                 arrow.PreventExtensions();
                 return arrow;
+            case ISharpTSGeneratorFunctionValue generator:
+                generator.FunctionProperties.OwnProperties.PreventExtensions();
+                return generator;
             case SharpTSRegExp regex:
                 regex.PreventExtensions();
                 return regex;
@@ -1715,6 +1772,9 @@ public static partial class ObjectBuiltIns
             case SharpTSArrowFunction arrow:
                 arrow.PreventExtensions();
                 return true;
+            case ISharpTSGeneratorFunctionValue generator:
+                generator.FunctionProperties.OwnProperties.PreventExtensions();
+                return true;
             case ISharpTSCallable callable:
                 PropertyDescriptorStore.PreventExtensions(callable);
                 return true;
@@ -1743,6 +1803,7 @@ public static partial class ObjectBuiltIns
             SharpTSArray arr => arr.IsExtensible,
             SharpTSFunction function => function.IsExtensible,
             SharpTSArrowFunction arrow => arrow.IsExtensible,
+            ISharpTSGeneratorFunctionValue generator => generator.FunctionProperties.OwnProperties.IsExtensible,
             SharpTSRegExp regex => regex.IsExtensible,
             SharpTSDate date => date.IsExtensible,
             ISharpTSCallable callable => PropertyDescriptorStore.IsExtensible(callable),
@@ -1765,6 +1826,8 @@ public static partial class ObjectBuiltIns
         List<object?> symbols = args[0] switch
         {
             SharpTSObject obj => obj.GetSymbolPropertyNames().Select(s => (object?)s).ToList(),
+            ISharpTSGeneratorFunctionValue generator => generator.FunctionProperties.GetProperties(interpreter)
+                .GetSymbolPropertyNames().Cast<object?>().ToList(),
             ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.GetSymbolPropertyNames().Cast<object?>().ToList(),
             SharpTSProxy proxy => proxy.TrapOwnPropertyKeys(interpreter)
                 .OfType<SharpTSSymbol>().Cast<object?>().ToList(),
@@ -1808,6 +1871,8 @@ public static partial class ObjectBuiltIns
         // A class instance's [[Prototype]] is its constructor's `prototype` object, so
         // `Object.getPrototypeOf(new C()) === C.prototype`.
         SharpTSInstance inst => inst.RuntimeClass.Prototype,
+        SharpTSGenerator generator => generator.Prototype ?? interp?.GetGeneratorIntrinsics(false).GeneratorPrototype,
+        SharpTSAsyncGenerator generator => generator.Prototype ?? interp?.GetGeneratorIntrinsics(true).GeneratorPrototype,
         // Native errors raised from C# carry only their type name; resolve it back to the
         // same constructor the global `TypeError` identifier yields so the prototypes match.
         SharpTSError err => interp?.GetErrorClass(err.ErrorTypeName).Prototype,
@@ -1850,6 +1915,8 @@ public static partial class ObjectBuiltIns
         // `Object.getPrototypeOf(RangeError) === Error`. A base class falls back to
         // Function.prototype like any other function object.
         SharpTSClass klass => (object?)klass.Superclass ?? interp?.GetFunctionPrototype(),
+        ISharpTSGeneratorFunctionValue generator when interp is not null
+            => generator.FunctionProperties.GetFunctionPrototype(interp),
         ISharpTSCallable => interp?.GetFunctionPrototype(),
         _ => null
     };

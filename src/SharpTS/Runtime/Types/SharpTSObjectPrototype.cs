@@ -210,6 +210,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                     => proxy.TrapGetOwnPropertyDescriptor(sym, interpreter)
                         is not (null or SharpTSUndefined),
                 SharpTSObject obj => obj.HasSymbolProperty(sym),
+                ISharpTSGeneratorFunctionValue generator => generator.FunctionProperties.OwnProperties.HasSymbolProperty(sym),
                 SharpTSInstance inst => inst.HasSymbolProperty(sym),
                 SharpTSClass klass => klass.GetOwnStaticSymbolPropertyDescriptor(sym) is not null,
                 SharpTSClassPrototype prototype => prototype.GetOwnPropertyDescriptor(sym) is not null,
@@ -262,6 +263,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
             // descriptor store, so deletion remains observable here.
             SharpTSFunction function => function.HasProperty(key),
             SharpTSArrowFunction arrow => arrow.HasProperty(key),
+            ISharpTSGeneratorFunctionValue generator => key is "name" or "length"
+                || generator.FunctionProperties.OwnProperties.HasProperty(key),
             SharpTSGlobalThis globalThis => globalThis.HasProperty(key),
             IDictionary<string, object?> dict => dict.ContainsKey(key),
             // Built-in functions expose `name` and `length` as own properties
@@ -293,7 +296,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
         if (target is SharpTSObject or SharpTSFunction or SharpTSArrowFunction
             or SharpTSArray or SharpTSProxy or SharpTSInstance or SharpTSClass
             or ISharpTSSymbolPropertyBag or SharpTSMath or SharpTSStringPrototype
-            or SharpTSRegExp
+            or SharpTSRegExp or ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator
             && interpreter?.GetSymbolPropertyValue(target, SharpTSSymbol.ToStringTag) is string customTag)
             return $"[object {customTag}]";
         if (target is string) return "[object String]";

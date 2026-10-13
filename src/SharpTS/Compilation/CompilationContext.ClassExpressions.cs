@@ -46,6 +46,7 @@ public partial class CompilationContext
     internal bool IsDerivedClassConstructor { get; set; }
     internal LocalBuilder? ClassConstructorReceiver { get; set; }
     internal LocalBuilder? ClassConstructorReturnValue { get; set; }
+    internal bool UseNominalSuperCallBridge { get; set; }
 
     // Variable name to class expression mapping (for static member access)
     public Dictionary<string, Expr.ClassExpr>? VarToClassExpr { get; set; }

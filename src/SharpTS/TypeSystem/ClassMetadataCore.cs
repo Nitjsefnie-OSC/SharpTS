@@ -33,7 +33,8 @@ public sealed record ClassMetadataCore(
     int DeclarationId = 0,
     FrozenDictionary<string, AccessModifier>? StaticMethodAccess = null,
     FrozenDictionary<string, AccessModifier>? StaticFieldAccess = null,
-    FrozenSet<string>? StaticReadonlyFields = null
+    FrozenSet<string>? StaticReadonlyFields = null,
+    FrozenDictionary<string, TypeInfo>? StaticSetters = null
 )
 {
     /// <summary>True when the class declares any index signature.</summary>
@@ -81,4 +82,8 @@ public sealed record ClassMetadataCore(
     /// </summary>
     public FrozenDictionary<string, AccessModifier> StaticFieldAccessMap =>
         StaticFieldAccess ?? FrozenDictionary<string, AccessModifier>.Empty;
+
+    /// <summary>Static accessor write types, which may differ from their getter read types.</summary>
+    public FrozenDictionary<string, TypeInfo> StaticSetterTypes =>
+        StaticSetters ?? FrozenDictionary<string, TypeInfo>.Empty;
 }

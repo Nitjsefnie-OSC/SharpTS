@@ -877,6 +877,9 @@ public partial class TypeChecker
     private static FrozenDictionary<string, TypeInfo>? GetStaticProperties(TypeInfo? classType) =>
         ClassInfoAccessor.Get(classType, c => c.StaticProperties, gc => gc.StaticProperties);
 
+    private static FrozenDictionary<string, TypeInfo>? GetStaticSetters(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.Core.StaticSetterTypes, gc => gc.Core.StaticSetterTypes);
+
     /// <summary>
     /// Converts a class-like type to a TypeInfo.Class for walking hierarchy.
     /// Returns null if the type is not class-like.

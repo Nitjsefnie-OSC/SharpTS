@@ -789,7 +789,7 @@ public partial class TypeChecker
                     ? CheckExprWithContext(stmt.Value, expectedReturnType)
                     : TypeInfo.Void.Shared;
 
-                MarkIfUndefinedReachableNumericReturn(stmt.Value, actualReturnType);
+                MarkIfUndefinedReachableTypedReturn(stmt.Value, actualReturnType);
 
                 if (_inGeneratorFunction && expectedReturnType is TypeInfo.Void)
                 {
@@ -812,22 +812,19 @@ public partial class TypeChecker
     /// <summary>
     /// When a return value whose runtime value can be the <c>undefined</c> sentinel (i.e. a
     /// statically <c>any</c>/<c>unknown</c> value, e.g. <c>return undefined as any</c>) flows into
-    /// a declared <c>number</c>/<c>boolean</c> return type, the IL compiler would give the function
-    /// an unboxed <c>double</c>/<c>bool</c> return slot. That slot cannot carry <c>undefined</c>, so
-    /// it is silently coerced to <c>NaN</c>/<c>false</c> (#344). Record the value expression so the
-    /// compiler widens that one function's slot back to <c>object</c>. <c>any</c>/<c>unknown</c> are
-    /// the only statically-checked types whose runtime value can be <c>undefined</c> while still
-    /// satisfying a <c>number</c>/<c>boolean</c> annotation (an exact annotation otherwise rejects
-    /// <c>undefined</c>; an inferred return that admits it widens to a union → object slot).
-    /// Compiler hint only — caller-side checking still sees the clean <c>number</c>/<c>boolean</c>.
+    /// a declared numeric, boolean or class-instance return type, its CLR slot cannot carry that
+    /// sentinel. Numeric slots would coerce it to <c>NaN</c>/<c>false</c> (#344), and a class-reference
+    /// cast would throw (#2034). Record the value expression so the compiler widens that function's
+    /// return slot to <c>object</c>. This is a compiler hint; caller-side checking keeps the declared type.
     /// </summary>
-    private void MarkIfUndefinedReachableNumericReturn(Expr? value, TypeInfo actualType)
+    private void MarkIfUndefinedReachableTypedReturn(Expr? value, TypeInfo actualType)
     {
         if (value == null) return;
 
         TypeInfo declared = _currentFunctionReturnType ?? actualType;
         if (_inAsyncFunction && declared is TypeInfo.Promise promised) declared = promised.ValueType;
-        if (declared is not TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER or TokenType.TYPE_BOOLEAN })
+        if (declared is not (TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER or TokenType.TYPE_BOOLEAN }
+            or TypeInfo.Instance))
             return;
 
         if (ReturnValueMayBeUndefinedSentinel(value))

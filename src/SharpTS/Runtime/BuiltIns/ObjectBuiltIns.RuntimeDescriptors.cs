@@ -80,7 +80,7 @@ public static partial class ObjectBuiltIns
         SharpTSPropertyDescriptor? descriptor = target switch
         {
             SharpTSObject obj => obj.GetOwnPropertyDescriptor(propKey),
-            SharpTSNumberNamespace number => number.GetOwnPropertyDescriptor(propKey),
+            ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.GetOwnPropertyDescriptor(propKey),
             SharpTSInstance inst => inst.GetOwnPropertyDescriptor(propKey),
             SharpTSArray arr => arr.GetOwnPropertyDescriptor(propKey),
             System.Collections.IDictionary idict => GetDescriptorFromIDictionary(idict, propKey),

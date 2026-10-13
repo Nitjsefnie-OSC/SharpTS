@@ -10,6 +10,11 @@ public abstract partial class ExpressionEmitterBase
     {
         if ((!Ctx.HasGuestReceiver && !Ctx.IsStaticSuperContext) || call.Callee is not Expr.Super { Method: not null } super
             || (!Ctx.IsStaticSuperContext && super.Method.Lexeme == "constructor")) return false;
+        // Nominal declaration helpers use the existing lexical-class bridge,
+        // which keeps the actual receiver and bypasses virtual overrides.
+        if (Ctx.UseNominalSuperCallBridge && Ctx.CurrentClassExpr == null && Ctx.CurrentClassBuilder != null
+            && !Ctx.IsStaticSuperContext && TryEmitSuperMethodCall(super.Method.Lexeme, call.Arguments))
+            return true;
         var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
         EmitGuestSuperValue(super.Method.Lexeme, receiver);
         EmitGuestMethodInvocation(receiver, call.Arguments);

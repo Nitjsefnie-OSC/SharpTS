@@ -407,6 +407,11 @@ public partial class SharpTSClass(
 
     public void SetStaticBySymbol(SharpTSSymbol symbol, object? value)
     {
+        // Assignment changes a method's value without changing its attributes.
+        if (_staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol) is null
+            && _staticSymbolMethods?.TryGetValue(symbol, out var method) == true)
+            (_staticSymbolAccessorObject ??= new SharpTSObject([])).DefineProperty(
+                symbol, SharpTSPropertyDescriptor.ForMethod(method));
         if (_staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol) is not null)
         {
             _staticSymbolAccessorObject.SetBySymbol(symbol, value);

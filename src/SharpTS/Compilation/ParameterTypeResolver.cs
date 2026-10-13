@@ -251,10 +251,8 @@ public static class ParameterTypeResolver
     /// <param name="typeMapper">TypeMapper for conversion</param>
     /// <param name="returnMayBeUndefined">
     /// True when the type checker found a return value of static type <c>any</c>/<c>unknown</c>
-    /// flowing into this <c>number</c>/<c>boolean</c> return (e.g. <c>return undefined as any</c>).
-    /// An unboxed <c>double</c>/<c>bool</c> slot cannot carry the runtime <c>undefined</c> sentinel,
-    /// so it is widened to <c>object</c> for just those functions to avoid silently coercing
-    /// <c>undefined</c> to <c>NaN</c>/<c>false</c>. (#344)
+    /// flowing into a numeric, boolean or class-instance return (e.g. <c>return undefined as any</c>).
+    /// Widen its CLR slot to <c>object</c> so the sentinel is neither coerced nor rejected by a class cast.
     /// </param>
     /// <returns>.NET type for the return value</returns>
     public static Type ResolveReturnType(
@@ -265,7 +263,10 @@ public static class ParameterTypeResolver
     {
         Type baseType;
 
-        if (returnTypeInfo == null)
+        // Bare class types describe constructor values; instance annotations are
+        // wrapped in Instance. A constructor cannot inhabit its CLR instance slot.
+        // Its runtime value is a Type token or a guest class definition.
+        if (returnTypeInfo is null or TSTypeInfo.Class or TSTypeInfo.GenericClass or TSTypeInfo.MutableClass)
         {
             baseType = typeof(object);
         }
@@ -273,14 +274,10 @@ public static class ParameterTypeResolver
         {
             baseType = typeMapper.MapTypeInfoStrict(returnTypeInfo);
 
-            if (returnTypeInfo is TSTypeInfo.Class or TSTypeInfo.GenericClass)
-                baseType = typeof(object);
-
-            // A `number`/`boolean` return reached by an `undefined`-admitting value (any/unknown)
-            // must use an object slot — the unboxed double/bool slot would coerce the runtime
-            // `undefined` sentinel to NaN/false. Only the genuinely-undefined-reachable functions
-            // pay this; the common sound numeric/boolean return keeps its unboxed slot. (#344)
-            if (returnMayBeUndefined && (baseType == typeof(double) || baseType == typeof(bool)))
+            // A flagged return can carry the undefined sentinel. Widen numeric/boolean and
+            // class-reference slots while retaining typed slots for sound return values.
+            if (returnMayBeUndefined && (baseType == typeof(double) || baseType == typeof(bool)
+                || returnTypeInfo is TSTypeInfo.Instance && !baseType.IsValueType))
             {
                 baseType = typeof(object);
             }

@@ -263,47 +263,21 @@ public partial class Interpreter
             return new SharpTSReadableAsyncIterator(readable);
         }
 
-        if (iterable is SharpTSClass klass)
+        var asyncIteratorFn = iterable switch
         {
-            var asyncIteratorFn = GetClassSymbolValue(klass, SharpTSSymbol.AsyncIterator);
-            if (asyncIteratorFn is null or SharpTSUndefined)
-                return null;
-            if (asyncIteratorFn is not ISharpTSCallable)
-                throw new ThrowException(new SharpTSTypeError(
-                    "[Symbol.asyncIterator] must be a function"));
-            asyncIteratorFn = BindMemberCallReceiver(asyncIteratorFn, klass);
-            return ((ISharpTSCallable)asyncIteratorFn!).Call(this, []);
-        }
-
-        if (iterable is SharpTSObject obj)
-        {
-            var asyncIteratorFn = obj.GetBySymbol(SharpTSSymbol.AsyncIterator);
-            if (asyncIteratorFn != null)
-            {
-                asyncIteratorFn = BindMemberCallReceiver(asyncIteratorFn, obj);
-
-                // Call the async iterator function
-                if (asyncIteratorFn is ISharpTSCallable callable)
-                    return callable.Call(this, []);
-            }
-        }
-        else if (iterable is SharpTSInstance inst)
-        {
-            var asyncIteratorFn = inst.GetBySymbol(SharpTSSymbol.AsyncIterator);
-            // Fall back to a declared symbol-keyed method on the class chain
-            // (`class C { async *[Symbol.asyncIterator]() {...} }`).
-            if (asyncIteratorFn == null && inst.GetClass().FindSymbolMethod(SharpTSSymbol.AsyncIterator) is { } symMethod)
-            {
-                asyncIteratorFn = SharpTSClass.BindMethod(symMethod, inst);
-            }
-            if (asyncIteratorFn != null)
-            {
-                asyncIteratorFn = BindMemberCallReceiver(asyncIteratorFn, inst);
-                if (asyncIteratorFn is ISharpTSCallable callable)
-                    return callable.Call(this, []);
-            }
-        }
-        return null;
+            SharpTSClass klass => GetClassSymbolValue(klass, SharpTSSymbol.AsyncIterator),
+            SharpTSObject obj => obj.GetBySymbol(SharpTSSymbol.AsyncIterator),
+            SharpTSInstance instance => GetInstanceSymbolValue(instance, SharpTSSymbol.AsyncIterator),
+            _ => null
+        };
+        // GetMethod permits the synchronous fallback only for an absent method.
+        if (asyncIteratorFn is null or SharpTSUndefined)
+            return null;
+        if (asyncIteratorFn is not ISharpTSCallable)
+            throw new ThrowException(new SharpTSTypeError(
+                "[Symbol.asyncIterator] must be a function"));
+        asyncIteratorFn = BindMemberCallReceiver(asyncIteratorFn, iterable);
+        return ((ISharpTSCallable)asyncIteratorFn!).Call(this, []);
     }
 
     /// <summary>

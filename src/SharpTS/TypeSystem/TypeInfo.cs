@@ -382,6 +382,8 @@ public abstract record TypeInfo
         public HashSet<string> StaticReadonlyFields { get; } = [];
         public Dictionary<string, TypeInfo> Getters { get; } = [];
         public Dictionary<string, TypeInfo> Setters { get; } = [];
+        public Dictionary<string, TypeInfo> StaticGetters { get; } = [];
+        public Dictionary<string, TypeInfo> StaticSetters { get; } = [];
         public Dictionary<string, TypeInfo> FieldTypes { get; } = [];
         public bool IsAbstract { get; set; }
         public HashSet<string> AbstractMethods { get; } = [];
@@ -433,7 +435,8 @@ public abstract record TypeInfo
                 DeclarationId,
                 StaticMethodAccess.Count > 0 ? StaticMethodAccess.ToFrozenDictionary() : null,
                 StaticFieldAccess.Count > 0 ? StaticFieldAccess.ToFrozenDictionary() : null,
-                StaticReadonlyFields.ToFrozenSet());
+                StaticReadonlyFields.ToFrozenSet(),
+                StaticSetters.Count > 0 ? StaticSetters.ToFrozenDictionary() : null);
             return _frozenCore;
         }
 

@@ -733,6 +733,7 @@ public partial class RuntimeEmitter
                 runtime.Errors,
                 runtime.FunctionConstruction,
                 runtime.FunctionValues,
+                runtime.NumericCoercion,
                 runtime.RegExps,
                 runtime.StringCoercion,
                 runtime.Sentinels.UndefinedInstance,

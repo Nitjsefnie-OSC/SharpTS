@@ -1457,33 +1457,19 @@ public partial class Interpreter
         if (instance.HasSymbolProperty(symbol)) return instance.GetBySymbol(symbol);
         var descriptor = instance.GetClass().FindInstanceSymbolPropertyDescriptor(symbol);
         if (!TryReadDescriptor(descriptor, instance, out var value)) return SharpTSUndefined.Instance;
-        // Instance method reads retain their existing binding behavior. The
-        // prototype itself exposes the canonical unbound descriptor value.
-        return descriptor is { HasValue: true } && value is ISharpTSCallable method
-            ? SharpTSClass.BindMethod(method, instance) : value;
+        // A method is an ordinary data-property value. Member calls provide
+        // the dynamic receiver separately, preserving identity on every read.
+        return value;
     }
 
     /// <summary>
-    /// Reads a symbol-keyed static from a class: a declared static symbol-keyed
-    /// getter (`static get [Symbol.species]()`) wins over expando data statics.
+    /// Reads the nearest symbol-keyed static descriptor, including replacements
+    /// of declared methods and own properties shadowing inherited members.
     /// </summary>
     private object? GetClassSymbolValue(SharpTSClass klass, SharpTSSymbol symbol)
     {
-        if (TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), klass, out var accessorValue))
-            return accessorValue;
-        if (klass.FindStaticSymbolGetter(symbol) is { } getter)
-        {
-            return getter.BindStatic(klass).Call(this, []);
-        }
-        // Symbol-keyed methods are canonical data-property values. Their dynamic
-        // receiver is supplied only when the method is actually invoked.
-        if (klass.FindStaticSymbolMethod(symbol) is { } method)
-        {
-            return method;
-        }
-        return klass.TryGetStaticBySymbol(symbol, out var value)
-            ? value ?? SharpTSUndefined.Instance
-            : SharpTSUndefined.Instance;
+        return TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), klass, out var value)
+            ? value : SharpTSUndefined.Instance;
     }
 
     /// <summary>
@@ -1581,9 +1567,9 @@ public partial class Interpreter
         if (obj is ISharpTSSymbolPropertyBag symbolBag
             && index is SharpTSSymbol bagSymbol)
         {
-            if (obj is not SharpTSNumberNamespace symbolNumber
-                || !TryAssignThroughDescriptor(symbolNumber.GetOwnPropertyDescriptor(bagSymbol),
-                    symbolNumber, bagSymbol.ToString(), value, strictMode))
+            if (obj is not ISharpTSPrimitiveConstructor symbolConstructor
+                || !TryAssignThroughDescriptor(symbolConstructor.GetOwnPropertyDescriptor(bagSymbol),
+                    symbolConstructor, bagSymbol.ToString(), value, strictMode))
                 symbolBag.SetBySymbolStrict(bagSymbol, value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
@@ -1698,7 +1684,7 @@ public partial class Interpreter
         // writability. Other keys on a callable (user-stored fn[k] = v) aren't
         // supported here either; let them fall through to the spec-conformant
         // error.
-        if (obj is ISharpTSCallable && obj is not (SharpTSFunction or SharpTSNumberNamespace)
+        if (obj is ISharpTSCallable && obj is not (SharpTSFunction or ISharpTSPrimitiveConstructor)
             && index?.ToString() is "name" or "length")
         {
             if (strictMode)
@@ -1932,9 +1918,9 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.BuiltInPrototypeString t:
-                if (t.Target is not SharpTSNumberNamespace indexedNumber
-                    || !TryAssignThroughDescriptor(indexedNumber.GetOwnPropertyDescriptor(t.Key),
-                        indexedNumber, t.Key, value, strictMode))
+                if (t.Target is not ISharpTSPrimitiveConstructor indexedConstructor
+                    || !TryAssignThroughDescriptor(indexedConstructor.GetOwnPropertyDescriptor(t.Key),
+                        indexedConstructor, t.Key, value, strictMode))
                     t.Target.SetExtra(t.Key, value);
                 break;
 
@@ -2367,7 +2353,9 @@ public partial class Interpreter
                                     : field.ComputedKey != null ? SharpTSUndefined.Instance : null;
                                 if (field.IsPrivate) klass.InstallStaticPrivateField(field.Name.Lexeme, fieldValue);
                                 else if (field.ComputedKey != null && computedMemberKeys[field.ComputedKey] is SharpTSSymbol symbol)
-                                    klass.SetStaticBySymbol(symbol, fieldValue);
+                                    klass.DefineStaticSymbolProperty(symbol,
+                                        new SharpTSPropertyDescriptor(fieldValue, writable: true,
+                                            enumerable: true, configurable: true) { HasValue = true });
                                 else
                                     klass.SetStaticProperty(field.ComputedKey != null
                                         ? (string)computedMemberKeys[field.ComputedKey]! : field.Name.Lexeme, fieldValue);

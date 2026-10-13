@@ -89,6 +89,14 @@ public sealed class EmittedDynamicConstructionRuntimeTests
                 Construct(owner.Value.Name, typeof(HostArrayConstructor), (object)values)).Values);
             var boxed = Construct(owner.Value.Name, typeof(string), "abc");
             Assert.Equal(3d, type.GetMethod(runtime.ObjectRead.Property.Name)!.Invoke(null, [boxed, "length"]));
+            var boxedNumber = Construct(owner.Value.Name, typeof(double), "7", "ignored");
+            Assert.True((bool)type.GetMethod(runtime.BoxedPrimitives.IsOfType.Name)!
+                .Invoke(null, [boxedNumber, "Number"])!);
+            Assert.Equal(7d, type.GetMethod(runtime.BoxedPrimitives.UnwrapIfBoxed.Name)!
+                .Invoke(null, [boxedNumber]));
+            Assert.NotSame(boxedNumber, Construct(owner.Value.Name, typeof(double), "7"));
+            Assert.Equal(0d, type.GetMethod(runtime.BoxedPrimitives.UnwrapIfBoxed.Name)!
+                .Invoke(null, [Construct(owner.Value.Name, typeof(double))]));
             if (runtime.RegExps.Implementation is not null)
             {
                 var regexp = Construct(owner.Value.Name, loaded.GetType(runtime.RegExps.RequireImplementation().Type.Name)!, "a", "g");

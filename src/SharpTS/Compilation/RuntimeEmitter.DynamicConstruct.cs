@@ -12,6 +12,7 @@ public partial class RuntimeEmitter
         EmittedErrorRuntime Errors,
         EmittedFunctionConstructionRuntime FunctionConstruction,
         EmittedFunctionValueRuntime FunctionValues,
+        EmittedNumericCoercionRuntime NumericCoercion,
         EmittedRegExpRuntime RegExps,
         EmittedStringCoercionRuntime StringCoercion,
         FieldInfo UndefinedInstance,
@@ -157,6 +158,35 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.BoxedPrimitives.New);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notStringTypeLabel);
+
+        // Number values use the CLR Double Type token, but construction creates
+        // a guest Number wrapper. Omission produces zero; present undefined
+        // goes through explicit Number conversion and produces NaN. This
+        // conversion also accepts BigInt, unlike abstract ToNumber.
+        var notNumberTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Double);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Bne_Un, notNumberTypeLabel);
+        il.Emit(OpCodes.Ldstr, "Number");
+        var numberArgPresentLabel = il.DefineLabel();
+        var numberValueReadyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brtrue, numberArgPresentLabel);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Br, numberValueReadyLabel);
+        il.MarkLabel(numberArgPresentLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Call, inputs.NumericCoercion.ConvertToNumber);
+        il.MarkLabel(numberValueReadyLabel);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Call, inputs.BoxedPrimitives.New);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNumberTypeLabel);
 
         var notFunctionType = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);

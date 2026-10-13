@@ -1926,7 +1926,7 @@ public partial class TypeChecker
 
                     // Expression-bodied arrows have no Stmt.Return; the body expression is
                     // the return value. Flag it the same way block returns are flagged (#344).
-                    MarkIfUndefinedReachableNumericReturn(arrow.ExpressionBody, exprType);
+                    MarkIfUndefinedReachableTypedReturn(arrow.ExpressionBody, exprType);
                 }
             }
             else if (arrow.BlockBody != null)

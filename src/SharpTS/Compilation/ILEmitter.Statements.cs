@@ -4170,11 +4170,19 @@ public partial class ILEmitter
                     }
                 }
             }
+            else if (!returnType.IsValueType)
+            {
+                // Reconcile object-valued dynamic reads with a specific class
+                // return slot before ret or storage for a deferred return.
+                EmitBoxIfNeeded(r.Value);
+                IL.Emit(OpCodes.Castclass, returnType);
+            }
             // Note: `string` return types are never emitted as a narrow `string` slot —
             // ParameterTypeResolver.ResolveReturnType maps them to object because a string
             // slot cannot carry the `$Undefined` sentinel an inferred-string body can
             // produce (see #318, which removed the #275 castclass that lived here).
-            // For other narrow types (double/bool handled above), the value is already correct.
+            // Specific reference slots are reconciled above; erased string slots
+            // continue through the object branch and preserve undefined.
         }
         else
         {

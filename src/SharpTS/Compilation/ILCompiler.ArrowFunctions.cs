@@ -2031,6 +2031,13 @@ public partial class ILCompiler
         {
             emitter.EnsureBoolean();
         }
+        else if (!arrowReturnType.IsValueType)
+        {
+            // Dynamic method/property reads leave an object-valued result even
+            // when the arrow's return slot names a particular guest class.
+            emitter.EmitBoxIfNeeded(expression);
+            il.Emit(OpCodes.Castclass, arrowReturnType);
+        }
 
         il.Emit(OpCodes.Ret);
     }

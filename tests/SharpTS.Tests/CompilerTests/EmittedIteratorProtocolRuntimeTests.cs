@@ -142,7 +142,7 @@ public sealed class EmittedIteratorProtocolRuntimeTests
         var emitter = new RuntimeEmitter(TypeProvider.Runtime); typeof(RuntimeEmitter).GetField("_features", Members)!.SetValue(emitter, features);
         var emit = typeof(RuntimeEmitter).GetMethod("EmitCompactIteratorResultRead", Members)!;
         var inputType = emit.GetParameters()[1].ParameterType;
-        var inputs = Activator.CreateInstance(inputType, runtime.DescriptorStorage, runtime.Records, selected ? new HashSet<string> { "shape" } : new HashSet<string>(), shapes, descriptors)!;
+        var inputs = Activator.CreateInstance(inputType, runtime.DescriptorStorage, runtime.Records, selected ? new HashSet<string> { "shape" } : new HashSet<string>(), shapes, descriptors, null)!;
         foreach (string key in new[] { "value", "done" })
         {
             var method = helper.DefineMethod(key, MethodAttributes.Public | MethodAttributes.Static, key == "value" ? typeof(object) : typeof(bool), [typeof(object)]);

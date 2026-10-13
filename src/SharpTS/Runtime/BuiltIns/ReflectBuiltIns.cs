@@ -522,9 +522,9 @@ public static class ReflectBuiltIns
                     return RuntimeValue.FromBoxed(proxy.TrapConstruct(
                         callArgs, interpreter, effectiveNewTarget));
                 }
-                if (target is ISharpTSCallable callable)
+                if (target is ISharpTSCallable)
                 {
-                    return RuntimeValue.FromBoxed(callable.Call(interpreter, callArgs));
+                    return RuntimeValue.FromBoxed(interpreter.Construct(target, callArgs));
                 }
                 throw new ThrowException(new SharpTSTypeError(
                     "Reflect.construct target is not a constructor"));

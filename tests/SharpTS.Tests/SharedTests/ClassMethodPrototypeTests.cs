@@ -85,8 +85,7 @@ public sealed class ClassMethodPrototypeTests
         console.log(new declared() instanceof declared, new expressed() instanceof expressed);
         const bound: any = declared.bind({});
         console.log(new bound() instanceof declared);
-        // Reflect.construct result identity has a separate interpreter defect (#2060).
-        try { Reflect.construct(declared, []); console.log(true); }
+        try { console.log(Reflect.construct(declared, []) instanceof declared); }
         catch (error) { console.log(false); }
         const arrow: any = () => {};
         console.log('prototype' in arrow);

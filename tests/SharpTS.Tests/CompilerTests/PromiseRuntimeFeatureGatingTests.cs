@@ -56,9 +56,10 @@ public class PromiseRuntimeFeatureGatingTests
         Assert.True(promiseOnlyMethods.Length == 0,
             $"Promise-only methods remained: {string.Join(", ", promiseOnlyMethods)}");
 
-        // Required class/descriptor and function-binding helpers measure 276,480
-        // bytes on Windows; allow the extra 512-byte PE alignment block on Linux.
-        Assert.True(assemblyBytes.Length <= 277_000,
+        // Required constructor-return, instanceof validation and static Symbol
+        // callable-cache helpers measure 278,016 bytes on Windows. Promise types
+        // and methods remain absent; allow one extra 512-byte PE block on Linux.
+        Assert.True(assemblyBytes.Length <= 278_600,
             $"Promise-free assembly grew beyond its size ratchet: {assemblyBytes.Length:N0} bytes.");
     }
 

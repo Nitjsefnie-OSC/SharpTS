@@ -7,6 +7,32 @@ public sealed class ClassConstructorReturnTests
 {
     public static IEnumerable<object[]> Cases()
     {
+        yield return ["dynamic-methods", """
+            const replacement: any = {
+                value: 44,
+                slice() { return this.value; },
+                concat() { return this.value; },
+                includes() { return this.value; },
+                indexOf() { return this.value; }
+            };
+            class C {
+                value = 43;
+                constructor(replace: boolean) { if (replace) return replacement; }
+                slice() { return this.value; }
+                concat() { return this.value; }
+                includes() { return this.value; }
+                indexOf() { return this.value; }
+            }
+            for (const replace of [false, true]) {
+                const value = new C(replace);
+                console.log(value.slice(), value.concat(), value.includes(), value.indexOf());
+            }
+            function* values() { yield new C(false).slice(); yield new C(true).slice(); }
+            console.log(values().next().value);
+            for (const value of values()) console.log(value);
+            async function run() { console.log(new C(false).slice(), new C(true).slice()); }
+            run();
+            """, "43 43 43 43\n44 44 44 44\n43\n43\n44\n43 44\n"];
         yield return ["direct", """
             const replacement: any = { value: 43, read() { return this.value; } };
             class C {

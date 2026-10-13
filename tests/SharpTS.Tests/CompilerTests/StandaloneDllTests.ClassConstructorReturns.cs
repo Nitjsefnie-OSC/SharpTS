@@ -6,6 +6,7 @@ namespace SharpTS.Tests.CompilerTests;
 public partial class StandaloneDllTests
 {
     [Theory]
+    [InlineData("dynamic-methods")]
     [InlineData("direct")]
     [InlineData("expression")]
     [InlineData("objects")]

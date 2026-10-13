@@ -290,7 +290,7 @@ public static class PromiseBuiltIns
     /// <c>@@species</c> indirection (that applies only to the prototype methods;
     /// see <see cref="SpeciesPromiseFactory"/>).
     /// </summary>
-    private static Func<Interpreter, Task<object?>, SharpTSPromise>? DerivedPromiseFactory(object? receiverOrClass)
+    private static Func<Interpreter, Task<object?>, object?>? DerivedPromiseFactory(object? receiverOrClass)
     {
         var klass = receiverOrClass switch
         {
@@ -365,10 +365,10 @@ public static class PromiseBuiltIns
     /// is null.
     /// </summary>
     /// <remarks>
-    /// A <see cref="SharpTSPromiseClass"/> species takes the fast subclass path
-    /// (<see cref="SharpTSPromiseClass.ConstructDerived"/>). Any other constructor
-    /// — a general (non-Promise) guest class, or a plain function/function
-    /// expression used via the <c>new</c> protocol — goes through the spec's
+    /// A <see cref="SharpTSPromiseClass"/> species delegates through
+    /// <see cref="SharpTSPromiseClass.ConstructDerived"/>. Every constructor
+    /// — including a general guest class or a plain function/function
+    /// expression used via the <c>new</c> protocol — uses the shared
     /// NewPromiseCapability (§27.2.4.5): the result is
     /// <c>new S((resolve, reject) =&gt; …)</c> with the captured capability
     /// adopting the settled task (#349/#390). A species that is neither
@@ -410,7 +410,7 @@ public static class PromiseBuiltIns
     };
 
     /// <summary>
-    /// General NewPromiseCapability over an arbitrary (non-Promise) guest
+    /// General NewPromiseCapability over an arbitrary guest
     /// constructor <c>S</c> (ECMA-262 §27.2.4.5 + §27.2.5.4 step 7). Constructs
     /// <c>new S(executor)</c> via the <c>new</c> protocol
     /// (<see cref="Interpreter.Construct"/>, which handles guest classes, plain
@@ -422,7 +422,7 @@ public static class PromiseBuiltIns
     /// (<see cref="SpeciesMaterializer"/>) has already verified
     /// <paramref name="speciesCtor"/> is a constructor.
     /// </summary>
-    private static object? ConstructPromiseCapabilityAndAdopt(
+    internal static object? ConstructPromiseCapabilityAndAdopt(
         Interpreter interp, object? speciesCtor, Task<object?> source)
     {
         var (promiseObject, resolveFn, rejectFn) = CreatePromiseCapability(interp, speciesCtor);
@@ -1584,7 +1584,7 @@ public static class PromiseBuiltIns
     /// </summary>
     private static object? WithResolversImpl(
         Interpreter interpreter,
-        Func<Interpreter, Task<object?>, SharpTSPromise>? promiseFactory)
+        Func<Interpreter, Task<object?>, object?>? promiseFactory)
     {
         var tcs = new TaskCompletionSource<object?>();
 

@@ -1598,6 +1598,14 @@ public abstract partial class ExpressionEmitterBase
 
         // Type-first dispatch via TypeEmitterRegistry
         var objType = Ctx.TypeMap?.Get(methodGet.Object);
+        if (Ctx.TypeMapper.IsDynamicClassInstance(objType))
+        {
+            // A constructor replacement can carry its own method, while a
+            // fallthrough result still carries the class's implementation.
+            // Resolve both through the actual receiver before builtin fallbacks.
+            EmitDynamicMethodCallPreservingThis(methodGet.Object, methodName, c.Arguments);
+            return true;
+        }
         if (objType is TypeSystem.TypeInfo.Array
             && methodName == "includes"
             && (Ctx.RuntimeFeatures?.UsesDynamicPropertyDescriptors != false

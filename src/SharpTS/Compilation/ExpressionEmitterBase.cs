@@ -1740,6 +1740,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     {
                         IL.Emit(OpCodes.Unbox_Any, targetParamType);
                     }
+                    else if (Types.IsString(targetParamType)
+                        || Ctx.TypeMapper.IsUserClassReferenceType(targetParamType))
+                    {
+                        IL.Emit(OpCodes.Castclass, targetParamType);
+                    }
                 }
             }
 
@@ -1855,6 +1860,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 if (targetParamType.IsValueType && targetParamType != typeof(object))
                 {
                     IL.Emit(OpCodes.Unbox_Any, targetParamType);
+                }
+                else if (Types.IsString(targetParamType)
+                    || Ctx.TypeMapper.IsUserClassReferenceType(targetParamType))
+                {
+                    IL.Emit(OpCodes.Castclass, targetParamType);
                 }
             }
         }

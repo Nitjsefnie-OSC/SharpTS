@@ -60,6 +60,13 @@ public class TypeMapper
 
     internal void RegisterCheckedClassName(int declarationId, string name) => _checkedClassNames[declarationId] = name;
 
+    internal bool IsUserClassReferenceType(Type type)
+    {
+        if (_classBuilders is null || type == _types.Object || type.IsValueType) return false;
+        var definition = type.IsGenericType ? type.GetGenericTypeDefinition() : type;
+        return _classBuilders.Values.Any(builder => ReferenceEquals(builder, definition));
+    }
+
     private Type GetCheckedClassType(ClassMetadataCore core) => GetClassType(
         _checkedClassNames.GetValueOrDefault(core.DeclarationId, core.Name));
     private Dictionary<string, TypeBuilder>? _classBuilders;

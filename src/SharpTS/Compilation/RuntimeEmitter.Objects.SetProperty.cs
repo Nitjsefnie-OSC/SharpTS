@@ -2050,6 +2050,28 @@ public partial class RuntimeEmitter
             il.MarkLabel(strictSetNotProxyLabel);
         }
 
+        // Constructor metadata descriptors are synthesized rather than stored
+        // in PDS. Strict writes must consult that same guest descriptor.
+        var notConstructorPrototype = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brfalse, notConstructorPrototype);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notConstructorPrototype);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ObjectDescriptors.GetOwnPropertyDescriptor);
+        il.Emit(OpCodes.Ldstr, "writable");
+        il.Emit(OpCodes.Call, inputs.ObjectRead.Property);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, notConstructorPrototype);
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Brfalse, nullLabel);
+        EmitThrowTypeErrorWithName(il, inputs.Errors, "Cannot assign to read only property '", "' of class");
+        il.MarkLabel(notConstructorPrototype);
+
         // Check if $Object
         EmitNamespaceSetBranch(il, inputs.Namespaces);
         var sharpTSObjectLabel = il.DefineLabel();

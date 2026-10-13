@@ -98,25 +98,55 @@ public sealed class ClassPrototypeDescriptorTests
         Assert.Equal(DefinitionExpected, TestHarness.Run(DefinitionSource, mode));
     }
 
-    [Fact]
-    public void StrictPrototypeWritesThrowForInterpretedClasses()
-    {
-        // Compiled strict writes through dynamic Type constructor values are
-        // tracked in #2058. Definition-owned expression values are covered below.
-        const string source = """
+    internal const string StrictPrototypeWriteSource = """
             "use strict";
             class Ordinary {}
+            class Derived extends Ordinary {}
             class Generic<T> {}
+            class GenericDerived<T> extends Generic<T> {}
             const expression = class {};
-            for (const owner of [Error, TypeError, Ordinary, Generic, expression]) {
+            for (const owner of [Error, TypeError, Ordinary, Derived,
+                Generic, GenericDerived, expression]) {
                 const alias: any = owner;
                 const original = alias.prototype;
                 try { alias.prototype = {}; } catch (error) { console.log(error instanceof TypeError); }
                 try { alias["prototype"] = original; } catch (error) { console.log(error instanceof TypeError); }
                 console.log(alias.prototype === original);
             }
+            function ordinaryFunction() {}
+            const callable: any = ordinaryFunction;
+            const replacement = {};
+            callable.prototype = replacement;
+            console.log(callable.prototype === replacement);
+            const object: any = { prototype: {} };
+            object.prototype = replacement;
+            console.log(object.prototype === replacement);
             """;
-        Assert.Equal(string.Concat(Enumerable.Repeat("true\n", 15)), TestHarness.RunInterpreted(source));
+
+    internal static string StrictPrototypeWriteExpected => string.Concat(Enumerable.Repeat("true\n", 23));
+
+    [Theory, ModeData]
+    public void StrictPrototypeWritesRespectConstructorDescriptors(ExecutionMode mode)
+    {
+        Assert.Equal(StrictPrototypeWriteExpected, TestHarness.Run(StrictPrototypeWriteSource, mode));
+    }
+
+    [Theory, ModeData]
+    public void ClassMethodPrototypeWritesAreImplicitlyStrict(ExecutionMode mode)
+    {
+        const string source = """
+            class C {
+                static write(owner: any) { owner.prototype = {}; }
+                static indexed(owner: any) { owner["prototype"] = owner.prototype; }
+            }
+            class Generic<T> {}
+            const expression: any = class {};
+            for (const owner of [Error, C, Generic, expression]) {
+                try { C.write(owner); } catch (error) { console.log(error instanceof TypeError); }
+                try { C.indexed(owner); } catch (error) { console.log(error instanceof TypeError); }
+            }
+            """;
+        Assert.Equal(string.Concat(Enumerable.Repeat("true\n", 8)), TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

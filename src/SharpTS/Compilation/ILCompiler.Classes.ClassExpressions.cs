@@ -711,8 +711,7 @@ public partial class ILCompiler
         {
             // The definition factory allocates through the bookkeeping constructor
             // and uses the explicit-receiver adapter for guest initialization.
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Call, _types.ObjectDefaultCtor);
+            EmitClassPrototypeBaseConstructorCall(il, typeBuilder);
             il.Emit(OpCodes.Ret);
             return;
         }

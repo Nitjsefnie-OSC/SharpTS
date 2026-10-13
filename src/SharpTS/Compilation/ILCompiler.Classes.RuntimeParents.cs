@@ -65,9 +65,25 @@ public partial class ILCompiler
         return true;
     }
 
-    private bool HasRuntimeParent(Expr.ClassExpr expression) => expression.SuperclassExpr != null
-        && (_classExprs.Builders[expression].BaseType == null || _classExprs.Builders[expression].BaseType == _types.Object)
-        && expression.SuperclassExpr is not Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 };
+    private bool HasRuntimeParent(Expr.ClassExpr expression)
+    {
+        // A CLR subclass can inherit a template whose guest parent is selected
+        // at runtime. Its bookkeeping constructor does not initialize that guest
+        // chain, so the child must use the same explicit-receiver factory path.
+        var visited = new HashSet<Expr.ClassExpr>(ReferenceEqualityComparer.Instance);
+        while (visited.Add(expression))
+        {
+            if (expression.SuperclassExpr == null
+                || expression.SuperclassExpr is Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 }) return false;
+            var parent = _classExprs.Builders[expression].BaseType;
+            if (parent == null || parent == _types.Object) return true;
+            if (parent.IsConstructedGenericType) parent = parent.GetGenericTypeDefinition();
+            var parentExpression = _classExprs.Builders.FirstOrDefault(entry => ReferenceEquals(entry.Value, parent)).Key;
+            if (parentExpression == null) return false;
+            expression = parentExpression;
+        }
+        return false;
+    }
 
     private static bool SupportsReceiverInitialization(Stmt.Class declaration)
     {

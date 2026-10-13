@@ -9,6 +9,7 @@ public partial class StandaloneDllTests
     [InlineData("issue")]
     [InlineData("metadata")]
     [InlineData("receivers")]
+    [InlineData("cache-keys")]
     public void Isolated_Issue2017StaticSymbolMethods_PreserveCanonicalValues(string name)
     {
         var (source, expected) = name switch
@@ -16,6 +17,7 @@ public partial class StandaloneDllTests
             "issue" => (StaticSymbolMethodIdentityTests.IssueSource, "true\ntrue\n"),
             "metadata" => (StaticSymbolMethodIdentityTests.MetadataSource,
                 string.Concat(Enumerable.Repeat("true true 1 1\n", 4))),
+            "cache-keys" => (StaticSymbolMethodIdentityTests.CacheKeySource, StaticSymbolMethodIdentityTests.CacheKeyExpected),
             _ => (StaticSymbolMethodIdentityTests.ReceiverSource, StaticSymbolMethodIdentityTests.ReceiverExpected)
         };
         using var directory = IntegrationTests.CliTestHelper.CreateTempDirectory();

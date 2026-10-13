@@ -1491,7 +1491,6 @@ public partial class RuntimeEmitter
                 runtime.Symbols,
                 runtime.FunctionConstruction.Constructor,
                 runtime.FunctionConstruction.CachedConstructor,
-                runtime.FunctionConstruction.GetOrCreate,
                 runtime.FunctionValues.NameGetter,
                 runtime.FunctionValues.LengthGetter,
                 runtime.FunctionValues.Type,
@@ -2763,7 +2762,8 @@ public partial class RuntimeEmitter
                 runtime.Errors.CreateException,
                 runtime.Errors.TypeErrorConstructor));
         // Fill in the symbol-keyed accessor registry helper bodies (#266).
-        EmitSymbolAccessorRegistryBodies(runtime.SymbolAccessors, runtime.Symbols, runtime.StringCoercion);
+        EmitSymbolAccessorRegistryBodies(runtime.SymbolAccessors, runtime.Symbols, runtime.StringCoercion,
+            runtime.FunctionConstruction, runtime.FunctionValues, runtime.Symbols.MethodName);
         // Microtask method (queueMicrotask) - must come before timer infrastructure so ProcessMicrotasks is available
         EmitQueueMicrotaskMethod(typeBuilder, runtime);
         // Virtual timer infrastructure (must come before DateMethods which calls ProcessPendingTimers)

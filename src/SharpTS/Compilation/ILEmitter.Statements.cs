@@ -2325,7 +2325,6 @@ public partial class ILEmitter
             var iterStartLabel = builder.DefineLabel("forof_iter_start");
             var iterEndLabel = builder.DefineLabel("forof_iter_end");
             var iterContinueLabel = builder.DefineLabel("forof_iter_continue");
-            _ctx.EnterLoop(iterEndLabel, iterContinueLabel, labelNames);
 
             // Call the iterator function to get the iterator object
             // Use InvokeMethodValue to properly bind 'this' to the iterable object
@@ -2338,6 +2337,28 @@ public partial class ILEmitter
             // Store the iterator object
             var iteratorObjLocal = IL.DeclareLocal(_ctx.Types.Object);
             IL.Emit(OpCodes.Stloc, iteratorObjLocal);
+
+            // Ordinary Symbol lookup can select an inherited Array iterator for
+            // a user subclass. Its native result exposes MoveNext/Current rather
+            // than a guest next property. Keep guest generators on their next/
+            // return protocol so abrupt completion still closes the generator.
+            var guestIteratorLabel = builder.DefineLabel("forof_guest_iterator");
+            IL.Emit(OpCodes.Ldloc, iteratorObjLocal);
+            IL.Emit(OpCodes.Isinst, _ctx.Runtime!.Generators.Type);
+            builder.Emit_Brtrue(guestIteratorLabel);
+            IL.Emit(OpCodes.Ldloc, iteratorObjLocal);
+            IL.Emit(OpCodes.Isinst, _ctx.Types.IEnumeratorOfObject);
+            builder.Emit_Brfalse(guestIteratorLabel);
+            var nativeStart = builder.DefineLabel("forof_native_iterator_start");
+            var nativeEnd = builder.DefineLabel("forof_native_iterator_end");
+            var nativeContinue = builder.DefineLabel("forof_native_iterator_continue");
+            _ctx.EnterLoop(nativeEnd, nativeContinue, labelNames);
+            IL.Emit(OpCodes.Ldloc, iteratorObjLocal);
+            EmitForOfNormalizedEnumerator(f, nativeStart, nativeEnd, nativeContinue, alreadyBoxed: true);
+            builder.Emit_Br(afterLoopLabel);
+            _ctx.Locals.EnterScope();
+            builder.MarkLabel(guestIteratorLabel);
+            _ctx.EnterLoop(iterEndLabel, iterContinueLabel, labelNames);
 
             // GetIterator captures next once, even if the receiver is mutated
             // by a later next call or by the loop body.
@@ -3079,14 +3100,15 @@ public partial class ILEmitter
     /// Unlike EmitForOfEnumerator (which casts to IEnumerable), this handles
     /// IEnumerator sources (like lazy iterator helpers and array values) correctly.
     /// </summary>
-    private void EmitForOfNormalizedEnumerator(Stmt.ForOf f, Label startLabel, Label endLabel, Label continueLabel)
+    private void EmitForOfNormalizedEnumerator(Stmt.ForOf f, Label startLabel, Label endLabel, Label continueLabel,
+        bool alreadyBoxed = false)
     {
         var builder = _ctx.ILBuilder;
         var moveNext = _ctx.Types.GetMethod(_ctx.Types.IEnumerator, "MoveNext");
         var current = _ctx.Types.GetProperty(_ctx.Types.IEnumerator, "Current")!.GetGetMethod()!;
 
         // Stack has the iterator source — normalize to IEnumerator<object>
-        EmitBoxIfNeeded(f.Iterable);
+        if (!alreadyBoxed) EmitBoxIfNeeded(f.Iterable);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.IteratorHelpers.NormalizeToEnumerator);
 
         var enumLocal = IL.DeclareLocal(_ctx.Types.IEnumerator);
@@ -4148,11 +4170,19 @@ public partial class ILEmitter
                     }
                 }
             }
+            else if (!returnType.IsValueType)
+            {
+                // Reconcile object-valued dynamic reads with a specific class
+                // return slot before ret or storage for a deferred return.
+                EmitBoxIfNeeded(r.Value);
+                IL.Emit(OpCodes.Castclass, returnType);
+            }
             // Note: `string` return types are never emitted as a narrow `string` slot —
             // ParameterTypeResolver.ResolveReturnType maps them to object because a string
             // slot cannot carry the `$Undefined` sentinel an inferred-string body can
             // produce (see #318, which removed the #275 castclass that lived here).
-            // For other narrow types (double/bool handled above), the value is already correct.
+            // Specific reference slots are reconciled above; erased string slots
+            // continue through the object branch and preserve undefined.
         }
         else
         {

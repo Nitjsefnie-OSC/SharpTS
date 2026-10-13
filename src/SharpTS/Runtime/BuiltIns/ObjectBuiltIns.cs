@@ -152,10 +152,10 @@ public static partial class ObjectBuiltIns
                     yield return new(k,
                         includeValues && arrowFn.TryGetProperty(k, out var av) ? av : null);
                 yield break;
-            case SharpTSNumberNamespace number:
-                foreach (var key in number.OwnEnumerableKeys().ToList())
+            case ISharpTSPrimitiveConstructor primitiveConstructor:
+                foreach (var key in primitiveConstructor.OwnEnumerableKeys().ToList())
                     yield return new(key,
-                        includeValues ? interpreter.GetPropertyValue(number, key) : null);
+                        includeValues ? interpreter.GetPropertyValue(primitiveConstructor, key) : null);
                 yield break;
             case ISharpTSCallable:
                 yield break;
@@ -551,8 +551,8 @@ public static partial class ObjectBuiltIns
                             "Cannot redefine symbol property"));
                     }
                     return target;
-                case SharpTSNumberNamespace number:
-                    if (!number.DefineProperty(symKey, descriptor))
+                case ISharpTSPrimitiveConstructor primitiveConstructor:
+                    if (!primitiveConstructor.DefineProperty(symKey, descriptor))
                         throw new ThrowException(new SharpTSTypeError("Cannot redefine symbol property"));
                     return target;
                 case SharpTSStringPrototype stringPrototype:
@@ -627,8 +627,8 @@ public static partial class ObjectBuiltIns
             case SharpTSObjectNamespace objectNamespace:
                 success = objectNamespace.DefineProperty(propertyKey, descriptor);
                 break;
-            case SharpTSNumberNamespace number:
-                success = number.DefineExtraProperty(propertyKey, descriptor);
+            case ISharpTSPrimitiveConstructor primitiveConstructor:
+                success = primitiveConstructor.DefineExtraProperty(propertyKey, descriptor);
                 break;
             case SharpTSInstance inst:
                 success = inst.DefineProperty(propertyKey, descriptor);
@@ -839,7 +839,7 @@ public static partial class ObjectBuiltIns
         return target switch
         {
             SharpTSObject obj => obj.GetOwnPropertyDescriptor(propertyKey),
-            SharpTSNumberNamespace number => number.GetOwnPropertyDescriptor(propertyKey),
+            ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.GetOwnPropertyDescriptor(propertyKey),
             SharpTSObjectNamespace objectNamespace
                 => objectNamespace.GetOwnPropertyDescriptor(propertyKey)
                     ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
@@ -1110,7 +1110,7 @@ public static partial class ObjectBuiltIns
                 return descriptor.ToObject();
             case SharpTSObject obj when obj.GetOwnPropertyDescriptor(key) is { } descriptor:
                 return descriptor.ToObject();
-            case SharpTSNumberNamespace number when number.GetOwnPropertyDescriptor(key) is { } descriptor:
+            case ISharpTSPrimitiveConstructor primitiveConstructor when primitiveConstructor.GetOwnPropertyDescriptor(key) is { } descriptor:
                 return descriptor.ToObject();
             case SharpTSInstance inst when inst.HasSymbolProperty(key):
                 return DescriptorObjectFor(inst.GetBySymbol(key));
@@ -1303,8 +1303,8 @@ public static partial class ObjectBuiltIns
         {
             SharpTSObject obj => GetAllOwnPropertyNames(obj).Cast<object?>()
                 .Concat(obj.GetSymbolPropertyNames().Cast<object?>()).ToList(),
-            SharpTSNumberNamespace number => number.OwnStringKeys().Cast<object?>()
-                .Concat(number.GetSymbolPropertyNames().Cast<object?>()).ToList(),
+            ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.OwnStringKeys().Cast<object?>()
+                .Concat(primitiveConstructor.GetSymbolPropertyNames().Cast<object?>()).ToList(),
             SharpTSInstance inst => inst.GetFieldNames().Cast<object?>().ToList(),
             SharpTSArray arr => GetOwnPropertyNamesFromArray(arr),
             SharpTSRegExp regex => regex.OwnStringKeys().Cast<object?>().ToList(),
@@ -1353,7 +1353,7 @@ public static partial class ObjectBuiltIns
                 new object?[] { "length", "name", "prototype" }
                     .Concat(StaticMemberNames.Cast<object?>()).ToList(),
             SharpTSObject obj => GetOwnPropertyNamesFromObject(obj),
-            SharpTSNumberNamespace number => number.OwnStringKeys().Cast<object?>().ToList(),
+            ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.OwnStringKeys().Cast<object?>().ToList(),
             SharpTSProxy proxy => proxy.TrapOwnPropertyKeys(interpreter)
                 .OfType<string>().Cast<object?>().ToList(),
             SharpTSInstance inst => inst.GetFieldNames().Select(k => (object?)k).ToList(),
@@ -1746,7 +1746,7 @@ public static partial class ObjectBuiltIns
         List<object?> symbols = args[0] switch
         {
             SharpTSObject obj => obj.GetSymbolPropertyNames().Select(s => (object?)s).ToList(),
-            SharpTSNumberNamespace number => number.GetSymbolPropertyNames().Cast<object?>().ToList(),
+            ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.GetSymbolPropertyNames().Cast<object?>().ToList(),
             SharpTSProxy proxy => proxy.TrapOwnPropertyKeys(interpreter)
                 .OfType<SharpTSSymbol>().Cast<object?>().ToList(),
             SharpTSInstance inst => inst.GetSymbolPropertyNames().Select(s => (object?)s).ToList(),

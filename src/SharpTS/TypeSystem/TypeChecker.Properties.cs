@@ -874,12 +874,14 @@ public partial class TypeChecker
                     if (ClassInfoAccessor.Get(current, c => c.Core.StaticReadonlyFields, gc => gc.Core.StaticReadonlyFields)?.Contains(set.Name.Lexeme) == true)
                         throw new TypeCheckException($" Cannot assign to '{set.Name.Lexeme}' because it is a read-only property.", tsCode: "TS2540");
                     ObserveSourceMemberSelection(set.Name, current, MemberFacet.Static);
+                    TypeInfo writeType = GetStaticSetters(current)?.GetValueOrDefault(set.Name.Lexeme) ?? staticPropType;
                     TypeInfo valueType = CheckExpr(set.Value);
-                    if (!IsCompatible(staticPropType, valueType))
+                    if (!IsCompatible(writeType, valueType))
                     {
-                        throw new TypeCheckException($" Cannot assign '{valueType}' to static property '{set.Name.Lexeme}' of type '{staticPropType}'.", tsCode: "TS2322");
+                        throw new TypeCheckException($" Cannot assign '{valueType}' to static property '{set.Name.Lexeme}' of type '{writeType}'.", tsCode: "TS2322");
                     }
-                    if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, staticPropType, valueType);
+                    if (assignedPath != null && GetStaticSetters(current)?.ContainsKey(set.Name.Lexeme) != true)
+                        InstallPostAssignmentNarrowing(assignedPath, staticPropType, valueType);
                     return valueType;
                 }
                 current = GetSuperclass(current);

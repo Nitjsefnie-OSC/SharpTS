@@ -290,13 +290,32 @@ public partial class ILCompiler
         {
             if (_classes.DeferredDefinitions.TryGet(typeBuilder, out _))
                 continue;
+            LocalBuilder? evaluatedKey = null;
+            var registrationDone = il.DefineLabel();
+            if (!method.IsStatic && CanOwnDeclaredSymbolMethodValue(typeBuilder))
+            {
+                // One evaluation supplies the data property's key and the legacy
+                // string-key registry fallback. Symbol methods are owned by the
+                // prototype, so a deleted value must not reappear from that registry.
+                evaluatedKey = il.DeclareLocal(_types.Object);
+                EmitComputedPropertyKey(emitter, il, key);
+                il.Emit(OpCodes.Stloc, evaluatedKey);
+                var ordinaryKey = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, evaluatedKey);
+                il.Emit(OpCodes.Isinst, _runtime.Symbols.Type);
+                il.Emit(OpCodes.Brfalse, ordinaryKey);
+                EmitDeclaredSymbolMethodDescriptor(il, typeBuilder, method, builder, evaluatedKey);
+                il.Emit(OpCodes.Br, registrationDone);
+                il.MarkLabel(ordinaryKey);
+            }
             // owner: typeof(ThisClass)
             il.Emit(OpCodes.Ldtoken, typeBuilder);
             il.Emit(OpCodes.Call, getTypeFromHandle);
 
             // property key: preserve Symbols; coerce every other value exactly as bracket
             // access does (notably null -> "null") before using it as a registry key.
-            EmitComputedPropertyKey(emitter, il, key);
+            if (evaluatedKey != null) il.Emit(OpCodes.Ldloc, evaluatedKey);
+            else EmitComputedPropertyKey(emitter, il, key);
 
             // method MethodInfo
             EmitMethodInfoLiteral(il, builder, typeBuilder);
@@ -305,6 +324,7 @@ public partial class ILCompiler
             il.Emit(method.IsStatic ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
 
             il.Emit(OpCodes.Call, _runtime.SymbolAccessors.RegisterMethod);
+            il.MarkLabel(registrationDone);
         }
     }
 
@@ -368,6 +388,22 @@ public partial class ILCompiler
                 }, descriptorOwner);
                 continue;
             }
+            var registrationDone = il.DefineLabel();
+            if (!isStatic && CanOwnDeclaredSymbolMethodValue(typeBuilder))
+            {
+                var evaluatedKey = il.DeclareLocal(_types.Object);
+                il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldc_I4, i); il.Emit(OpCodes.Ldelem_Ref);
+                il.Emit(OpCodes.Stloc, evaluatedKey);
+                var ordinaryKey = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, evaluatedKey); il.Emit(OpCodes.Isinst, _runtime.Symbols.Type);
+                il.Emit(OpCodes.Brfalse, ordinaryKey);
+                var methodSource = _classes.ComputedMembers.GetMethods(typeBuilder)
+                    .First(entry => ReferenceEquals(entry.Builder, builder)).Method;
+                EmitDeclaredSymbolMethodDescriptor(il, typeBuilder, methodSource, builder!, evaluatedKey,
+                    CanonicalGenericClassOwner(typeBuilder));
+                il.Emit(OpCodes.Br, registrationDone);
+                il.MarkLabel(ordinaryKey);
+            }
             il.Emit(OpCodes.Ldtoken, typeBuilder);
             il.Emit(OpCodes.Call, getTypeFromHandle);
             il.Emit(OpCodes.Ldarg_0);
@@ -376,6 +412,7 @@ public partial class ILCompiler
             EmitMethodInfoLiteral(il, builder!, typeBuilder);
             il.Emit(isStatic ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
             il.Emit(OpCodes.Call, _runtime.SymbolAccessors.RegisterMethod);
+            il.MarkLabel(registrationDone);
         }
 
         il.Emit(OpCodes.Call, typeBuilder.IsGenericTypeDefinition

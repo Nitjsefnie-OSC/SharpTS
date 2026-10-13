@@ -190,7 +190,11 @@ public static class FunctionBuiltIns
     // Canonical static methods are strict and distinguish an absent receiver
     // from explicit null. Other callables retain their existing normalization.
     private static object? DefaultThisArgument(ISharpTSCallable callable)
-        => callable is SharpTSFunction { IsStaticMethod: true }
+        => callable is SharpTSFunction { PrivateOwner: not null }
+            or SharpTSAsyncFunction { PrivateOwner: not null }
+            or SharpTSGeneratorFunction { PrivateOwner: not null }
+            or SharpTSAsyncGeneratorFunction { PrivateOwner: not null }
+            or SharpTSFunction { IsStaticMethod: true }
             or SharpTSAsyncFunction { IsStaticMethod: true }
             or SharpTSGeneratorFunction { IsStaticMethod: true }
             or SharpTSAsyncGeneratorFunction { IsStaticMethod: true }
@@ -207,6 +211,17 @@ public static class FunctionBuiltIns
             _ => null,
         };
 
+    /// <summary>Class method calls retain the exact guest receiver for every function kind.</summary>
+    internal static ISharpTSCallable? BindClassReceiver(ISharpTSCallable callable, object? receiver)
+        => callable switch
+        {
+            SharpTSFunction fn when fn.PrivateOwner != null => fn.BindThis(receiver),
+            SharpTSAsyncFunction fn when fn.PrivateOwner != null => fn.BindThisValue(receiver),
+            SharpTSGeneratorFunction fn when fn.PrivateOwner != null => fn.BindToReceiver(receiver!),
+            SharpTSAsyncGeneratorFunction fn when fn.PrivateOwner != null => fn.BindToReceiver(receiver!),
+            _ => null,
+        };
+
     private static object? InvokeWithThis(Interpreter interp, ISharpTSCallable callable, object? thisArg, List<object?> args)
     {
         if (callable is SharpTSClass klass)
@@ -219,6 +234,9 @@ public static class FunctionBuiltIns
 
         if (BindStaticReceiver(callable, thisArg) is { } staticMethod)
             return staticMethod.Call(interp, args);
+
+        if (BindClassReceiver(callable, thisArg) is { } classMethod)
+            return classMethod.Call(interp, args);
 
         // Arrow functions ignore thisArg
         if (callable is SharpTSArrowFunction arrow && !arrow.HasOwnThis)
@@ -465,6 +483,11 @@ public class BoundFunction : ISharpTSCallable
         if (!_ignoreThisArg && FunctionBuiltIns.BindStaticReceiver(_target, _thisArg) is { } staticMethod)
             return staticMethod.CallV2(interpreter, combined);
 
+        // Canonical class method values keep the supplied receiver itself,
+        // including null/primitives, rather than a synthetic instance view.
+        if (!_ignoreThisArg && FunctionBuiltIns.BindClassReceiver(_target, _thisArg) is { } classMethod)
+            return classMethod.CallV2(interpreter, combined);
+
         // Delegate to target's V2 path if available
         if (!_ignoreThisArg && _thisArg != null)
         {
@@ -521,6 +544,9 @@ public class BoundFunction : ISharpTSCallable
 
         if (!_ignoreThisArg && FunctionBuiltIns.BindStaticReceiver(_target, _thisArg) is { } staticMethod)
             return staticMethod.Call(interpreter, combinedArgs);
+
+        if (!_ignoreThisArg && FunctionBuiltIns.BindClassReceiver(_target, _thisArg) is { } classMethod)
+            return classMethod.Call(interpreter, combinedArgs);
 
         // Handle binding 'this' for the target function
         if (!_ignoreThisArg && _thisArg != null)

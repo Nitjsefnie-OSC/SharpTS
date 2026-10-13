@@ -42,6 +42,7 @@ public partial class CompilationContext
     internal FieldBuilder? ClassDefinitionOwnerField { get; set; }
     internal string? GuestThisVariableName { get; set; }
     internal bool HasGuestReceiver { get; set; }
+    internal bool UseNominalSuperCallBridge { get; set; }
 
     // Variable name to class expression mapping (for static member access)
     public Dictionary<string, Expr.ClassExpr>? VarToClassExpr { get; set; }

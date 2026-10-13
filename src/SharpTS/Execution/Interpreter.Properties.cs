@@ -155,7 +155,7 @@ public partial class Interpreter
         // wrapper depends on this — without it, `new Test262Error("x")` is
         // null and every assert.* throws "Only instances and objects have
         // properties" instead of the spec'd Test262Error.
-        if (klass is SharpTSArrowFunction userArrowFn && userArrowFn.HasOwnThis)
+        if (klass is SharpTSArrowFunction { IsConstructible: true } userArrowFn)
         {
             // Function expressions have prototype too — lazy-create on first read.
             if (!userArrowFn.TryGetProperty("prototype", out var protoObj))
@@ -266,7 +266,7 @@ public partial class Interpreter
             var result = bound.CallBoxed(this, [.. args]);
             return IsConstructorReturnObject(result) ? result : newThis;
         }
-        if (callable is SharpTSArrowFunction arrowFn && arrowFn.HasOwnThis)
+        if (callable is SharpTSArrowFunction { IsConstructible: true } arrowFn)
         {
             if (!arrowFn.TryGetProperty("prototype", out var protoObj))
             {
@@ -379,7 +379,7 @@ public partial class Interpreter
         // SharpTSFunction case above. The Test262 harness's Test262Error
         // wrapper relies on this (`new Test262Error("...")`); without the
         // case, every assert.* throw lands as null instead of a usable error.
-        if (klass is SharpTSArrowFunction userArrowFn && userArrowFn.HasOwnThis)
+        if (klass is SharpTSArrowFunction { IsConstructible: true } userArrowFn)
         {
             if (!userArrowFn.TryGetProperty("prototype", out var protoObj))
             {
@@ -689,9 +689,9 @@ public partial class Interpreter
                     : arrowDescriptor.Value;
             }
 
-            if (current is SharpTSNumberNamespace numberNamespace
-                && TryReadDescriptor(numberNamespace.GetOwnPropertyDescriptor(name), receiver, out var numberValue))
-                return numberValue;
+            if (current is ISharpTSPrimitiveConstructor primitiveConstructor
+                && TryReadDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(name), receiver, out var primitiveValue))
+                return primitiveValue;
 
             if (current is ISharpTSCallable callable)
             {
@@ -724,7 +724,7 @@ public partial class Interpreter
                     return objectDescriptor.Value;
                 }
                 return objectPrototype.GetMember(name)
-                    ?? (callable is SharpTSNumberNamespace ? null : FunctionBuiltIns.GetMember(callable, name))
+                    ?? (callable is ISharpTSPrimitiveConstructor ? null : FunctionBuiltIns.GetMember(callable, name))
                     ?? SharpTSUndefined.Instance;
             }
 
@@ -824,9 +824,9 @@ public partial class Interpreter
         return SharpTSUndefined.Instance;
     }
 
-    internal object? GetNumberConstructorSymbolValue(
-        SharpTSNumberNamespace number, SharpTSSymbol symbol, object? receiver)
-        => TryReadDescriptor(number.GetOwnPropertyDescriptor(symbol), receiver, out var value)
+    internal object? GetPrimitiveConstructorSymbolValue(
+        ISharpTSPrimitiveConstructor primitiveConstructor, SharpTSSymbol symbol, object? receiver)
+        => TryReadDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(symbol), receiver, out var value)
             ? value : SharpTSUndefined.Instance;
 
     /// <summary>
@@ -862,9 +862,9 @@ public partial class Interpreter
             }
             if (obj is SharpTSObjectPrototype objectPrototype)
                 return objectPrototype.GetOwnPropertyDescriptor(name) is not null;
-            if (obj is SharpTSNumberNamespace number)
+            if (obj is ISharpTSPrimitiveConstructor primitiveConstructor)
             {
-                if (number.HasOwnProperty(name)) return true;
+                if (primitiveConstructor.HasOwnProperty(name)) return true;
                 obj = GetFunctionPrototype();
                 continue;
             }
@@ -1068,22 +1068,8 @@ public partial class Interpreter
             }
         }
 
-        if (obj is SharpTSNumberNamespace numberNamespace)
-            return RuntimeValue.FromBoxed(GetPropertyValue(numberNamespace, get.Name.Lexeme));
-
-        // String/Boolean are per-realm constructor objects whose
-        // statics carry no receiver semantics. Going through instance-member dispatch would
-        // hand out a freshly bound copy per read, so `String.fromCharCode` would not equal
-        // the `value` of its own descriptor.
-        if (obj is SharpTSStringNamespace or SharpTSBooleanNamespace)
-        {
-            var nsMember = obj switch
-            {
-                SharpTSStringNamespace ns => ns.GetMember(get.Name.Lexeme),
-                _ => ((SharpTSBooleanNamespace)obj).GetMember(get.Name.Lexeme),
-            };
-            if (nsMember != null) return RuntimeValue.FromBoxed(nsMember);
-        }
+        if (obj is ISharpTSPrimitiveConstructor primitiveConstructor)
+            return RuntimeValue.FromBoxed(GetPropertyValue(primitiveConstructor, get.Name.Lexeme));
 
         var category = TypeCategoryResolver.ClassifyRuntime(obj);
         string memberName = get.Name.Lexeme;
@@ -1253,7 +1239,7 @@ public partial class Interpreter
             // walks the prototype chain looking for ctor.prototype, so
             // without this lazy init `obj instanceof FnExpr` always
             // returns false.
-            if (memberName == "prototype" && arrowFn.HasOwnThis)
+            if (memberName == "prototype" && arrowFn.IsConstructible)
             {
                 var proto = CreateFunctionPrototype(arrowFn);
                 arrowFn.SetProperty("prototype", proto);
@@ -1577,7 +1563,7 @@ public partial class Interpreter
     internal static bool IsNonConstructorWrapper(object? callable) => callable
         is ISharpTSNonConstructorCallable
         or SharpTSFunction { IsConstructible: false }
-        or SharpTSArrowFunction { HasOwnThis: false }
+        or SharpTSArrowFunction { IsConstructible: false }
         or SharpTSAsyncFunction
         or SharpTSAsyncArrowFunction
         or SharpTSGeneratorFunction
@@ -2120,8 +2106,8 @@ public partial class Interpreter
     /// </summary>
     private object? EvaluateGetOnFallback(object? obj, string memberName)
     {
-        if (obj is SharpTSNumberNamespace numberNamespace)
-            return GetPropertyValue(numberNamespace, memberName);
+        if (obj is ISharpTSPrimitiveConstructor primitiveConstructor)
+            return GetPropertyValue(primitiveConstructor, memberName);
 
         if (obj is SharpTSJSON json)
         {
@@ -2647,11 +2633,11 @@ public partial class Interpreter
         // (Object/Array/String/Number/Boolean/Function.prototype). Test262 assigns
         // indexed elements and `length` onto them before calling Array.prototype.* with
         // a primitive receiver, and patches them to exercise inherited-property paths.
-        if (obj is SharpTSNumberNamespace numberNamespace)
+        if (obj is ISharpTSPrimitiveConstructor primitiveConstructor)
         {
-            if (!TryAssignThroughDescriptor(numberNamespace.GetOwnPropertyDescriptor(set.Name.Lexeme),
-                    numberNamespace, set.Name.Lexeme, value, strictMode))
-                numberNamespace.SetExtra(set.Name.Lexeme, value);
+            if (!TryAssignThroughDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(set.Name.Lexeme),
+                    primitiveConstructor, set.Name.Lexeme, value, strictMode))
+                primitiveConstructor.SetExtra(set.Name.Lexeme, value);
             return value;
         }
         if (obj is ISharpTSMutableBuiltIn builtInProto)

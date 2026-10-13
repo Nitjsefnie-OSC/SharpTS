@@ -1054,13 +1054,7 @@ public partial class Interpreter
             SharpTSArrayGlobal arrayGlobal => arrayGlobal.DeleteProperty(name),
             SharpTSObjectNamespace objectNamespace => objectNamespace.DeleteProperty(name),
             SharpTSGlobalThis globalThis => globalThis.DeleteProperty(name),
-            SharpTSStringNamespace when name == "prototype" =>
-                DeleteNonConfigurableClassPrototype(name, strictMode),
-            SharpTSStringNamespace stringNamespace => stringNamespace.DeleteProperty(name),
-            SharpTSNumberNamespace numberNamespace => numberNamespace.DeletePropertyStrict(name, strictMode),
-            SharpTSBooleanNamespace when name == "prototype" =>
-                DeleteNonConfigurableClassPrototype(name, strictMode),
-            SharpTSBooleanNamespace booleanNamespace => booleanNamespace.DeleteProperty(name),
+            ISharpTSPrimitiveConstructor constructor => constructor.DeletePropertyStrict(name, strictMode),
             SharpTSFunctionPrototype functionPrototype => functionPrototype.DeleteProperty(name),
             SharpTSArrayPrototype arrayPrototype => arrayPrototype.DeleteProperty(name),
             SharpTSStringPrototype stringPrototype => stringPrototype.DeleteProperty(name),
@@ -1119,7 +1113,7 @@ public partial class Interpreter
                 SharpTSClassPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSArray array => array.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSMath math => math.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSNumberNamespace number => number.DeleteBySymbolStrict(symbol, strictMode),
+                ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSStringPrototype stringPrototype
                     => stringPrototype.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSJSON json => json.DeleteBySymbolStrict(symbol, strictMode),

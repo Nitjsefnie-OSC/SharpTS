@@ -1080,7 +1080,7 @@ public partial class Parser
                             ReturnType: accessorReturnType,
                             HasOwnThis: true,
                             ReturnTypeNode: accessorReturnTypeNode
-                        );
+                        ) { IsMethod = true };
                         RecordFunctionExpressionSyntax(accessorExpr, propertyStart, parameterStart,
                             parameterEnd, headerEnd, bodyStart);
                         properties.Add(new Expr.Property(
@@ -1373,7 +1373,7 @@ public partial class Parser
             IsAsync: isAsync,
             IsGenerator: isGenerator,
             ThisTypeNode: thisTypeNode,
-            ReturnTypeNode: returnTypeNode);
+            ReturnTypeNode: returnTypeNode) { IsMethod = true };
         RecordFunctionExpressionSyntax(arrow, start, parameterStart, parameterEnd, headerEnd, bodyStart);
         return arrow;
     }

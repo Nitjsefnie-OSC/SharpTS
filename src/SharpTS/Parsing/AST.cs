@@ -204,6 +204,10 @@ public abstract record Expr
     /// </summary>
     public record ArrowFunction(Token? Name, List<TypeParam>? TypeParams, string? ThisType, List<Stmt.Parameter> Parameters, Expr? ExpressionBody, List<Stmt>? BlockBody, string? ReturnType, bool HasOwnThis = false, bool IsAsync = false, bool IsGenerator = false, TypeNode? ThisTypeNode = null, TypeNode? ReturnTypeNode = null) : Expr
     {
+        // Object methods/accessors bind their own receiver but have no [[Construct]].
+        // Ordinary function expressions also have HasOwnThis, so retain this distinction.
+        public bool IsMethod { get; init; }
+
         // #945: marks the sync forwarding arrow NestedFunctionLifter substitutes for a capturing nested
         // generator that was hoisted into a generator encloser's body. Tells the generator function-DC
         // pass (ComputeMutatedCapturedGeneratorVars) to route this arrow's read-only forwarded captures

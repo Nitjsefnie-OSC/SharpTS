@@ -470,7 +470,7 @@ public partial class ILCompiler
             MarkPadsUndefined(_closures.ArrowMethods[arrow]);
             MarkFunctionLength(_closures.ArrowMethods[arrow], arrow.Parameters);
             MarkFunctionName(_closures.ArrowMethods[arrow], arrow.Name?.Lexeme ?? "");
-            if (!arrow.HasOwnThis)
+            if (!arrow.HasOwnThis || arrow.IsMethod)
                 MarkNonConstructible(_closures.ArrowMethods[arrow]);
         }
     }
@@ -2030,6 +2030,13 @@ public partial class ILCompiler
         else if (_types.IsBoolean(arrowReturnType))
         {
             emitter.EnsureBoolean();
+        }
+        else if (!arrowReturnType.IsValueType)
+        {
+            // Dynamic method/property reads leave an object-valued result even
+            // when the arrow's return slot names a particular guest class.
+            emitter.EmitBoxIfNeeded(expression);
+            il.Emit(OpCodes.Castclass, arrowReturnType);
         }
 
         il.Emit(OpCodes.Ret);

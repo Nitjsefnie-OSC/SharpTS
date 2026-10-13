@@ -477,6 +477,15 @@ public class VariableResolver : AstVisitorBase
         var enclosingClass = _currentClass;
         _currentClass = expr.SuperclassExpr != null ? ClassType.Subclass : ClassType.Class;
 
+        // Named expressions have a self-reference scope outside the class body.
+        // Include it when resolving enclosing captures so depths match execution.
+        if (expr.Name != null)
+        {
+            BeginScope();
+            Declare(expr.Name.Lexeme);
+            Define(expr.Name.Lexeme);
+        }
+
         // If there's a superclass, create a scope for 'super'
         if (expr.SuperclassExpr != null)
         {
@@ -522,6 +531,9 @@ public class VariableResolver : AstVisitorBase
 
         if (expr.SuperclassExpr != null)
             EndScope(); // 'super' scope
+
+        if (expr.Name != null)
+            EndScope(); // named expression scope
 
         _currentClass = enclosingClass;
     }

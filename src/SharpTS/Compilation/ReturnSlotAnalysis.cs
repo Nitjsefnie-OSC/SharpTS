@@ -5,10 +5,9 @@ namespace SharpTS.Compilation;
 
 /// <summary>
 /// Decides whether a function/arrow/method body has a return whose value can be the runtime
-/// <c>undefined</c> sentinel despite a <c>number</c>/<c>boolean</c> declared return type — the
-/// type checker flags those return-value expressions in the <see cref="TypeMap"/> (#344). The IL
-/// compiler consults this to widen the otherwise-unboxed <c>double</c>/<c>bool</c> return slot
-/// back to <c>object</c>, so a legitimate <c>undefined</c> is not coerced to <c>NaN</c>/<c>false</c>.
+/// <c>undefined</c> sentinel despite a numeric, boolean or class-instance declared return type.
+/// The checker flags those expressions in <see cref="TypeMap"/> so the compiler can widen the
+/// return slot to <c>object</c>, preserving the value instead of coercing it or failing a class cast.
 /// </summary>
 internal static class ReturnSlotAnalysis
 {

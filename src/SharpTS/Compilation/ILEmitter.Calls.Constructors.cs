@@ -532,18 +532,32 @@ public partial class ILEmitter
         var typeLocal = IL.DeclareLocal(_ctx.Types.Type);
         IL.Emit(OpCodes.Stloc, typeLocal);
 
-        // Test before evaluating arguments so Function's spread arguments use
-        // the ordinary call expansion exactly once.
+        // Test before evaluating arguments so these built-ins use ordinary
+        // call expansion exactly once, including spreads and surplus values.
         var notFunctionType = IL.DefineLabel();
-        var functionDone = IL.DefineLabel();
+        var builtInDone = IL.DefineLabel();
         IL.Emit(OpCodes.Ldloc, typeLocal);
         IL.Emit(OpCodes.Ldtoken, _ctx.Runtime!.FunctionValues.Type);
         IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Type, "GetTypeFromHandle", _ctx.Types.RuntimeTypeHandle));
         IL.Emit(OpCodes.Bne_Un, notFunctionType);
         EmitArgsArrayWithSpread(n.Arguments);
         IL.Emit(OpCodes.Call, _ctx.Runtime.FunctionConstruction.Construct);
-        IL.Emit(OpCodes.Br, functionDone);
+        IL.Emit(OpCodes.Br, builtInDone);
         IL.MarkLabel(notFunctionType);
+
+        // Number constructor values carry the Double Type token. CLR Double
+        // has no public constructor; the guest construction helper applies
+        // Number coercion and creates a fresh boxed primitive instead.
+        var notNumberType = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, typeLocal);
+        IL.Emit(OpCodes.Ldtoken, _ctx.Types.Double);
+        IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Bne_Un, notNumberType);
+        IL.Emit(OpCodes.Ldloc, typeLocal);
+        EmitArgsArrayWithSpread(n.Arguments);
+        IL.Emit(OpCodes.Call, _ctx.Runtime.DynamicConstruction.Value);
+        IL.Emit(OpCodes.Br, builtInDone);
+        IL.MarkLabel(notNumberType);
 
         List<LocalBuilder> argTemps = [];
         foreach (var arg in n.Arguments)
@@ -761,7 +775,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, argsArrayLocal);
         IL.Emit(OpCodes.Callvirt, invokeMethod);
         IL.MarkLabel(constructionDone);
-        IL.MarkLabel(functionDone);
+        IL.MarkLabel(builtInDone);
     }
 
     /// <summary>

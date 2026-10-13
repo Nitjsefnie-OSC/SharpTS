@@ -674,6 +674,16 @@ public class ClosureAnalyzer : AstVisitorBase
             if (method.Body != null)
                 AnalyzeFunctionBody(method, method.Parameters, method.Body);
         }
+        if (stmt.Accessors != null)
+        {
+            foreach (var accessor in stmt.Accessors)
+            {
+                var parameters = accessor.SetterParam != null
+                    ? new List<Stmt.Parameter> { accessor.SetterParam }
+                    : [];
+                AnalyzeFunctionBody(accessor, parameters, accessor.Body);
+            }
+        }
     }
 
     protected override void VisitClassExpr(Expr.ClassExpr expr)

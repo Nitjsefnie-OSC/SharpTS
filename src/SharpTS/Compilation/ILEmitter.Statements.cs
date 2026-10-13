@@ -2318,7 +2318,22 @@ public partial class ILEmitter
         // Explicit null remains present and fails as non-callable below.
         IL.Emit(OpCodes.Ldloc, iteratorFnLocal);
         IL.Emit(OpCodes.Isinst, _ctx.Runtime!.Sentinels.UndefinedType);
-        builder.Emit_Brtrue(indexBasedLabel);
+        var presentIteratorMethod = builder.DefineLabel("forof_present_iterator_method");
+        builder.Emit_Brfalse(presentIteratorMethod);
+        // Constructor values have no indexed/CLR enumerable fallback. Reject
+        // a missing method here instead of materializing and reading the
+        // same observable iterator getter for a second time.
+        var missingConstructorMethod = builder.DefineLabel("forof_missing_constructor_method");
+        IL.Emit(OpCodes.Ldloc, iterableLocal);
+        IL.Emit(OpCodes.Isinst, _ctx.Types.Type);
+        builder.Emit_Brtrue(missingConstructorMethod);
+        IL.Emit(OpCodes.Ldloc, iterableLocal);
+        IL.Emit(OpCodes.Isinst, _ctx.Runtime.ClassDefinitions.Type);
+        builder.Emit_Brfalse(indexBasedLabel);
+        builder.MarkLabel(missingConstructorMethod);
+        GuestErrorEmitter.ThrowError(IL, _ctx.Runtime.Errors.CreateException,
+            _ctx.Runtime.Errors.TypeErrorConstructor, "Value is not iterable");
+        builder.MarkLabel(presentIteratorMethod);
 
         // ===== Iterator protocol path =====
         {

@@ -1270,9 +1270,14 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(tryRegistryLabel);
         var ordinaryRegistry = il.DefineLabel();
+        var ordinaryUserClass = il.DefineLabel();
+        // Constructors use ordinary symbol lookup so inherited accessor
+        // descriptors execute with the constructor as their receiver.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, ordinaryUserClass);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.ClassDefinitions.InstanceInterface);
-        var ordinaryUserClass = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, ordinaryUserClass);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.ObjectFields.Interface);
@@ -1291,19 +1296,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Br, returnUndefinedLabel);
         il.MarkLabel(registryValueLabel);
-        // Declared static protocol methods need the same callable wrapper as
-        // ordinary member reads. Reflection ignores the receiver of a static
-        // MethodInfo; InvokeWithThis supplies it to the emitted method body.
-        var registryInstanceMethod = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.Type);
-        il.Emit(OpCodes.Brfalse, registryInstanceMethod);
-        il.Emit(OpCodes.Stloc, valueLocal);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Castclass, _types.MethodInfo);
-        il.Emit(OpCodes.Newobj, inputs.FunctionConstruction.Constructor);
-        il.MarkLabel(registryInstanceMethod);
         il.Emit(OpCodes.Ret);
 
         // return undefined;

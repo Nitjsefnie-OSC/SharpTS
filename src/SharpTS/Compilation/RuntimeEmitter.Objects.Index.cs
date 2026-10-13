@@ -296,6 +296,26 @@ public partial class RuntimeEmitter
         var symbolFoundLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, symbolFoundLabel);
 
+        var symMethodLocal = il.DeclareLocal(_types.Object);
+        var symbolMethodFound = il.DefineLabel();
+        void EmitOwnConstructorMethodProbe(Action emitOwner)
+        {
+            var next = il.DefineLabel();
+            emitOwner();
+            il.Emit(OpCodes.Isinst, _types.Type);
+            il.Emit(OpCodes.Brfalse, next);
+            emitOwner();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindOwnMethod);
+            il.Emit(OpCodes.Stloc, symMethodLocal);
+            il.Emit(OpCodes.Ldloc, symMethodLocal);
+            il.Emit(OpCodes.Brtrue, symbolMethodFound);
+            il.MarkLabel(next);
+        }
+        // Own declared static methods are properties of the constructor and
+        // must win over an ancestor's Symbol accessor or data descriptor.
+        EmitOwnConstructorMethodProbe(() => il.Emit(OpCodes.Ldarg_0));
+
         // Definition-owned computed members live on the guest prototype,
         // independently of the shared CLR template's symbol registry.
         var prototype = il.DeclareLocal(_types.Object);
@@ -313,6 +333,31 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, symbolValueLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
         il.Emit(OpCodes.Brtrue, symbolFoundLabel);
+
+        // A generic base reached through CLR inheritance can be Base<T> or
+        // Base<double>; its guest static descriptors belong to Base's open
+        // constructor identity. Preserve exact storage before that fallback.
+        var nextPrototype = il.DefineLabel();
+        var prototypeType = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Stloc, prototypeType);
+        il.Emit(OpCodes.Ldloc, prototypeType);
+        il.Emit(OpCodes.Brfalse, nextPrototype);
+        il.Emit(OpCodes.Ldloc, prototypeType);
+        il.Emit(OpCodes.Call, inputs.SymbolAccessors.RegistryKey);
+        il.Emit(OpCodes.Stloc, prototypeType);
+        il.Emit(OpCodes.Ldloc, prototypeType);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Beq, nextPrototype);
+        il.Emit(OpCodes.Ldloc, prototypeType);
+        il.Emit(OpCodes.Call, inputs.Symbols.GetStorage);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, symbolValueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+        il.Emit(OpCodes.Brtrue, symbolFoundLabel);
+        il.MarkLabel(nextPrototype);
+        EmitOwnConstructorMethodProbe(() => il.Emit(OpCodes.Ldloc, prototype));
         il.Emit(OpCodes.Ldloc, prototype);
         il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
         il.Emit(OpCodes.Stloc, prototype);
@@ -348,13 +393,13 @@ public partial class RuntimeEmitter
         // their existing symbol dispatch path.
         {
             var noSymMethodLabel = il.DefineLabel();
-            var symMethodLocal = il.DeclareLocal(_types.Object);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindMethod);
             il.Emit(OpCodes.Stloc, symMethodLocal);
             il.Emit(OpCodes.Ldloc, symMethodLocal);
             il.Emit(OpCodes.Brfalse, noSymMethodLabel);
+            il.MarkLabel(symbolMethodFound);
 
             var instanceMethod = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);

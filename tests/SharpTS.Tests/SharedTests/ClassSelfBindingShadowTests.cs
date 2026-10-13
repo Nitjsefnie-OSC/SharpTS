@@ -26,6 +26,18 @@ public sealed class ClassSelfBindingShadowTests
             console.log(instance.self() === C, C.read(value) === value, C.local(value) === value, C.self() === C);
             """, "true true true\ntrue true\ntrue true true true\n"];
 
+        yield return ["shadowed-static-call", """
+            class C {
+                static foo() { return 1; }
+                call(C: any) { return C.foo(); }
+                local(value: any) { const C = value; return C.foo(); }
+                arrow(C: any) { return () => C.foo(); }
+                static call(C: any) { return C.foo(); }
+            }
+            const value: any = { foo() { return 42; } }, instance = new C();
+            console.log(instance.call(value), instance.local(value), instance.arrow(value)(), C.call(value), C.foo());
+            """, "42 42 42 42 1\n"];
+
         yield return ["expression", """
             const Owner: any = class C {
                 read(C: any) { return C; }

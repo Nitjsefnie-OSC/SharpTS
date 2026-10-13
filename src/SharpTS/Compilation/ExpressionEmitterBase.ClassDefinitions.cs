@@ -85,9 +85,7 @@ public abstract partial class ExpressionEmitterBase
             // A named enclosing expression has no outer variable declaration to
             // capture. Its checked constructor binding identifies the lexical
             // self-name, whose evaluated definition travels in the owner chain.
-            if (Ctx.TryGetParameter(name, out _) || Ctx.Locals.GetLocal(name) != null
-                || GetHoistedVariableField(name) != null
-                || Ctx.CapturedFields?.ContainsKey(name) == true
+            if (HasClassDefinitionCaptureShadow(name)
                 || TryGetClassDefinitionCaptureSlot(name, out _)) return false;
             var constructor = Ctx.TypeMap?.Get(variable);
             if (constructor is not (SharpTS.TypeSystem.TypeInfo.Class or SharpTS.TypeSystem.TypeInfo.GenericClass))

@@ -1500,6 +1500,7 @@ public abstract partial class ExpressionEmitterBase
     protected bool TryEmitClassStaticDispatch(Expr.Call c, Expr.Get methodGet)
     {
         if (methodGet.Object is not Expr.Variable classVar ||
+            HasClassDefinitionCaptureShadow(classVar.Name.Lexeme) ||
             !Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out var classBuilder))
         {
             return false;

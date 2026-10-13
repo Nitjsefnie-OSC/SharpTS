@@ -677,6 +677,8 @@ public partial class ILCompiler
         il.Emit(OpCodes.Stfld, EmitterTypeHelpers.SelfFieldReference(_classExprs.DefinitionFields[classExpr]));
         var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, fieldsField, ctorBuilder);
         ctx.IsInstanceMethod = true;
+        if (constructor != null)
+            SetupSyncMethodFunctionDisplayClass(ctx, il, constructor);
         ctx.CurrentMethodReturnType = _types.Void;
         ConfigureClassConstructorReturns(ctx, constructor, classExpr.SuperclassExpr != null);
 
@@ -802,6 +804,8 @@ public partial class ILCompiler
                 constructor.Body,
                 constructorParamTypes,
                 argumentOffset: 1);
+            InitializeSyncMethodCapturedParameters(
+                ctx, il, constructor, ctorBuilder, argumentOffset: 1);
 
             // Base-class fields are initialized before the constructor body. Derived-class
             // fields are initialized immediately after the explicit super() establishes this.

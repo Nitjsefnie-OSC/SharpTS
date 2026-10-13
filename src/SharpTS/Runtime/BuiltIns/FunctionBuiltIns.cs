@@ -153,7 +153,7 @@ public static class FunctionBuiltIns
         var argsArray = args.Length > 1 ? args[1].ToObject() : null;
 
         List<object?> callArgs;
-        if (argsArray == null)
+        if (argsArray is null or SharpTSUndefined)
         {
             callArgs = new List<object?>();
         }

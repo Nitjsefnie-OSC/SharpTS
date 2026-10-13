@@ -591,8 +591,8 @@ public static class ParameterTypeResolver
     };
 
     /// <summary>
-    /// Resolves constructor parameter types for a class, widening defaulted params to
-    /// <c>object</c> so the entry prologue can distinguish undefined from null (#705).
+    /// Resolves constructor parameter types for a class. Guest number/boolean and
+    /// defaulted parameters use object slots to preserve null/undefined across construction.
     /// </summary>
     public static Type[] ResolveConstructorParameters(
         string className,
@@ -602,6 +602,11 @@ public static class ParameterTypeResolver
     {
         var resolved = ResolveConstructorParametersCore(className, parameters, typeMapper, typeMap);
         WidenDefaultedParamsToObject(resolved, parameters, typeof(object));
+        // A guest constructor can be reached through a runtime-valued or bound
+        // callee. Type annotations do not prove those supplied values are primitives.
+        for (int index = 0; index < resolved.Length; index++)
+            if (typeMapper.Types.IsDouble(resolved[index]) || typeMapper.Types.IsBoolean(resolved[index]))
+                resolved[index] = typeof(object);
         ForceRestParamsToListMarker(resolved, parameters);
         return resolved;
     }

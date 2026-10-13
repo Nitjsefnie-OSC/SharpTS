@@ -83,6 +83,53 @@ public class ArraySubclassTests
     }
 
     [Theory, ModeData]
+    public void ExtendsArray_InheritedIteratorObservesLiveElementsAndLoopLabels(ExecutionMode mode)
+    {
+        const string source = """
+            class Values extends Array {}
+            const values: any = new Values(3, 4);
+            let result = "";
+            outer: for (const value of values) {
+                result += value;
+                if (value === 3) { values.push(5); continue outer; }
+                if (value === 5) break outer;
+            }
+            console.log(result, values.length);
+            """;
+        Assert.Equal("345 3\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void ExtendsArray_DeclaredIteratorValuesPreserveOverridesAndGeneratorClose()
+    {
+        const string source = """
+            class NativeReverse extends Array {
+                [Symbol.iterator]() {
+                    const values: any = this;
+                    return [values[1], values[0]].values();
+                }
+            }
+            class GeneratorReverse extends Array {
+                *[Symbol.iterator]() {
+                    const values: any = this;
+                    try { yield values[1]; yield values[0]; }
+                    finally { console.log("closed"); }
+                }
+            }
+            const native: any = new NativeReverse(3, 4), generator: any = new GeneratorReverse(5, 6);
+            console.log(native[Symbol.iterator] === NativeReverse.prototype[Symbol.iterator],
+                generator[Symbol.iterator] === GeneratorReverse.prototype[Symbol.iterator]);
+            let result = "";
+            for (const value of native) result += value;
+            console.log(result);
+            for (const value of generator) { console.log(value); break; }
+            """;
+        // Interpreted Array subclasses currently bypass declared iterator
+        // overrides; protect the compiled canonical method-value path here.
+        Assert.Equal("true true\n43\n6\nclosed\n", TestHarness.RunCompiled(source));
+    }
+
+    [Theory, ModeData]
     public void ExtendsArray_ConstructorWithSuper(ExecutionMode mode)
     {
         var source = """

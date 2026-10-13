@@ -1457,10 +1457,9 @@ public partial class Interpreter
         if (instance.HasSymbolProperty(symbol)) return instance.GetBySymbol(symbol);
         var descriptor = instance.GetClass().FindInstanceSymbolPropertyDescriptor(symbol);
         if (!TryReadDescriptor(descriptor, instance, out var value)) return SharpTSUndefined.Instance;
-        // Instance method reads retain their existing binding behavior. The
-        // prototype itself exposes the canonical unbound descriptor value.
-        return descriptor is { HasValue: true } && value is ISharpTSCallable method
-            ? SharpTSClass.BindMethod(method, instance) : value;
+        // A method is an ordinary data-property value. Member calls provide
+        // the dynamic receiver separately, preserving identity on every read.
+        return value;
     }
 
     /// <summary>

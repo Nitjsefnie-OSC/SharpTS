@@ -204,10 +204,7 @@ public sealed class StaticPrivateMethodCallBrandTests
     }
 
     public static IEnumerable<object[]> ParityCases()
-        // Interpreter spread expansion retains a separate follow-up (#2064).
-        => Cases().SelectMany(row => ((string)row[0] is "arguments" or "generic" or "suspended"
-                ? new[] { ExecutionMode.Compiled }
-                : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
+        => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, ModeData]

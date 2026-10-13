@@ -3283,11 +3283,7 @@ public partial class Interpreter
         object? obj = Evaluate(expr.Object);
         object? callee = GetPrivateCore(obj, expr.Name.Lexeme).ToObject();
 
-        List<object?> arguments = [];
-        foreach (var arg in expr.Arguments)
-        {
-            arguments.Add(Evaluate(arg));
-        }
+        List<object?> arguments = EvaluateNewArguments(expr.Arguments);
 
         return InvokePrivateCall(callee, obj, arguments);
     }
@@ -3300,11 +3296,7 @@ public partial class Interpreter
         object? obj = (await EvaluateAsync(expr.Object)).ToObject();
         object? callee = GetPrivateCore(obj, expr.Name.Lexeme).ToObject();
 
-        List<object?> arguments = [];
-        foreach (var arg in expr.Arguments)
-        {
-            arguments.Add((await EvaluateAsync(arg)).ToObject());
-        }
+        List<object?> arguments = await EvaluateNewArgumentsCore(_asyncContext, expr.Arguments);
 
         return InvokePrivateCall(callee, obj, arguments);
     }

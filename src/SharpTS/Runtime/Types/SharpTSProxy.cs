@@ -276,12 +276,15 @@ public class SharpTSProxy : ISharpTSCallable
     /// is forwarded to the target, including through nested proxies.
     /// </summary>
     internal object? TrapGet(SharpTSSymbol prop, Interpreter interp)
+        => TrapGet(prop, interp, this);
+
+    internal object? TrapGet(SharpTSSymbol prop, Interpreter interp, object receiver)
     {
         var trap = GetTrapCallable("get", interp);
         if (trap == null)
-            return interp.GetSymbolPropertyValue(_target, prop);
+            return interp.GetSymbolPropertyValue(_target, prop, receiver);
 
-        object? result = InvokeTrap(trap, interp, [_target, prop, this]);
+        object? result = InvokeTrap(trap, interp, [_target, prop, receiver]);
         ValidateGetTrapResult(prop, result, interp);
         return result;
     }

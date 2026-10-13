@@ -30,10 +30,14 @@ public partial class RuntimeEmitter
         EmittedClassDefinitionRuntime ClassDefinitions,
         EmittedClassPrototypeRuntime ClassPrototypes,
         EmittedAbortRuntime? Abort,
+        EmittedBooleanRuntime Booleans,
         EmittedBoxedPrimitiveRuntime BoxedPrimitives,
+        EmittedErrorRuntime Errors,
         EmittedFunctionBindingRuntime FunctionBindings,
         MethodBuilder GetFunctionMethod,
+        MethodBuilder InvokeMethodValue,
         EmittedObjectPrototypeRuntime ObjectPrototypes,
+        EmittedObjectReadRuntime ObjectRead,
         EmittedPromiseRuntime? Promise,
         EmittedSymbolRuntime Symbols,
         TypeBuilder TSFunctionType,
@@ -640,25 +644,76 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitInstanceOf(TypeBuilder typeBuilder, EmittedOperatorRuntime operators, InstanceOfInputs inputs)
+    private void DeclareInstanceOf(TypeBuilder typeBuilder, EmittedOperatorRuntime operators)
     {
-        var method = typeBuilder.DefineMethod(
+        operators.InstanceOf = typeBuilder.DefineMethod(
             "InstanceOf",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Boolean,
             [_types.Object, _types.Object]
         );
-        operators.InstanceOf = method;
+    }
+
+    private void EmitInstanceOf(TypeBuilder typeBuilder, EmittedOperatorRuntime operators, InstanceOfInputs inputs)
+    {
+        var method = operators.InstanceOf;
 
         var il = method.GetILGenerator();
         var falseLabel = il.DefineLabel();
         var trueLabel = il.DefineLabel();
 
-        // if (instance == null || classType == null) return false
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, falseLabel);
+        // Protocol lookup precedes bound-target delegation and primitive-LHS
+        // shortcuts: a custom handler can accept null or any other guest value.
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, falseLabel);
+
+        var ordinaryLabel = il.DefineLabel();
+        var lookupHandlerLabel = il.DefineLabel();
+        var rhsKind = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, operators.TypeOf);
+        il.Emit(OpCodes.Stloc, rhsKind);
+        il.Emit(OpCodes.Ldloc, rhsKind);
+        il.Emit(OpCodes.Ldstr, "object");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, lookupHandlerLabel);
+        il.Emit(OpCodes.Ldloc, rhsKind);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brfalse, ordinaryLabel);
+        il.MarkLabel(lookupHandlerLabel);
+
+        var handler = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldsfld, inputs.Symbols.HasInstance);
+        il.Emit(OpCodes.Call, inputs.ObjectRead.Index);
+        il.Emit(OpCodes.Stloc, handler);
+        il.Emit(OpCodes.Ldloc, handler);
+        il.Emit(OpCodes.Brfalse, ordinaryLabel);
+        il.Emit(OpCodes.Ldloc, handler);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, ordinaryLabel);
+        il.Emit(OpCodes.Ldloc, handler);
+        il.Emit(OpCodes.Call, operators.TypeOf);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        var callableHandlerLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, callableHandlerLabel);
+        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
+            "Symbol.hasInstance is not a function");
+        il.MarkLabel(callableHandlerLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, handler);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
+        il.Emit(OpCodes.Call, inputs.Booleans.IsTruthy);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(ordinaryLabel);
 
         // Delegate through each bound target so ordinary constructor prototype
         // lookup remains live and repeated bindings retain target identity.
@@ -680,6 +735,9 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notBound);
         }
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, falseLabel);
 
         // A plain Dictionary RHS is never a constructor — letting it reach the
         // IsAssignableFrom fallback matched EVERY dict-shaped value (object
@@ -970,6 +1028,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(falseLabel);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
+        operators.MarkInstanceOfBodyEmitted();
     }
 
     /// <summary>

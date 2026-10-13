@@ -917,26 +917,9 @@ public partial class RuntimeEmitter
         // InstanceOf can brand-check the AbortSignal singleton (#246).
         // Populate bodies are emitted later (EmitNamespaceSingletons).
         DefineNamespaceSingletonFields(typeBuilder, runtime.Abort, runtime.Intl);
-        // InstanceOf walks the prototype chain via GetFunctionMethod (for the
-        // `F.prototype` fetch) — must be emitted AFTER GetFunctionMethod so
-        // `runtime.FunctionIntrospection.GetProperty` is populated when InstanceOf references it.
-        EmitInstanceOf(
-            typeBuilder,
-            runtime.Operators,
-            new InstanceOfInputs(
-                runtime.ClassDefinitions,
-                runtime.ClassPrototypes,
-                runtime.Abort,
-                runtime.BoxedPrimitives,
-                runtime.FunctionBindings,
-                runtime.FunctionIntrospection.GetProperty,
-                runtime.ObjectPrototypes,
-                runtime.Promise,
-                runtime.Symbols,
-                runtime.FunctionValues.Type,
-                runtime.Sentinels.UndefinedType
-            )
-        );
+        // Keep operator metadata order stable while deferring the body until
+        // receiver-aware Symbol lookup and invocation are available.
+        DeclareInstanceOf(typeBuilder, runtime.Operators);
         EmitToPascalCase(typeBuilder, runtime.ReflectedMethods);  // Must be emitted before GetFieldsProperty/SetFieldsProperty
         EmitSafeGetMethod(typeBuilder, runtime.ReflectedMethods); // Must be emitted before GetFieldsProperty/SetFieldsProperty
         // ArrayConstructor (#61) must come before InvokeValue since InvokeValue's
@@ -1518,6 +1501,29 @@ public partial class RuntimeEmitter
                 runtime.Booleans,
                 runtime.Numbers,
                 runtime.BigInt
+            )
+        );
+        // InstanceOf needs ordinary Symbol lookup, receiver-aware invocation,
+        // and function prototype lookup; all their tokens now exist.
+        EmitInstanceOf(
+            typeBuilder,
+            runtime.Operators,
+            new InstanceOfInputs(
+                runtime.ClassDefinitions,
+                runtime.ClassPrototypes,
+                runtime.Abort,
+                runtime.Booleans,
+                runtime.BoxedPrimitives,
+                runtime.Errors,
+                runtime.FunctionBindings,
+                runtime.FunctionIntrospection.GetProperty,
+                runtime.Invocation.Method,
+                runtime.ObjectPrototypes,
+                runtime.ObjectRead,
+                runtime.Promise,
+                runtime.Symbols,
+                runtime.FunctionValues.Type,
+                runtime.Sentinels.UndefinedType
             )
         );
         // DisposeResource uses the shared Symbol indexed-get path so descriptor

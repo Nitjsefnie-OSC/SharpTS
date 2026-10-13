@@ -9,6 +9,7 @@ public sealed class EmittedOperatorRuntime
     internal EmittedOperatorRuntime() { }
     public bool IsComplete { get; private set; }
     private bool _equalityBodyEmitted;
+    private bool _instanceOfBodyEmitted;
 
     private MethodBuilder? _updateNumeric;
     public MethodBuilder UpdateNumeric
@@ -96,6 +97,15 @@ public sealed class EmittedOperatorRuntime
         _equalityBodyEmitted = true;
     }
 
+    internal void MarkInstanceOfBodyEmitted()
+    {
+        EnsureMutable();
+        _ = InstanceOf;
+        if (_instanceOfBodyEmitted)
+            throw new InvalidOperationException("Operator InstanceOf body emission is already complete.");
+        _instanceOfBodyEmitted = true;
+    }
+
     private static T Require<T>(T? handle, [CallerMemberName] string name = "") where T : class =>
         handle ?? throw new InvalidOperationException("Operator metadata '" + name + "' has not been declared.");
 
@@ -130,6 +140,8 @@ public sealed class EmittedOperatorRuntime
         _ = WarnSloppyDeleteVariable;
         if (!_equalityBodyEmitted)
             throw new InvalidOperationException("Operator Equality body has not been emitted.");
+        if (!_instanceOfBodyEmitted)
+            throw new InvalidOperationException("Operator InstanceOf body has not been emitted.");
         IsComplete = true;
     }
 }

@@ -738,17 +738,18 @@ public partial class Interpreter
     /// preserving accessor invocation and ordinary object prototype lookup.
     /// </summary>
     internal object? GetSymbolPropertyValue(object obj, SharpTSSymbol symbol)
+        => GetSymbolPropertyValue(obj, symbol, obj);
+
+    internal object? GetSymbolPropertyValue(object obj, SharpTSSymbol symbol, object receiver)
     {
         if (obj is string or bool or double or SharpTSBigInt or SharpTSSymbol)
             return SharpTSUndefined.Instance;
 
-        if (obj is SharpTSProxy proxy)
-            return proxy.TrapGet(symbol, this);
-
-        object receiver = obj;
         object? current = obj;
         for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
         {
+            if (current is SharpTSProxy proxy)
+                return proxy.TrapGet(symbol, this, receiver);
             if (current is SharpTSClassPrototype prototype)
             {
                 if (TryReadDescriptor(prototype.GetOwnPropertyDescriptor(symbol), receiver, out var value))
@@ -819,7 +820,20 @@ public partial class Interpreter
                     : SharpTSUndefined.Instance;
             }
 
-            return PerformIndexGet(null!, current, symbol).ToObject();
+            if (current is SharpTSClass klass)
+                return GetClassSymbolValue(klass, symbol);
+            if (current is SharpTSInstance instance)
+                return GetInstanceSymbolValue(instance, symbol);
+            if (current is SharpTSRegExp)
+                return PerformIndexGet(null!, current, symbol).ToObject();
+            if (current is ISharpTSCallable)
+            {
+                current = GetFunctionPrototype();
+                continue;
+            }
+            if (current is ISharpTSMutableBuiltIn)
+                return PerformIndexGet(null!, current, symbol).ToObject();
+            return SharpTSUndefined.Instance;
         }
         return SharpTSUndefined.Instance;
     }

@@ -1160,6 +1160,18 @@ public partial class Interpreter
 
     private object EvaluateInstanceof(object? left, object? right)
     {
+        if (IsJsObject(right))
+        {
+            var handler = GetSymbolPropertyValue(right!, SharpTSSymbol.HasInstance);
+            if (handler is not (null or SharpTSUndefined))
+            {
+                if (handler is not ISharpTSCallable callable
+                    || handler is SharpTSProxy { IsCallable: false })
+                    throw new ThrowException(new SharpTSTypeError("Symbol.hasInstance is not a function"));
+                return IsTruthy(FunctionBuiltIns.CallWithThis(this, callable, right, [left]));
+            }
+        }
+
         // Bound functions delegate to their target, including through repeated
         // bindings. Their own prototype property does not participate.
         if (right is BoundFunction bound)

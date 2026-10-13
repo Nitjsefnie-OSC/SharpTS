@@ -84,10 +84,13 @@ public partial class SharpTSClass
         => _staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol)
             ?? (_staticSymbolProperties?.TryGetValue(symbol, out var value) == true
                 ? new SharpTSPropertyDescriptor(value, writable: true, enumerable: true, configurable: true)
+                    { HasValue = true } : null)
+            ?? (_staticSymbolMethods?.TryGetValue(symbol, out var method) == true
+                ? new SharpTSPropertyDescriptor(method, writable: true, enumerable: false, configurable: true)
                     { HasValue = true } : null);
 
     internal SharpTSPropertyDescriptor? FindStaticSymbolAccessorDescriptor(SharpTSSymbol symbol)
-        => _staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol)
+        => GetOwnStaticSymbolPropertyDescriptor(symbol)
             ?? Superclass?.FindStaticSymbolAccessorDescriptor(symbol);
 
     internal bool DefineStaticSymbolProperty(SharpTSSymbol symbol, SharpTSPropertyDescriptor descriptor)

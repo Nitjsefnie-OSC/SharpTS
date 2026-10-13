@@ -1464,26 +1464,13 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Reads a symbol-keyed static from a class: a declared static symbol-keyed
-    /// getter (`static get [Symbol.species]()`) wins over expando data statics.
+    /// Reads the nearest symbol-keyed static descriptor, including replacements
+    /// of declared methods and own properties shadowing inherited members.
     /// </summary>
     private object? GetClassSymbolValue(SharpTSClass klass, SharpTSSymbol symbol)
     {
-        if (TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), klass, out var accessorValue))
-            return accessorValue;
-        if (klass.FindStaticSymbolGetter(symbol) is { } getter)
-        {
-            return getter.BindStatic(klass).Call(this, []);
-        }
-        // Symbol-keyed methods are canonical data-property values. Their dynamic
-        // receiver is supplied only when the method is actually invoked.
-        if (klass.FindStaticSymbolMethod(symbol) is { } method)
-        {
-            return method;
-        }
-        return klass.TryGetStaticBySymbol(symbol, out var value)
-            ? value ?? SharpTSUndefined.Instance
-            : SharpTSUndefined.Instance;
+        return TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), klass, out var value)
+            ? value : SharpTSUndefined.Instance;
     }
 
     /// <summary>
@@ -2367,7 +2354,9 @@ public partial class Interpreter
                                     : field.ComputedKey != null ? SharpTSUndefined.Instance : null;
                                 if (field.IsPrivate) klass.InstallStaticPrivateField(field.Name.Lexeme, fieldValue);
                                 else if (field.ComputedKey != null && computedMemberKeys[field.ComputedKey] is SharpTSSymbol symbol)
-                                    klass.SetStaticBySymbol(symbol, fieldValue);
+                                    klass.DefineStaticSymbolProperty(symbol,
+                                        new SharpTSPropertyDescriptor(fieldValue, writable: true,
+                                            enumerable: true, configurable: true) { HasValue = true });
                                 else
                                     klass.SetStaticProperty(field.ComputedKey != null
                                         ? (string)computedMemberKeys[field.ComputedKey]! : field.Name.Lexeme, fieldValue);

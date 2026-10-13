@@ -130,10 +130,10 @@ public static class ReflectBuiltIns
                         return RuntimeValue.FromBoolean(klassBySymbol.DeleteStaticSymbolProperty(symbol, false));
                     if (target is SharpTSClassPrototype prototypeBySymbol)
                         return RuntimeValue.FromBoolean(prototypeBySymbol.DeleteBySymbolStrict(symbol, false));
-                    if (target is SharpTSNumberNamespace numberBySymbol)
-                        return RuntimeValue.FromBoolean(numberBySymbol.DeleteBySymbolStrict(symbol, false));
+                    if (target is ISharpTSPrimitiveConstructor primitiveConstructorBySymbol)
+                        return RuntimeValue.FromBoolean(primitiveConstructorBySymbol.DeleteBySymbolStrict(symbol, false));
                 }
-                var propertyKey = target is SharpTSNumberNamespace
+                var propertyKey = target is ISharpTSPrimitiveConstructor
                     ? interpreter.ToPropertyKeyString(args[1].ToObject())
                     : args[1].ToObject()?.ToString() ?? "";
                 switch (target)
@@ -151,8 +151,8 @@ public static class ReflectBuiltIns
                         return RuntimeValue.True;
                     case SharpTSClass klass:
                         return RuntimeValue.FromBoolean(klass.DeleteStaticProperty(propertyKey));
-                    case SharpTSNumberNamespace number:
-                        return RuntimeValue.FromBoolean(number.DeleteProperty(propertyKey));
+                    case ISharpTSPrimitiveConstructor primitiveConstructor:
+                        return RuntimeValue.FromBoolean(primitiveConstructor.DeleteProperty(propertyKey));
                     case Dictionary<string, object?> dict:
                         if ((PropertyDescriptorStore.IsFrozen(dict) || PropertyDescriptorStore.IsSealed(dict))
                             && dict.ContainsKey(propertyKey))
@@ -167,13 +167,13 @@ public static class ReflectBuiltIns
             "get" => BuiltInMethod.CreateV2("get", 2, 3, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.get requires a target object.");
-                if (target is SharpTSNumberNamespace number)
+                if (target is ISharpTSPrimitiveConstructor primitiveConstructor)
                 {
-                    object? numberReceiver = args.Length > 2 ? args[2].ToObject() : target;
+                    object? primitiveReceiver = args.Length > 2 ? args[2].ToObject() : target;
                     return RuntimeValue.FromBoxed(args[1].ToObject() is SharpTSSymbol symbol
-                        ? interpreter.GetNumberConstructorSymbolValue(number, symbol, numberReceiver)
-                        : interpreter.GetPropertyValue(number,
-                            interpreter.ToPropertyKeyString(args[1].ToObject()), numberReceiver));
+                        ? interpreter.GetPrimitiveConstructorSymbolValue(primitiveConstructor, symbol, primitiveReceiver)
+                        : interpreter.GetPropertyValue(primitiveConstructor,
+                            interpreter.ToPropertyKeyString(args[1].ToObject()), primitiveReceiver));
                 }
                 var propertyKey = args[1].ToObject()?.ToString() ?? "";
                 object? receiver = args.Length > 2 && !args[2].IsUndefined
@@ -189,13 +189,13 @@ public static class ReflectBuiltIns
             "set" => BuiltInMethod.CreateV2("set", 3, 4, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.set requires a target object.");
-                if (target is SharpTSNumberNamespace number)
+                if (target is ISharpTSPrimitiveConstructor primitiveConstructor)
                 {
-                    object? numberReceiver = args.Length > 3 ? args[3].ToObject() : target;
+                    object? primitiveReceiver = args.Length > 3 ? args[3].ToObject() : target;
                     return RuntimeValue.FromBoolean(args[1].ToObject() is SharpTSSymbol symbol
-                        ? SetNumberSymbolProperty(interpreter, number, symbol, args[2].ToObject(), numberReceiver)
-                        : SharpTSProxy.OrdinarySet(interpreter, number,
-                            interpreter.ToPropertyKeyString(args[1].ToObject()), args[2].ToObject(), numberReceiver));
+                        ? SetPrimitiveConstructorSymbolProperty(interpreter, primitiveConstructor, symbol, args[2].ToObject(), primitiveReceiver)
+                        : SharpTSProxy.OrdinarySet(interpreter, primitiveConstructor,
+                            interpreter.ToPropertyKeyString(args[1].ToObject()), args[2].ToObject(), primitiveReceiver));
                 }
                 var propertyKey = args[1].ToObject()?.ToString() ?? "";
                 var value = args[2].ToObject();
@@ -279,13 +279,13 @@ public static class ReflectBuiltIns
             "getOwnPropertyDescriptor" => BuiltInMethod.CreateV2("getOwnPropertyDescriptor", 2, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.getOwnPropertyDescriptor requires a target object.");
-                if (target is SharpTSNumberNamespace number)
+                if (target is ISharpTSPrimitiveConstructor primitiveConstructor)
                 {
-                    var numberDescriptor = args[1].ToObject() is SharpTSSymbol symbol
-                        ? number.GetOwnPropertyDescriptor(symbol)
-                        : number.GetOwnPropertyDescriptor(interpreter.ToPropertyKeyString(args[1].ToObject()));
-                    return numberDescriptor is null ? RuntimeValue.Undefined
-                        : RuntimeValue.FromBoxed(numberDescriptor.ToObject());
+                    var primitiveDescriptor = args[1].ToObject() is SharpTSSymbol symbol
+                        ? primitiveConstructor.GetOwnPropertyDescriptor(symbol)
+                        : primitiveConstructor.GetOwnPropertyDescriptor(interpreter.ToPropertyKeyString(args[1].ToObject()));
+                    return primitiveDescriptor is null ? RuntimeValue.Undefined
+                        : RuntimeValue.FromBoxed(primitiveDescriptor.ToObject());
                 }
                 var propertyKey = args[1].ToObject()?.ToString() ?? "";
                 if (target is SharpTSProxy proxy)
@@ -305,7 +305,7 @@ public static class ReflectBuiltIns
             "defineProperty" => BuiltInMethod.CreateV2("defineProperty", 3, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.defineProperty requires a target object.");
-                var propertyKey = target is SharpTSNumberNamespace && args[1].ToObject() is not SharpTSSymbol
+                var propertyKey = target is ISharpTSPrimitiveConstructor && args[1].ToObject() is not SharpTSSymbol
                     ? interpreter.ToPropertyKeyString(args[1].ToObject())
                     : args[1].ToObject()?.ToString() ?? "";
                 var descriptorArg = args[2].ToObject() ?? throw new Exception("TypeError: Property description must be an object");
@@ -319,10 +319,10 @@ public static class ReflectBuiltIns
                 {
                     SharpTSPropertyDescriptor descriptor = ObjectBuiltIns.ToPropertyDescriptor(
                         interpreter, descriptorArg);
-                    if (target is SharpTSNumberNamespace number)
+                    if (target is ISharpTSPrimitiveConstructor primitiveConstructor)
                         return RuntimeValue.FromBoolean(args[1].ToObject() is SharpTSSymbol symbol
-                            ? number.DefineProperty(symbol, descriptor)
-                            : number.DefineExtraProperty(propertyKey, descriptor));
+                            ? primitiveConstructor.DefineProperty(symbol, descriptor)
+                            : primitiveConstructor.DefineExtraProperty(propertyKey, descriptor));
                     ObjectBuiltIns.PreserveOmittedAttributes(
                         target, propertyKey, descriptor, descriptorArg, interpreter);
                     if (target is SharpTSArray
@@ -368,9 +368,9 @@ public static class ReflectBuiltIns
                         keys.AddRange(obj.OwnVisibleStringKeys().Select(k => (object?)k));
                         keys.AddRange(obj.GetSymbolPropertyNames().Select(s => (object?)s));
                         break;
-                    case SharpTSNumberNamespace number:
-                        keys.AddRange(number.OwnStringKeys().Cast<object?>());
-                        keys.AddRange(number.GetSymbolPropertyNames().Cast<object?>());
+                    case ISharpTSPrimitiveConstructor primitiveConstructor:
+                        keys.AddRange(primitiveConstructor.OwnStringKeys().Cast<object?>());
+                        keys.AddRange(primitiveConstructor.GetSymbolPropertyNames().Cast<object?>());
                         break;
                     case SharpTSArray array:
                         keys.AddRange(array.OwnStringKeys().Select(k => (object?)k));
@@ -520,8 +520,8 @@ public static class ReflectBuiltIns
         return value is not ISharpTSCallable;
     }
 
-    private static bool SetNumberSymbolProperty(
-        Interpreter interpreter, SharpTSNumberNamespace target, SharpTSSymbol key,
+    private static bool SetPrimitiveConstructorSymbolProperty(
+        Interpreter interpreter, ISharpTSPrimitiveConstructor target, SharpTSSymbol key,
         object? value, object? receiver)
     {
         var descriptor = target.GetOwnPropertyDescriptor(key);

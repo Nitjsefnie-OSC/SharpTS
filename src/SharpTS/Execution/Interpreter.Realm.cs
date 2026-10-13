@@ -565,7 +565,8 @@ public partial class Interpreter
     internal Runtime.Types.SharpTSDate GetDatePrototype()
         => _datePrototype ??= new(double.NaN) { IsPrototype = true };
     internal Runtime.Types.SharpTSObjectNamespace GetObjectNamespace() => _objectNamespace ??= new();
-    internal Runtime.Types.SharpTSStringNamespace GetStringNamespace() => _stringNamespace ??= new();
+    internal Runtime.Types.SharpTSStringNamespace GetStringNamespace()
+        => _stringNamespace ??= new() { RealmPrototypeFactory = GetStringPrototype };
     internal Runtime.Types.SharpTSNumberNamespace GetNumberNamespace()
     {
         if (_numberNamespace is null)
@@ -580,7 +581,8 @@ public partial class Interpreter
         }
         return _numberNamespace;
     }
-    internal Runtime.Types.SharpTSBooleanNamespace GetBooleanNamespace() => _booleanNamespace ??= new();
+    internal Runtime.Types.SharpTSBooleanNamespace GetBooleanNamespace()
+        => _booleanNamespace ??= new() { RealmPrototypeFactory = GetBooleanPrototype };
     internal Runtime.Types.SharpTSArrayGlobal GetArrayGlobal()
     {
         if (_arrayGlobal is null)

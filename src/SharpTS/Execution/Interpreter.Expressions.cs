@@ -1568,9 +1568,9 @@ public partial class Interpreter
         if (obj is ISharpTSSymbolPropertyBag symbolBag
             && index is SharpTSSymbol bagSymbol)
         {
-            if (obj is not SharpTSNumberNamespace symbolNumber
-                || !TryAssignThroughDescriptor(symbolNumber.GetOwnPropertyDescriptor(bagSymbol),
-                    symbolNumber, bagSymbol.ToString(), value, strictMode))
+            if (obj is not ISharpTSPrimitiveConstructor symbolConstructor
+                || !TryAssignThroughDescriptor(symbolConstructor.GetOwnPropertyDescriptor(bagSymbol),
+                    symbolConstructor, bagSymbol.ToString(), value, strictMode))
                 symbolBag.SetBySymbolStrict(bagSymbol, value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
@@ -1685,7 +1685,7 @@ public partial class Interpreter
         // writability. Other keys on a callable (user-stored fn[k] = v) aren't
         // supported here either; let them fall through to the spec-conformant
         // error.
-        if (obj is ISharpTSCallable && obj is not (SharpTSFunction or SharpTSNumberNamespace)
+        if (obj is ISharpTSCallable && obj is not (SharpTSFunction or ISharpTSPrimitiveConstructor)
             && index?.ToString() is "name" or "length")
         {
             if (strictMode)
@@ -1919,9 +1919,9 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.BuiltInPrototypeString t:
-                if (t.Target is not SharpTSNumberNamespace indexedNumber
-                    || !TryAssignThroughDescriptor(indexedNumber.GetOwnPropertyDescriptor(t.Key),
-                        indexedNumber, t.Key, value, strictMode))
+                if (t.Target is not ISharpTSPrimitiveConstructor indexedConstructor
+                    || !TryAssignThroughDescriptor(indexedConstructor.GetOwnPropertyDescriptor(t.Key),
+                        indexedConstructor, t.Key, value, strictMode))
                     t.Target.SetExtra(t.Key, value);
                 break;
 

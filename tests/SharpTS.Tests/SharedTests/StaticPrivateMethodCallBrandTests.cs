@@ -204,15 +204,14 @@ public sealed class StaticPrivateMethodCallBrandTests
     }
 
     public static IEnumerable<object[]> ParityCases()
-        // Interpreter call ordering and static-method access through an own instance
-        // have separate retained follow-up reports; #2023 repairs the compiler path.
-        => Cases().SelectMany(row => ((string)row[0] is "brands" or "arguments" or "generic" or "suspended"
+        // Interpreter spread expansion retains a separate follow-up (#2064).
+        => Cases().SelectMany(row => ((string)row[0] is "arguments" or "generic" or "suspended"
                 ? new[] { ExecutionMode.Compiled }
                 : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
-    [Fact]
-    public void CompiledPrivateCallsRejectBeforeAnAwaitedArgument()
+    [Theory, ModeData]
+    public void PrivateCallsRejectBeforeAnAwaitedArgument(ExecutionMode mode)
     {
         const string source = """
             let effects = 0;
@@ -228,7 +227,106 @@ public sealed class StaticPrivateMethodCallBrandTests
             }
             run().catch((error: any) => console.log("unexpected", error.name, error.message));
             """;
-        Assert.Equal("true 0\n", TestHarness.RunCompiled(source));
+        Assert.Equal("true 0\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void InstancePrivateCallsRejectBeforeArgumentsAndRetainDerivedReceivers(ExecutionMode mode)
+    {
+        const string source = """
+            let effects = 0, receivers = 0;
+            function receiver(value: any) { receivers++; return value; }
+            class C {
+                #m(value: any) { return [this instanceof C, value].join("|"); }
+                read(object: any) { return receiver(object).#m(++effects); }
+            }
+            class Child extends C {}
+            class Other { #m(value: any) { return value; } }
+            const reader: any = new C();
+            let rejected = 0;
+            for (const object of [new Other(), {}, undefined, 1, "value", false, Symbol("value"), 1n]) {
+                try { reader.read(object); }
+                catch (error) { if (error instanceof TypeError) rejected++; }
+            }
+            console.log(rejected, effects, receivers);
+            console.log(reader.read(reader), reader.read(new Child()), effects, receivers);
+            """;
+        Assert.Equal("8 0 8\ntrue|1 true|2 2 10\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void InterpretedNullInstanceReceiversRejectBeforeArguments()
+    {
+        // Compiled null receiver branding retains a separate follow-up (#2150).
+        const string source = """
+            let effects = 0;
+            class C {
+                #m(value: any) { return value; }
+                read(object: any) { return object.#m(++effects); }
+            }
+            try { new C().read(null); }
+            catch (error) { console.log(error instanceof TypeError, effects); }
+            """;
+        Assert.Equal("true 0\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void InterpretedInstancePrivateCallsRetainCapturedScopeAndSuperReceiver()
+    {
+        const string source = """
+            function make(prefix: string) {
+                class Base { read() { return "base"; } }
+                class C extends Base {
+                    #m() { return prefix + ":" + super.read(); }
+                    read() { return this.#m(); }
+                }
+                return new C();
+            }
+            console.log(make("outer").read());
+            """;
+        Assert.Equal("outer:base\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Theory, ModeData]
+    public void AwaitedPrivateReceiversRejectBeforeArgumentEffects(ExecutionMode mode)
+    {
+        const string source = """
+            let effects = 0;
+            class C {
+                static #m(value: any) { return value; }
+                static async read(object: typeof C) {
+                    return (await Promise.resolve(object)).#m((effects++, await Promise.resolve(7)));
+                }
+            }
+            class Other {}
+            async function run() {
+                const reader: any = C;
+                try { await reader.read(Other); }
+                catch (error) { console.log(error instanceof TypeError, effects); }
+                console.log(await reader.read(C), effects);
+            }
+            run().catch((error: any) => console.log("unexpected", error.name, error.message));
+            """;
+        Assert.Equal("true 0\n7 1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void BrandedNoncallableFieldsStillEvaluateArgumentsBeforeRejecting(ExecutionMode mode)
+    {
+        const string source = """
+            let effects = 0;
+            class C {
+                #field: any = 3;
+                static #staticField: any = 4;
+                fail() { return this.#field(++effects); }
+                static fail() { return this.#staticField(++effects); }
+            }
+            try { new C().fail(); }
+            catch (error) { console.log(error instanceof TypeError, effects); }
+            try { C.fail(); }
+            catch (error) { console.log(error instanceof TypeError, effects); }
+            """;
+        Assert.Equal("true 1\ntrue 2\n", TestHarness.Run(source, mode));
     }
 
     [Fact]

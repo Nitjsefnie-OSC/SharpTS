@@ -3281,8 +3281,7 @@ public partial class Interpreter
     private RuntimeValue EvaluateCallPrivate(Expr.CallPrivate expr)
     {
         object? obj = Evaluate(expr.Object);
-        bool isField = IsPrivateCallField(expr.Name.Lexeme);
-        object? callee = isField ? GetPrivateCore(obj, expr.Name.Lexeme).ToObject() : null;
+        object? callee = GetPrivateCore(obj, expr.Name.Lexeme).ToObject();
 
         List<object?> arguments = [];
         foreach (var arg in expr.Arguments)
@@ -3290,8 +3289,7 @@ public partial class Interpreter
             arguments.Add(Evaluate(arg));
         }
 
-        return isField ? CallPrivateField(callee, obj, arguments)
-            : CallPrivateCore(obj, arguments, expr.Name.Lexeme);
+        return InvokePrivateCall(callee, obj, arguments);
     }
 
     /// <summary>
@@ -3300,8 +3298,7 @@ public partial class Interpreter
     private async Task<RuntimeValue> EvaluateCallPrivateAsync(Expr.CallPrivate expr)
     {
         object? obj = (await EvaluateAsync(expr.Object)).ToObject();
-        bool isField = IsPrivateCallField(expr.Name.Lexeme);
-        object? callee = isField ? GetPrivateCore(obj, expr.Name.Lexeme).ToObject() : null;
+        object? callee = GetPrivateCore(obj, expr.Name.Lexeme).ToObject();
 
         List<object?> arguments = [];
         foreach (var arg in expr.Arguments)
@@ -3309,65 +3306,24 @@ public partial class Interpreter
             arguments.Add((await EvaluateAsync(arg)).ToObject());
         }
 
-        return isField ? CallPrivateField(callee, obj, arguments)
-            : CallPrivateCore(obj, arguments, expr.Name.Lexeme);
+        return InvokePrivateCall(callee, obj, arguments);
     }
 
-    private bool IsPrivateCallField(string name)
-    {
-        var owner = _environment.FindPrivateClass(name);
-        return owner is not null && owner.GetPrivateMethod(name) is null
-            && owner.GetStaticPrivateMethod(name) is null;
-    }
-
-    private RuntimeValue CallPrivateField(object? callee, object? receiver, List<object?> arguments)
+    private RuntimeValue InvokePrivateCall(object? callee, object? receiver, List<object?> arguments)
     {
         // GetValue (including the private brand) precedes arguments, but the
         // callable check follows them, just as for an ordinary member call.
         if (callee is not ISharpTSCallable callable)
             throw new ThrowException(new SharpTSTypeError($"{GetTypeofString(callee)} is not a function"));
+        // Instance class methods keep the resolver's class-this scope and
+        // lexical super binding. Callable fields use ordinary Call semantics.
+        if (receiver is SharpTSInstance instance && callable is
+            SharpTSFunction { PrivateOwner: not null, IsStaticMethod: false }
+            or SharpTSAsyncFunction { PrivateOwner: not null, IsStaticMethod: false }
+            or SharpTSGeneratorFunction { PrivateOwner: not null, IsStaticMethod: false }
+            or SharpTSAsyncGeneratorFunction { PrivateOwner: not null, IsStaticMethod: false })
+            return RuntimeValue.FromBoxed(SharpTSClass.BindMethod(callable, instance).CallBoxed(this, arguments));
         return RuntimeValue.FromBoxed(FunctionBuiltIns.CallWithThis(this, callable, receiver, arguments));
-    }
-
-    private RuntimeValue CallPrivateCore(object? obj, List<object?> arguments, string methodName)
-    {
-        var owner = _environment.FindPrivateClass(methodName);
-        // Handle static private method call on class
-        if (obj is SharpTSClass klass)
-        {
-            if (owner is not null && !ReferenceEquals(klass, owner))
-                throw new ThrowException(new SharpTSTypeError(
-                    $"Cannot access private member {methodName} from an object whose class did not declare it"));
-            // For static private methods, the class being accessed IS the declaring class
-            // The type checker already verified we're inside this class
-            var method = klass.GetStaticPrivateMethod(methodName);
-            if (method == null)
-            {
-                throw new InterpreterException($"Static private method '{methodName}' does not exist on class '{klass.Name}'.");
-            }
-
-            return RuntimeValue.FromBoxed(SharpTSClass.BindStaticMethod(method, klass).CallBoxed(this, arguments));
-        }
-
-        // Instance private method call
-        if (obj is SharpTSInstance instance)
-        {
-            var declaringClass = owner ?? instance.RuntimeClass;
-            if (!declaringClass.HasPrivateBrand(instance))
-                throw new ThrowException(new SharpTSTypeError(
-                    $"Cannot access private member {methodName} from an object whose class did not declare it"));
-            var method = declaringClass.GetPrivateMethod(methodName);
-            if (method == null)
-            {
-                throw new InterpreterException($"Private method '{methodName}' does not exist on class '{declaringClass.Name}'.");
-            }
-
-            // Bind method to instance
-            return RuntimeValue.FromBoxed(SharpTSClass.BindMethod(method, instance).CallBoxed(this, arguments));
-        }
-
-        throw new ThrowException(new SharpTSTypeError(
-            $"Cannot access private member {methodName} from an object whose class did not declare it"));
     }
 
     #endregion

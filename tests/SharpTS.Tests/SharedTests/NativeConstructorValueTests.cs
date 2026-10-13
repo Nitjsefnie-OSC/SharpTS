@@ -31,15 +31,20 @@ public sealed class NativeConstructorValueTests
         Assert.Equal(ReadExpected, TestHarness.Run(ReadSource, mode));
     }
 
-    [Fact]
-    public void CompiledNativeConstructorFunctionPrototypeRemainsAvailable()
+    internal const string FunctionPrototypeSource = """
+        const N: any = Number;
+        console.log(N.constructor === Function, typeof N.call, typeof N.apply, typeof N.bind);
+        console.log(N.call({}, "7"), N.apply({}, ["8"]), N.bind({}, "9")());
+        const call: any = N.call, apply: any = N.apply, bind: any = N.bind;
+        console.log(call.call(N, {}, "10"), apply.call(N, {}, ["11"]), bind.call(N, {}, "12")());
+        """;
+
+    internal const string FunctionPrototypeExpected = "true function function function\n7 8 9\n10 11 12\n";
+
+    [Theory, ModeData]
+    public void NativeConstructorFunctionPrototypeRemainsAvailable(ExecutionMode mode)
     {
-        // The interpreter's Number namespace does not yet expose these inherited members.
-        const string source = """
-            const N: any = Number;
-            console.log(N.constructor === Function, typeof N.call, typeof N.apply, typeof N.bind);
-            """;
-        Assert.Equal("true function function function\n", TestHarness.Run(source, ExecutionMode.Compiled));
+        Assert.Equal(FunctionPrototypeExpected, TestHarness.Run(FunctionPrototypeSource, mode));
     }
 
     [Fact]

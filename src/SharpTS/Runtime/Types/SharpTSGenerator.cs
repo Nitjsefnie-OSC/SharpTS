@@ -540,11 +540,24 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     // IEnumerable implementation for for...of integration
     public IEnumerator<object?> GetEnumerator()
     {
-        while (true)
+        bool done = true;
+        try
         {
-            var result = Next();
-            if (result.Done) yield break;
-            yield return result.Value;
+            while (true)
+            {
+                done = true;
+                var result = Next();
+                if (result.Done) yield break;
+                done = false;
+                yield return result.Value;
+            }
+        }
+        finally
+        {
+            // Abandonment after a successful step runs IteratorClose. A failed
+            // next() or normal exhaustion must not resume the generator again.
+            if (!done)
+                Return(SharpTSUndefined.Instance);
         }
     }
 

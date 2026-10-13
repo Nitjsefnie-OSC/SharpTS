@@ -197,21 +197,40 @@ public static partial class ObjectBuiltIns
         var elements = interpreter.GetIterableElements(args[0]);
         Dictionary<string, object?> result = [];
 
-        foreach (var element in elements)
+        var iterator = elements.GetEnumerator();
+        bool preserveThrow = false;
+        try
         {
-            if (element is SharpTSArray pair && pair.Length >= 2)
+            while (iterator.MoveNext())
             {
-                string key = pair.Get(0)?.ToString() ?? "";
-                result[key] = pair.Get(1);
+                var element = iterator.Current;
+                if (element is SharpTSArray pair && pair.Length >= 2)
+                {
+                    string key = pair.Get(0)?.ToString() ?? "";
+                    result[key] = pair.Get(1);
+                }
+                else if (element is List<object?> listPair && listPair.Count >= 2)
+                {
+                    string key = listPair[0]?.ToString() ?? "";
+                    result[key] = listPair[1];
+                }
+                else
+                {
+                    throw new Exception("Runtime Error: Object.fromEntries() requires [key, value] pairs");
+                }
             }
-            else if (element is List<object?> listPair && listPair.Count >= 2)
+        }
+        catch
+        {
+            preserveThrow = true;
+            throw;
+        }
+        finally
+        {
+            try { iterator.Dispose(); }
+            catch when (preserveThrow)
             {
-                string key = listPair[0]?.ToString() ?? "";
-                result[key] = listPair[1];
-            }
-            else
-            {
-                throw new Exception("Runtime Error: Object.fromEntries() requires [key, value] pairs");
+                // IteratorClose cannot replace the entry-processing throw.
             }
         }
         return new SharpTSObject(result);
@@ -1951,21 +1970,40 @@ public static partial class ObjectBuiltIns
         var callbackArgs = new List<object?> { null, null };
 
         long i = 0;
-        foreach (var element in interp.GetIterableElements(args[0]))
+        var iterator = interp.GetIterableElements(args[0]).GetEnumerator();
+        bool preserveThrow = false;
+        try
         {
-            callbackArgs[0] = element;
-            callbackArgs[1] = (double)i;
-            var key = FunctionBuiltIns.CallWithThis(
-                interp, callback, SharpTSUndefined.Instance, callbackArgs);
-            var keyStr = key?.ToString() ?? "undefined";
-
-            if (!groups.TryGetValue(keyStr, out var existing))
+            while (iterator.MoveNext())
             {
-                existing = new SharpTSArray([]);
-                groups[keyStr] = existing;
+                var element = iterator.Current;
+                callbackArgs[0] = element;
+                callbackArgs[1] = (double)i;
+                var key = FunctionBuiltIns.CallWithThis(
+                    interp, callback, SharpTSUndefined.Instance, callbackArgs);
+                var keyStr = key?.ToString() ?? "undefined";
+
+                if (!groups.TryGetValue(keyStr, out var existing))
+                {
+                    existing = new SharpTSArray([]);
+                    groups[keyStr] = existing;
+                }
+                ((SharpTSArray)existing!).Add(element);
+                i++;
             }
-            ((SharpTSArray)existing!).Add(element);
-            i++;
+        }
+        catch
+        {
+            preserveThrow = true;
+            throw;
+        }
+        finally
+        {
+            try { iterator.Dispose(); }
+            catch when (preserveThrow)
+            {
+                // Preserve a grouping callback's abrupt completion.
+            }
         }
 
         // ECMA-262 §20.1.2.13: the result is OrdinaryObjectCreate(null) — a

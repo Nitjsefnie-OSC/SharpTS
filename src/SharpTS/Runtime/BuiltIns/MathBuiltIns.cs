@@ -260,17 +260,35 @@ public static class MathBuiltIns
         // loss (the core guarantee of Math.sumPrecise).
         BigInteger exactUnits = BigInteger.Zero;
 
-        foreach (var item in items)
+        var iterator = items.GetEnumerator();
+        bool preserveThrow = false;
+        try
         {
-            if (item is not double d)
-                throw new ThrowException(new SharpTSTypeError(
-                    "Math.sumPrecise: every element must be a Number"));
-            any = true;
-            if (double.IsNaN(d)) { sawNaN = true; continue; }
-            if (double.IsPositiveInfinity(d)) { sawPosInf = true; continue; }
-            if (double.IsNegativeInfinity(d)) { sawNegInf = true; continue; }
-            if (d != 0 || !double.IsNegative(d)) allNegZero = false;
-            exactUnits += ToBinary64Units(d);
+            while (iterator.MoveNext())
+            {
+                if (iterator.Current is not double d)
+                    throw new ThrowException(new SharpTSTypeError(
+                        "Math.sumPrecise: every element must be a Number"));
+                any = true;
+                if (double.IsNaN(d)) { sawNaN = true; continue; }
+                if (double.IsPositiveInfinity(d)) { sawPosInf = true; continue; }
+                if (double.IsNegativeInfinity(d)) { sawNegInf = true; continue; }
+                if (d != 0 || !double.IsNegative(d)) allNegZero = false;
+                exactUnits += ToBinary64Units(d);
+            }
+        }
+        catch
+        {
+            preserveThrow = true;
+            throw;
+        }
+        finally
+        {
+            try { iterator.Dispose(); }
+            catch when (preserveThrow)
+            {
+                // IteratorClose preserves the original non-Number error.
+            }
         }
 
         if (sawPosInf && sawNegInf) return RuntimeValue.FromNumber(double.NaN);

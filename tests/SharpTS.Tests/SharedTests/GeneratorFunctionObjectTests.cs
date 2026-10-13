@@ -102,6 +102,38 @@ public sealed class GeneratorFunctionObjectTests
         "true true false false\ntrue\ntrue\n42 false false\n", 4))
         + "true false 2 false\ntrue false false\n";
 
+    public static string PartialDescriptorSource => Functions + """
+        const key = Symbol("partial");
+        for (const f of functions) {
+            f.tag = 41;
+            Object.defineProperty(f, "tag", { writable: false });
+            let descriptor: any = Object.getOwnPropertyDescriptor(f, "tag");
+            console.log(descriptor.value, descriptor.writable, descriptor.enumerable, descriptor.configurable);
+            console.log(Reflect.defineProperty(f, "tag", { value: 42 }));
+            descriptor = Object.getOwnPropertyDescriptor(f, "tag");
+            console.log(descriptor.value, descriptor.writable, descriptor.enumerable, descriptor.configurable);
+            f[key] = 43;
+            console.log(Object.defineProperty(f, key, { writable: false }) === f);
+            descriptor = Object.getOwnPropertyDescriptor(f, key);
+            console.log(descriptor.value, descriptor.writable, descriptor.enumerable, descriptor.configurable);
+            Object.defineProperty(f, key, { value: 44 });
+            descriptor = Object.getOwnPropertyDescriptor(f, key);
+            console.log(descriptor.value, descriptor.writable, descriptor.enumerable, descriptor.configurable);
+            const getter: any = function() { return 45; };
+            const setter: any = function(value: any) { this.tag = value; };
+            Object.defineProperty(f, "accessor", { get: getter, set: setter, enumerable: true, configurable: true });
+            console.log(Reflect.defineProperty(f, "accessor", { enumerable: false }));
+            descriptor = Object.getOwnPropertyDescriptor(f, "accessor");
+            console.log(descriptor.get === getter, descriptor.set === setter, descriptor.enumerable, descriptor.configurable);
+            Object.defineProperty(f, "accessor", { get: undefined });
+            descriptor = Reflect.getOwnPropertyDescriptor(f, "accessor");
+            console.log(descriptor.get === undefined, descriptor.set === setter, descriptor.enumerable, descriptor.configurable);
+        }
+        """;
+
+    public static string PartialDescriptorExpected => string.Concat(Enumerable.Repeat(
+        "41 false true true\ntrue\n42 false true true\ntrue\n43 false true true\n44 false true true\ntrue\ntrue true false true\ntrue true false true\n", 4));
+
     [Theory, ModeData]
     public void AllGeneratorFunctionFormsRetainOwnPropertiesAndMetadata(ExecutionMode mode)
         => Assert.Equal(AssignmentExpected, TestHarness.Run(AssignmentSource, mode));
@@ -114,16 +146,22 @@ public sealed class GeneratorFunctionObjectTests
     public void FrozenGeneratorFunctionsRejectWritesAndReflectIntegrity(ExecutionMode mode)
         => Assert.Equal(IntegrityExpected, TestHarness.Run(IntegritySource, mode));
 
+    [Theory, ModeData]
+    public void PartialDescriptorsRetainAttributesValuesAndAccessorHalves(ExecutionMode mode)
+        => Assert.Equal(PartialDescriptorExpected, TestHarness.Run(PartialDescriptorSource, mode));
+
     [Theory]
     [InlineData("assignment")]
     [InlineData("descriptors")]
     [InlineData("integrity")]
+    [InlineData("partial")]
     public void NativeBlockCapturingExpressionsUseTheSameOwnPropertyProtocol(string scenario)
     {
         var (source, expected) = scenario switch
         {
             "assignment" => (AssignmentSource, AssignmentExpected),
             "descriptors" => (DescriptorSource, DescriptorExpected),
+            "partial" => (PartialDescriptorSource, PartialDescriptorExpected),
             _ => (IntegritySource, IntegrityExpected),
         };
         // These expressions survive generator lifting because they capture a
@@ -174,8 +212,8 @@ public sealed class GeneratorFunctionObjectTests
         Assert.Equal("false\ntrue\ntrue\nfalse\ntrue\ntrue\n", TestHarness.RunInterpreted(source));
     }
 
-    [Fact]
-    public void ExplicitOwnPrototypeParticipatesInInstanceofWithoutCreatingAnIntrinsicPrototype()
+    [Theory, ModeData]
+    public void ExplicitOwnPrototypeParticipatesInInstanceof(ExecutionMode mode)
     {
         const string source = """
             function* generator() { yield 42; }
@@ -185,9 +223,9 @@ public sealed class GeneratorFunctionObjectTests
             console.log(Object.create(prototype) instanceof f, {} instanceof f, 1 instanceof f);
             f.prototype = null;
             try { console.log({} instanceof f); } catch (e) { console.log(e instanceof TypeError); }
-            delete f.prototype;
-            console.log(f.hasOwnProperty("prototype"));
+            f.temporary = 42;
+            console.log(delete f.temporary, f.hasOwnProperty("temporary"));
             """;
-        Assert.Equal("true false false\ntrue\nfalse\n", TestHarness.RunInterpreted(source));
+        Assert.Equal("true false false\ntrue\ntrue false\n", TestHarness.Run(source, mode));
     }
 }

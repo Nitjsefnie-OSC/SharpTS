@@ -334,7 +334,7 @@ public partial class Parser
                     if (Match(TokenType.COLON))
                     {
                         typeAnnotation = ParseTypeAnnotation();
-                        typeAnnotationNode = EditorSyntaxEnabled ? TakeTypeNode() : null;
+                        typeAnnotationNode = TakeTypeNode();
                     }
                     Expr? initializer = null;
                     if (Match(TokenType.EQUAL))
@@ -346,7 +346,7 @@ public partial class Parser
                         Match(TokenType.SEMICOLON);
                     else
                         ConsumeSemicolon("Expect ';' after private field declaration.");
-                    var privateField = new Stmt.Field(fieldName, typeAnnotation, initializer, isStatic, AccessModifier.Public, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, Decorators: null, IsPrivate: true);
+                    var privateField = new Stmt.Field(fieldName, typeAnnotation, initializer, isStatic, AccessModifier.Public, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, Decorators: null, IsPrivate: true, TypeAnnotationNode: typeAnnotationNode);
                     AttachEditorSyntax(privateField, typeAnnotationNode);
                     RecordWrittenMember(privateField, fieldName);
                     fields.Add(privateField);
@@ -962,7 +962,7 @@ public partial class Parser
                     if (Match(TokenType.COLON))
                     {
                         typeAnnotation = ParseTypeAnnotation();
-                        typeAnnotationNode = EditorSyntaxEnabled ? TakeTypeNode() : null;
+                        typeAnnotationNode = TakeTypeNode();
                     }
                     Expr? initializer = null;
                     if (Match(TokenType.EQUAL))
@@ -971,7 +971,7 @@ public partial class Parser
                     }
 
                     ConsumeSemicolon("Expect ';' after private field declaration.");
-                    var privateField = new Stmt.Field(fieldName, typeAnnotation, initializer, isStatic, AccessModifier.Public, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, Decorators: null, IsPrivate: true);
+                    var privateField = new Stmt.Field(fieldName, typeAnnotation, initializer, isStatic, AccessModifier.Public, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, Decorators: null, IsPrivate: true, TypeAnnotationNode: typeAnnotationNode);
                     AttachEditorSyntax(privateField, typeAnnotationNode);
                     RecordWrittenMember(privateField, fieldName);
                     fields.Add(privateField);

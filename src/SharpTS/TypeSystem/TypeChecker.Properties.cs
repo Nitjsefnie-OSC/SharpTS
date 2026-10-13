@@ -1458,11 +1458,17 @@ public partial class TypeChecker
         // Private names follow lexical nesting, never superclass lookup.
         TypeInfo? methodType = null;
         MemberFacet selectedFacet = MemberFacet.PrivateInstance;
-        if (owner.PrivateMethodTypes.TryGetValue(methodName, out var pm))
+        if (owner.PrivateFieldTypes.TryGetValue(methodName, out var pf))
+        {
+            methodType = pf;
+        }
+        else if (owner.PrivateMethodTypes.TryGetValue(methodName, out var pm))
         {
             methodType = pm;
         }
-        else if (IsStaticPrivateConstructor(objType, owner) && owner.StaticPrivateMethodTypes.TryGetValue(methodName, out var spm))
+        else if (IsStaticPrivateConstructor(objType, owner) &&
+            (owner.StaticPrivateFieldTypes.TryGetValue(methodName, out var spm) ||
+                owner.StaticPrivateMethodTypes.TryGetValue(methodName, out spm)))
         {
             methodType = spm;
             selectedFacet = MemberFacet.PrivateStatic;
@@ -1473,15 +1479,21 @@ public partial class TypeChecker
             throw new TypeCheckException($" Private method '{methodName}' does not exist on class '{_currentClass.Name}'.", tsCode: "TS2339");
         }
 
-        // Check argument types against method signature
+        RecordPrivateSourceMemberRead(call, call.Name, objType, owner, selectedFacet);
+        if (methodType is TypeInfo.Any)
+        {
+            foreach (var argument in call.Arguments) CheckExpr(argument);
+            return TypeInfo.Any.Shared;
+        }
+
+        // Check argument types against the callable member's signature.
         if (methodType is not TypeInfo.Function funcType)
         {
-            throw new TypeCheckException($" Private member '{methodName}' is not a method.", tsCode: "TS2349");
+            throw new TypeCheckException($" Private member '{methodName}' is not callable.", tsCode: "TS2349");
         }
         if (EditorFacts.IsEnabled && HasPrivateSourceOwner(objType, owner.Core.DeclarationId,
                 selectedFacet == MemberFacet.PrivateStatic))
             RecordEditorCallCandidates(funcType);
-        RecordPrivateSourceMemberRead(call, call.Name, objType, owner, selectedFacet);
 
         // Check argument count
         if (call.Arguments.Count < funcType.RequiredParams)

@@ -3281,6 +3281,8 @@ public partial class Interpreter
     private RuntimeValue EvaluateCallPrivate(Expr.CallPrivate expr)
     {
         object? obj = Evaluate(expr.Object);
+        bool isField = IsPrivateCallField(expr.Name.Lexeme);
+        object? callee = isField ? GetPrivateCore(obj, expr.Name.Lexeme).ToObject() : null;
 
         List<object?> arguments = [];
         foreach (var arg in expr.Arguments)
@@ -3288,7 +3290,8 @@ public partial class Interpreter
             arguments.Add(Evaluate(arg));
         }
 
-        return CallPrivateCore(obj, arguments, expr.Name.Lexeme);
+        return isField ? CallPrivateField(callee, obj, arguments)
+            : CallPrivateCore(obj, arguments, expr.Name.Lexeme);
     }
 
     /// <summary>
@@ -3297,6 +3300,8 @@ public partial class Interpreter
     private async Task<RuntimeValue> EvaluateCallPrivateAsync(Expr.CallPrivate expr)
     {
         object? obj = (await EvaluateAsync(expr.Object)).ToObject();
+        bool isField = IsPrivateCallField(expr.Name.Lexeme);
+        object? callee = isField ? GetPrivateCore(obj, expr.Name.Lexeme).ToObject() : null;
 
         List<object?> arguments = [];
         foreach (var arg in expr.Arguments)
@@ -3304,7 +3309,24 @@ public partial class Interpreter
             arguments.Add((await EvaluateAsync(arg)).ToObject());
         }
 
-        return CallPrivateCore(obj, arguments, expr.Name.Lexeme);
+        return isField ? CallPrivateField(callee, obj, arguments)
+            : CallPrivateCore(obj, arguments, expr.Name.Lexeme);
+    }
+
+    private bool IsPrivateCallField(string name)
+    {
+        var owner = _environment.FindPrivateClass(name);
+        return owner is not null && owner.GetPrivateMethod(name) is null
+            && owner.GetStaticPrivateMethod(name) is null;
+    }
+
+    private RuntimeValue CallPrivateField(object? callee, object? receiver, List<object?> arguments)
+    {
+        // GetValue (including the private brand) precedes arguments, but the
+        // callable check follows them, just as for an ordinary member call.
+        if (callee is not ISharpTSCallable callable)
+            throw new ThrowException(new SharpTSTypeError($"{GetTypeofString(callee)} is not a function"));
+        return RuntimeValue.FromBoxed(FunctionBuiltIns.CallWithThis(this, callable, receiver, arguments));
     }
 
     private RuntimeValue CallPrivateCore(object? obj, List<object?> arguments, string methodName)

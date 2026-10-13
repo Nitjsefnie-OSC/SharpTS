@@ -232,6 +232,7 @@ public partial class ILEmitter
     /// </summary>
     protected override void EmitCallPrivate(Expr.CallPrivate cp)
     {
+        if (TryEmitPrivateFieldCall(cp)) return;
         if (TryEmitBrandedPrivateCall(cp)) return;
         if (TryEmitGenericPrivateCall(cp))
             return;

@@ -1046,6 +1046,7 @@ public partial class Interpreter
         {
             SharpTSArray array => array.DeletePropertyStrict(name, strictMode),
             SharpTSObject tsObj => tsObj.DeletePropertyStrict(name, strictMode),
+            ISharpTSFunctionObject function => function.OwnProperties.DeletePropertyStrict(name, strictMode),
             SharpTSInstance tsInst => tsInst.DeleteFieldStrict(name, strictMode),
             SharpTSMath math => math.DeleteExtra(name),
             SharpTSJSON json => json.DeleteExtra(name),
@@ -1108,6 +1109,7 @@ public partial class Interpreter
             return obj switch
             {
                 SharpTSObject tsObj => tsObj.DeleteBySymbolStrict(symbol, strictMode),
+                ISharpTSFunctionObject function => function.OwnProperties.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSInstance tsInst => tsInst.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSClass klass => klass.DeleteStaticSymbolProperty(symbol, strictMode),
                 SharpTSClassPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),

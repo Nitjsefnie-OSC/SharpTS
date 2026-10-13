@@ -13,14 +13,27 @@ namespace SharpTS.Runtime.Types;
 /// </remarks>
 /// <seealso cref="SharpTSAsyncGenerator"/>
 /// <seealso cref="SharpTSGeneratorFunction"/>
-public class SharpTSAsyncGeneratorFunction : ISharpTSCallable, IReceiverBindable
+public class SharpTSAsyncGeneratorFunction : ISharpTSFunctionObject, IReceiverBindable
 {
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
     internal bool IsStaticMethod => _declaration.IsStatic;
     internal SharpTSClass? PrivateOwner { get; set; }
-    internal string? ComputedName { get; set; }
+    private SharpTSObject _properties;
+    SharpTSObject ISharpTSFunctionObject.OwnProperties => _properties;
+    private string? _computedName;
+    internal string? ComputedName
+    {
+        get => _computedName;
+        set
+        {
+            _computedName = value;
+            _properties.DefineProperty("name", new SharpTSPropertyDescriptor(
+                value ?? _declaration.RuntimeName ?? _declaration.Name.Lexeme,
+                writable: false, enumerable: false, configurable: true));
+        }
+    }
     /// <summary>A dynamic receiver was bound, so <see cref="Call"/> binds <c>this</c> to
     /// <see cref="_boundThis"/> rather than defaulting it to undefined.</summary>
     private readonly bool _thisBound;
@@ -43,6 +56,7 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable, IReceiverBindable
         _boundSuper = boundSuper;
         _arity = declaration.IsPrivate ? declaration.Parameters.TakeWhile(p => p.DefaultValue == null && !p.IsRest).Count()
             : declaration.Parameters?.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional) ?? 0;
+        _properties = FunctionObjectProperties.Create(declaration.RuntimeName ?? declaration.Name.Lexeme, _arity);
     }
 
     public int Arity() => _arity;
@@ -88,15 +102,23 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable, IReceiverBindable
     /// Creates a bound version with 'this' set for method calls.
     /// </summary>
     public SharpTSAsyncGeneratorFunction Bind(SharpTSInstance instance)
-        => new(_declaration, _closure, thisBound: true, boundThis: instance) { PrivateOwner = PrivateOwner, ComputedName = ComputedName };
+        => ShareObjectState(new(_declaration, _closure, thisBound: true, boundThis: instance));
 
     /// <summary>Binds an arbitrary receiver (object async generator method / <c>.call</c> / <c>.apply</c>) (#775).</summary>
     public ISharpTSCallable BindToReceiver(object receiver)
-        => new SharpTSAsyncGeneratorFunction(_declaration, _closure, thisBound: true, boundThis: receiver) { PrivateOwner = PrivateOwner, ComputedName = ComputedName };
+        => ShareObjectState(new(_declaration, _closure, thisBound: true, boundThis: receiver));
 
     public SharpTSAsyncGeneratorFunction BindStatic(SharpTSClass klass)
-        => new(_declaration, _closure, thisBound: true, boundThis: klass,
-            boundSuper: _declaration.IsStatic ? null : klass.Superclass) { PrivateOwner = PrivateOwner, ComputedName = ComputedName };
+        => ShareObjectState(new(_declaration, _closure, thisBound: true, boundThis: klass,
+            boundSuper: _declaration.IsStatic ? null : klass.Superclass));
+
+    private SharpTSAsyncGeneratorFunction ShareObjectState(SharpTSAsyncGeneratorFunction bound)
+    {
+        bound._properties = _properties;
+        bound.PrivateOwner = PrivateOwner;
+        bound._computedName = _computedName;
+        return bound;
+    }
 
     public override string ToString() => $"[async function* {_declaration.Name?.Lexeme ?? "anonymous"}]";
 }
@@ -114,11 +136,13 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable, IReceiverBindable
 /// </remarks>
 /// <seealso cref="SharpTSAsyncGenerator"/>
 /// <seealso cref="SharpTSArrowGeneratorFunction"/>
-public class SharpTSAsyncArrowGeneratorFunction : ISharpTSCallable, IReceiverBindable
+public class SharpTSAsyncArrowGeneratorFunction : ISharpTSFunctionObject, IReceiverBindable
 {
     private readonly Expr.ArrowFunction _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    private SharpTSObject _properties;
+    SharpTSObject ISharpTSFunctionObject.OwnProperties => _properties;
     /// <summary>A dynamic receiver was bound (via <see cref="Bind"/>), so <see cref="Call"/> binds
     /// <c>this</c> to <see cref="_boundThis"/> rather than defaulting it to undefined.</summary>
     private readonly bool _thisBound;
@@ -138,6 +162,7 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSCallable, IReceiverBin
         _thisBound = thisBound;
         _boundThis = boundThis;
         _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
+        _properties = FunctionObjectProperties.Create(declaration.Name?.Lexeme ?? "", _arity);
     }
 
     public int Arity() => _arity;
@@ -168,7 +193,12 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSCallable, IReceiverBin
 
     /// <summary>Binds <c>this</c>. Only applicable for function expressions with HasOwnThis=true.</summary>
     public SharpTSAsyncArrowGeneratorFunction Bind(object thisObject)
-        => new(_declaration, _closure, hasOwnThis: true, thisBound: true, boundThis: thisObject);
+    {
+        var bound = new SharpTSAsyncArrowGeneratorFunction(
+            _declaration, _closure, hasOwnThis: true, thisBound: true, boundThis: thisObject);
+        bound._properties = _properties;
+        return bound;
+    }
 
     /// <summary>Receiver-binding entry point for the method-call / <c>.call</c> / <c>.apply</c> path (#775).</summary>
     public ISharpTSCallable BindToReceiver(object receiver) => Bind(receiver);

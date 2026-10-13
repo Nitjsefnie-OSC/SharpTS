@@ -33,6 +33,12 @@ public static class FunctionBuiltIns
     /// </summary>
     public static object? GetMember(ISharpTSCallable receiver, string name)
     {
+        if (receiver is ISharpTSFunctionObject functionObject && name is "name" or "length")
+        {
+            var descriptor = functionObject.OwnProperties.GetOwnPropertyDescriptor(name);
+            return descriptor is { HasValue: true } ? descriptor.Value : null;
+        }
+
         // Own function-object properties win over the prototype surface —
         // Node models process.hrtime.bigint / process.memoryUsage.rss as
         // properties on the function itself (see BuiltInMethod.OwnProperties).
@@ -84,10 +90,10 @@ public static class FunctionBuiltIns
             // Built-in wrappers know their own spec name; without this they fell through
             // to "" and every `<method>/name.js` test failed.
             IBuiltInFunctionMetadata builtIn => builtIn.FunctionName,
+            ISharpTSFunctionObject function =>
+                function.OwnProperties.GetOwnPropertyDescriptor("name")?.Value as string ?? "",
             SharpTSFunction fn => fn.TryGetProperty("name", out var name) ? name as string ?? "" : "",
             SharpTSAsyncFunction fn => fn.TryGetProperty("name", out var name) ? name as string ?? "" : "",
-            SharpTSGeneratorFunction fn => fn.ComputedName ?? "",
-            SharpTSAsyncGeneratorFunction fn => fn.ComputedName ?? "",
             SharpTSArrowFunction arrow => arrow.ToString().Contains("<fn ")
                 ? arrow.ToString().Replace("<fn ", "").TrimEnd('>')
                 : "",

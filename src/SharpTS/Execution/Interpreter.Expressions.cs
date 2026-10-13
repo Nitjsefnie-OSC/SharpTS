@@ -1139,6 +1139,11 @@ public partial class Interpreter
             }
         }
 
+        if (obj is ISharpTSFunctionObject functionObject)
+            return RuntimeValue.FromBoxed(index is SharpTSSymbol functionSymbol
+                ? GetSymbolPropertyValue(functionObject, functionSymbol)
+                : GetPropertyValue(functionObject, ToPropertyKeyString(index)));
+
         if (obj is ISharpTSSymbolPropertyBag symbolBag
             && index is SharpTSSymbol bagSymbol)
         {
@@ -1561,6 +1566,19 @@ public partial class Interpreter
             if (!assigned && strictMode)
                 throw new ThrowException(new SharpTSTypeError(
                     $"Proxy set trap rejected property '{key}'"));
+            return RuntimeValue.FromBoxed(value);
+        }
+
+        if (obj is ISharpTSFunctionObject functionObject)
+        {
+            if (index is SharpTSSymbol functionSymbol)
+            {
+                if (!TryAssignThroughDescriptor(
+                        functionObject.OwnProperties.GetOwnPropertyDescriptor(functionSymbol),
+                        functionObject, functionSymbol.ToString(), value, strictMode))
+                    functionObject.OwnProperties.SetBySymbolStrict(functionSymbol, value, strictMode);
+            }
+            else SetFunctionObjectProperty(functionObject, ToPropertyKeyString(index), value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
 

@@ -1340,6 +1340,7 @@ public class SharpTSProxy : ISharpTSCallable
 
     private static bool TargetIsExtensible(object target) => target switch
     {
+        ISharpTSFunctionObject function => function.OwnProperties.IsExtensible,
         SharpTSProxy proxy => TargetIsExtensible(proxy.Target),
         SharpTSObject obj => obj.IsExtensible,
         SharpTSInstance instance => instance.IsExtensible,

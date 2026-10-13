@@ -105,10 +105,9 @@ public sealed class StaticSymbolMethodIdentityTests
         Assert.Equal("true true retained\ntrue true retained\n", TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void CompiledGeneratorMethodsRetainAssignedProperties()
+    [Theory, ModeData]
+    public void GeneratorMethodsRetainAssignedProperties(ExecutionMode mode)
     {
-        // Interpreter generator functions currently reject own-property assignment.
         const string source = """
             const generator = Symbol("generator"), asyncGenerator = Symbol("asyncGenerator");
             class Base {
@@ -123,7 +122,7 @@ public sealed class StaticSymbolMethodIdentityTests
                 console.log(method === base[key], method === derived[key], derived[key].tag);
             }
             """;
-        Assert.Equal("true true retained\ntrue true retained\n", TestHarness.RunCompiled(source));
+        Assert.Equal("true true retained\ntrue true retained\n", TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

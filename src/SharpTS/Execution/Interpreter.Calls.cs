@@ -1277,9 +1277,10 @@ public partial class Interpreter
 
         // Generator function prototype objects are not yet represented by the
         // interpreter (#2111); retain the existing unmatched-object result.
-        if (right is SharpTSGeneratorFunction or SharpTSAsyncGeneratorFunction
-            or SharpTSArrowGeneratorFunction or SharpTSAsyncArrowGeneratorFunction)
-            return false;
+        if (right is ISharpTSFunctionObject generatorFunction)
+            return generatorFunction.OwnProperties.GetOwnPropertyDescriptor("prototype") is null
+                ? false
+                : InstanceOfByPrototype(left, generatorFunction);
 
         if (right is not SharpTSClass targetClass)
             return InstanceOfByPrototype(left, (ISharpTSCallable)right);

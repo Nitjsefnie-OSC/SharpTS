@@ -991,23 +991,14 @@ public class ClosureAnalyzer : AstVisitorBase
         EnterScope();
         foreach (var evalVar in CollectDirectEvalVarDeclarations(parameters))
             DeclareVariable(evalVar);
+        // Defaults may create arrows that capture this call's arguments object.
+        if (ArgumentsRefScanner.Contains(parameters, body, treatEvalReferenceAsUse: true))
+            DeclareVariable("arguments");
         foreach (var param in parameters)
         {
             DeclareVariable(param.Name.Lexeme);
             if (param.DefaultValue != null)
                 Visit(param.DefaultValue);
-        }
-
-        // Pre-declare `arguments` as a synthetic local if the body (including nested
-        // arrows, but not nested non-arrow functions) references it. Without this, a
-        // nested arrow reading `arguments` would resolve against the (non-existent)
-        // outer scope and fail at IL emission; declaring it here routes the reference
-        // through the normal captured-local machinery so arrows get it via the display
-        // class (#64). Non-arrow nested functions declare their own `arguments` and
-        // shadow this one — matching JS spec.
-        if (ReferencesArgumentsIdentifierNonArrow(body))
-        {
-            DeclareVariable("arguments");
         }
 
         // Hoist sibling function declarations so forward references in one sibling's
@@ -1075,6 +1066,10 @@ public class ClosureAnalyzer : AstVisitorBase
         // binding initialized by a later eval call.
         foreach (var evalVar in CollectDirectEvalVarDeclarations(af.Parameters))
             DeclareVariable(evalVar);
+
+        if (af.HasOwnThis && ArgumentsRefScanner.Contains(af.Parameters, af.BlockBody,
+                af.ExpressionBody, treatEvalReferenceAsUse: true))
+            DeclareVariable("arguments");
 
         // Declare parameters (may shadow function name if same identifier)
         foreach (var param in af.Parameters)
@@ -1177,26 +1172,4 @@ public class ClosureAnalyzer : AstVisitorBase
 
     #endregion
 
-    /// <summary>
-    /// Returns true if any statement (directly or inside a nested arrow) references
-    /// the identifier <c>arguments</c>, stopping at nested non-arrow function boundaries
-    /// (those have their own <c>arguments</c> binding per JS spec, so a reference inside
-    /// them belongs to the nested function, not this one). Scanning lives in the shared
-    /// <see cref="ArgumentsRefScanner"/> (also used by the interpreter's lazy
-    /// <c>arguments</c> materialization).
-    /// </summary>
-    private static bool ReferencesArgumentsIdentifierNonArrow(List<Stmt> stmts)
-    {
-        // A direct eval inside a nested arrow may reference the enclosing
-        // function's `arguments` binding without that identifier appearing in
-        // the parsed outer AST. Match the entry-environment scanner's conservative
-        // rule so capture discovery and prologue materialization cannot drift.
-        var scanner = new ArgumentsRefScanner(treatEvalReferenceAsUse: true);
-        foreach (var s in stmts)
-        {
-            scanner.Visit(s);
-            if (scanner.Found) return true;
-        }
-        return false;
-    }
 }

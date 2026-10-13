@@ -136,7 +136,7 @@ public partial class ILCompiler
                 MarkJsVariadicConstructor(ctorBuilder);
 
             _classes.Constructors[qualifiedClassName] = ctorBuilder;
-            RegisterArgumentsCapturingMethod(ctorBuilder, constructor?.Body);
+            RegisterArgumentsCapturingMethod(ctorBuilder, constructor?.Body, constructor?.Parameters);
             if (constructor == null && classStmt.SuperclassExpr != null)
             {
                 string qualifiedSuperclass = ctx.ResolveClassName(
@@ -191,7 +191,7 @@ public partial class ILCompiler
             );
 
             _classes.StaticMethods[qualifiedClassName][method.Name.Lexeme] = methodBuilder;
-            RegisterArgumentsCapturingMethod(methodBuilder, method.Body);
+            RegisterArgumentsCapturingMethod(methodBuilder, method.Body, method.Parameters);
         }
 
         // Define instance methods (skip overload signatures with no body, and computed
@@ -260,7 +260,7 @@ public partial class ILCompiler
                 _classes.InstanceMethods[qualifiedClassName] = classMethods;
             }
             classMethods[method.Name.Lexeme] = methodBuilder;
-            RegisterArgumentsCapturingMethod(methodBuilder, method.Body);
+            RegisterArgumentsCapturingMethod(methodBuilder, method.Body, method.Parameters);
 
             // Store the method builder for body emission later
             // Use typeBuilder.Name to match the lookup in EmitMethod

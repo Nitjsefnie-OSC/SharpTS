@@ -18,13 +18,32 @@ public sealed class ArgumentsRefScanner : AstVisitorBase
     /// The interpreter implements direct eval against the live scope chain, so
     /// <c>eval("arguments[0]")</c> can observe the binding without the scanner
     /// ever seeing the <c>arguments</c> identifier — callers that gate binding
-    /// creation on this scan must stay conservative in that case. The compiled
-    /// closure analyzer passes false (its existing behavior).
+    /// creation on this scan must stay conservative in that case.
     /// </param>
     public ArgumentsRefScanner(bool treatEvalReferenceAsUse = false)
         => _treatEvalReferenceAsUse = treatEvalReferenceAsUse;
 
     public bool Found { get; private set; }
+
+    /// <summary>Scans the owning callable's defaults and body with the same lexical boundaries.</summary>
+    public static bool Contains(IEnumerable<Stmt.Parameter> parameters, IEnumerable<Stmt>? body,
+        Expr? expressionBody = null, bool treatEvalReferenceAsUse = false)
+    {
+        var scanner = new ArgumentsRefScanner(treatEvalReferenceAsUse);
+        foreach (var parameter in parameters)
+        {
+            if (parameter.DefaultValue != null) scanner.Visit(parameter.DefaultValue);
+            if (scanner.Found) return true;
+        }
+        if (body != null)
+            foreach (var statement in body)
+            {
+                scanner.Visit(statement);
+                if (scanner.Found) return true;
+            }
+        if (expressionBody != null) scanner.Visit(expressionBody);
+        return scanner.Found;
+    }
 
     protected override void VisitVariable(Expr.Variable expr)
     {

@@ -73,6 +73,7 @@ public partial class ILCompiler
 
         // Store for later body emission
         _functions.Builders[qualifiedFunctionName] = stubMethod;
+        RegisterArgumentsCapturingFunction(stubMethod, qualifiedFunctionName, funcStmt);
         _async.StateMachines[qualifiedFunctionName] = smBuilder;
         _async.Functions[qualifiedFunctionName] = funcStmt;
         _async.Analyses[qualifiedFunctionName] = analysis;
@@ -84,6 +85,13 @@ public partial class ILCompiler
         MarkFunctionLength(stubMethod, funcStmt.Parameters);
         MarkFunctionName(stubMethod, funcStmt.RuntimeName ?? funcStmt.Name.Lexeme);
         MarkNonConstructible(stubMethod);
+
+        // Direct async calls need the same rest-slot metadata as iterator stubs
+        // when deriving CLR slots from the raw arguments object.
+        var restParameter = funcStmt.Parameters.FirstOrDefault(parameter => parameter.IsRest);
+        if (restParameter != null)
+            _functions.RestParams[qualifiedFunctionName] = (funcStmt.Parameters.IndexOf(restParameter),
+                funcStmt.Parameters.Count(parameter => !parameter.IsRest));
 
         // Create function-level display class for captured locals (same as sync functions).
         // This enables closure mutation sharing between the async state machine and sync inner arrows.
@@ -755,7 +763,7 @@ public partial class ILCompiler
                     hasNestedChildren);
 
                 // Define the stub method that will be called to invoke the async arrow
-                arrowBuilder.DefineStubMethod(_programType, _runtime);
+                DefineAsyncArrowStub(arrowBuilder);
                 MarkPadsUndefined(arrowBuilder.StubMethod); // #640
                 MarkFunctionLength(arrowBuilder.StubMethod, arrowInfo.Arrow.Parameters);
                 MarkFunctionName(arrowBuilder.StubMethod, arrowInfo.Arrow.Name?.Lexeme ?? "");
@@ -779,7 +787,7 @@ public partial class ILCompiler
                 hasNestedAsyncArrows: hasNestedChildren);
 
             // Define the stub method that will be called to invoke the async arrow
-            arrowBuilder.DefineStubMethod(_programType, _runtime);
+            DefineAsyncArrowStub(arrowBuilder);
             MarkPadsUndefined(arrowBuilder.StubMethod); // #640
             MarkFunctionLength(arrowBuilder.StubMethod, arrowInfo.Arrow.Parameters);
             MarkFunctionName(arrowBuilder.StubMethod, arrowInfo.Arrow.Name?.Lexeme ?? "");
@@ -1154,7 +1162,7 @@ public partial class ILCompiler
             EmitAsyncStubMethod(
                 stubMethod,
                 smBuilder,
-                func.Parameters,
+                func,
                 coerceSloppyDynamicThis: !(_isStrictMode || BodyDeclaresUseStrict(func.Body)));
 
             // Create context for MoveNext emission
@@ -1441,19 +1449,29 @@ public partial class ILCompiler
     private void EmitAsyncStubMethod(
         MethodBuilder stubMethod,
         AsyncStateMachineBuilder smBuilder,
-        List<Stmt.Parameter> parameters,
+        Stmt.Function function,
         bool isInstanceMethod = false,
         FieldBuilder? asyncLockField = null,
         FieldBuilder? lockReentrancyField = null,
         string? functionDCKey = null,
         bool coerceSloppyDynamicThis = false)
     {
+        var parameters = function.Parameters;
         var il = stubMethod.GetILGenerator();
         var smLocal = il.DeclareLocal(smBuilder.StateMachineType);
 
         // var sm = default(<StateMachine>);
         il.Emit(OpCodes.Ldloca, smLocal);
         il.Emit(OpCodes.Initobj, smBuilder.StateMachineType);
+
+        var arguments = EmitSuspendedArgumentsPrologue(stubMethod, function, isInstanceMethod);
+        if (arguments != null)
+        {
+            il.Emit(OpCodes.Ldloca, smLocal);
+            il.Emit(OpCodes.Ldloc, arguments);
+            il.Emit(OpCodes.Stfld, smBuilder.GetVariableField("arguments")
+                ?? throw new InvalidOperationException("Async arguments storage has not been declared."));
+        }
 
         // Copy `this` to the state machine. Instance methods read arg0; free
         // async functions snapshot the call-time receiver staged by
@@ -1575,6 +1593,13 @@ public partial class ILCompiler
                 // Copy captured parameters into the function DC
                 if (_closures.FunctionDisplayClassFields.TryGetValue(qualifiedName, out var dcFields))
                 {
+                    if (arguments != null && dcFields.TryGetValue("arguments", out var argumentsField))
+                    {
+                        il.Emit(OpCodes.Ldloca, smLocal);
+                        il.Emit(OpCodes.Ldfld, smBuilder.FunctionDCField);
+                        il.Emit(OpCodes.Ldloc, arguments);
+                        il.Emit(OpCodes.Stfld, argumentsField);
+                    }
                     for (int j = 0; j < parameters.Count; j++)
                     {
                         string pName = parameters[j].Name.Lexeme;
@@ -1703,7 +1728,7 @@ public partial class ILCompiler
         EmitAsyncStubMethod(
             methodBuilder,
             smBuilder,
-            method.Parameters,
+            method,
             isInstanceMethod: isInstanceMethod,
             asyncLockField,
             lockReentrancyField,
@@ -1822,7 +1847,7 @@ public partial class ILCompiler
                 GetDebugStaticCaptureNames(arrow, captures));
 
             // Define the stub method
-            arrowBuilder.DefineStubMethod(_programType, _runtime);
+            DefineAsyncArrowStub(arrowBuilder);
             MarkPadsUndefined(arrowBuilder.StubMethod); // #640
             MarkFunctionLength(arrowBuilder.StubMethod, arrow.Parameters);
             MarkFunctionName(arrowBuilder.StubMethod, arrow.Name?.Lexeme ?? "");

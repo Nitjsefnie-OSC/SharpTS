@@ -31,10 +31,11 @@ public partial class ILCompiler
 
         // Parameter initialization belongs to the generator call, before the
         // iterator is returned, rather than to its first MoveNext invocation.
-        var precreatedFunctionDC = EmitIteratorStubDefaults(
+        var environment = EmitIteratorStubEnvironment(
             methodBuilder, funcStmt, isInstanceMethod: false, funcDCKey: qualifiedName);
 
         il.Emit(OpCodes.Newobj, smBuilder.Constructor);
+        EmitIteratorArgumentsStore(il, smBuilder, environment.Arguments);
 
         // #775: capture the active dynamic `this` into <>4__this. The receiver is the thread-local
         // `$TSFunction._currentFunctionThis` (set by InvokeWithThis for an `o.gen()` / `.call(recv)`
@@ -89,7 +90,7 @@ public partial class ILCompiler
         // them live from their enclosing storage instead.
         EmitGeneratorFunctionDCInit(
             il, smBuilder.FunctionDCField, funcStmt, qualifiedName, paramOffset: 0,
-            precreatedFunctionDC: precreatedFunctionDC);
+            precreatedFunctionDC: environment.FunctionDisplayClass);
 
         il.Emit(OpCodes.Ret);
     }
@@ -115,7 +116,7 @@ public partial class ILCompiler
         var parameters = method.Parameters;
         var il = methodBuilder.GetILGenerator();
 
-        var precreatedFunctionDC = EmitIteratorStubDefaults(
+        var environment = EmitIteratorStubEnvironment(
             methodBuilder,
             method,
             isInstanceMethod,
@@ -124,6 +125,7 @@ public partial class ILCompiler
             funcDCKey);
 
         il.Emit(OpCodes.Newobj, smBuilder.Constructor);
+        EmitIteratorArgumentsStore(il, smBuilder, environment.Arguments);
 
         if (smBuilder.ThisField != null)
         {
@@ -159,7 +161,7 @@ public partial class ILCompiler
         if (funcDCKey != null)
             EmitGeneratorFunctionDCInit(
                 il, smBuilder.FunctionDCField, method, funcDCKey, paramOffset, paramTypes,
-                precreatedFunctionDC);
+                environment.FunctionDisplayClass);
 
         il.Emit(OpCodes.Ret);
     }
@@ -169,7 +171,18 @@ public partial class ILCompiler
     /// creation stub. Defaults update the argument slots before those values are copied
     /// into the state machine and any function display class.
     /// </summary>
-    private LocalBuilder? EmitIteratorStubDefaults(
+    private readonly record struct IteratorStubEnvironment(LocalBuilder? FunctionDisplayClass, LocalBuilder? Arguments);
+
+    private void EmitIteratorArgumentsStore(ILGenerator il, IIteratorStateMachineBuilder builder, LocalBuilder? arguments)
+    {
+        if (arguments == null) return;
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldloc, arguments);
+        il.Emit(OpCodes.Stfld, builder.GetVariableField("arguments")
+            ?? throw new InvalidOperationException("Iterator arguments storage has not been declared."));
+    }
+
+    private IteratorStubEnvironment EmitIteratorStubEnvironment(
         MethodBuilder methodBuilder,
         Stmt.Function function,
         bool isInstanceMethod,
@@ -177,8 +190,9 @@ public partial class ILCompiler
         string? currentClassName = null,
         string? funcDCKey = null)
     {
-        if (!function.Parameters.Any(p => p.DefaultValue != null))
-            return null;
+        if (!function.Parameters.Any(p => p.DefaultValue != null)
+            && !ReferencesArgumentsIdentifier(function.Body, function.Parameters))
+            return default;
 
         var ctx = CreateModuleMemberContext(methodBuilder.GetILGenerator(), methodBuilder);
         ctx.FieldsField = fieldsField;
@@ -215,11 +229,29 @@ public partial class ILCompiler
             ctx.DefineParameter(function.Parameters[i].Name.Lexeme, i + paramOffset, paramType);
         }
 
+        // Snapshot caller values before eager defaults rewrite any argument slots.
+        var arguments = EmitSuspendedArgumentsPrologue(methodBuilder, function, isInstanceMethod, ctx);
+
         new ILEmitter(ctx).EmitDefaultParameters(
             function.Parameters,
             isInstanceMethod,
             paramTypes: methodParams.Select(p => p.ParameterType).ToArray());
 
-        return functionDCLocal;
+        return new(functionDCLocal, arguments);
+    }
+
+    private LocalBuilder? EmitSuspendedArgumentsPrologue(MethodBuilder method, Stmt.Function function,
+        bool isInstanceMethod, CompilationContext? context = null)
+    {
+        if (!ReferencesArgumentsIdentifier(function.Body, function.Parameters)) return null;
+        // Private value helpers have a compiler-owned guest receiver parameter.
+        // A real source parameter named __this does not affect this registry test.
+        int receiverSkip = _privateMethodValueOwners.ContainsKey(method) ? 1 : 0;
+        var parameters = function.Parameters.Skip(receiverSkip).ToList();
+        var types = method.GetParameters().Skip(receiverSkip).Select(parameter => parameter.ParameterType).ToArray();
+        var il = method.GetILGenerator();
+        context ??= CreateModuleMemberContext(il, method);
+        return EmitArgumentsLocalPrologueCore(il, context, parameters, types,
+            (isInstanceMethod ? 1 : 0) + receiverSkip, publishedArgsLeadingSkip: receiverSkip);
     }
 }

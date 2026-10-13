@@ -146,6 +146,14 @@ public partial class AsyncGeneratorStateAnalyzer : AstVisitorBase
             _variablesDeclaredBeforeSuspension.Add(param.Name.Lexeme);
         }
 
+        bool usesArguments = ArgumentsRefScanner.Contains(func.Parameters, func.Body,
+            treatEvalReferenceAsUse: true);
+        if (usesArguments)
+        {
+            _declaredVariables.Add("arguments");
+            _variablesDeclaredBeforeSuspension.Add("arguments");
+        }
+
         // Analyze the function body using visitor pattern
         if (func.Body != null)
         {
@@ -160,6 +168,7 @@ public partial class AsyncGeneratorStateAnalyzer : AstVisitorBase
         var hoistedLocals = new HashSet<string>(_declaredVariables);
         hoistedLocals.IntersectWith(_variablesUsedAfterSuspension);
         hoistedLocals.ExceptWith(parameters); // Parameters are tracked separately
+        if (usesArguments) hoistedLocals.Add("arguments");
 
         // Build TryBlockInfo list from collected data
         var tryBlocks = BuildTryBlockInfoList();

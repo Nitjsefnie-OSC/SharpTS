@@ -393,6 +393,9 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
     /// </summary>
     private void DefineOwnVariableFields(List<Stmt.Parameter> parameters, HashSet<string> locals)
     {
+        if (Arrow.HasOwnThis && SharpTS.Parsing.Visitors.ArgumentsRefScanner.Contains(
+                Arrow.Parameters, Arrow.BlockBody, Arrow.ExpressionBody, treatEvalReferenceAsUse: true))
+            locals = [.. locals, "arguments"];
         var hoisting = new HoistingManager(_stateMachineType, _types.Object);
         hoisting.DefineHoistedVariables(parameters.Select(parameter => parameter.Name.Lexeme), locals, DebugSymbols);
         foreach (var (name, field) in hoisting.HoistedParameters) ParameterFields[name] = field;
@@ -400,7 +403,8 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
         foreach (Stmt.Parameter parameter in parameters) ParameterOrder.Add(parameter.Name.Lexeme);
     }
 
-    public void DefineStubMethod(TypeBuilder programType, EmittedRuntime? runtime = null)
+    public void DefineStubMethod(TypeBuilder programType, EmittedRuntime? runtime = null,
+        Action<ILGenerator, LocalBuilder, int>? initializeArguments = null)
     {
         // Build parameter types list
         var paramTypes = new List<Type>();
@@ -497,6 +501,10 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
             il.MarkLabel(thisNotNull);
             il.Emit(OpCodes.Stfld, OwnThisField);
         }
+
+        // Own function expressions snapshot raw arguments before Start/defaults;
+        // true arrows retain their enclosing callable's binding.
+        initializeArguments?.Invoke(il, smLocal, paramOffset);
 
         // Copy parameters to state machine fields (in order!)
         for (int i = 0; i < ParameterOrder.Count; i++)

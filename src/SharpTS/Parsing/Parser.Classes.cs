@@ -75,7 +75,8 @@ public partial class Parser
             bool isMemberAsync = false;
             bool isMemberDeclare = false;
 
-            while (Match(TokenType.PUBLIC, TokenType.PRIVATE, TokenType.PROTECTED, TokenType.STATIC, TokenType.READONLY, TokenType.ABSTRACT, TokenType.OVERRIDE, TokenType.ASYNC, TokenType.DECLARE))
+            while (!IsMethodOrFieldOpener(PeekNext().Type) &&
+                   Match(TokenType.PUBLIC, TokenType.PRIVATE, TokenType.PROTECTED, TokenType.STATIC, TokenType.READONLY, TokenType.ABSTRACT, TokenType.OVERRIDE, TokenType.ASYNC, TokenType.DECLARE))
             {
                 var modifier = Previous().Type;
                 switch (modifier)
@@ -767,7 +768,8 @@ public partial class Parser
             bool isMemberAsync = false;
             bool isMemberDeclare = false;
 
-            while (Match(TokenType.PUBLIC, TokenType.PRIVATE, TokenType.PROTECTED, TokenType.STATIC, TokenType.READONLY, TokenType.ASYNC, TokenType.DECLARE))
+            while (!IsMethodOrFieldOpener(PeekNext().Type) &&
+                   Match(TokenType.PUBLIC, TokenType.PRIVATE, TokenType.PROTECTED, TokenType.STATIC, TokenType.READONLY, TokenType.ASYNC, TokenType.DECLARE))
             {
                 var modifier = Previous().Type;
                 switch (modifier)

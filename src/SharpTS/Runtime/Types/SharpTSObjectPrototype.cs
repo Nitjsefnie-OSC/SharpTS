@@ -295,7 +295,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
         if (target is SharpTSObject or SharpTSFunction or SharpTSArrowFunction
             or SharpTSArray or SharpTSProxy or SharpTSInstance or SharpTSClass
             or ISharpTSSymbolPropertyBag or SharpTSMath or SharpTSStringPrototype
-            or SharpTSRegExp
+            or SharpTSRegExp or ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator
             && interpreter?.GetSymbolPropertyValue(target, SharpTSSymbol.ToStringTag) is string customTag)
             return $"[object {customTag}]";
         if (target is string) return "[object String]";

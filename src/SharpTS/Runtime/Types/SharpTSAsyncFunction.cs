@@ -134,6 +134,9 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
             environment.Define("this", _receiverBound && _closure.TryGet("this", out var receiver)
                 ? receiver.ToObject() : SharpTSUndefined.Instance);
         }
+        // Snapshot the caller values before defaults; this binding survives every await.
+        if (ArgumentsUsage.UsesArguments(_declaration))
+            environment.Define("arguments", new SharpTSArguments(arguments));
         await ParameterBinder.BindAsync(_declaration.Parameters, arguments, environment, interpreter);
 
         if (_declaration.Body == null)
@@ -298,6 +301,9 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
         {
             environment.Define(_declaration.Name.Lexeme, this);
         }
+        // Function expressions own arguments; true arrows retain the enclosing binding.
+        if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
+            environment.Define("arguments", new SharpTSArguments(arguments));
         await ParameterBinder.BindAsync(_declaration.Parameters, arguments, environment, interpreter);
 
         using var debugFrame = interpreter.EnterDebugFrame(

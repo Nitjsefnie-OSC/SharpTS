@@ -1181,10 +1181,18 @@ public static class PromiseBuiltIns
         {
             if (_done) return;
             _done = true;
-            if (_iteratorObject is not null)
-                _interpreter.CloseIterator(_iteratorObject);
-            else
-                _enumerator?.Dispose();
+            try
+            {
+                if (_iteratorObject is not null)
+                    _interpreter.CloseIterator(_iteratorObject);
+                else
+                    _enumerator?.Dispose();
+            }
+            catch
+            {
+                // Combinators close only after an abrupt completion; the
+                // original error must reject their promise even if return fails.
+            }
         }
     }
 

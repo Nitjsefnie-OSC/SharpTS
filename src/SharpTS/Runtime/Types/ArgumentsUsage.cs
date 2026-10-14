@@ -5,7 +5,7 @@ using SharpTS.Parsing.Visitors;
 namespace SharpTS.Runtime.Types;
 
 /// <summary>
-/// Per-declaration cache answering "does this function's body observe the JS
+/// Per-declaration cache answering "does this function observe the JS
 /// <c>arguments</c> binding?" so call paths can skip materializing the
 /// <c>arguments</c> array (a List + SharpTSArray + per-arg boxing on EVERY
 /// call) for the overwhelming majority of functions that never touch it.
@@ -25,7 +25,8 @@ internal static class ArgumentsUsage
     {
         if (_cache.TryGetValue(declaration, out var cached))
             return (bool)cached;
-        bool result = declaration.Body != null && Scan(declaration.Body, null);
+        bool result = ArgumentsRefScanner.Contains(declaration.Parameters, declaration.Body,
+            treatEvalReferenceAsUse: true);
         _cache.AddOrUpdate(declaration, result ? BoxedTrue : BoxedFalse);
         return result;
     }
@@ -34,26 +35,9 @@ internal static class ArgumentsUsage
     {
         if (_cache.TryGetValue(declaration, out var cached))
             return (bool)cached;
-        bool result = Scan(declaration.BlockBody, declaration.ExpressionBody);
+        bool result = ArgumentsRefScanner.Contains(declaration.Parameters, declaration.BlockBody,
+            declaration.ExpressionBody, treatEvalReferenceAsUse: true);
         _cache.AddOrUpdate(declaration, result ? BoxedTrue : BoxedFalse);
         return result;
-    }
-
-    private static bool Scan(List<Stmt>? blockBody, Expr? expressionBody)
-    {
-        var scanner = new ArgumentsRefScanner(treatEvalReferenceAsUse: true);
-        if (expressionBody != null)
-        {
-            scanner.Visit(expressionBody);
-            return scanner.Found;
-        }
-        if (blockBody == null)
-            return false;
-        foreach (var stmt in blockBody)
-        {
-            scanner.Visit(stmt);
-            if (scanner.Found) return true;
-        }
-        return false;
     }
 }

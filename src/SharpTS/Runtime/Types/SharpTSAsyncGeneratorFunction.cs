@@ -13,15 +13,16 @@ namespace SharpTS.Runtime.Types;
 /// </remarks>
 /// <seealso cref="SharpTSAsyncGenerator"/>
 /// <seealso cref="SharpTSGeneratorFunction"/>
-public class SharpTSAsyncGeneratorFunction : ISharpTSFunctionObject, IReceiverBindable
+public class SharpTSAsyncGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceiverBindable
 {
+    private GeneratorFunctionProperties _functionProperties;
+    GeneratorFunctionProperties ISharpTSGeneratorFunctionValue.FunctionProperties => _functionProperties;
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
     internal bool IsStaticMethod => _declaration.IsStatic;
     internal SharpTSClass? PrivateOwner { get; set; }
-    private SharpTSObject _properties;
-    SharpTSObject ISharpTSFunctionObject.OwnProperties => _properties;
+    SharpTSObject ISharpTSFunctionObject.OwnProperties => _functionProperties.OwnProperties;
     private string? _computedName;
     internal string? ComputedName
     {
@@ -29,7 +30,7 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSFunctionObject, IReceiverBi
         set
         {
             _computedName = value;
-            _properties.DefineProperty("name", new SharpTSPropertyDescriptor(
+            _functionProperties.OwnProperties.DefineProperty("name", new SharpTSPropertyDescriptor(
                 value ?? _declaration.RuntimeName ?? _declaration.Name.Lexeme,
                 writable: false, enumerable: false, configurable: true));
         }
@@ -47,7 +48,7 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSFunctionObject, IReceiverBi
     public bool HasDynamicThis => _declaration.HasDynamicThis;
 
     public SharpTSAsyncGeneratorFunction(Stmt.Function declaration, RuntimeEnvironment closure,
-        bool thisBound = false, object? boundThis = null, SharpTSClass? boundSuper = null)
+        bool thisBound = false, object? boundThis = null, SharpTSClass? boundSuper = null, Interpreter? creationRealm = null)
     {
         _declaration = declaration;
         _closure = closure;
@@ -56,7 +57,8 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSFunctionObject, IReceiverBi
         _boundSuper = boundSuper;
         _arity = declaration.IsPrivate ? declaration.Parameters.TakeWhile(p => p.DefaultValue == null && !p.IsRest).Count()
             : declaration.Parameters?.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional) ?? 0;
-        _properties = FunctionObjectProperties.Create(declaration.RuntimeName ?? declaration.Name.Lexeme, _arity);
+        _functionProperties = new(isAsync: true,
+            name: declaration.RuntimeName ?? declaration.Name.Lexeme, length: _arity, creationRealm: creationRealm);
     }
 
     public int Arity() => _arity;
@@ -88,6 +90,9 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSFunctionObject, IReceiverBi
             environment.Define("this", interpreter.GlobalThis); // sloppy-mode `this` = globalThis (#775)
         }
 
+        // Snapshot before defaults and before the lazy async generator is returned.
+        if (ArgumentsUsage.UsesArguments(_declaration))
+            environment.Define("arguments", new SharpTSArguments(arguments));
         // Bind parameters to arguments
         ParameterBinder.Bind(_declaration.Parameters ?? [], arguments, environment, interpreter);
 
@@ -95,7 +100,8 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSFunctionObject, IReceiverBi
         // as a function expression — only the body and captured environment differ.
         return new SharpTSAsyncGenerator(
             _declaration.Body ?? [], environment, interpreter,
-            _declaration.Name?.Lexeme ?? "<async generator>", _declaration);
+            _declaration.Name?.Lexeme ?? "<async generator>", _declaration)
+        { Prototype = _functionProperties.GetIteratorPrototype(interpreter) };
     }
 
     /// <summary>
@@ -114,7 +120,7 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSFunctionObject, IReceiverBi
 
     private SharpTSAsyncGeneratorFunction ShareObjectState(SharpTSAsyncGeneratorFunction bound)
     {
-        bound._properties = _properties;
+        bound._functionProperties = _functionProperties;
         bound.PrivateOwner = PrivateOwner;
         bound._computedName = _computedName;
         return bound;
@@ -136,13 +142,14 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSFunctionObject, IReceiverBi
 /// </remarks>
 /// <seealso cref="SharpTSAsyncGenerator"/>
 /// <seealso cref="SharpTSArrowGeneratorFunction"/>
-public class SharpTSAsyncArrowGeneratorFunction : ISharpTSFunctionObject, IReceiverBindable
+public class SharpTSAsyncArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceiverBindable
 {
+    private GeneratorFunctionProperties _functionProperties;
+    GeneratorFunctionProperties ISharpTSGeneratorFunctionValue.FunctionProperties => _functionProperties;
     private readonly Expr.ArrowFunction _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
-    private SharpTSObject _properties;
-    SharpTSObject ISharpTSFunctionObject.OwnProperties => _properties;
+    SharpTSObject ISharpTSFunctionObject.OwnProperties => _functionProperties.OwnProperties;
     /// <summary>A dynamic receiver was bound (via <see cref="Bind"/>), so <see cref="Call"/> binds
     /// <c>this</c> to <see cref="_boundThis"/> rather than defaulting it to undefined.</summary>
     private readonly bool _thisBound;
@@ -154,7 +161,8 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSFunctionObject, IRecei
     /// </summary>
     public bool HasOwnThis { get; }
 
-    public SharpTSAsyncArrowGeneratorFunction(Expr.ArrowFunction declaration, RuntimeEnvironment closure, bool hasOwnThis = false, bool thisBound = false, object? boundThis = null)
+    public SharpTSAsyncArrowGeneratorFunction(Expr.ArrowFunction declaration, RuntimeEnvironment closure, bool hasOwnThis = false,
+        bool thisBound = false, object? boundThis = null, Interpreter? creationRealm = null)
     {
         _declaration = declaration;
         _closure = closure;
@@ -162,7 +170,8 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSFunctionObject, IRecei
         _thisBound = thisBound;
         _boundThis = boundThis;
         _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
-        _properties = FunctionObjectProperties.Create(declaration.Name?.Lexeme ?? "", _arity);
+        _functionProperties = new(isAsync: true,
+            name: declaration.Name?.Lexeme ?? "", length: _arity, creationRealm: creationRealm);
     }
 
     public int Arity() => _arity;
@@ -182,13 +191,16 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSFunctionObject, IRecei
             environment.Define("this", _boundThis);
         else if (HasOwnThis)
             environment.Define("this", interpreter.GlobalThis); // sloppy-mode `this` = globalThis (#775)
+        if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
+            environment.Define("arguments", new SharpTSArguments(arguments));
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         // Generator expressions always have a block body (the parser never produces an
         // expression-bodied generator).
         return new SharpTSAsyncGenerator(
             _declaration.BlockBody ?? [], environment, interpreter,
-            _declaration.Name?.Lexeme ?? "<async generator>", _declaration);
+            _declaration.Name?.Lexeme ?? "<async generator>", _declaration)
+        { Prototype = _functionProperties.GetIteratorPrototype(interpreter) };
     }
 
     /// <summary>Binds <c>this</c>. Only applicable for function expressions with HasOwnThis=true.</summary>
@@ -196,7 +208,7 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSFunctionObject, IRecei
     {
         var bound = new SharpTSAsyncArrowGeneratorFunction(
             _declaration, _closure, hasOwnThis: true, thisBound: true, boundThis: thisObject);
-        bound._properties = _properties;
+        bound._functionProperties = _functionProperties;
         return bound;
     }
 

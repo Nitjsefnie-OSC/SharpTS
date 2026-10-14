@@ -186,9 +186,73 @@ public abstract partial class ExpressionEmitterBase
         string name = call.Name.Lexeme.TrimStart('#');
         string owner = Ctx.ResolvePrivateMethodOwner(current, name);
         var value = Ctx.ClassRegistry?.GetPrivateMethodValue(owner, name);
-        if (value is null || (value.Definition == null && !value.Source.IsStatic)) return false;
+        if (value is null || (value.Definition == null && !value.Source.IsStatic
+                && !Parsing.Visitors.ArgumentsRefScanner.Contains(value.Source.Parameters, value.Source.Body,
+                    treatEvalReferenceAsUse: true))) return false;
         var receiver = SpillGenericPrivateOperand(call.Object);
         EmitPrivateMethodValue(value, owner, name, receiver);
+        EmitGuestMethodInvocation(receiver, call.Arguments);
+        return true;
+    }
+
+    protected bool TryEmitPrivateFieldCall(Expr.CallPrivate call)
+    {
+        if (Ctx.CurrentClassName is not { } current) return false;
+        string name = call.Name.Lexeme.TrimStart('#');
+        string owner = Ctx.ResolvePrivateFieldOwner(current, name);
+        var declaration = Ctx.ClassRegistry?.GetPrivateElements(owner);
+        bool isStatic = declaration?.StaticFields.ContainsKey(name) == true;
+        if (declaration is null || (!isStatic && !declaration.FieldNames.Contains(name))) return false;
+
+        var receiver = SpillGenericPrivateOperand(call.Object);
+        var expression = Ctx.ClassExprBuilders?.FirstOrDefault(entry => entry.Value.FullName == owner).Key;
+        var definition = expression == null ? null : EmitDefinitionPrivateBrandCheck(receiver, name, isStatic, owner);
+        LocalBuilder slots;
+        string key = name;
+        if (isStatic && definition != null)
+        {
+            slots = IL.DeclareLocal(Types.DictionaryStringObject);
+            IL.Emit(OpCodes.Ldloc, definition);
+            IL.Emit(OpCodes.Ldfld, Ctx.Runtime!.ClassDefinitions.PrivateMembers);
+            IL.Emit(OpCodes.Stloc, slots);
+            key = $"field:{name}";
+        }
+        else if (isStatic)
+        {
+            EmitOrdinaryStaticPrivateBrandCheck(owner, receiver, name);
+            if (!Ctx.ClassRegistry!.TryGetCallableStaticPrivateField(owner, name, out var field))
+                throw new InvalidOperationException("Static private field has no callable owner.");
+            var presence = field!.DeclaringType!.IsConstructedGenericType
+                ? EmitterTypeHelpers.ResolveField(field.DeclaringType, declaration.StaticPresence!)
+                : declaration.StaticPresence!;
+            var installed = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldsfld, presence);
+            IL.Emit(OpCodes.Ldstr, name);
+            IL.Emit(OpCodes.Callvirt, Types.GetMethod(typeof(HashSet<string>), "Contains", Types.String));
+            IL.Emit(OpCodes.Brtrue, installed);
+            GuestErrorEmitter.ThrowTypeError(IL, Ctx.Runtime!, $"Cannot access private member #{name} before initialization");
+            IL.MarkLabel(installed);
+            IL.Emit(OpCodes.Ldsfld, field);
+            SetStackUnknown();
+            EmitGuestMethodInvocation(receiver, call.Arguments);
+            return true;
+        }
+        else if (declaration.InstanceBridge is { } bridge)
+            slots = EmitGenericPrivateBrandCheck(bridge, receiver, name);
+        else
+            slots = EmitOrdinaryPrivateBrandCheck(owner, receiver, name);
+
+        var present = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, slots);
+        IL.Emit(OpCodes.Ldstr, key);
+        IL.Emit(OpCodes.Callvirt, Types.GetMethod(Types.DictionaryStringObject, "ContainsKey", Types.String));
+        IL.Emit(OpCodes.Brtrue, present);
+        GuestErrorEmitter.ThrowTypeError(IL, Ctx.Runtime!, $"Cannot access private member #{name} before initialization");
+        IL.MarkLabel(present);
+        IL.Emit(OpCodes.Ldloc, slots);
+        IL.Emit(OpCodes.Ldstr, key);
+        IL.Emit(OpCodes.Callvirt, Types.GetMethod(Types.DictionaryStringObject, "get_Item", Types.String));
+        SetStackUnknown();
         EmitGuestMethodInvocation(receiver, call.Arguments);
         return true;
     }

@@ -275,6 +275,7 @@ public partial class AsyncMoveNextEmitter
 
     protected override void EmitCallPrivate(Expr.CallPrivate cp)
     {
+        if (TryEmitPrivateFieldCall(cp)) return;
         if (TryEmitBrandedPrivateCall(cp)) return;
         if (TryEmitGenericPrivateCall(cp, SpillBoxed))
             return;

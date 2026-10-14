@@ -139,6 +139,10 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
             _declaredVariables.Add(param.Name.Lexeme);
         }
 
+        bool usesArguments = ArgumentsRefScanner.Contains(func.Parameters, func.Body,
+            treatEvalReferenceAsUse: true);
+        if (usesArguments) _declaredVariables.Add("arguments");
+
         // Analyze the function body using visitor pattern
         if (func.Body != null)
         {
@@ -153,6 +157,7 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
         var hoistedLocals = new HashSet<string>(_declaredVariables);
         hoistedLocals.IntersectWith(_variablesUsedAfterAwait);
         hoistedLocals.ExceptWith(parameters); // Parameters are tracked separately
+        if (usesArguments) hoistedLocals.Add("arguments");
         // Catch parameters used after an await are ordinary live bindings: an IL local is reset
         // on MoveNext reentry, so excluding them would turn the caught value into null.
 

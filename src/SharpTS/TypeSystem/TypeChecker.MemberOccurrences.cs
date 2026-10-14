@@ -75,7 +75,7 @@ public partial class TypeChecker
         if (receiver is TypeInfo.TypeParameter { Constraint: { } constraint })
             return HasPrivateSourceOwner(constraint, ownerId, isStatic, depth + 1);
         if (isStatic)
-            return receiver is TypeInfo.Class or TypeInfo.GenericClass or TypeInfo.InstantiatedGeneric &&
+            return receiver is TypeInfo.Class or TypeInfo.MutableClass or TypeInfo.GenericClass or TypeInfo.InstantiatedGeneric &&
                 Members.IsSameSourceClass(SelectedSourceClassId(receiver), ownerId);
         return receiver is TypeInfo.Instance instance &&
             EnumerateClassCores(instance.ResolvedClassType).Any(core => Members.IsSameSourceClass(core.DeclarationId, ownerId));

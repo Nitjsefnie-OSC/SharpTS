@@ -220,6 +220,15 @@ public abstract partial class ExpressionEmitterBase
                 (int RestParamIndex, int RegularParamCount) restInfo = default;
                 bool hasRestParam = Ctx.FunctionRestParams?.TryGetValue(resolvedFuncName, out restInfo) == true;
 
+                if (Ctx.FunctionsCapturingArguments?.Contains(resolvedFuncName) == true
+                    && Ctx.Runtime?.Arguments.CurrentField != null)
+                {
+                    EmitArgumentsObservingCall(c.Arguments, targetMethod.GetParameters(), hasRestParam);
+                    IL.Emit(OpCodes.Call, targetMethod);
+                    BoxReturnValueIfNeeded(targetMethod.ReturnType);
+                    return;
+                }
+
                 // Preserve the original arity-only optimization behind the
                 // ordinary direct-call binding guards, including calls from
                 // closures and methods outside exact alias-call analysis.
@@ -1091,6 +1100,12 @@ public abstract partial class ExpressionEmitterBase
             Ctx.MethodsCapturingArguments?.Contains(targetMethod) == true &&
             Ctx.Runtime?.Arguments.CurrentField != null;
 
+        if (publishesArguments)
+        {
+            EmitArgumentsObservingCall(arguments, targetParams, hasRestParam);
+            return;
+        }
+
         // A spread can change both the number and the positions of the runtime arguments, so it
         // cannot be lowered as one CLR argument per source expression. Expand through the shared
         // iterator-aware helper first, then reload only the target's fixed slots. This preserves
@@ -1102,12 +1117,6 @@ public abstract partial class ExpressionEmitterBase
             EmitArgsArrayWithSpread(arguments);
             IL.Emit(OpCodes.Stloc, expandedArguments);
 
-            if (publishesArguments)
-            {
-                IL.Emit(OpCodes.Ldloc, expandedArguments);
-                IL.Emit(OpCodes.Stsfld, Ctx.Runtime!.Arguments.CurrentField);
-            }
-
             for (int i = 0; i < paramCount; i++)
             {
                 var missing = IL.DefineLabel();
@@ -1121,72 +1130,6 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Ldc_I4, i);
                 IL.Emit(OpCodes.Ldelem_Ref);
                 EmitCoerceBoxedToType(targetParams[i].ParameterType);
-                IL.Emit(OpCodes.Br, loaded);
-                IL.MarkLabel(missing);
-                EmitOmittedArgument(targetParams[i].ParameterType);
-                IL.MarkLabel(loaded);
-            }
-            return;
-        }
-
-        // A fixed CLR signature has nowhere to carry JavaScript surplus values.
-        // When this callee observes `arguments`, evaluate into boxed temps, publish
-        // the exact caller list, then reload only the declared CLR slots. This is
-        // the class-method counterpart of direct function call lowering.
-        if (publishesArguments && !hasRestParam && !arguments.Any(arg => arg is Expr.Spread))
-        {
-            var argumentTemps = new LocalBuilder[arguments.Count];
-            for (int i = 0; i < arguments.Count; i++)
-            {
-                argumentTemps[i] = i < paramCount
-                    ? SpillConvertedArg(arguments[i], targetParams[i].ParameterType)
-                    : SpillBoxed(arguments[i]);
-            }
-
-            IL.Emit(OpCodes.Ldc_I4, arguments.Count);
-            IL.Emit(OpCodes.Newarr, Types.Object);
-            for (int i = 0; i < argumentTemps.Length; i++)
-            {
-                IL.Emit(OpCodes.Dup);
-                IL.Emit(OpCodes.Ldc_I4, i);
-                IL.Emit(OpCodes.Ldloc, argumentTemps[i]);
-                IL.Emit(OpCodes.Stelem_Ref);
-            }
-            IL.Emit(OpCodes.Stsfld, Ctx.Runtime!.Arguments.CurrentField);
-
-            for (int i = 0; i < Math.Min(arguments.Count, paramCount); i++)
-            {
-                IL.Emit(OpCodes.Ldloc, argumentTemps[i]);
-                EmitCoerceBoxedToType(targetParams[i].ParameterType);
-            }
-            for (int i = arguments.Count; i < paramCount; i++)
-                EmitOmittedArgument(targetParams[i].ParameterType);
-            return;
-        }
-
-        // Untyped/defaulted JavaScript parameters use object slots. For that
-        // common shape, a spread-expanded runtime array can feed both the
-        // `arguments` snapshot and the declared call slots without re-evaluation.
-        if (publishesArguments && !hasRestParam && targetParams.All(p => p.ParameterType == Types.Object))
-        {
-            var rawArguments = IL.DeclareLocal(Types.ObjectArray);
-            EmitArgsArrayWithSpread(arguments);
-            IL.Emit(OpCodes.Stloc, rawArguments);
-            IL.Emit(OpCodes.Ldloc, rawArguments);
-            IL.Emit(OpCodes.Stsfld, Ctx.Runtime!.Arguments.CurrentField);
-
-            for (int i = 0; i < paramCount; i++)
-            {
-                var missing = IL.DefineLabel();
-                var loaded = IL.DefineLabel();
-                IL.Emit(OpCodes.Ldloc, rawArguments);
-                IL.Emit(OpCodes.Ldlen);
-                IL.Emit(OpCodes.Conv_I4);
-                IL.Emit(OpCodes.Ldc_I4, i);
-                IL.Emit(OpCodes.Ble, missing);
-                IL.Emit(OpCodes.Ldloc, rawArguments);
-                IL.Emit(OpCodes.Ldc_I4, i);
-                IL.Emit(OpCodes.Ldelem_Ref);
                 IL.Emit(OpCodes.Br, loaded);
                 IL.MarkLabel(missing);
                 EmitOmittedArgument(targetParams[i].ParameterType);

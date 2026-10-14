@@ -88,6 +88,14 @@ public class GeneratorStateAnalyzer : AstVisitorBase
             _variablesDeclaredBeforeYield.Add(param.Name.Lexeme);
         }
 
+        bool usesArguments = ArgumentsRefScanner.Contains(func.Parameters, func.Body,
+            treatEvalReferenceAsUse: true);
+        if (usesArguments)
+        {
+            _declaredVariables.Add("arguments");
+            _variablesDeclaredBeforeYield.Add("arguments");
+        }
+
         // Analyze the function body using visitor pattern
         if (func.Body != null)
         {
@@ -108,6 +116,7 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         hoistedLocals.IntersectWith(_variablesUsedAfterYield);
         hoistedLocals.UnionWith(_usingResources);
         hoistedLocals.ExceptWith(parameters); // Parameters are tracked separately
+        if (usesArguments) hoistedLocals.Add("arguments");
 
         return new GeneratorFunctionAnalysis(
             YieldPointCount: _yieldPoints.Count,

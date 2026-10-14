@@ -602,6 +602,20 @@ public partial class Interpreter
             if (current is SharpTSProxy proxy)
                 return proxy.TrapGet(name, this, receiver);
 
+            if (current is ISharpTSGeneratorFunctionValue generatorFunction)
+            {
+                if (TryReadDescriptor(generatorFunction.FunctionProperties.GetProperties(this)
+                        .GetOwnPropertyDescriptor(name), receiver, out var ownValue))
+                    return ownValue;
+                current = generatorFunction.FunctionProperties.GetFunctionPrototype(this);
+                continue;
+            }
+            if (current is SharpTSGenerator or SharpTSAsyncGenerator)
+            {
+                current = ObjectBuiltIns.PrototypeOf(this, current);
+                continue;
+            }
+
             if (current is bool)
             {
                 var prototype = GetBooleanPrototype();
@@ -667,8 +681,26 @@ public partial class Interpreter
                 continue;
             }
 
+            if (current is SharpTSFunctionPrototype functionPrototypeObject)
+            {
+                if (TryReadDescriptor(functionPrototypeObject.GetOwnPropertyDescriptor(name),
+                        receiver, out var prototypeValue))
+                    return prototypeValue;
+                if (functionPrototypeObject.GetMember(name) is { } member)
+                    return member;
+                current = GetObjectPrototype();
+                continue;
+            }
+            if (current is SharpTSObjectPrototype objectPrototypeObject)
+            {
+                if (TryReadDescriptor(objectPrototypeObject.GetOwnPropertyDescriptor(name),
+                        receiver, out var prototypeValue))
+                    return prototypeValue;
+                return objectPrototypeObject.GetMember(name) ?? SharpTSUndefined.Instance;
+            }
+
             if (current is ISharpTSFunctionObject functionObject
-                && TryReadDescriptor(functionObject.OwnProperties.GetOwnPropertyDescriptor(name),
+                && TryReadDescriptor(FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(name),
                     receiver, out var functionObjectValue))
                 return functionObjectValue;
 
@@ -706,6 +738,13 @@ public partial class Interpreter
 
             if (current is ISharpTSCallable callable)
             {
+                // Built-in callable metadata is an own property even when it
+                // is stored outside the ordinary function property bag.
+                if (callable is IBuiltInFunctionMetadata
+                    && name is "name" or "length"
+                    && FunctionBuiltIns.GetMember(callable, name) is { } metadataValue)
+                    return metadataValue;
+
                 // Ordinary callables inherit from the realm's mutable
                 // Function.prototype. Consult its descriptor overlay before
                 // the intrinsic members so user data properties/accessors
@@ -761,6 +800,19 @@ public partial class Interpreter
         {
             if (current is SharpTSProxy proxy)
                 return proxy.TrapGet(symbol, this, receiver);
+            if (current is ISharpTSGeneratorFunctionValue generatorFunction)
+            {
+                if (TryReadDescriptor(generatorFunction.FunctionProperties.GetProperties(this)
+                        .GetOwnPropertyDescriptor(symbol), receiver, out var ownValue))
+                    return ownValue;
+                current = generatorFunction.FunctionProperties.GetFunctionPrototype(this);
+                continue;
+            }
+            if (current is SharpTSGenerator or SharpTSAsyncGenerator)
+            {
+                current = ObjectBuiltIns.PrototypeOf(this, current);
+                continue;
+            }
             if (current is SharpTSClassPrototype prototype)
             {
                 if (TryReadDescriptor(prototype.GetOwnPropertyDescriptor(symbol), receiver, out var value))
@@ -782,7 +834,7 @@ public partial class Interpreter
 
             if (current is ISharpTSFunctionObject functionObject)
             {
-                if (TryReadDescriptor(functionObject.OwnProperties.GetOwnPropertyDescriptor(symbol),
+                if (TryReadDescriptor(FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(symbol),
                         receiver, out var value))
                     return value;
                 current = GetFunctionPrototype();
@@ -904,8 +956,8 @@ public partial class Interpreter
             }
             if (obj is ISharpTSFunctionObject functionObject)
             {
-                if (functionObject.OwnProperties.GetOwnPropertyDescriptor(name) is not null) return true;
-                obj = GetFunctionPrototype();
+                if (FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(name) is not null) return true;
+                obj = ObjectBuiltIns.PrototypeOf(this, functionObject);
                 continue;
             }
             if (obj is SharpTSObject so)
@@ -946,8 +998,8 @@ public partial class Interpreter
             }
             if (current is ISharpTSFunctionObject functionObject)
             {
-                if (functionObject.OwnProperties.GetOwnPropertyDescriptor(symbol) is not null) return true;
-                current = GetFunctionPrototype();
+                if (FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(symbol) is not null) return true;
+                current = ObjectBuiltIns.PrototypeOf(this, functionObject);
                 continue;
             }
             if (current is SharpTSArray array)
@@ -1119,6 +1171,9 @@ public partial class Interpreter
 
         if (obj is ISharpTSPrimitiveConstructor primitiveConstructor)
             return RuntimeValue.FromBoxed(GetPropertyValue(primitiveConstructor, get.Name.Lexeme));
+
+        if (obj is ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator)
+            return RuntimeValue.FromBoxed(GetPropertyValue(obj, get.Name.Lexeme));
 
         var category = TypeCategoryResolver.ClassifyRuntime(obj);
         string memberName = get.Name.Lexeme;
@@ -2155,14 +2210,14 @@ public partial class Interpreter
     private void SetFunctionObjectProperty(
         ISharpTSFunctionObject function, string name, object? value, bool strictMode)
     {
-        var ownDescriptor = function.OwnProperties.GetOwnPropertyDescriptor(name);
+        var ownDescriptor = FunctionObjectProperties.GetProperties(function, this).GetOwnPropertyDescriptor(name);
         if (TryAssignThroughDescriptor(ownDescriptor, function, name, value, strictMode)) return;
         if (ownDescriptor is null
             && TryAssignThroughDescriptor(
                 GetFunctionPrototype().GetOwnPropertyDescriptor(name)
                     ?? GetObjectPrototype().GetOwnPropertyDescriptor(name),
                 function, name, value, strictMode)) return;
-        function.OwnProperties.SetPropertyStrict(name, value, strictMode);
+        FunctionObjectProperties.GetProperties(function, this).SetPropertyStrict(name, value, strictMode);
     }
 
     /// <summary>
@@ -2487,6 +2542,10 @@ public partial class Interpreter
         {
             if (memberName == "constructor")
                 return GetFunctionPrototype().GetMember(memberName);
+            if (callable is IBuiltInFunctionMetadata
+                && memberName is "name" or "length"
+                && FunctionBuiltIns.GetMember(callable, memberName) is { } metadataValue)
+                return metadataValue;
             if (GetFunctionPrototype().HasExtra(memberName))
                 return GetFunctionPrototype().TryGetExtra(memberName);
             var fnMember = FunctionBuiltIns.GetMember(callable, memberName);
@@ -3312,14 +3371,11 @@ public partial class Interpreter
     private RuntimeValue EvaluateCallPrivate(Expr.CallPrivate expr)
     {
         object? obj = Evaluate(expr.Object);
+        object? callee = GetPrivateCore(obj, expr.Name.Lexeme).ToObject();
 
-        List<object?> arguments = [];
-        foreach (var arg in expr.Arguments)
-        {
-            arguments.Add(Evaluate(arg));
-        }
+        List<object?> arguments = EvaluateNewArguments(expr.Arguments);
 
-        return CallPrivateCore(obj, arguments, expr.Name.Lexeme);
+        return InvokePrivateCall(callee, obj, arguments);
     }
 
     /// <summary>
@@ -3328,55 +3384,28 @@ public partial class Interpreter
     private async Task<RuntimeValue> EvaluateCallPrivateAsync(Expr.CallPrivate expr)
     {
         object? obj = (await EvaluateAsync(expr.Object)).ToObject();
+        object? callee = GetPrivateCore(obj, expr.Name.Lexeme).ToObject();
 
-        List<object?> arguments = [];
-        foreach (var arg in expr.Arguments)
-        {
-            arguments.Add((await EvaluateAsync(arg)).ToObject());
-        }
+        List<object?> arguments = await EvaluateNewArgumentsCore(_asyncContext, expr.Arguments);
 
-        return CallPrivateCore(obj, arguments, expr.Name.Lexeme);
+        return InvokePrivateCall(callee, obj, arguments);
     }
 
-    private RuntimeValue CallPrivateCore(object? obj, List<object?> arguments, string methodName)
+    private RuntimeValue InvokePrivateCall(object? callee, object? receiver, List<object?> arguments)
     {
-        var owner = _environment.FindPrivateClass(methodName);
-        // Handle static private method call on class
-        if (obj is SharpTSClass klass)
-        {
-            if (owner is not null && !ReferenceEquals(klass, owner))
-                throw new ThrowException(new SharpTSTypeError(
-                    $"Cannot access private member {methodName} from an object whose class did not declare it"));
-            // For static private methods, the class being accessed IS the declaring class
-            // The type checker already verified we're inside this class
-            var method = klass.GetStaticPrivateMethod(methodName);
-            if (method == null)
-            {
-                throw new InterpreterException($"Static private method '{methodName}' does not exist on class '{klass.Name}'.");
-            }
-
-            return RuntimeValue.FromBoxed(SharpTSClass.BindStaticMethod(method, klass).CallBoxed(this, arguments));
-        }
-
-        // Instance private method call
-        if (obj is SharpTSInstance instance)
-        {
-            var declaringClass = owner ?? instance.RuntimeClass;
-            if (!declaringClass.HasPrivateBrand(instance))
-                throw new ThrowException(new SharpTSTypeError(
-                    $"Cannot access private member {methodName} from an object whose class did not declare it"));
-            var method = declaringClass.GetPrivateMethod(methodName);
-            if (method == null)
-            {
-                throw new InterpreterException($"Private method '{methodName}' does not exist on class '{declaringClass.Name}'.");
-            }
-
-            // Bind method to instance
-            return RuntimeValue.FromBoxed(SharpTSClass.BindMethod(method, instance).CallBoxed(this, arguments));
-        }
-
-        throw new ThrowException(new SharpTSTypeError(
-            $"Cannot access private member {methodName} from an object whose class did not declare it"));
+        // GetValue (including the private brand) precedes arguments, but the
+        // callable check follows them, just as for an ordinary member call.
+        if (callee is not ISharpTSCallable callable)
+            throw new ThrowException(new SharpTSTypeError($"{GetTypeofString(callee)} is not a function"));
+        // Instance class methods keep the resolver's class-this scope and
+        // lexical super binding. Callable fields use ordinary Call semantics.
+        if (receiver is SharpTSInstance instance && callable is
+            SharpTSFunction { PrivateOwner: not null, IsStaticMethod: false }
+            or SharpTSAsyncFunction { PrivateOwner: not null, IsStaticMethod: false }
+            or SharpTSGeneratorFunction { PrivateOwner: not null, IsStaticMethod: false }
+            or SharpTSAsyncGeneratorFunction { PrivateOwner: not null, IsStaticMethod: false })
+            return RuntimeValue.FromBoxed(SharpTSClass.BindMethod(callable, instance).CallBoxed(this, arguments));
+        return RuntimeValue.FromBoxed(FunctionBuiltIns.CallWithThis(this, callable, receiver, arguments));
     }
 
     #endregion

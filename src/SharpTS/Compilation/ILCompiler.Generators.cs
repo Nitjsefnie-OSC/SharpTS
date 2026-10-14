@@ -101,6 +101,7 @@ public partial class ILCompiler
             smBuilder.ThrowMethod);
 
         _functions.Builders[qualifiedName] = methodBuilder;
+        RegisterArgumentsCapturingFunction(methodBuilder, qualifiedName, funcStmt);
 
         // #925: a generator function used as a value (imported cross-module, stored, passed as a
         // callback → $TSFunction.Invoke) must pad omitted trailing optional args with the `undefined`

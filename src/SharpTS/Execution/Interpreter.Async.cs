@@ -126,67 +126,65 @@ public partial class Interpreter
 
         // Check for Symbol.iterator protocol first (works for both sync and async for...of)
         var syncIterator = TryGetSymbolIterator(iterable);
-        if (syncIterator != null)
+
+        // for-await-of also accepts sync iterables. Keep this fallback aligned
+        // with ExecuteForOf and GetIterableElements.
+        IEnumerable<object?> items = syncIterator ?? (iterable switch
         {
-            foreach (var item in syncIterator)
+            SharpTSArray arr => arr,
+            SharpTSBuffer buffer => buffer.Data.Select(b => (object?)(double)b),
+            SharpTSTypedArray typed => typed.ToArray(),
+            SharpTSMap map => map.Entries().Elements,
+            SharpTSSet set => set.Values().Elements,
+            SharpTSIterator iter => iter.Elements,
+            SharpTSGenerator gen => gen,
+            string s => StringBuiltIns.IterateCodePoints(s),
+            _ => throw new InterpreterException("for...of requires an iterable (array, Map, Set, or iterator).")
+        });
+
+        var iterator = items.GetEnumerator();
+        bool preserveThrow = false;
+        bool disposeIterator = true;
+        try
+        {
+            while (iterator.MoveNext())
             {
-                // CreateAsyncFromSyncIterator awaits each yielded value (including
-                // guest Promises and ordinary thenables), not just raw CLR Tasks.
-                object? value = forOf.IsAsync ? await AwaitAsyncIterationValue(item) : item;
+                // CreateAsyncFromSyncIterator adopts each yielded value.
+                object? value = iterator.Current;
+                if (forOf.IsAsync)
+                {
+                    // Value adoption is part of AsyncFromSyncIterator.next(). A
+                    // rejected step leaves the underlying iterator resumable.
+                    disposeIterator = false;
+                    value = await AwaitAsyncIterationValue(value);
+                    disposeIterator = true;
+                }
 
                 var result = await ExecuteLoopBodyAsync(forOf.Variable.Lexeme, value, forOf.Body);
+                preserveThrow = result.Type == ExecutionResult.ResultType.Throw;
                 var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
                 if (shouldBreak) return ExecutionResult.Success();
                 if (shouldContinue) continue;
                 if (abruptResult.HasValue) return abruptResult.Value;
 
-                // Process any pending timer callbacks
                 ProcessPendingCallbacks();
             }
             return ExecutionResult.Success();
         }
-
-        // Get elements based on iterable type. for-await-of accepts a sync iterable too, so
-        // this mirrors ExecuteForOf — see the note there about the three copies of this
-        // switch and keeping their iterable kinds in step. (#1282)
-        IEnumerable<object?> items = iterable switch
+        catch
         {
-            SharpTSArray arr => arr,
-            SharpTSBuffer buffer => buffer.Data.Select(b => (object?)(double)b),  // byte values as numbers
-            SharpTSTypedArray typed => typed.ToArray(),    // %TypedArray%.prototype[@@iterator]
-            SharpTSMap map => map.Entries().Elements,      // yields [key, value] arrays
-            SharpTSSet set => set.Values().Elements,       // yields values
-            SharpTSIterator iter => iter.Elements,
-            SharpTSGenerator gen => gen,                   // generators implement IEnumerable<object?>
-            string s => StringBuiltIns.IterateCodePoints(s),
-            _ => throw new InterpreterException("for...of requires an iterable (array, Map, Set, or iterator).")
-        };
-
-        foreach (var item in items)
-        {
-            object? value = forOf.IsAsync ? await AwaitAsyncIterationValue(item) : item;
-
-            var result = await ExecuteLoopBodyAsync(forOf.Variable.Lexeme, value, forOf.Body);
-            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
-            if (shouldBreak)
-            {
-                CloseSyncGeneratorOnEarlyExit(iterable);
-                return ExecutionResult.Success();
-            }
-            if (shouldContinue) continue;
-            if (abruptResult.HasValue)
-            {
-                CloseSyncGeneratorOnEarlyExit(iterable);
-                return abruptResult.Value;
-            }
-
-            // Process any pending timer callbacks
-            ProcessPendingCallbacks();
+            preserveThrow = true;
+            throw;
         }
-
-        return ExecutionResult.Success();
+        finally
+        {
+            try { if (disposeIterator) iterator.Dispose(); }
+            catch when (preserveThrow)
+            {
+                // A failing IteratorClose cannot replace an existing throw.
+            }
+        }
     }
-
     /// <summary>
     /// Applies the PromiseResolve-style value adoption required by
     /// CreateAsyncFromSyncIterator.
@@ -200,17 +198,6 @@ public partial class Interpreter
         if (TryGetThenable(value, out var thenFn))
             return await AwaitPreservingEnvironment(AdoptThenable(value!, thenFn));
         return value;
-    }
-
-    /// <summary>
-    /// A SharpTSGenerator's IEnumerable facade does not own the generator and
-    /// therefore cannot close it from IEnumerator.Dispose. Inject return() on an
-    /// abrupt for-await exit so active finally blocks run.
-    /// </summary>
-    private static void CloseSyncGeneratorOnEarlyExit(object? iterable)
-    {
-        if (iterable is SharpTSGenerator generator)
-            generator.Return(SharpTSUndefined.Instance);
     }
 
     private async Task<ExecutionResult> ExecuteLoopBodyAsync(string varName, object? value, Stmt body)

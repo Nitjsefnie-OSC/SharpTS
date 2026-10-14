@@ -1119,6 +1119,7 @@ public partial class Interpreter
     /// </summary>
     private bool InstanceOfByPrototype(object? left, ISharpTSCallable ctor)
     {
+        if (!IsJsObject(left)) return false;
         object? protoObj = GetPropertyValue(ctor, "prototype");
         if (!IsJsObject(protoObj))
             throw new ThrowException(new SharpTSTypeError("Function has non-object prototype in instanceof check"));
@@ -1274,13 +1275,11 @@ public partial class Interpreter
         // [[Construct]] result is checked via `instanceof species`.
         if (right is SharpTSArrowFunction arrCtor)
             return InstanceOfByPrototype(left, arrCtor);
-
-        // Generator function prototype objects are not yet represented by the
-        // interpreter (#2111); retain the existing unmatched-object result.
-        if (right is ISharpTSFunctionObject generatorFunction)
-            return generatorFunction.OwnProperties.GetOwnPropertyDescriptor("prototype") is null
-                ? false
-                : InstanceOfByPrototype(left, generatorFunction);
+        if (right is ISharpTSGeneratorFunctionValue generatorConstructor)
+            return InstanceOfByPrototype(left, generatorConstructor);
+        if (right is BuiltInMethod { OwnProperties: { } own } intrinsicConstructor
+            && own.ContainsKey("prototype"))
+            return InstanceOfByPrototype(left, intrinsicConstructor);
 
         if (right is not SharpTSClass targetClass)
             return InstanceOfByPrototype(left, (ISharpTSCallable)right);

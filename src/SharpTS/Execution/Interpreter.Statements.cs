@@ -1306,24 +1306,44 @@ public partial class Interpreter
     /// </summary>
     private ExecutionResult IterateWithBreakContinue(IEnumerable<object?> elements, string variableName, Stmt body, IReadOnlyList<string>? labels = null)
     {
-        foreach (var element in elements)
+        var iterator = elements.GetEnumerator();
+        bool preserveThrow = false;
+        try
         {
-            RuntimeEnvironment loopEnv = new(_environment);
-            loopEnv.Define(variableName, element);
-
-            using (PushScope(loopEnv))
+            while (iterator.MoveNext())
             {
-                var result = Execute(body);
-                var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
-                if (shouldBreak) return ExecutionResult.Success();
-                if (shouldContinue) continue;
-                if (abruptResult.HasValue) return abruptResult.Value;
+                RuntimeEnvironment loopEnv = new(_environment);
+                loopEnv.Define(variableName, iterator.Current);
 
-                // Process any pending timer callbacks
-                ProcessPendingCallbacks();
+                using (PushScope(loopEnv))
+                {
+                    var result = Execute(body);
+                    preserveThrow = result.Type == ExecutionResult.ResultType.Throw;
+                    var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
+                    if (shouldBreak) return ExecutionResult.Success();
+                    if (shouldContinue) continue;
+                    if (abruptResult.HasValue) return abruptResult.Value;
+
+                    // Process any pending timer callbacks
+                    ProcessPendingCallbacks();
+                }
+            }
+            return ExecutionResult.Success();
+        }
+        catch
+        {
+            preserveThrow = true;
+            throw;
+        }
+        finally
+        {
+            try { iterator.Dispose(); }
+            catch when (preserveThrow)
+            {
+                // IteratorClose preserves an existing throw completion, including
+                // guest throws represented by ExecutionResult rather than exceptions.
             }
         }
-        return ExecutionResult.Success();
     }
 
     /// <summary>
@@ -1999,12 +2019,12 @@ public partial class Interpreter
         if (functionStmt.IsGenerator && functionStmt.IsAsync)
         {
             // Async generator: async function* foo() { yield await ... }
-            SharpTSAsyncGeneratorFunction asyncGenFunction = new(functionStmt, _environment);
+            SharpTSAsyncGeneratorFunction asyncGenFunction = new(functionStmt, _environment, creationRealm: this);
             _environment.Define(functionStmt.Name.Lexeme, asyncGenFunction);
         }
         else if (functionStmt.IsGenerator)
         {
-            SharpTSGeneratorFunction generatorFunction = new(functionStmt, _environment);
+            SharpTSGeneratorFunction generatorFunction = new(functionStmt, _environment, creationRealm: this);
             _environment.Define(functionStmt.Name.Lexeme, generatorFunction);
         }
         else if (functionStmt.IsAsync)
@@ -2153,11 +2173,11 @@ public partial class Interpreter
             // Create the appropriate function type based on async/generator flags
             ISharpTSCallable func;
             if (method.IsGenerator && method.IsAsync)
-                func = new SharpTSAsyncGeneratorFunction(method, _environment);
+                func = new SharpTSAsyncGeneratorFunction(method, _environment, creationRealm: this);
             else if (method.IsAsync)
                 func = new SharpTSAsyncFunction(method, _environment);
             else if (method.IsGenerator)
-                func = new SharpTSGeneratorFunction(method, _environment);
+                func = new SharpTSGeneratorFunction(method, _environment, creationRealm: this);
             else
                 func = new SharpTSFunction(method, _environment, isConstructible: false);
 

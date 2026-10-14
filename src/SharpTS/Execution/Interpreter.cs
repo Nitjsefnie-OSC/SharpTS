@@ -2178,11 +2178,11 @@ public partial class Interpreter : IDisposable
                 // Create the appropriate function type and define it
                 if (funcStmt.IsGenerator && funcStmt.IsAsync)
                 {
-                    _environment.Define(funcStmt.Name.Lexeme, new SharpTSAsyncGeneratorFunction(funcStmt, _environment));
+                    _environment.Define(funcStmt.Name.Lexeme, new SharpTSAsyncGeneratorFunction(funcStmt, _environment, creationRealm: this));
                 }
                 else if (funcStmt.IsGenerator)
                 {
-                    _environment.Define(funcStmt.Name.Lexeme, new SharpTSGeneratorFunction(funcStmt, _environment));
+                    _environment.Define(funcStmt.Name.Lexeme, new SharpTSGeneratorFunction(funcStmt, _environment, creationRealm: this));
                 }
                 else if (funcStmt.IsAsync)
                 {

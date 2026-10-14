@@ -73,7 +73,9 @@ public sealed class EditorDeclarationSyntaxTests
         var @class = Assert.IsType<Stmt.Class>(Assert.Single(parsed.Statements));
         Assert.Contains(parsed.Syntax.GetRecords(@class), record => record.Role == EditorSyntaxRole.Header && Text(parsed.Document, record) == "class Container ");
         Assert.Contains(parsed.Syntax.GetRecords(@class.Fields[0]), record => record.Role == EditorSyntaxRole.PrivateName && Text(parsed.Document, record) == "#value");
-        Assert.Null(@class.Fields[0].TypeAnnotationNode);
+        var privateType = Assert.IsType<NamedTypeNode>(@class.Fields[0].TypeAnnotationNode);
+        Assert.Equal("Box", privateType.Name);
+        Assert.Equal("string", Assert.IsType<NamedTypeNode>(Assert.Single(privateType.TypeArguments!)).Name);
         Assert.Contains(parsed.Syntax.Records, record => record.Kind == EditorSyntaxKind.Type && record.Role == EditorSyntaxRole.Annotation &&
             record.Span.Start == source.IndexOf("Box<string>", StringComparison.Ordinal) && Text(parsed.Document, record) == "Box<string>");
         var method = @class.Methods.Single(method => method.Name.Lexeme == "map");
@@ -161,13 +163,20 @@ public sealed class EditorDeclarationSyntaxTests
     }
 
     [Fact]
-    public void SyntaxOnlyPrivateAnnotationDoesNotChangeCheckerInputsOrDiagnostics()
+    public void RetainedPrivateAnnotationsHaveOrdinaryAndEditorParserParity()
     {
         const string source = "class Container { #value: Container[\"#value\"]; }";
         var ordinary = new Parser(new Lexer(source).ScanTokens()).ParseOrThrow();
         var editor = Parse(source);
-        Assert.Null(Assert.IsType<Stmt.Class>(Assert.Single(ordinary)).Fields[0].TypeAnnotationNode);
-        Assert.Null(Assert.IsType<Stmt.Class>(Assert.Single(editor.Statements)).Fields[0].TypeAnnotationNode);
+        var ordinaryField = Assert.IsType<Stmt.Class>(Assert.Single(ordinary)).Fields[0];
+        var editorField = Assert.IsType<Stmt.Class>(Assert.Single(editor.Statements)).Fields[0];
+        Assert.Equal(ordinaryField.TypeAnnotation, editorField.TypeAnnotation);
+        foreach (var field in new[] { ordinaryField, editorField })
+        {
+            var annotation = Assert.IsType<IndexedAccessTypeNode>(field.TypeAnnotationNode);
+            Assert.Equal("Container", Assert.IsType<NamedTypeNode>(annotation.ObjectType).Name);
+            Assert.Equal("#value", Assert.IsType<LiteralTypeNode>(annotation.IndexType).Value);
+        }
         var ordinaryResult = new TypeChecker().CheckWithRecovery(ordinary);
         var editorResult = new TypeChecker().CheckWithRecovery(editor.Statements);
         Assert.Equal(ordinaryResult.Diagnostics.Select(diagnostic => (diagnostic.TsCode, diagnostic.Message)),

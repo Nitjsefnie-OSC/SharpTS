@@ -105,13 +105,13 @@ public abstract partial class AsyncFunctionMoveNextEmitter : StateMachineExitRou
             EnsureBoxed();
 
             // Async-function return performs PromiseResolve-style adoption. Private async
-            // methods have a statically identifiable call node and return Task<object>, so
-            // consume the synthetic analyzer state and await it before completing the outer
+            // methods and callable fields can return Tasks, Promises, or thenables, so consume
+            // the synthetic analyzer state and adopt their value before completing the outer
             // function. This prevents a nested host Task from becoming the JavaScript result.
             if (r.Value is Expr.CallPrivate privateCall)
             {
                 int returnState = NextAwaitState();
-                if (PrivateCallReturnsTask(privateCall))
+                if (PrivateCallNeedsReturnAdoption(privateCall))
                     EmitAwaitFromValueOnStack(returnState);
                 else
                 {
@@ -151,14 +151,21 @@ public abstract partial class AsyncFunctionMoveNextEmitter : StateMachineExitRou
         EmitCompleteWithReturnValueOnStack();
     }
 
-    private bool PrivateCallReturnsTask(Expr.CallPrivate call)
+    private bool PrivateCallNeedsReturnAdoption(Expr.CallPrivate call)
     {
+        if (Ctx.TypeMap?.Get(call) is SharpTS.TypeSystem.TypeInfo.Promise)
+            return true;
         string methodName = call.Name.Lexeme.TrimStart('#');
         string? className = Ctx.CurrentClassName;
         if (className == null || Ctx.ClassRegistry == null)
             return false;
 
         className = Ctx.ResolvePrivateMethodOwner(className, methodName);
+        // A field's callable value can return a Promise or thenable even when
+        // its declared result is any. Adopt the value at the async return boundary.
+        if (Ctx.ClassRegistry.GetPrivateElements(className) is { } declaration &&
+            (declaration.FieldNames.Contains(methodName) || declaration.StaticFields.ContainsKey(methodName)))
+            return true;
         if (Ctx.ClassRegistry.TryGetPrivateMethod(className, methodName, out var instanceMethod)
             && instanceMethod?.ReturnType == Ctx.Types.TaskOfObject)
             return true;

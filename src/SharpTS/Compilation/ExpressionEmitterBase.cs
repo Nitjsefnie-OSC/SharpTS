@@ -1186,6 +1186,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitCallPrivate(Expr.CallPrivate cp)
     {
+        if (TryEmitPrivateFieldCall(cp)) return;
         if (TryEmitBrandedPrivateCall(cp)) return;
         if (TryEmitGenericPrivateCall(cp))
             return;

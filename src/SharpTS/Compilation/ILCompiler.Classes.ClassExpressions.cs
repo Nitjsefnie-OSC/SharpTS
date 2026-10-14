@@ -400,7 +400,7 @@ public partial class ILCompiler
             MarkJsVariadicConstructor(ctorBuilder);
         _classExprs.Constructors[classExpr] = ctorBuilder;
         _classes.Constructors[className] = ctorBuilder;
-        RegisterArgumentsCapturingMethod(ctorBuilder, constructor?.Body);
+        RegisterArgumentsCapturingMethod(ctorBuilder, constructor?.Body, constructor?.Parameters);
         if (constructor == null && parentConstructor != null
             && _functions.MethodsCapturingArguments.Contains(parentConstructor))
             _functions.MethodsCapturingArguments.Add(ctorBuilder);
@@ -428,7 +428,7 @@ public partial class ILCompiler
             );
             _classExprs.StaticMethods[classExpr][method.Name.Lexeme] = methodBuilder;
             methodBuilder.DefineParameter(1, ParameterAttributes.None, "__classDefinition");
-            RegisterArgumentsCapturingMethod(methodBuilder, method.Body);
+            RegisterArgumentsCapturingMethod(methodBuilder, method.Body, method.Parameters);
         }
 
         // Define instance methods (computed symbol-keyed methods are handled by
@@ -457,7 +457,7 @@ public partial class ILCompiler
                 paramTypes
             );
             _classExprs.InstanceMethods[classExpr][method.Name.Lexeme] = methodBuilder;
-            RegisterArgumentsCapturingMethod(methodBuilder, method.Body);
+            RegisterArgumentsCapturingMethod(methodBuilder, method.Body, method.Parameters);
         }
 
         // Computed symbol-keyed methods (`*[Symbol.iterator]()` etc.) get synthetic uniquely-named

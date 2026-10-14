@@ -267,7 +267,6 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
 
-        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
         // Bind the JS-spec `arguments` array-like to the current call's args.
         // Arrow functions do NOT bind `arguments` — they inherit from the
         // enclosing non-arrow function (handled by SharpTSArrowFunction).
@@ -276,6 +275,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         {
             environment.Define("arguments", new SharpTSArguments(arguments));
         }
+        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         using var debugFrame = interpreter.EnterDebugFrame(
             _declaration.Name.Lexeme, environment, _declaration);
@@ -384,7 +384,6 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
 
-        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
         // See Call for the JS-spec rationale; materialize the args span into a
         // SharpTSArray so `arguments[i]` and `arguments.length` work — but only
         // when the body can observe it (ArgumentsUsage scan).
@@ -394,6 +393,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             for (int i = 0; i < arguments.Length; i++) argsList.Add(arguments[i].ToObject());
             environment.Define("arguments", new SharpTSArguments(argsList));
         }
+        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
 
         using var debugFrame = interpreter.EnterDebugFrame(
             _declaration.Name.Lexeme, environment, _declaration);
@@ -722,6 +722,9 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             environment.Define(_declaration.Name.Lexeme, this);
         }
 
+        // Defaults can observe their own arguments binding before the body runs.
+        if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
+            environment.Define("arguments", new SharpTSArguments(arguments));
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         // Receiver bound via Bind() is stored on the function itself, not in an
@@ -745,17 +748,6 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             // function expressions.
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
-        }
-
-        // Function expressions (HasOwnThis) bind their own `arguments`; true arrows
-        // (HasOwnThis=false) inherit it from the enclosing scope per JS spec. Needed
-        // for lodash-style wrappers: `function outer() { return function() {
-        // return func.apply(this, arguments); }; }` — the returned function is a
-        // function expression, not an arrow, and must see its own `arguments`.
-        // Materialized only when the body can observe it (ArgumentsUsage scan).
-        if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
-        {
-            environment.Define("arguments", new SharpTSArguments(new List<object?>(arguments)));
         }
 
         using var debugFrame = interpreter.EnterDebugFrame(
@@ -810,6 +802,13 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             environment.Define(_declaration.Name.Lexeme, this);
         }
 
+        // True arrows inherit arguments; own-this expressions snapshot before defaults.
+        if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
+        {
+            var argsList = new List<object?>(arguments.Length);
+            for (int i = 0; i < arguments.Length; i++) argsList.Add(arguments[i].ToObject());
+            environment.Define("arguments", new SharpTSArguments(argsList));
+        }
         ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
 
         if (_hasBoundThis)
@@ -822,15 +821,6 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             // or undefined (strict). Mirrors the legacy Call path above.
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
-        }
-
-        // Function expressions (HasOwnThis) bind their own `arguments`; true arrows do not.
-        // Materialized only when the body can observe it (ArgumentsUsage scan).
-        if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
-        {
-            var argsList = new List<object?>(arguments.Length);
-            for (int i = 0; i < arguments.Length; i++) argsList.Add(arguments[i].ToObject());
-            environment.Define("arguments", new SharpTSArguments(argsList));
         }
 
         using var debugFrame = interpreter.EnterDebugFrame(

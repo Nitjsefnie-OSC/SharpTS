@@ -158,7 +158,7 @@ public static partial class ObjectBuiltIns
                         includeValues ? interpreter.GetPropertyValue(primitiveConstructor, key) : null);
                 yield break;
             case ISharpTSFunctionObject function:
-                foreach (var key in function.OwnProperties.OwnEnumerableKeys().ToList())
+                foreach (var key in FunctionObjectProperties.GetProperties(function, interpreter).OwnEnumerableKeys().ToList())
                     yield return new(key, includeValues ? interpreter.GetPropertyValue(function, key) : null);
                 yield break;
             case ISharpTSCallable:
@@ -201,21 +201,40 @@ public static partial class ObjectBuiltIns
         var elements = interpreter.GetIterableElements(args[0]);
         Dictionary<string, object?> result = [];
 
-        foreach (var element in elements)
+        var iterator = elements.GetEnumerator();
+        bool preserveThrow = false;
+        try
         {
-            if (element is SharpTSArray pair && pair.Length >= 2)
+            while (iterator.MoveNext())
             {
-                string key = pair.Get(0)?.ToString() ?? "";
-                result[key] = pair.Get(1);
+                var element = iterator.Current;
+                if (element is SharpTSArray pair && pair.Length >= 2)
+                {
+                    string key = pair.Get(0)?.ToString() ?? "";
+                    result[key] = pair.Get(1);
+                }
+                else if (element is List<object?> listPair && listPair.Count >= 2)
+                {
+                    string key = listPair[0]?.ToString() ?? "";
+                    result[key] = listPair[1];
+                }
+                else
+                {
+                    throw new Exception("Runtime Error: Object.fromEntries() requires [key, value] pairs");
+                }
             }
-            else if (element is List<object?> listPair && listPair.Count >= 2)
+        }
+        catch
+        {
+            preserveThrow = true;
+            throw;
+        }
+        finally
+        {
+            try { iterator.Dispose(); }
+            catch when (preserveThrow)
             {
-                string key = listPair[0]?.ToString() ?? "";
-                result[key] = listPair[1];
-            }
-            else
-            {
-                throw new Exception("Runtime Error: Object.fromEntries() requires [key, value] pairs");
+                // IteratorClose cannot replace the entry-processing throw.
             }
         }
         return new SharpTSObject(result);
@@ -334,9 +353,9 @@ public static partial class ObjectBuiltIns
             switch (args[i])
             {
                 case ISharpTSFunctionObject source:
-                    foreach (var symbol in source.OwnProperties.GetSymbolPropertyNames().ToList())
+                    foreach (var symbol in FunctionObjectProperties.GetProperties(source, interpreter).GetSymbolPropertyNames().ToList())
                     {
-                        if (source.OwnProperties.GetOwnPropertyDescriptor(symbol)?.Enumerable != true) continue;
+                        if (FunctionObjectProperties.GetProperties(source, interpreter).GetOwnPropertyDescriptor(symbol)?.Enumerable != true) continue;
                         SetAssignedSymbol(interpreter, target, symbol,
                             interpreter.GetSymbolPropertyValue(source, symbol));
                     }
@@ -370,7 +389,7 @@ public static partial class ObjectBuiltIns
         switch (target)
         {
             case ISharpTSFunctionObject function:
-                var descriptor = function.OwnProperties.GetOwnPropertyDescriptor(symbol);
+                var descriptor = FunctionObjectProperties.GetProperties(function, interpreter).GetOwnPropertyDescriptor(symbol);
                 if (descriptor is { HasGet: true } or { HasSet: true })
                 {
                     if (descriptor.Set is null)
@@ -378,7 +397,7 @@ public static partial class ObjectBuiltIns
                             $"Cannot set symbol property '{symbol}' which has only a getter"));
                     FunctionBuiltIns.CallWithThis(interpreter, descriptor.Set, function, [value]);
                 }
-                else function.OwnProperties.SetBySymbolStrict(symbol, value, strictMode: true);
+                else FunctionObjectProperties.GetProperties(function, interpreter).SetBySymbolStrict(symbol, value, strictMode: true);
                 break;
             case SharpTSObject obj when obj.TryGetSymbolAccessor(symbol, out _, out var setter):
                 if (setter is null)
@@ -393,13 +412,13 @@ public static partial class ObjectBuiltIns
         }
     }
 
-    private static RuntimeValue FreezeV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    private static RuntimeValue FreezeV2(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var arg = args[0].ToObject();
         switch (arg)
         {
             case ISharpTSFunctionObject function:
-                function.OwnProperties.Freeze();
+                FunctionObjectProperties.GetProperties(function, interpreter).Freeze();
                 return RuntimeValue.FromObject(function);
             case SharpTSObject obj:
                 obj.Freeze();
@@ -439,13 +458,13 @@ public static partial class ObjectBuiltIns
         }
     }
 
-    private static RuntimeValue SealV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    private static RuntimeValue SealV2(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var arg = args[0].ToObject();
         switch (arg)
         {
             case ISharpTSFunctionObject function:
-                function.OwnProperties.Seal();
+                FunctionObjectProperties.GetProperties(function, interpreter).Seal();
                 return RuntimeValue.FromObject(function);
             case SharpTSObject obj:
                 obj.Seal();
@@ -485,13 +504,13 @@ public static partial class ObjectBuiltIns
         }
     }
 
-    private static RuntimeValue IsFrozenV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    private static RuntimeValue IsFrozenV2(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var arg = args[0].ToObject();
         return RuntimeValue.FromBoolean(arg switch
         {
             SharpTSObject obj => obj.IsFrozen,
-            ISharpTSFunctionObject function => function.OwnProperties.IsFrozen,
+            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, interpreter).IsFrozen,
             SharpTSInstance inst => inst.IsFrozen,
             SharpTSArray arr => arr.IsFrozen,
             Dictionary<string, object?> dict => PropertyDescriptorStore.IsFrozen(dict),
@@ -502,13 +521,13 @@ public static partial class ObjectBuiltIns
         });
     }
 
-    private static RuntimeValue IsSealedV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    private static RuntimeValue IsSealedV2(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var arg = args[0].ToObject();
         return RuntimeValue.FromBoolean(arg switch
         {
             SharpTSObject obj => obj.IsSealed,
-            ISharpTSFunctionObject function => function.OwnProperties.IsSealed,
+            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, interpreter).IsSealed,
             SharpTSInstance inst => inst.IsSealed,
             SharpTSArray arr => arr.IsSealed,
             Dictionary<string, object?> dict => PropertyDescriptorStore.IsSealed(dict),
@@ -612,7 +631,7 @@ public static partial class ObjectBuiltIns
                         symInst.SetBySymbol(symKey, descriptor.Value);
                     return target;
                 case ISharpTSFunctionObject function:
-                    if (!function.OwnProperties.DefineProperty(symKey, descriptor))
+                    if (!FunctionObjectProperties.GetProperties(function, interpreter).DefineProperty(symKey, descriptor))
                         throw new ThrowException(new SharpTSTypeError("Cannot redefine symbol property"));
                     return target;
                 case SharpTSFunction symFn:
@@ -657,7 +676,7 @@ public static partial class ObjectBuiltIns
         switch (target)
         {
             case ISharpTSFunctionObject function:
-                success = function.OwnProperties.DefineProperty(propertyKey, descriptor);
+                success = FunctionObjectProperties.GetProperties(function, interpreter).DefineProperty(propertyKey, descriptor);
                 break;
             case SharpTSObject obj:
                 success = obj.DefineProperty(propertyKey, descriptor);
@@ -839,7 +858,7 @@ public static partial class ObjectBuiltIns
         {
             if (target is SharpTSProxy symbolProxy)
                 return symbolProxy.TrapGetOwnPropertyDescriptor(symKey, interpreter);
-            return GetOwnPropertyDescriptorBySymbol(target, symKey);
+            return GetOwnPropertyDescriptorBySymbol(target, symKey, interpreter);
         }
 
         // ECMA-262 §7.1.19: ToPropertyKey on the name argument.
@@ -876,7 +895,7 @@ public static partial class ObjectBuiltIns
     {
         return target switch
         {
-            ISharpTSFunctionObject function => function.OwnProperties.GetOwnPropertyDescriptor(propertyKey),
+            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, interpreter).GetOwnPropertyDescriptor(propertyKey),
             SharpTSObject obj => obj.GetOwnPropertyDescriptor(propertyKey),
             ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.GetOwnPropertyDescriptor(propertyKey),
             SharpTSObjectNamespace objectNamespace
@@ -1139,11 +1158,11 @@ public static partial class ObjectBuiltIns
     /// target tracks one. Plain objects preserve symbol descriptor attributes;
     /// legacy specialized runtime types retain their existing default shape.
     /// </summary>
-    private static object? GetOwnPropertyDescriptorBySymbol(object target, SharpTSSymbol key)
+    private static object? GetOwnPropertyDescriptorBySymbol(object target, SharpTSSymbol key, Interpreter? interpreter = null)
     {
         switch (target)
         {
-            case ISharpTSFunctionObject function when function.OwnProperties.GetOwnPropertyDescriptor(key) is { } descriptor:
+            case ISharpTSFunctionObject function when (interpreter is null ? function.OwnProperties : FunctionObjectProperties.GetProperties(function, interpreter)).GetOwnPropertyDescriptor(key) is { } descriptor:
                 return descriptor.ToObject();
             case SharpTSClass klass when klass.GetOwnStaticSymbolPropertyDescriptor(key) is { } descriptor:
                 return descriptor.ToObject();
@@ -1253,7 +1272,7 @@ public static partial class ObjectBuiltIns
         // keys and read every descriptor through Get before applying it. The
         // carrier may be any object kind (function, array/arguments, Math,
         // Date, RegExp, JSON, …), and accessor reads bind `this` to that carrier.
-        var entries = OwnEnumerableKeysForDefineProperties(props)
+        var entries = OwnEnumerableKeysForDefineProperties(interpreter, props)
             .Select(key => new KeyValuePair<string, object?>(
                 key, ReadDefinePropertiesValue(interpreter, props, key)))
             .ToList();
@@ -1266,7 +1285,7 @@ public static partial class ObjectBuiltIns
         return target;
     }
 
-    private static IEnumerable<string> OwnEnumerableKeysForDefineProperties(object props)
+    private static IEnumerable<string> OwnEnumerableKeysForDefineProperties(Interpreter interpreter, object props)
         => props switch
         {
             SharpTSObject obj => OwnEnumerablePropertyKeys(obj),
@@ -1279,7 +1298,7 @@ public static partial class ObjectBuiltIns
             SharpTSRegExp regex => regex.OwnEnumerableKeys(),
             SharpTSError error => error.OwnEnumerableKeys(),
             SharpTSFunction function => function.PropertyKeys,
-            ISharpTSFunctionObject function => function.OwnProperties.OwnEnumerableKeys(),
+            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, interpreter).OwnEnumerableKeys(),
             SharpTSArrowFunction arrow => arrow.PropertyKeys,
             ISharpTSCallable => [],
             _ => throw new ThrowException(new SharpTSTypeError(
@@ -1302,7 +1321,7 @@ public static partial class ObjectBuiltIns
             SharpTSRegExp regex => regex.GetOwnPropertyDescriptor(key),
             SharpTSError error => error.GetOwnPropertyDescriptor(key),
             SharpTSFunction function => function.GetOwnPropertyDescriptor(key),
-            ISharpTSFunctionObject function => function.OwnProperties.GetOwnPropertyDescriptor(key),
+            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, interpreter).GetOwnPropertyDescriptor(key),
             SharpTSArrowFunction arrow => arrow.GetOwnPropertyDescriptor(key),
             _ => null,
         };
@@ -1344,8 +1363,8 @@ public static partial class ObjectBuiltIns
         // followed by symbols, each in the order supplied by the target.
         List<object?> keys = target switch
         {
-            ISharpTSFunctionObject function => function.OwnProperties.OwnVisibleStringKeys().Cast<object?>()
-                .Concat(function.OwnProperties.GetSymbolPropertyNames().Cast<object?>()).ToList(),
+            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, interpreter).OwnVisibleStringKeys().Cast<object?>()
+                .Concat(FunctionObjectProperties.GetProperties(function, interpreter).GetSymbolPropertyNames().Cast<object?>()).ToList(),
             SharpTSObject obj => GetAllOwnPropertyNames(obj).Cast<object?>()
                 .Concat(obj.GetSymbolPropertyNames().Cast<object?>()).ToList(),
             ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.OwnStringKeys().Cast<object?>()
@@ -1394,7 +1413,7 @@ public static partial class ObjectBuiltIns
 
         List<object?> names = target switch
         {
-            ISharpTSFunctionObject function => function.OwnProperties.OwnVisibleStringKeys().Cast<object?>().ToList(),
+            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, interpreter).OwnVisibleStringKeys().Cast<object?>().ToList(),
             SharpTSObjectNamespace =>
                 new object?[] { "length", "name", "prototype" }
                     .Concat(StaticMemberNames.Cast<object?>()).ToList(),
@@ -1698,7 +1717,7 @@ public static partial class ObjectBuiltIns
                 function.PreventExtensions();
                 return function;
             case ISharpTSFunctionObject function:
-                function.OwnProperties.PreventExtensions();
+                FunctionObjectProperties.GetProperties(function, interpreter).PreventExtensions();
                 return function;
             case SharpTSArrowFunction arrow:
                 arrow.PreventExtensions();
@@ -1743,7 +1762,7 @@ public static partial class ObjectBuiltIns
                 function.PreventExtensions();
                 return true;
             case ISharpTSFunctionObject function:
-                function.OwnProperties.PreventExtensions();
+                FunctionObjectProperties.GetProperties(function, interpreter).PreventExtensions();
                 return true;
             case SharpTSArrowFunction arrow:
                 arrow.PreventExtensions();
@@ -1775,7 +1794,7 @@ public static partial class ObjectBuiltIns
             SharpTSInstance inst => inst.IsExtensible,
             SharpTSArray arr => arr.IsExtensible,
             SharpTSFunction function => function.IsExtensible,
-            ISharpTSFunctionObject function => function.OwnProperties.IsExtensible,
+            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, interpreter).IsExtensible,
             SharpTSArrowFunction arrow => arrow.IsExtensible,
             SharpTSRegExp regex => regex.IsExtensible,
             SharpTSDate date => date.IsExtensible,
@@ -1799,7 +1818,7 @@ public static partial class ObjectBuiltIns
         List<object?> symbols = args[0] switch
         {
             SharpTSObject obj => obj.GetSymbolPropertyNames().Select(s => (object?)s).ToList(),
-            ISharpTSFunctionObject function => function.OwnProperties.GetSymbolPropertyNames().Cast<object?>().ToList(),
+            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, interpreter).GetSymbolPropertyNames().Cast<object?>().ToList(),
             ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.GetSymbolPropertyNames().Cast<object?>().ToList(),
             SharpTSProxy proxy => proxy.TrapOwnPropertyKeys(interpreter)
                 .OfType<SharpTSSymbol>().Cast<object?>().ToList(),
@@ -1843,6 +1862,8 @@ public static partial class ObjectBuiltIns
         // A class instance's [[Prototype]] is its constructor's `prototype` object, so
         // `Object.getPrototypeOf(new C()) === C.prototype`.
         SharpTSInstance inst => inst.RuntimeClass.Prototype,
+        SharpTSGenerator generator => generator.Prototype ?? interp?.GetGeneratorIntrinsics(false).GeneratorPrototype,
+        SharpTSAsyncGenerator generator => generator.Prototype ?? interp?.GetGeneratorIntrinsics(true).GeneratorPrototype,
         // Native errors raised from C# carry only their type name; resolve it back to the
         // same constructor the global `TypeError` identifier yields so the prototypes match.
         SharpTSError err => interp?.GetErrorClass(err.ErrorTypeName).Prototype,
@@ -1885,6 +1906,8 @@ public static partial class ObjectBuiltIns
         // `Object.getPrototypeOf(RangeError) === Error`. A base class falls back to
         // Function.prototype like any other function object.
         SharpTSClass klass => (object?)klass.Superclass ?? interp?.GetFunctionPrototype(),
+        ISharpTSGeneratorFunctionValue generator when interp is not null
+            => generator.FunctionProperties.GetFunctionPrototype(interp),
         ISharpTSCallable => interp?.GetFunctionPrototype(),
         _ => null
     };
@@ -2005,21 +2028,40 @@ public static partial class ObjectBuiltIns
         var callbackArgs = new List<object?> { null, null };
 
         long i = 0;
-        foreach (var element in interp.GetIterableElements(args[0]))
+        var iterator = interp.GetIterableElements(args[0]).GetEnumerator();
+        bool preserveThrow = false;
+        try
         {
-            callbackArgs[0] = element;
-            callbackArgs[1] = (double)i;
-            var key = FunctionBuiltIns.CallWithThis(
-                interp, callback, SharpTSUndefined.Instance, callbackArgs);
-            var keyStr = key?.ToString() ?? "undefined";
-
-            if (!groups.TryGetValue(keyStr, out var existing))
+            while (iterator.MoveNext())
             {
-                existing = new SharpTSArray([]);
-                groups[keyStr] = existing;
+                var element = iterator.Current;
+                callbackArgs[0] = element;
+                callbackArgs[1] = (double)i;
+                var key = FunctionBuiltIns.CallWithThis(
+                    interp, callback, SharpTSUndefined.Instance, callbackArgs);
+                var keyStr = key?.ToString() ?? "undefined";
+
+                if (!groups.TryGetValue(keyStr, out var existing))
+                {
+                    existing = new SharpTSArray([]);
+                    groups[keyStr] = existing;
+                }
+                ((SharpTSArray)existing!).Add(element);
+                i++;
             }
-            ((SharpTSArray)existing!).Add(element);
-            i++;
+        }
+        catch
+        {
+            preserveThrow = true;
+            throw;
+        }
+        finally
+        {
+            try { iterator.Dispose(); }
+            catch when (preserveThrow)
+            {
+                // Preserve a grouping callback's abrupt completion.
+            }
         }
 
         // ECMA-262 §20.1.2.13: the result is OrdinaryObjectCreate(null) — a
@@ -2066,7 +2108,7 @@ public static partial class ObjectBuiltIns
     {
         var arg = args[0].ToObject();
         if (arg is ISharpTSFunctionObject function)
-            return RuntimeValue.FromBoolean(function.OwnProperties.IsExtensible);
+            return RuntimeValue.FromBoolean(FunctionObjectProperties.GetProperties(function, interp).IsExtensible);
         if (arg is SharpTSProxy proxy)
             return RuntimeValue.FromBoolean(proxy.TrapIsExtensible(interp));
         if (args[0].Kind == ValueKind.Object

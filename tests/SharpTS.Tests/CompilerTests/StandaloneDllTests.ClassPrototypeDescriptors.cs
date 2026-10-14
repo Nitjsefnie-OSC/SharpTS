@@ -29,4 +29,22 @@ public partial class StandaloneDllTests
         Assert.Equal(expected, ExecuteCompiledDllIsolated(output, timeoutMs: 30000,
             verifyStandardError: error => Assert.Empty(error), standardInput: ""));
     }
+
+    [Fact]
+    public void Isolated_Issue2058StrictConstructorPrototypeWrites_RespectDescriptors()
+    {
+        using var directory = IntegrationTests.CliTestHelper.CreateTempDirectory();
+        var path = directory.CreateFile("main.ts", ClassPrototypeDescriptorTests.StrictPrototypeWriteSource);
+        var output = directory.GetPath("strict-class-prototypes.dll");
+        var compile = IntegrationTests.CliTestHelper.RunCli(
+            $"--no-tsconfig --compile \"{path}\" -o \"{output}\" --standalone --verify",
+            directory.Path, TimeSpan.FromSeconds(60));
+        Assert.True(compile.ExitCode == 0, compile.StandardOutput + compile.StandardError);
+        Assert.Contains("IL verification passed.", compile.StandardOutput);
+        Assert.DoesNotContain("SharpTS", GetAssemblyReferences(output));
+        Assert.False(File.Exists(directory.GetPath("SharpTS.dll")));
+        Assert.Equal(ClassPrototypeDescriptorTests.StrictPrototypeWriteExpected,
+            ExecuteCompiledDllIsolated(output, timeoutMs: 30000,
+                verifyStandardError: error => Assert.Empty(error), standardInput: ""));
+    }
 }

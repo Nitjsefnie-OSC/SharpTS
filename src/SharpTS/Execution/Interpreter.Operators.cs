@@ -1046,7 +1046,8 @@ public partial class Interpreter
         {
             SharpTSArray array => array.DeletePropertyStrict(name, strictMode),
             SharpTSObject tsObj => tsObj.DeletePropertyStrict(name, strictMode),
-            ISharpTSFunctionObject function => function.OwnProperties.DeletePropertyStrict(name, strictMode),
+            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, this)
+                .DeletePropertyStrict(name, strictMode),
             SharpTSInstance tsInst => tsInst.DeleteFieldStrict(name, strictMode),
             SharpTSMath math => math.DeleteExtra(name),
             SharpTSJSON json => json.DeleteExtra(name),
@@ -1106,10 +1107,15 @@ public partial class Interpreter
         // Handle symbol keys
         if (key is SharpTSSymbol symbol)
         {
+            if (obj is ISharpTSFunctionObject function)
+            {
+                var properties = FunctionObjectProperties.GetProperties(function, this);
+                return !properties.HasSymbolProperty(symbol)
+                    || properties.DeleteBySymbolStrict(symbol, strictMode);
+            }
             return obj switch
             {
                 SharpTSObject tsObj => tsObj.DeleteBySymbolStrict(symbol, strictMode),
-                ISharpTSFunctionObject function => function.OwnProperties.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSInstance tsInst => tsInst.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSClass klass => klass.DeleteStaticSymbolProperty(symbol, strictMode),
                 SharpTSClassPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),

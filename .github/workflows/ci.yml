@@ -280,12 +280,11 @@ jobs:
         run: dotnet build tests/SharpTS.Tests/SharpTS.Tests.csproj --no-restore --configuration Release
       - name: Test standalone
         shell: pwsh
-        # Deterministic method shards cover the entire class on each platform
-        # without extending individual test or aggregate step deadlines.
-        # Six shards split each prior three-way partition in two, keeping the
-        # expanded frozen-backlog regressions within the Windows step budget.
+        # Deterministic method shards cover every theory row on each platform.
+        # The expanded regression corpus needs a bounded 25-minute aggregate
+        # step; the shard runner retains its 120-second per-test hang guard.
         run: ./scripts/test-standalone-shard.ps1 -ShardIndex ${{ matrix.shard }} -ShardCount 6
-        timeout-minutes: 20
+        timeout-minutes: 25
 
   typescript-conformance:
     needs: workflow-policy

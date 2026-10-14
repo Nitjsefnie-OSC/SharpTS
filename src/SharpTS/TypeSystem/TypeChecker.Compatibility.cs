@@ -428,16 +428,13 @@ public partial class TypeChecker
     /// </summary>
     private bool IsCompatibleCore(TypeInfo expected, TypeInfo actual)
     {
-        // Constructors retain declaration identity through typeof and aliases.
+        // Constructor typeof aliases retain declaration identity while a class
+        // expression's self-type is still mutable during signature collection.
         if (expected is TypeInfo.Class or TypeInfo.GenericClass && ReferenceEquals(expected, actual)) return true;
-        if (expected is TypeInfo.Class expectedClassConstructor &&
-            actual is TypeInfo.Class actualClassConstructor &&
-            expectedClassConstructor.Core.DeclarationId != 0 &&
-            expectedClassConstructor.Core.DeclarationId == actualClassConstructor.Core.DeclarationId) return true;
-        if (expected is TypeInfo.GenericClass expectedConstructor &&
-            actual is TypeInfo.GenericClass actualConstructor &&
-            expectedConstructor.Core.DeclarationId != 0 &&
-            expectedConstructor.Core.DeclarationId == actualConstructor.Core.DeclarationId) return true;
+        if (expected is TypeInfo.Class or TypeInfo.MutableClass or TypeInfo.GenericClass &&
+            actual is TypeInfo.Class or TypeInfo.MutableClass or TypeInfo.GenericClass &&
+            SelectedSourceClassId(expected) is var declarationId && declarationId != 0 &&
+            declarationId == SelectedSourceClassId(actual)) return true;
 
         if (expected is TypeInfo.Any or TypeInfo.Inferred || actual is TypeInfo.Any or TypeInfo.Inferred) return true;
 

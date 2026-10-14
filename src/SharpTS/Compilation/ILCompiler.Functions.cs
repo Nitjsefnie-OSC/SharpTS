@@ -214,19 +214,7 @@ public partial class ILCompiler
         // caller args to the thread-static before OpCodes.Call. Uses the same scanner
         // the prologue consults, keeping the two sides in sync. Overload signatures
         // (no body) can't reference `arguments`; skip them.
-        if (funcStmt.Body != null && ReferencesArgumentsIdentifier(funcStmt.Body))
-        {
-            _functions.CapturingArguments.Add(qualifiedFunctionName);
-            // Mark the method so $TSFunction can detect (at runtime, via
-            // IsDefined) that this callback may observe the iteration index
-            // through `arguments`. Without it, the iterator-helper
-            // skip-index-box optimization treats this `this`-less declaration
-            // like an arrow and drops args[1], so `function(){...arguments[1]...}`
-            // used as a map/forEach/every callback reads a null index (#101).
-            if (_runtime?.FunctionAttributes.CapturesArgumentsCtor != null)
-                methodBuilder.SetCustomAttribute(
-                    _runtime.FunctionAttributes.CapturesArgumentsCtor, CustomAttributeEncoder.EmptyBlob);
-        }
+        RegisterArgumentsCapturingFunction(methodBuilder, qualifiedFunctionName, funcStmt);
 
         // Generate overloads for functions with default parameters
         var overloadSignatures = OverloadGenerator.GetOverloadSignatures(
@@ -827,25 +815,24 @@ public partial class ILCompiler
     /// so we delegate traversal to <see cref="Parsing.Visitors.AstVisitorBase"/>
     /// rather than hand-rolling an incomplete walk.
     /// </remarks>
-    private static bool ReferencesArgumentsIdentifier(List<Stmt> stmts)
+    private static bool ReferencesArgumentsIdentifier(List<Stmt>? stmts,
+        IEnumerable<Stmt.Parameter>? parameters = null)
+        => Parsing.Visitors.ArgumentsRefScanner.Contains(parameters ?? [], stmts,
+            treatEvalReferenceAsUse: true);
+
+    private void RegisterArgumentsCapturingMethod(MethodBase method, List<Stmt>? body,
+        IEnumerable<Stmt.Parameter>? parameters = null)
     {
-        // Direct eval can mention `arguments` in a string literal that is absent
-        // from the surrounding AST. Stay conservative and create the binding for
-        // any function containing eval; static direct-eval lowering then resolves
-        // it through the same lexical local as an ordinary source reference.
-        var scanner = new Parsing.Visitors.ArgumentsRefScanner(treatEvalReferenceAsUse: true);
-        foreach (var s in stmts)
-        {
-            scanner.Visit(s);
-            if (scanner.Found) return true;
-        }
-        return false;
+        if (ReferencesArgumentsIdentifier(body, parameters))
+            _functions.MethodsCapturingArguments.Add(method);
     }
 
-    private void RegisterArgumentsCapturingMethod(MethodBase method, List<Stmt>? body)
+    private void RegisterArgumentsCapturingFunction(MethodBuilder method, string name, Stmt.Function function)
     {
-        if (body != null && ReferencesArgumentsIdentifier(body))
-            _functions.MethodsCapturingArguments.Add(method);
+        if (!ReferencesArgumentsIdentifier(function.Body, function.Parameters)) return;
+        _functions.CapturingArguments.Add(name);
+        if (_runtime?.FunctionAttributes.CapturesArgumentsCtor != null)
+            method.SetCustomAttribute(_runtime.FunctionAttributes.CapturesArgumentsCtor, CustomAttributeEncoder.EmptyBlob);
     }
 
     /// <summary>
@@ -866,7 +853,7 @@ public partial class ILCompiler
         bool createsArgumentsBinding = true,
         int publishedArgsLeadingSkip = 0)
     {
-        if (createsArgumentsBinding && body != null && ReferencesArgumentsIdentifier(body))
+        if (createsArgumentsBinding && ReferencesArgumentsIdentifier(body, parameters))
         {
             EmitArgumentsLocalPrologueCore(
                 il,
@@ -896,7 +883,7 @@ public partial class ILCompiler
     /// prepended slot is a synthetic receiver, not a user-supplied argument, so
     /// <c>arguments</c> must not include it (JS spec).
     /// </param>
-    private void EmitArgumentsLocalPrologueCore(
+    private LocalBuilder EmitArgumentsLocalPrologueCore(
         ILGenerator il,
         CompilationContext ctx,
         List<Stmt.Parameter> parameters,
@@ -1072,6 +1059,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldloc, argsLocal);
             il.Emit(OpCodes.Stfld, argsDCField);
         }
+        return argsLocal;
     }
 
     /// <summary>

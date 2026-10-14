@@ -1270,9 +1270,14 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(tryRegistryLabel);
         var ordinaryRegistry = il.DefineLabel();
+        var ordinaryUserClass = il.DefineLabel();
+        // Constructors use ordinary symbol lookup so inherited accessor
+        // descriptors execute with the constructor as their receiver.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, ordinaryUserClass);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.ClassDefinitions.InstanceInterface);
-        var ordinaryUserClass = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, ordinaryUserClass);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.ObjectFields.Interface);

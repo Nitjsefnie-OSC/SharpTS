@@ -183,10 +183,11 @@ public sealed class GeneratorFunctionObjectTests
                 const copied: any = { f };
                 console.log(copied.f.tag, copied.f.hasOwnProperty("name"), copied.f.hasOwnProperty("length"));
                 console.log(copied.f.name === undefined, copied.f.length === undefined);
+                console.log(copied.f.name === "", copied.f.length === 0);
             }
             console.log(object.method.tag, object.asyncMethod.tag, instance.method.tag, instance.asyncMethod.tag);
             """;
-        Assert.Equal(string.Concat(Enumerable.Repeat("42 false false\ntrue true\n", 4)) + "42 42 42 42\n",
+        Assert.Equal(string.Concat(Enumerable.Repeat("42 false false\nfalse false\ntrue true\n", 4)) + "42 42 42 42\n",
             TestHarness.RunInterpreted(source));
     }
 

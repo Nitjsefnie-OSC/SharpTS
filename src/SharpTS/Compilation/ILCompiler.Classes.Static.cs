@@ -765,7 +765,7 @@ public partial class ILCompiler
         EmitAsyncStubMethod(
             methodBuilder,
             smBuilder,
-            method.Parameters,
+            method,
             isInstanceMethod: false,  // Static method!
             staticAsyncLockField,
             staticLockReentrancyField,

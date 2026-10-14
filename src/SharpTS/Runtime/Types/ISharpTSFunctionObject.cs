@@ -1,3 +1,5 @@
+using SharpTS.Execution;
+
 namespace SharpTS.Runtime.Types;
 
 /// <summary>Own property storage for interpreter callable objects.</summary>
@@ -8,6 +10,11 @@ internal interface ISharpTSFunctionObject : ISharpTSCallable
 
 internal static class FunctionObjectProperties
 {
+    internal static SharpTSObject GetProperties(ISharpTSFunctionObject function, Interpreter interpreter)
+        => function is ISharpTSGeneratorFunctionValue generator
+            ? generator.FunctionProperties.GetProperties(interpreter)
+            : function.OwnProperties;
+
     internal static SharpTSObject Create(string name, int length)
     {
         var properties = new SharpTSObject([]);

@@ -57,7 +57,6 @@ public partial class RuntimeEmitter
         EmittedSymbolRuntime Symbols,
         ConstructorBuilder TSFunctionCtor,
         ConstructorBuilder TSFunctionCachedCtor,
-        MethodBuilder TSFunctionGetOrCreate,
         MethodBuilder TSFunctionNameGetter,
         MethodBuilder TSFunctionLengthGetter,
         TypeBuilder TSFunctionType,
@@ -410,26 +409,14 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.MethodInfo, "IsStatic")!.GetGetMethod()!);
             il.Emit(OpCodes.Brfalse, instanceMethod);
 
-            // Derive metadata through the ordinary constructor so defaults/rest
-            // lengths and function-name attributes match the existing wrapper.
-            var staticValue = il.DeclareLocal(inputs.TSFunctionType);
-            il.Emit(OpCodes.Ldnull);
-            il.Emit(OpCodes.Ldloc, symMethodLocal);
-            il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);
-            il.Emit(OpCodes.Stloc, staticValue);
             il.Emit(OpCodes.Ldloc, symMethodLocal);
             il.Emit(OpCodes.Castclass, _types.MethodInfo);
             il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Ldloc, staticValue);
-            il.Emit(OpCodes.Callvirt, inputs.TSFunctionNameGetter);
-            il.Emit(OpCodes.Call, inputs.Symbols.MethodName);
-            il.Emit(OpCodes.Ldloc, staticValue);
-            il.Emit(OpCodes.Callvirt, inputs.TSFunctionLengthGetter);
-            il.Emit(OpCodes.Call, inputs.TSFunctionGetOrCreate);
+            il.Emit(OpCodes.Call, inputs.SymbolAccessors.GetOrCreateStaticMethod);
             il.Emit(OpCodes.Ret);
 
             il.MarkLabel(instanceMethod);
+            var staticValue = il.DeclareLocal(inputs.TSFunctionType);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldloc, symMethodLocal);
             il.Emit(OpCodes.Castclass, _types.MethodInfo);

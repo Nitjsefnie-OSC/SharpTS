@@ -4148,17 +4148,11 @@ public partial class ILEmitter
             }
             else if (returnType == typeof(void))
             {
-                // Void method (most commonly a constructor) — discard the value to keep
-                // the stack balanced on ret. JS constructors can return a replacement
-                // object (spec: if the returned value is an object, it replaces `this`),
-                // but .NET ctors must return void with an empty stack. We fall back to
-                // ignoring the return value, matching the common case where ctors return
-                // primitives or `undefined`; spec-compliant object substitution would
-                // require rewriting the `new` call site and is out of scope here.
-                // Required for real npm packages that use this idiom (semver's Comparator
-                // ctor does `return comp` when the argument is already a Comparator).
                 EmitBoxIfNeeded(r.Value);
-                IL.Emit(OpCodes.Pop);
+                if (_ctx.CapturesClassConstructorReturn)
+                    EmitClassConstructorReturnCompletion();
+                else
+                    IL.Emit(OpCodes.Pop);
             }
             else if (_ctx.Types.IsDouble(returnType))
             {
@@ -4204,7 +4198,11 @@ public partial class ILEmitter
             // Return undefined (null) or appropriate default
             if (returnType == typeof(void))
             {
-                // Void functions: no value on stack; ret takes nothing.
+                if (_ctx.CapturesClassConstructorReturn)
+                {
+                    EmitUndefinedConstant();
+                    EmitClassConstructorReturnCompletion();
+                }
             }
             else if (returnType == _ctx.Types.Object)
             {
@@ -4241,6 +4239,27 @@ public partial class ILEmitter
 
     emit_return:
         EmitReturnFromStack(returnType);
+    }
+
+    private void EmitClassConstructorReturnCompletion()
+    {
+        IL.Emit(OpCodes.Stloc, _ctx.ClassConstructorReturnValue!);
+    }
+
+    private void PublishClassConstructorReturnCompletion()
+    {
+        IL.Emit(OpCodes.Ldarg_0);
+        IL.Emit(OpCodes.Ldloc, _ctx.ClassConstructorReturnValue!);
+        IL.Emit(_ctx.IsDerivedClassConstructor ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+        IL.Emit(OpCodes.Ldloc, _ctx.ClassConstructorReceiver!);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.DynamicConstruction.RecordClassReturn);
+    }
+
+    internal void EmitClassConstructorFallthrough()
+    {
+        EmitUndefinedConstant();
+        EmitClassConstructorReturnCompletion();
+        PublishClassConstructorReturnCompletion();
     }
 
     /// <summary>
@@ -4284,6 +4303,8 @@ public partial class ILEmitter
         }
         else
         {
+            if (_ctx.CapturesClassConstructorReturn)
+                PublishClassConstructorReturnCompletion();
             IL.Emit(OpCodes.Ret);
         }
 

@@ -23,7 +23,19 @@ public class SharpTSGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceive
     private readonly int _arity;
     internal bool IsStaticMethod => _declaration.IsStatic;
     internal SharpTSClass? PrivateOwner { get; set; }
-    internal string? ComputedName { get; set; }
+    SharpTSObject ISharpTSFunctionObject.OwnProperties => _functionProperties.OwnProperties;
+    private string? _computedName;
+    internal string? ComputedName
+    {
+        get => _computedName;
+        set
+        {
+            _computedName = value;
+            _functionProperties.OwnProperties.DefineProperty("name", new SharpTSPropertyDescriptor(
+                value ?? _declaration.RuntimeName ?? _declaration.Name.Lexeme,
+                writable: false, enumerable: false, configurable: true));
+        }
+    }
     /// <summary>A dynamic receiver was bound (via <see cref="BindToReceiver"/>), so <see cref="Call"/>
     /// binds <c>this</c> to <see cref="_boundThis"/> rather than defaulting it to undefined.</summary>
     private readonly bool _thisBound;
@@ -41,7 +53,6 @@ public class SharpTSGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceive
     public SharpTSGeneratorFunction(Stmt.Function declaration, RuntimeEnvironment closure,
         bool thisBound = false, object? boundThis = null, SharpTSClass? boundSuper = null, Interpreter? creationRealm = null)
     {
-        _functionProperties = new(isAsync: false, creationRealm);
         _declaration = declaration;
         _closure = closure;
         _thisBound = thisBound;
@@ -49,6 +60,8 @@ public class SharpTSGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceive
         _boundSuper = boundSuper;
         _arity = declaration.IsPrivate ? declaration.Parameters.TakeWhile(p => p.DefaultValue == null && !p.IsRest).Count()
             : declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
+        _functionProperties = new(isAsync: false,
+            name: declaration.RuntimeName ?? declaration.Name.Lexeme, length: _arity, creationRealm: creationRealm);
     }
 
     public int Arity() => _arity;
@@ -99,21 +112,26 @@ public class SharpTSGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceive
     /// Creates a bound version with 'this' set for method calls.
     /// </summary>
     public SharpTSGeneratorFunction Bind(SharpTSInstance instance)
-        => new(_declaration, _closure, thisBound: true, boundThis: instance)
-        { PrivateOwner = PrivateOwner, ComputedName = ComputedName, _functionProperties = _functionProperties };
+        => ShareObjectState(new(_declaration, _closure, thisBound: true, boundThis: instance));
 
     /// <summary>
     /// Binds an arbitrary receiver (object-literal generator method / <c>.call</c> / <c>.apply</c>),
     /// not just a <see cref="SharpTSInstance"/> (#775).
     /// </summary>
     public ISharpTSCallable BindToReceiver(object receiver)
-        => new SharpTSGeneratorFunction(_declaration, _closure, thisBound: true, boundThis: receiver)
-        { PrivateOwner = PrivateOwner, ComputedName = ComputedName, _functionProperties = _functionProperties };
+        => ShareObjectState(new(_declaration, _closure, thisBound: true, boundThis: receiver));
 
     public SharpTSGeneratorFunction BindStatic(SharpTSClass klass)
-        => new(_declaration, _closure, thisBound: true, boundThis: klass,
-            boundSuper: _declaration.IsStatic ? null : klass.Superclass)
-        { PrivateOwner = PrivateOwner, ComputedName = ComputedName, _functionProperties = _functionProperties };
+        => ShareObjectState(new(_declaration, _closure, thisBound: true, boundThis: klass,
+            boundSuper: _declaration.IsStatic ? null : klass.Superclass));
+
+    private SharpTSGeneratorFunction ShareObjectState(SharpTSGeneratorFunction bound)
+    {
+        bound._functionProperties = _functionProperties;
+        bound.PrivateOwner = PrivateOwner;
+        bound._computedName = _computedName;
+        return bound;
+    }
 
     public override string ToString() => $"<generator fn {_declaration.Name.Lexeme}>";
 }
@@ -132,6 +150,7 @@ public class SharpTSArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
     private readonly Expr.ArrowFunction _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    SharpTSObject ISharpTSFunctionObject.OwnProperties => _functionProperties.OwnProperties;
     /// <summary>A dynamic receiver was bound (via <see cref="Bind"/>), so <see cref="Call"/> binds
     /// <c>this</c> to <see cref="_boundThis"/> rather than defaulting it to undefined.</summary>
     private readonly bool _thisBound;
@@ -146,13 +165,14 @@ public class SharpTSArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
     public SharpTSArrowGeneratorFunction(Expr.ArrowFunction declaration, RuntimeEnvironment closure, bool hasOwnThis = false,
         bool thisBound = false, object? boundThis = null, Interpreter? creationRealm = null)
     {
-        _functionProperties = new(isAsync: false, creationRealm);
         _declaration = declaration;
         _closure = closure;
         HasOwnThis = hasOwnThis;
         _thisBound = thisBound;
         _boundThis = boundThis;
         _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
+        _functionProperties = new(isAsync: false,
+            name: declaration.Name?.Lexeme ?? "", length: _arity, creationRealm: creationRealm);
     }
 
     public int Arity() => _arity;
@@ -194,8 +214,12 @@ public class SharpTSArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
     /// Binds 'this' to the given object. Only applicable for function expressions with HasOwnThis=true.
     /// </summary>
     public SharpTSArrowGeneratorFunction Bind(object thisObject)
-        => new(_declaration, _closure, hasOwnThis: true, thisBound: true, boundThis: thisObject)
-        { _functionProperties = _functionProperties };
+    {
+        var bound = new SharpTSArrowGeneratorFunction(
+            _declaration, _closure, hasOwnThis: true, thisBound: true, boundThis: thisObject);
+        bound._functionProperties = _functionProperties;
+        return bound;
+    }
 
     /// <summary>Receiver-binding entry point for the method-call / <c>.call</c> / <c>.apply</c> path (#775).</summary>
     public ISharpTSCallable BindToReceiver(object receiver) => Bind(receiver);

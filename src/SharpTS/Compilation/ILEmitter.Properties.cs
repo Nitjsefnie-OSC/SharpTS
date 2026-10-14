@@ -2472,6 +2472,8 @@ public partial class ILEmitter
         if (receiverType is TypeInfo.TypeParameter { Constraint: TypeInfo.Instance } tp)
             receiverType = tp.Constraint;
 
+        if (_ctx.TypeMapper.IsDynamicClassInstance(receiverType)) return false;
+
         // Only handle Instance types (e.g., let p: Person = ...)
         if (receiverType is not TypeInfo.Instance instance)
             return false;
@@ -2559,6 +2561,7 @@ public partial class ILEmitter
     /// </summary>
     private bool TryEmitDirectSetterCall(Expr receiver, TypeInfo? receiverType, string propertyName, Expr value)
     {
+        if (_ctx.TypeMapper.IsDynamicClassInstance(receiverType)) return false;
         // Only handle Instance types (e.g., let p: Person = ...)
         if (receiverType is not TypeInfo.Instance instance)
             return false;

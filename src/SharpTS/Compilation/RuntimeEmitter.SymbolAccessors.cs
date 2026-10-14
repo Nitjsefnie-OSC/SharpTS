@@ -16,6 +16,9 @@ public partial class RuntimeEmitter
 
     private Type SymInnerDictType => _types.MakeGenericType(_types.DictionaryOpen, _types.Object, _types.ObjectArray);
     private Type SymOuterDictType => _types.MakeGenericType(_types.DictionaryOpen, _types.Type, SymInnerDictType);
+    private Type StaticSymbolMethodKeyType => _types.MakeGenericType(typeof(ValueTuple<,>), _types.MethodInfo, _types.Object);
+    private Type StaticSymbolMethodCacheType => _types.MakeGenericType(
+        _types.ConcurrentDictionaryOpen, StaticSymbolMethodKeyType, _types.Object);
 
     /// <summary>
     /// Forward-declares the symbol-accessor registry field and its three helper
@@ -66,6 +69,15 @@ public partial class RuntimeEmitter
             _types.Object,
             [_types.Object, _types.Object]);
 
+        symbolAccessors.StaticCallableCache = typeBuilder.DefineField(
+            "_staticSymbolMethods", StaticSymbolMethodCacheType,
+            FieldAttributes.Private | FieldAttributes.Static | FieldAttributes.InitOnly);
+        symbolAccessors.GetOrCreateStaticMethod = typeBuilder.DefineMethod(
+            "GetOrCreateStaticSymbolMethod",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.MethodInfo, _types.Object]);
+
         // #351 generic-class helpers (forward-declared; bodies filled alongside
         // the Find* bodies). FindSymbol* calls them in its base-chain walk.
         symbolAccessors.RegistryKey = typeBuilder.DefineMethod(
@@ -92,6 +104,8 @@ public partial class RuntimeEmitter
     {
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(SymOuterDictType));
         cctorIL.Emit(OpCodes.Stsfld, symbolAccessors.Registry);
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(StaticSymbolMethodCacheType));
+        cctorIL.Emit(OpCodes.Stsfld, symbolAccessors.StaticCallableCache);
         symbolAccessors.MarkInitializerEmitted();
     }
 
@@ -99,7 +113,10 @@ public partial class RuntimeEmitter
     private void EmitSymbolAccessorRegistryBodies(
         EmittedSymbolAccessorRuntime symbolAccessors,
         EmittedSymbolRuntime symbols,
-        EmittedStringCoercionRuntime stringCoercion
+        EmittedStringCoercionRuntime stringCoercion,
+        EmittedFunctionConstructionRuntime functionConstruction,
+        EmittedFunctionValueRuntime functionValues,
+        MethodBuilder symbolMethodName
     )
     {
         var outer = SymOuterDictType;
@@ -184,7 +201,57 @@ public partial class RuntimeEmitter
             getType,
             ownOnly: true
         );
+        EmitGetOrCreateStaticSymbolMethod(symbolAccessors, functionConstruction, functionValues, symbolMethodName);
         symbolAccessors.MarkBodiesEmitted();
+    }
+
+    private void EmitGetOrCreateStaticSymbolMethod(
+        EmittedSymbolAccessorRuntime symbolAccessors,
+        EmittedFunctionConstructionRuntime functionConstruction,
+        EmittedFunctionValueRuntime functionValues,
+        MethodBuilder symbolMethodName)
+    {
+        var il = symbolAccessors.GetOrCreateStaticMethod.GetILGenerator();
+        var keyType = StaticSymbolMethodKeyType;
+        var cacheType = StaticSymbolMethodCacheType;
+        var key = il.DeclareLocal(keyType);
+        var existing = il.DeclareLocal(_types.Object);
+        var metadata = il.DeclareLocal(functionValues.Type);
+        var missing = il.DefineLabel();
+
+        // FindMethod has already closed generic declaring types. Preserve both
+        // that identity and the evaluated symbol key without computing metadata.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(keyType, _types.MethodInfo, _types.Object));
+        il.Emit(OpCodes.Stloc, key);
+        il.Emit(OpCodes.Ldsfld, symbolAccessors.StaticCallableCache);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Ldloca, existing);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(cacheType, "TryGetValue", keyType, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, missing);
+        il.Emit(OpCodes.Ldloc, existing);
+        il.Emit(OpCodes.Ret);
+
+        // A first read retains ordinary source name/default/rest length derivation
+        // and the existing canonical callable factory. Cache its result for reads.
+        il.MarkLabel(missing);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Newobj, functionConstruction.Constructor);
+        il.Emit(OpCodes.Stloc, metadata);
+        il.Emit(OpCodes.Ldsfld, symbolAccessors.StaticCallableCache);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, metadata);
+        il.Emit(OpCodes.Callvirt, functionValues.NameGetter);
+        il.Emit(OpCodes.Call, symbolMethodName);
+        il.Emit(OpCodes.Ldloc, metadata);
+        il.Emit(OpCodes.Callvirt, functionValues.LengthGetter);
+        il.Emit(OpCodes.Call, functionConstruction.GetOrCreate);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(cacheType, "GetOrAdd", keyType, _types.Object));
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>

@@ -111,11 +111,11 @@ public sealed class EmittedDynamicConstructionRuntimeTests
     [Fact]
     public void OwnerAndHelpersUseExplicitDependencies()
     {
-        Assert.Equal(5, Properties.Length);
+        Assert.Equal(7, Properties.Length);
         Assert.NotSame(new EmittedRuntime().DynamicConstruction, new EmittedRuntime().DynamicConstruction);
         Assert.Null(typeof(EmittedRuntime).GetProperty("DynamicConstruction")!.SetMethod);
         foreach (string old in new[] { "NewOnFunction", "ConstructDynamicValue" }) Assert.Null(typeof(EmittedRuntime).GetProperty(old));
-        foreach (string name in new[] { "EmitNewOnFunction", "EmitConstructDynamicValue" })
+        foreach (string name in new[] { "EmitNewOnFunction", "EmitConstructDynamicValue", "EmitClassConstructorReturns" })
         {
             var method = typeof(RuntimeEmitter).GetMethod(name, Members)!;
             Assert.DoesNotContain(method.GetParameters(), p => p.ParameterType == typeof(EmittedRuntime) || p.ParameterType == typeof(RuntimeFeatureSet));
@@ -143,6 +143,10 @@ public sealed class EmittedDynamicConstructionRuntimeTests
         {
             ["Function"] = type.DefineMethod("Function", MethodAttributes.Public | MethodAttributes.Static, typeof(object), Type.EmptyTypes),
             ["Value"] = type.DefineMethod("Value", MethodAttributes.Public | MethodAttributes.Static, typeof(object), Type.EmptyTypes),
+            ["RecordClassReturn"] = type.DefineMethod("RecordClassReturn", MethodAttributes.Public | MethodAttributes.Static,
+                typeof(void), [typeof(object), typeof(object), typeof(bool), typeof(object)]),
+            ["ResolveClassReturn"] = type.DefineMethod("ResolveClassReturn", MethodAttributes.Public | MethodAttributes.Static,
+                typeof(object), [typeof(object)]),
             ["FactoryAttributeType"] = type,
             ["FactoryAttributeConstructor"] = type.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, [typeof(string)]),
             ["FactoryAttributeName"] = type.DefineField("Name", typeof(string), FieldAttributes.Public)

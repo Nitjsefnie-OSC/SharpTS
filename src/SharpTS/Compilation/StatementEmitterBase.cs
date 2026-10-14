@@ -1054,8 +1054,8 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     }
 
     /// <summary>
-    /// Emits a for...of loop using IEnumerable pattern.
-    /// Override in ILEmitter for iterator protocol support.
+    /// Emits a for...of loop using the guest iterator protocol with CLR enumeration fallback.
+    /// Override in ILEmitter for specialized iterator handling.
     /// Override in async emitters for for await...of support.
     /// </summary>
     protected virtual void EmitForOf(Stmt.ForOf f)
@@ -1064,16 +1064,9 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         var endLabel = IL.DefineLabel();
         var continueLabel = IL.DefineLabel();
 
-        // Emit iterable and get enumerator
-        EmitExpression(f.Iterable);
-        EnsureBoxed();
-
-        var getEnumerator = typeof(System.Collections.IEnumerable).GetMethod("GetEnumerator")!;
         var moveNext = typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!;
         var current = typeof(System.Collections.IEnumerator).GetProperty("Current")!.GetGetMethod()!;
-
-        IL.Emit(OpCodes.Castclass, typeof(System.Collections.IEnumerable));
-        IL.Emit(OpCodes.Callvirt, getEnumerator);
+        EmitSynchronousForOfEnumerator(f.Iterable);
 
         Action loadEnumerator = StoreForOfEnumerator(f);
 
@@ -1105,6 +1098,64 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
 
         IL.MarkLabel(endLabel);
         ExitLoop();
+    }
+
+    /// <summary>Acquires an iterator once, preserving the iterable as the guest method receiver.</summary>
+    protected void EmitSynchronousForOfEnumerator(Expr iterable)
+    {
+        EmitExpression(iterable);
+        EnsureBoxed();
+        var runtime = Ctx.Runtime!;
+        var source = IL.DeclareLocal(Types.Object);
+        var method = IL.DeclareLocal(Types.Object);
+        var staticMethod = IL.DeclareLocal(Types.MethodInfo);
+        var enumerator = IL.DeclareLocal(Types.IEnumerator);
+        var fallback = IL.DefineLabel();
+        var invoke = IL.DefineLabel();
+        var ready = IL.DefineLabel();
+        IL.Emit(OpCodes.Stloc, source);
+        IL.Emit(OpCodes.Ldloc, source);
+        IL.Emit(OpCodes.Ldsfld, runtime.Symbols.Iterator);
+        IL.Emit(OpCodes.Call, runtime.IteratorProtocol.Function);
+        IL.Emit(OpCodes.Stloc, method);
+        IL.Emit(OpCodes.Ldloc, method);
+        IL.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
+        IL.Emit(OpCodes.Brtrue, fallback);
+
+        // The declared-class registry returns raw methods. A guest callable
+        // supplies their hidden receiver argument; instance methods stay raw.
+        IL.Emit(OpCodes.Ldloc, method);
+        IL.Emit(OpCodes.Isinst, Types.MethodInfo);
+        IL.Emit(OpCodes.Stloc, staticMethod);
+        IL.Emit(OpCodes.Ldloc, staticMethod);
+        IL.Emit(OpCodes.Brfalse, invoke);
+        IL.Emit(OpCodes.Ldloc, staticMethod);
+        IL.Emit(OpCodes.Callvirt, Types.GetPropertyGetter(Types.MethodInfo, "IsStatic"));
+        IL.Emit(OpCodes.Brfalse, invoke);
+        IL.Emit(OpCodes.Ldloc, staticMethod);
+        IL.Emit(OpCodes.Ldsfld, runtime.Symbols.Iterator);
+        IL.Emit(OpCodes.Call, runtime.SymbolAccessors.GetOrCreateStaticMethod);
+        IL.Emit(OpCodes.Stloc, method);
+
+        IL.MarkLabel(invoke);
+        // Present null and noncallable values must reach invocation validation.
+        IL.Emit(OpCodes.Ldloc, source);
+        IL.Emit(OpCodes.Ldloc, method);
+        IL.Emit(OpCodes.Ldc_I4_0);
+        IL.Emit(OpCodes.Newarr, Types.Object);
+        IL.Emit(OpCodes.Call, runtime.Invocation.Method);
+        IL.Emit(OpCodes.Call, runtime.IteratorHelpers.NormalizeToEnumerator);
+        IL.Emit(OpCodes.Stloc, enumerator);
+        IL.Emit(OpCodes.Br, ready);
+
+        IL.MarkLabel(fallback);
+        IL.Emit(OpCodes.Ldloc, source);
+        IL.Emit(OpCodes.Castclass, Types.IEnumerable);
+        IL.Emit(OpCodes.Callvirt, Types.GetMethodNoParams(Types.IEnumerable, "GetEnumerator"));
+        IL.Emit(OpCodes.Stloc, enumerator);
+        IL.MarkLabel(ready);
+        IL.Emit(OpCodes.Ldloc, enumerator);
+        SetStackUnknown();
     }
 
     /// <summary>Stores an iterator and supplies a load operation; async bodies can retain it across suspension.</summary>

@@ -112,15 +112,11 @@ public partial class AsyncGeneratorMoveNextEmitter
         string varName = GetBindingStorageName(f, f.Variable.Lexeme);
         var varField = _builder.GetVariableField(varName);
 
-        var getEnumerator = typeof(System.Collections.IEnumerable).GetMethod("GetEnumerator")!;
         var moveNext = typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!;
         var current = typeof(System.Collections.IEnumerator).GetProperty("Current")!.GetGetMethod()!;
 
         // Emit the iterable and get enumerator
-        EmitExpression(f.Iterable);
-        EnsureBoxed();
-        _il.Emit(OpCodes.Castclass, typeof(System.Collections.IEnumerable));
-        _il.Emit(OpCodes.Callvirt, getEnumerator);
+        EmitSynchronousForOfEnumerator(f.Iterable);
 
         // Store enumerator to hoisted field (need temp local for the stack swap)
         var tempLocal = _il.DeclareLocal(typeof(System.Collections.IEnumerator));

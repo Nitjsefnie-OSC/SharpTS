@@ -11,6 +11,42 @@ namespace SharpTS.Tests.SharedTests;
 public class PromiseMethodTests
 {
     [Theory, ModeData]
+    public void Constructor_CallbackOwnMetadataPrecedesFunctionPrototype(ExecutionMode mode)
+    {
+        const string source = """
+            new Promise((resolve: any, reject: any) => {
+                for (const callback of [resolve, reject]) {
+                    const descriptor: any = Object.getOwnPropertyDescriptor(callback, "length");
+                    console.log(callback.length, Reflect.get(callback, "length"), descriptor.value,
+                        descriptor.writable, descriptor.enumerable, descriptor.configurable,
+                        Object.hasOwn(callback, "length"));
+                }
+                resolve(7);
+            }).then((value: any) => console.log(value));
+            """;
+
+        Assert.Equal("1 1 1 false false true true\n1 1 1 false false true true\n7\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory, InterpretedOnlyData]
+    public void ReflectGet_DeletedOrdinaryMetadataFallsBackToFunctionPrototype(ExecutionMode mode)
+    {
+        const string source = """
+            function ordinary(value: any) {}
+            const arrow: any = (value: any) => {};
+            for (const callback of [ordinary, arrow] as any[]) {
+                delete callback.length;
+                delete callback.name;
+                console.log(Reflect.get(callback, "length"), Reflect.get(callback, "name") === "",
+                    Object.hasOwn(callback, "length"), Object.hasOwn(callback, "name"));
+            }
+            """;
+
+        Assert.Equal("0 true false false\n0 true false false\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
     public void All_CustomConstructorUsesSingleResolveElementCallback(ExecutionMode mode)
     {
         var source = """

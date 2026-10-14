@@ -14,7 +14,8 @@ internal static class StableNumericFunctionCaptureAnalyzer
         Expr.ArrowFunction next,
         object? owner,
         ClosureAnalyzer closures,
-        TypeMap typeMap)
+        TypeMap typeMap,
+        bool isClassConstructor = false)
     {
         if (owner is not Stmt.Function source || source.Body is null || source.IsAsync || source.IsGenerator ||
             next.IsAsync || next.IsGenerator)
@@ -33,6 +34,10 @@ internal static class StableNumericFunctionCaptureAnalyzer
 
         foreach (string name in closures.GetCaptures(next))
         {
+            // Guest constructor parameters retain supplied null/undefined in
+            // object slots; their annotations cannot prove a numeric capture.
+            if (isClassConstructor && source.Parameters.Any(parameter => parameter.Name.Lexeme == name))
+                continue;
             if (!ReferenceEquals(closures.GetCaptureSource(next, name), source) ||
                 IsCapturedByAnotherCallable(source.Body, next, name, closures) ||
                 HasAmbiguousBinding(source, name) ||
@@ -189,7 +194,7 @@ internal static class StableNumericFunctionCaptureAnalyzer
                 foreach (var property in literal.Properties)
                     if (property.Value is Expr.ArrowFunction method)
                         MarkCaptures(
-                            method, function, closures, typeMap);
+                            method, function, closures, typeMap, visitor.Constructors.Contains(function));
             }
         }
     }
@@ -205,7 +210,24 @@ internal static class StableNumericFunctionCaptureAnalyzer
     private sealed class FunctionVisitor : AstVisitorBase
     {
         public List<Stmt.Function> Functions { get; } = [];
+        public HashSet<Stmt.Function> Constructors { get; } = new(ReferenceEqualityComparer.Instance);
         public bool HasEval { get; private set; }
+        protected override void VisitClass(Stmt.Class statement)
+        {
+            RecordConstructors(statement.Methods);
+            base.VisitClass(statement);
+        }
+        protected override void VisitClassExpr(Expr.ClassExpr expression)
+        {
+            RecordConstructors(expression.Methods);
+            base.VisitClassExpr(expression);
+        }
+        private void RecordConstructors(IEnumerable<Stmt.Function> methods)
+        {
+            foreach (var method in methods)
+                if (!method.IsStatic && method.Name.Lexeme == "constructor" && method.Body != null)
+                    Constructors.Add(method);
+        }
         protected override void VisitFunction(Stmt.Function statement)
         {
             Functions.Add(statement);

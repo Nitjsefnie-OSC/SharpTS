@@ -9,23 +9,19 @@ namespace SharpTS.Runtime.Types;
 internal sealed class GeneratorFunctionProperties
 {
     private readonly bool _isAsync;
-    private readonly SharpTSObject _properties = CreateProperties();
+    private readonly SharpTSObject _properties;
+    private readonly SharpTSObject _initialGeneratorPrototype = new([]);
     private object? _functionPrototype;
     private object? _generatorPrototype;
     internal SharpTSObject OwnProperties => _properties;
 
-    internal GeneratorFunctionProperties(bool isAsync, Interpreter? creationRealm = null)
+    internal GeneratorFunctionProperties(bool isAsync, string name, int length, Interpreter? creationRealm = null)
     {
         _isAsync = isAsync;
+        _properties = FunctionObjectProperties.Create(name, length);
+        _properties.DefineProperty("prototype", new SharpTSPropertyDescriptor(
+            value: _initialGeneratorPrototype, writable: true));
         if (creationRealm is not null) InitializeRealm(creationRealm);
-    }
-
-    private static SharpTSObject CreateProperties()
-    {
-        var properties = new SharpTSObject([]);
-        properties.DefineProperty("prototype", new SharpTSPropertyDescriptor(
-            value: new SharpTSObject([]), writable: true));
-        return properties;
     }
 
     internal SharpTSObject GetProperties(Interpreter interpreter)
@@ -37,7 +33,7 @@ internal sealed class GeneratorFunctionProperties
     private void InitializeRealm(Interpreter interpreter)
     {
         (_functionPrototype, _generatorPrototype) = interpreter.GetGeneratorIntrinsics(_isAsync);
-        ((SharpTSObject)_properties.GetProperty("prototype")!).Prototype = _generatorPrototype;
+        _initialGeneratorPrototype.Prototype = _generatorPrototype;
     }
 
     internal object GetFunctionPrototype(Interpreter interpreter)
@@ -57,7 +53,7 @@ internal sealed class GeneratorFunctionProperties
     }
 }
 
-internal interface ISharpTSGeneratorFunctionValue : ISharpTSCallable
+internal interface ISharpTSGeneratorFunctionValue : ISharpTSFunctionObject
 {
     GeneratorFunctionProperties FunctionProperties { get; }
 }

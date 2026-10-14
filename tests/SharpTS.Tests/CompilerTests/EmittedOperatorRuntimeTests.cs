@@ -25,7 +25,8 @@ public sealed class EmittedOperatorRuntimeTests
         Expect<InvalidOperationException>(() => Invoke(owner, "CompleteEmission")); Assert.False(IsComplete(owner));
         var handle = Handle(property); property.SetValue(owner, handle); Assert.Same(handle, property.GetValue(owner));
         Expect<InvalidOperationException>(() => property.SetValue(owner, Handle(property)));
-        Invoke(owner, "MarkEqualityBodyEmitted"); Invoke(owner, "CompleteEmission"); AssertFrozen(owner);
+        Invoke(owner, "MarkEqualityBodyEmitted"); Invoke(owner, "MarkInstanceOfBodyEmitted");
+        Invoke(owner, "CompleteEmission"); AssertFrozen(owner);
     }
 
     [Fact]
@@ -43,13 +44,18 @@ public sealed class EmittedOperatorRuntimeTests
     {
         var owner = new EmittedOperatorRuntime();
         Assert.Throws<InvalidOperationException>(owner.MarkEqualityBodyEmitted);
+        Assert.Throws<InvalidOperationException>(owner.MarkInstanceOfBodyEmitted);
         Fill(owner);
         Assert.Throws<InvalidOperationException>(owner.CompleteEmission);
         Assert.False(owner.IsComplete);
         owner.MarkEqualityBodyEmitted();
         Assert.Throws<InvalidOperationException>(owner.MarkEqualityBodyEmitted);
+        Assert.Throws<InvalidOperationException>(owner.CompleteEmission);
+        owner.MarkInstanceOfBodyEmitted();
+        Assert.Throws<InvalidOperationException>(owner.MarkInstanceOfBodyEmitted);
         owner.CompleteEmission();
         Assert.Throws<InvalidOperationException>(owner.MarkEqualityBodyEmitted);
+        Assert.Throws<InvalidOperationException>(owner.MarkInstanceOfBodyEmitted);
         AssertFrozen(owner);
     }
 
@@ -112,6 +118,7 @@ public sealed class EmittedOperatorRuntimeTests
         features.UsesPromise = globalFlag;
         var probe = runtime.RuntimeClass.Type.DefineNestedType("SuppliedPromise", TypeAttributes.NestedPublic);
         var owner = new EmittedOperatorRuntime();
+        typeof(RuntimeEmitter).GetMethod("DeclareInstanceOf", Members)!.Invoke(emitter, [probe, owner]);
         foreach (var name in new[] { "EmitTypeOf", "EmitInstanceOf" })
         {
             var method = typeof(RuntimeEmitter).GetMethod(name, Members)!;
@@ -197,7 +204,7 @@ public sealed class EmittedOperatorRuntimeTests
         foreach (var name in FormerHandles) Assert.Null(typeof(EmittedRuntime).GetProperty(name));
     }
 
-    private static readonly string[] ScopedMethods = ["EmitUpdateNumeric", "EmitJsLessThan", "EmitJsLessOrEqual", "EmitTypeOf", "EmitInstanceOf", "EmitHasIn", "EmitAdd", "DeclareEquals", "EmitEquals", "EmitStrictEquals", "EmitStrictModeHelpers", "EmitWarnSloppyDeleteVariable", "EmitProxyHasCheck", "EmitProxyHasResult"];
+    private static readonly string[] ScopedMethods = ["EmitUpdateNumeric", "EmitJsLessThan", "EmitJsLessOrEqual", "EmitTypeOf", "DeclareInstanceOf", "EmitInstanceOf", "EmitHasIn", "EmitAdd", "DeclareEquals", "EmitEquals", "EmitStrictEquals", "EmitStrictModeHelpers", "EmitWarnSloppyDeleteVariable", "EmitProxyHasCheck", "EmitProxyHasResult"];
     private static readonly string[] FormerHandles = ["UpdateNumeric", "JsLessThan", "JsLessOrEqual", "TypeOf", "InstanceOf", "HasIn", "ProxyOrdinaryHas", "Add", "Equals", "StrictEquals", "WarnSloppyDeleteVariable"];
     private static void Fill(object owner, string? missing = null)
     {

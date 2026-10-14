@@ -136,19 +136,18 @@ public sealed class BoundClassArgumentTests
         Assert.Equal("first 44\n", TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void CompiledRequiredPrimitiveSlotsPreserveSuppliedNullConversion()
+    [Theory, ModeData]
+    public void RequiredPrimitiveSlotsPreserveSuppliedNull(ExecutionMode mode)
     {
-        // The existing CLR constructor ABI converts supplied null to 0/false.
-        // Node and the interpreter retain null (#2040); this preserves compiled behavior.
         const string source = """
             class C { constructor(value: number, flag: boolean) { console.log(value, flag); } }
             const extractedBind: any = (() => 0).bind;
             const Bound: any = extractedBind.call(C, {}, null, null);
             new Bound();
             """;
-        Assert.Empty(TestHarness.CompileAndVerifyOnly(source));
-        Assert.Equal("0 false\n", TestHarness.Run(source, ExecutionMode.Compiled));
+        if (mode == ExecutionMode.Compiled)
+            Assert.Empty(TestHarness.CompileAndVerifyOnly(source));
+        Assert.Equal("null null\n", TestHarness.Run(source, mode));
     }
 
     internal const string BoxedIntegerSource = """

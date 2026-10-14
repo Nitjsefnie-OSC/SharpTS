@@ -430,7 +430,7 @@ public partial class TypeChecker
     {
         // Constructor typeof aliases retain declaration identity while a class
         // expression's self-type is still mutable during signature collection.
-        if (expected is TypeInfo.GenericClass && ReferenceEquals(expected, actual)) return true;
+        if (expected is TypeInfo.Class or TypeInfo.GenericClass && ReferenceEquals(expected, actual)) return true;
         if (expected is TypeInfo.Class or TypeInfo.MutableClass or TypeInfo.GenericClass &&
             actual is TypeInfo.Class or TypeInfo.MutableClass or TypeInfo.GenericClass &&
             SelectedSourceClassId(expected) is var declarationId && declarationId != 0 &&

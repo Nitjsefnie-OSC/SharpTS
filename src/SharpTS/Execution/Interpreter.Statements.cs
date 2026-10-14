@@ -768,6 +768,7 @@ public partial class Interpreter
             // JS functions are objects; enumerate user-assigned properties. Lodash iterates
             // its own utility namespace (which is a function returning the wrapper) with
             // `for (var key in _) { ... }` to copy members onto the mixin target.
+            ISharpTSFunctionObject function => function.OwnProperties.OwnEnumerableKeys(),
             SharpTSFunction f => f.PropertyKeys,
             SharpTSArrowFunction af => af.PropertyKeys,
             SharpTSMath math => math.OwnEnumerableKeys(),

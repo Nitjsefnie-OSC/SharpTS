@@ -27,6 +27,8 @@ public partial class ILCompiler
     private void DefineClassExpression(Expr.ClassExpr classExpr)
     {
         if (_classExprs.Builders.ContainsKey(classExpr)) return;
+        if (ClassConstructorMayReplace(classExpr.Methods) && _typeMap.GetClassExprType(classExpr) is { } replacementClass)
+            _typeMapper.RegisterDynamicClassInstance(replacementClass.Core.DeclarationId);
         if (ResolveClassExpressionParent(classExpr) is { } parent && !ReferenceEquals(parent, classExpr))
             DefineClassExpression(parent);
         string className = _classExprs.Names[classExpr];
@@ -347,15 +349,32 @@ public partial class ILCompiler
     /// </summary>
     private void DefineClassExpressionMethodSignatures(Expr.ClassExpr classExpr)
     {
-        if (!_classExprs.Builders.TryGetValue(classExpr, out var typeBuilder))
+        if (!_classExprs.Builders.TryGetValue(classExpr, out var typeBuilder)
+            || _classExprs.Constructors.ContainsKey(classExpr))
             return;
+        if (!_classExprs.MethodsBeingDefined.Add(classExpr))
+            throw new Diagnostics.Exceptions.CompileException("Cyclic class expression constructor heritage.");
 
         string className = _classExprs.Names[classExpr];
+        if (ResolveClassExpressionParent(classExpr) is { } parentExpression)
+            DefineClassExpressionMethodSignatures(parentExpression);
+        else
+        {
+            var parentType = typeBuilder.BaseType;
+            if (parentType?.IsConstructedGenericType == true) parentType = parentType.GetGenericTypeDefinition();
+            var parentDeclaration = _classes.Declarations.FirstOrDefault(declaration =>
+                _classes.DeclarationNames.TryGetValue(declaration, out var name)
+                && _classes.Builders.TryGetValue(name, out var builder) && ReferenceEquals(builder, parentType));
+            if (parentDeclaration != null) DefineClassMethodsOnly(parentDeclaration);
+        }
 
         // Find user-defined constructor or use default
         var constructor = classExpr.Methods.FirstOrDefault(m => !m.IsStatic && m.Name.Lexeme == "constructor" && m.Body != null);
         var superclassName = _classExprs.Superclass.GetValueOrDefault(classExpr);
+        var parentConstructor = HasRuntimeParent(classExpr) ? null : ResolveClassExprImplicitBaseConstructor(classExpr);
         var ctorParamTypes = constructor?.Parameters.Select(_ => typeof(object)).ToArray()
+            ?? parentConstructor?.GetParameters().Where(parameter => parameter.ParameterType != _runtime.ClassDefinitions.Type)
+                .Select(parameter => ResolveInheritedConstructorSlot(parameter.ParameterType, typeBuilder.BaseType)).ToArray()
             ?? (superclassName == "Array"
                 ? [typeof(object[])]
                 : Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(superclassName ?? "")
@@ -365,6 +384,11 @@ public partial class ILCompiler
                     : superclassName == "Promise"
                         ? [typeof(object)]
                         : []);
+        // Declaration adapters keep the declaration's rest marker. Ordinary
+        // expression constructors retain their existing parameter representation.
+        if (constructor != null && _runtimeClassDeclarations.Values.Any(expression => ReferenceEquals(expression, classExpr)))
+            for (int index = 0; index < constructor.Parameters.Count; index++)
+                if (constructor.Parameters[index].IsRest) ctorParamTypes[index] = _types.ListOfObject;
 
         var ctorBuilder = typeBuilder.DefineConstructor(
             MethodAttributes.Public,
@@ -377,6 +401,9 @@ public partial class ILCompiler
         _classExprs.Constructors[classExpr] = ctorBuilder;
         _classes.Constructors[className] = ctorBuilder;
         RegisterArgumentsCapturingMethod(ctorBuilder, constructor?.Body, constructor?.Parameters);
+        if (constructor == null && parentConstructor != null
+            && _functions.MethodsCapturingArguments.Contains(parentConstructor))
+            _functions.MethodsCapturingArguments.Add(ctorBuilder);
         DefineClassPrototypeConstructor(typeBuilder);
         DefineClassExpressionFactory(classExpr, typeBuilder, ctorBuilder, ctorParamTypes);
 
@@ -495,6 +522,25 @@ public partial class ILCompiler
         _classExprs.Factories[classExpr] = _classExprs.Factories[classExpr] with { Keys = keys };
         DefinePrivateClassElements(typeBuilder, className, ClassExpressionDeclaration(classExpr),
             _classes.GenericParameters.Require(typeBuilder).ToArray(), classExpr);
+        _classExprs.MethodsBeingDefined.Remove(classExpr);
+    }
+
+    private Type ResolveInheritedConstructorSlot(Type slot, Type? parent)
+    {
+        if (parent?.IsConstructedGenericType != true) return slot;
+        var definition = parent.GetGenericTypeDefinition();
+        var arguments = parent.GetGenericArguments();
+        return Substitute(slot);
+
+        Type Substitute(Type type)
+        {
+            if (type.IsGenericParameter && ReferenceEquals(type.DeclaringType, definition))
+                return arguments[type.GenericParameterPosition];
+            if (type.IsArray) return _types.MakeArrayType(Substitute(type.GetElementType()!));
+            if (type.IsGenericType && type.ContainsGenericParameters)
+                return _types.MakeGenericType(type.GetGenericTypeDefinition(), type.GetGenericArguments().Select(Substitute).ToArray());
+            return type;
+        }
     }
 
     /// <summary>
@@ -665,8 +711,7 @@ public partial class ILCompiler
         {
             // The definition factory allocates through the bookkeeping constructor
             // and uses the explicit-receiver adapter for guest initialization.
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Call, _types.ObjectDefaultCtor);
+            EmitClassPrototypeBaseConstructorCall(il, typeBuilder);
             il.Emit(OpCodes.Ret);
             return;
         }
@@ -675,6 +720,10 @@ public partial class ILCompiler
         il.Emit(OpCodes.Stfld, EmitterTypeHelpers.SelfFieldReference(_classExprs.DefinitionFields[classExpr]));
         var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, fieldsField, ctorBuilder);
         ctx.IsInstanceMethod = true;
+        if (constructor != null)
+            SetupSyncMethodFunctionDisplayClass(ctx, il, constructor);
+        ctx.CurrentMethodReturnType = _types.Void;
+        ConfigureClassConstructorReturns(ctx, constructor, classExpr.SuperclassExpr != null);
 
         // Add generic type parameters to context
         if (_classes.GenericParameters.Require(typeBuilder) is { Count: > 0 } genericParams)
@@ -704,22 +753,23 @@ public partial class ILCompiler
             // When the superclass is another emitted class (declaration or
             // expression), its base is a TypeBuilder — Type.GetConstructor is
             // not supported on an unbaked TypeBuilder, so resolve the parent's
-            // ConstructorBuilder from the registries instead (#287 family). The
-            // implicit derived constructor forwards no args, so supply defaults
-            // for any base ctor parameters (parameterless in the common case).
+            // ConstructorBuilder from the registries instead (#287 family).
+            // An implicit constructor inherits and forwards the guest slots;
+            // the evaluated parent definition is a separate metadata argument.
             var superclassName = _classExprs.Superclass.GetValueOrDefault(classExpr);
-            if (superclassName == "Array")
+            var resolvedBaseConstructor = ResolveClassExprImplicitBaseConstructor(classExpr);
+            if (superclassName == "Array" && resolvedBaseConstructor == null)
             {
                 il.Emit(OpCodes.Ldarg_1);
                 il.Emit(OpCodes.Call, _runtime.ArrayStorage.CtorFromCtorArgs);
             }
-            else if (superclassName == "Promise")
+            else if (superclassName == "Promise" && resolvedBaseConstructor == null)
             {
                 il.Emit(OpCodes.Ldarg_1);
                 il.Emit(OpCodes.Call, _runtime.RequirePromise().FromExecutor);
                 il.Emit(OpCodes.Call, _runtime.RequirePromise().Ctor);
             }
-            else if (Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(superclassName ?? ""))
+            else if (resolvedBaseConstructor == null && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(superclassName ?? ""))
             {
                 bool aggregate = superclassName == "AggregateError";
                 var messageLocal = il.DeclareLocal(_types.String);
@@ -754,8 +804,9 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Call, _runtime.Errors.DefineMessageProperty);
                 il.MarkLabel(skipMessageDescriptor);
             }
-            else if (ResolveClassExprImplicitBaseConstructor(classExpr) is { } baseCtor)
+            else if (resolvedBaseConstructor is { } baseCtor)
             {
+                int guestArgument = 1;
                 foreach (var p in baseCtor.GetParameters())
                 {
                     if (p.ParameterType == _runtime.ClassDefinitions.Type)
@@ -766,9 +817,13 @@ public partial class ILCompiler
                         il.Emit(OpCodes.Ldfld, _runtime.ClassDefinitions.Parent);
                         il.Emit(OpCodes.Isinst, _runtime.ClassDefinitions.Type);
                     }
+                    else if (constructor == null)
+                        il.Emit(OpCodes.Ldarg, guestArgument++);
                     else emitter.EmitOmittedArgument(p.ParameterType);
                 }
-                il.Emit(OpCodes.Call, baseCtor);
+                var baseType = typeBuilder.BaseType;
+                il.Emit(OpCodes.Call, baseType?.IsConstructedGenericType == true
+                    ? EmitterTypeHelpers.ResolveConstructor(baseType, baseCtor) : baseCtor);
             }
             else
             {
@@ -777,6 +832,8 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Call, fallbackCtor);
             }
         }
+        if (!hasExplicitSuperCall)
+            InitializeClassConstructorReceiver(ctx, il);
         if (constructor != null)
         {
             // Define parameters with typed parameter types from constructor signature
@@ -796,6 +853,8 @@ public partial class ILCompiler
                 constructor.Body,
                 constructorParamTypes,
                 argumentOffset: 1);
+            InitializeSyncMethodCapturedParameters(
+                ctx, il, constructor, ctorBuilder, argumentOffset: 1);
 
             // Base-class fields are initialized before the constructor body. Derived-class
             // fields are initialized immediately after the explicit super() establishes this.
@@ -822,6 +881,11 @@ public partial class ILCompiler
         if (!initializersEmitted)
             EmitInstanceFieldInitializers();
 
+        if (ctx.CapturesClassConstructorReturn)
+        {
+            emitter.EmitClassConstructorFallthrough();
+            il.Emit(OpCodes.Ret);
+        }
         emitter.FinalizeReturns();
 
         il.Emit(OpCodes.Ret);
@@ -913,6 +977,11 @@ public partial class ILCompiler
     /// </summary>
     private System.Reflection.ConstructorInfo? ResolveClassExprImplicitBaseConstructor(Expr.ClassExpr classExpr)
     {
+        var parentType = _classExprs.Builders[classExpr].BaseType;
+        if (parentType?.IsConstructedGenericType == true) parentType = parentType.GetGenericTypeDefinition();
+        var selectedConstructor = _classes.Constructors.Values.FirstOrDefault(constructor =>
+            ReferenceEquals(constructor.DeclaringType, parentType));
+        if (selectedConstructor != null) return selectedConstructor;
         if (!_classExprs.Superclass.TryGetValue(classExpr, out var superName) || superName == null)
             return null;
 
@@ -929,7 +998,10 @@ public partial class ILCompiler
         return null;
     }
 
-    private Expr.ClassExpr? ResolveClassExpressionParent(Expr.ClassExpr classExpr)
+    private Expr.ClassExpr? ResolveClassExpressionParent(Expr.ClassExpr classExpr) =>
+        ResolveClassExpressionParent(_typeMap.GetClassExprType(classExpr)?.Superclass, classExpr.SuperclassExpr);
+
+    private Expr.ClassExpr? ResolveClassExpressionParent(TSTypeInfo? superclass, Expr? superclassExpression)
     {
         static int DeclarationId(TSTypeInfo? type) => type switch
         {
@@ -941,17 +1013,17 @@ public partial class ILCompiler
             _ => 0
         };
 
-        int parentId = DeclarationId(_typeMap.GetClassExprType(classExpr)?.Superclass);
+        int parentId = DeclarationId(superclass);
         if (parentId != 0)
             return _classExprs.ToDefine.FirstOrDefault(candidate =>
                 _typeMap.GetClassExprType(candidate)?.Core.DeclarationId == parentId);
 
-        if (classExpr.SuperclassExpr != null && _typeMap.Get(classExpr.SuperclassExpr) is TSTypeInfo.Any)
+        if (superclassExpression != null && _typeMap.Get(superclassExpression) is TSTypeInfo.Any)
             return null;
 
         // Only checked heritage can select a CLR base. Untyped values are retained
         // in the guest definition and dispatched through its runtime parent.
-        return _classExprs.Superclass.GetValueOrDefault(classExpr) is { } name
+        return Expr.GetSuperclassLeafName(superclassExpression) is { } name
             ? _classExprs.VarToClassExpr.GetValueOrDefault(name) : null;
     }
 

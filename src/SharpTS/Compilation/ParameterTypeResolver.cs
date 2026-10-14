@@ -168,7 +168,7 @@ public static class ParameterTypeResolver
     /// the asymmetry (return slots widened, parameter slots not) was the root cause of #568/#573.
     /// </summary>
     /// <remarks>
-    /// Three families need an object slot:
+    /// These families need an object slot:
     /// <list type="bullet">
     /// <item>Date/RegExp/array/Map/Set — strictly mapped to DateTime/Regex/List/Dictionary/HashSet,
     /// but their runtime values are $TSDate/$RegExp/$Array/$Map/$Set carried as object; a typed slot
@@ -180,11 +180,17 @@ public static class ParameterTypeResolver
     /// too. (#568)</item>
     /// <item><c>symbol</c> — strictly mapped to String, but a runtime symbol is a $Symbol reference,
     /// so a String slot can't hold it. (#573 scope)</item>
+    /// <item>Class constructors (<c>typeof C</c>) — runtime values are Type or $ClassDefinition,
+    /// rather than CLR instances of C.</item>
     /// </list>
     /// Primitives, plain strings, and class instances keep their sound strict slot.
     /// </remarks>
     private static Type CoerceParamSlotType(Type mapped, TSTypeInfo source, TypeMapper typeMapper)
     {
+        // typeof a class denotes its constructor value (Type or $ClassDefinition),
+        // rather than an instance of the emitted class.
+        if (source is TSTypeInfo.Class or TSTypeInfo.GenericClass)
+            return typeof(object);
         if (mapped == typeof(Delegate) || mapped.IsSubclassOf(typeof(Delegate)))
             return typeof(object);
         if (typeMapper.IsDynamicRuntimeType(mapped))
@@ -582,8 +588,8 @@ public static class ParameterTypeResolver
     };
 
     /// <summary>
-    /// Resolves constructor parameter types for a class, widening defaulted params to
-    /// <c>object</c> so the entry prologue can distinguish undefined from null (#705).
+    /// Resolves constructor parameter types for a class. Guest number/boolean and
+    /// defaulted parameters use object slots to preserve null/undefined across construction.
     /// </summary>
     public static Type[] ResolveConstructorParameters(
         string className,
@@ -593,6 +599,11 @@ public static class ParameterTypeResolver
     {
         var resolved = ResolveConstructorParametersCore(className, parameters, typeMapper, typeMap);
         WidenDefaultedParamsToObject(resolved, parameters, typeof(object));
+        // A guest constructor can be reached through a runtime-valued or bound
+        // callee. Type annotations do not prove those supplied values are primitives.
+        for (int index = 0; index < resolved.Length; index++)
+            if (typeMapper.Types.IsDouble(resolved[index]) || typeMapper.Types.IsBoolean(resolved[index]))
+                resolved[index] = typeof(object);
         ForceRestParamsToListMarker(resolved, parameters);
         return resolved;
     }

@@ -78,6 +78,29 @@ public sealed class StaticSymbolMethodIdentityTests
     public static string ReceiverExpected => string.Concat(Enumerable.Repeat(
         "true true true bare true\ntrue true true\n", 4));
 
+    public const string CacheKeySource = """
+        const first = Symbol("same"), second = Symbol("same");
+        class Base {
+            static [first](value: any, fallback: any = 2, ...rest: any[]) { return [this, value, fallback, rest.length]; }
+            static [second](value: any) { return [this, value]; }
+        }
+        class Derived extends Base {}
+        const base: any = Base, derived: any = Derived;
+        const method: any = base[first];
+        method.tag = "retained";
+        Object.defineProperty(method, "name", { value: "changed", configurable: true });
+        console.log(method === base[first], method === derived[first], method === base[second]);
+        console.log(derived[first].tag, base[first].name, base[first].length, base[second].name);
+        const result: any = derived[first](42, undefined, 43, 44);
+        console.log(result[0] === derived, result[1], result[2], result[3]);
+        """;
+
+    public const string CacheKeyExpected = "true true false\nretained changed 1 [same]\ntrue 42 2 2\n";
+
+    [Theory, ModeData]
+    public void CachedReadsKeepDistinctEvaluatedSymbolsAndRetainMutableMetadata(ExecutionMode mode)
+        => Assert.Equal(CacheKeyExpected, TestHarness.Run(CacheKeySource, mode));
+
     [Theory, ModeData]
     public void CachedMethodsPreserveDefaultRestLengths(ExecutionMode mode)
     {
@@ -105,10 +128,9 @@ public sealed class StaticSymbolMethodIdentityTests
         Assert.Equal("true true retained\ntrue true retained\n", TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void CompiledGeneratorMethodsRetainAssignedProperties()
+    [Theory, ModeData]
+    public void GeneratorMethodsRetainAssignedProperties(ExecutionMode mode)
     {
-        // Interpreter generator functions currently reject own-property assignment.
         const string source = """
             const generator = Symbol("generator"), asyncGenerator = Symbol("asyncGenerator");
             class Base {
@@ -123,7 +145,7 @@ public sealed class StaticSymbolMethodIdentityTests
                 console.log(method === base[key], method === derived[key], derived[key].tag);
             }
             """;
-        Assert.Equal("true true retained\ntrue true retained\n", TestHarness.RunCompiled(source));
+        Assert.Equal("true true retained\ntrue true retained\n", TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

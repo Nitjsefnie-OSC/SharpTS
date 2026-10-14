@@ -137,7 +137,8 @@ public class SharpTSPromiseClass : SharpTSClass
 
         if (hasUserConstructor && constructor != null)
         {
-            BindMethodToReceiver(constructor, instance).Call(interpreter, arguments);
+            var result = BindMethodToReceiver(constructor, instance).Call(interpreter, arguments);
+            return ResolveConstructorReturn(result, instance);
         }
         else
         {
@@ -148,19 +149,14 @@ public class SharpTSPromiseClass : SharpTSClass
     }
 
     /// <summary>
-    /// Constructs a subclass instance settled from an existing task —
-    /// the species-lite stand-in for NewPromiseCapability used by inherited
-    /// statics (<c>MyPromise.resolve</c>) and by <c>then</c>/<c>catch</c>/
+    /// Constructs the result from an existing task through NewPromiseCapability,
+    /// preserving constructor replacements and validating the supplied executor.
+    /// Used by inherited statics and by <c>then</c>/<c>catch</c>/
     /// <c>finally</c> on subclass receivers. Runs the class's own
-    /// construction (field initialisers and any user constructor, fed a
-    /// no-op executor) so the result is a fully initialised instance.
+    /// construction so declared fields and the user constructor run normally.
     /// </summary>
-    internal SharpTSPromise ConstructDerived(Interpreter interpreter, Task<object?> source)
-    {
-        var instance = (SharpTSPromiseSubclassInstance)Call(interpreter, [new CapturingExecutor()])!;
-        SettleFromTask(source, instance.Capability);
-        return instance;
-    }
+    internal object? ConstructDerived(Interpreter interpreter, Task<object?> source)
+        => PromiseBuiltIns.ConstructPromiseCapabilityAndAdopt(interpreter, this, source);
 
     /// <summary>
     /// Runs a guest Promise executor against a capability: invokes it
@@ -238,25 +234,6 @@ public class SharpTSPromiseClass : SharpTSClass
         }
     }
 
-    /// <summary>
-    /// Settles a capability from a source task, flattening promise results
-    /// the same way an executor's resolve callback would.
-    /// </summary>
-    private static void SettleFromTask(Task<object?> source, TaskCompletionSource<object?> target)
-    {
-        source.ContinueWith(t =>
-        {
-            if (t.IsFaulted)
-                target.TrySetException(t.Exception!.InnerException ?? t.Exception);
-            else if (t.IsCanceled)
-                target.TrySetCanceled();
-            else if (t.Result is SharpTSPromise inner)
-                SettleFromTask(inner.Task, target);
-            else
-                target.TrySetResult(t.Result);
-        }, TaskContinuationOptions.ExecuteSynchronously);
-    }
-
     private static ISharpTSCallable RequireExecutor(List<object?> arguments)
     {
         if (arguments.Count < 1 || arguments[0] is not ISharpTSCallable executor)
@@ -306,17 +283,5 @@ public class SharpTSPromiseClass : SharpTSClass
                 RunExecutor(interpreter, RequireExecutor(arguments), instance.Capability);
             return null;
         }
-    }
-
-    /// <summary>
-    /// Placeholder executor passed to the class constructor by
-    /// <see cref="ConstructDerived"/>. Accepts (and discards) the
-    /// resolve/reject callbacks — the derived instance's capability is
-    /// settled from the source task instead.
-    /// </summary>
-    private sealed class CapturingExecutor : ISharpTSCallable
-    {
-        public int Arity() => 2;
-        public object? Call(Interpreter interpreter, List<object?> arguments) => null;
     }
 }

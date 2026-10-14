@@ -59,6 +59,14 @@ public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSS
 {
     private readonly PrototypePropertyOverlay _overlay = new(IsBuiltIn);
 
+    public SharpTSFunctionPrototype()
+    {
+        _overlay.DefineProperty("name", new SharpTSPropertyDescriptor(
+            "", writable: false, enumerable: false, configurable: true));
+        _overlay.DefineProperty("length", new SharpTSPropertyDescriptor(
+            0d, writable: false, enumerable: false, configurable: true));
+    }
+
     public bool HasExtra(string name) => _overlay.HasExtra(name);
     public object? TryGetExtra(string name) => _overlay.GetProperty(name);
     public void SetExtra(string name, object? value) => _overlay.SetProperty(name, value);

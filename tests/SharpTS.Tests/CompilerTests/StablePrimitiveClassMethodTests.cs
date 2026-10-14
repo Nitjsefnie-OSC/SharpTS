@@ -44,7 +44,14 @@ public sealed class StablePrimitiveClassMethodTests
         var exact = ReadInstructions(FindFunction(assembly, "exact")).ToArray();
         Assert.Contains(exact, instruction =>
             instruction.Operand is MethodBase method && method.Name == core.Name);
-        Assert.DoesNotContain(exact, instruction =>
+        int construction = Array.FindIndex(exact, instruction =>
+            instruction.OpCode == OpCodes.Newobj
+            && instruction.Operand is ConstructorInfo constructor
+            && constructor.DeclaringType == counterType);
+        Assert.True(construction >= 0);
+        // Constructor parameters use object slots to retain null. The typed
+        // method loop must still avoid boxing its numeric results.
+        Assert.DoesNotContain(exact.Skip(construction + 1), instruction =>
             instruction.OpCode == OpCodes.Box && instruction.Operand == typeof(double));
 
         var uncertain = ReadInstructions(FindFunction(assembly, "uncertain")).ToArray();

@@ -695,6 +695,9 @@ public partial class RuntimeEmitter
             _types.Object,
             [_types.Object, _types.ObjectArray]);
 
+        EmitClassConstructorReturns(runtime.RuntimeClass.Type, runtime.DynamicConstruction,
+            new ClassConstructorReturnInputs(runtime.Errors, runtime.Sentinels.UndefinedType, runtime.Symbols.Type));
+
         // Emit $Runtime class with all helper methods
         EmitRuntimeClass(moduleBuilder, runtime, netConstruction);
 

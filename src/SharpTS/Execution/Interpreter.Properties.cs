@@ -301,7 +301,7 @@ public partial class Interpreter
     /// tsc/node and the compiled <c>NewOnFunction</c> path. Centralizes the decision
     /// so every construct-return site stays consistent.
     /// </summary>
-    private static bool IsConstructorReturnObject(object? result) => result switch
+    internal static bool IsConstructorReturnObject(object? result) => result switch
     {
         null => false,
         SharpTSUndefined => false,
@@ -607,8 +607,6 @@ public partial class Interpreter
                 if (TryReadDescriptor(generatorFunction.FunctionProperties.GetProperties(this)
                         .GetOwnPropertyDescriptor(name), receiver, out var ownValue))
                     return ownValue;
-                if (name is "name" or "length")
-                    return FunctionBuiltIns.GetMember(generatorFunction, name);
                 current = generatorFunction.FunctionProperties.GetFunctionPrototype(this);
                 continue;
             }
@@ -683,6 +681,29 @@ public partial class Interpreter
                 continue;
             }
 
+            if (current is SharpTSFunctionPrototype functionPrototypeObject)
+            {
+                if (TryReadDescriptor(functionPrototypeObject.GetOwnPropertyDescriptor(name),
+                        receiver, out var prototypeValue))
+                    return prototypeValue;
+                if (functionPrototypeObject.GetMember(name) is { } member)
+                    return member;
+                current = GetObjectPrototype();
+                continue;
+            }
+            if (current is SharpTSObjectPrototype objectPrototypeObject)
+            {
+                if (TryReadDescriptor(objectPrototypeObject.GetOwnPropertyDescriptor(name),
+                        receiver, out var prototypeValue))
+                    return prototypeValue;
+                return objectPrototypeObject.GetMember(name) ?? SharpTSUndefined.Instance;
+            }
+
+            if (current is ISharpTSFunctionObject functionObject
+                && TryReadDescriptor(FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(name),
+                    receiver, out var functionObjectValue))
+                return functionObjectValue;
+
             if (current is SharpTSFunction function
                 && function.GetOwnPropertyDescriptor(name) is { } functionDescriptor)
             {
@@ -709,8 +730,21 @@ public partial class Interpreter
                 && TryReadDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(name), receiver, out var primitiveValue))
                 return primitiveValue;
 
+            if (current is SharpTSObjectNamespace objectNamespace
+                && TryReadDescriptor(
+                    ObjectBuiltIns.OwnPropertyDescriptorOf(this, objectNamespace, name),
+                    receiver, out var objectConstructorValue))
+                return objectConstructorValue;
+
             if (current is ISharpTSCallable callable)
             {
+                // Built-in callable metadata is an own property even when it
+                // is stored outside the ordinary function property bag.
+                if (callable is IBuiltInFunctionMetadata
+                    && name is "name" or "length"
+                    && FunctionBuiltIns.GetMember(callable, name) is { } metadataValue)
+                    return metadataValue;
+
                 // Ordinary callables inherit from the realm's mutable
                 // Function.prototype. Consult its descriptor overlay before
                 // the intrinsic members so user data properties/accessors
@@ -754,17 +788,18 @@ public partial class Interpreter
     /// preserving accessor invocation and ordinary object prototype lookup.
     /// </summary>
     internal object? GetSymbolPropertyValue(object obj, SharpTSSymbol symbol)
+        => GetSymbolPropertyValue(obj, symbol, obj);
+
+    internal object? GetSymbolPropertyValue(object obj, SharpTSSymbol symbol, object receiver)
     {
         if (obj is string or bool or double or SharpTSBigInt or SharpTSSymbol)
             return SharpTSUndefined.Instance;
 
-        if (obj is SharpTSProxy proxy)
-            return proxy.TrapGet(symbol, this);
-
-        object receiver = obj;
         object? current = obj;
         for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
         {
+            if (current is SharpTSProxy proxy)
+                return proxy.TrapGet(symbol, this, receiver);
             if (current is ISharpTSGeneratorFunctionValue generatorFunction)
             {
                 if (TryReadDescriptor(generatorFunction.FunctionProperties.GetProperties(this)
@@ -794,6 +829,15 @@ public partial class Interpreter
                 if (record.HasSymbolProperty(symbol))
                     return record.GetBySymbol(symbol);
                 current = GetRecordPrototype(record);
+                continue;
+            }
+
+            if (current is ISharpTSFunctionObject functionObject)
+            {
+                if (TryReadDescriptor(FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(symbol),
+                        receiver, out var value))
+                    return value;
+                current = GetFunctionPrototype();
                 continue;
             }
 
@@ -848,7 +892,20 @@ public partial class Interpreter
                     : SharpTSUndefined.Instance;
             }
 
-            return PerformIndexGet(null!, current, symbol).ToObject();
+            if (current is SharpTSClass klass)
+                return GetClassSymbolValue(klass, symbol);
+            if (current is SharpTSInstance instance)
+                return GetInstanceSymbolValue(instance, symbol);
+            if (current is SharpTSRegExp)
+                return PerformIndexGet(null!, current, symbol).ToObject();
+            if (current is ISharpTSCallable)
+            {
+                current = GetFunctionPrototype();
+                continue;
+            }
+            if (current is ISharpTSMutableBuiltIn)
+                return PerformIndexGet(null!, current, symbol).ToObject();
+            return SharpTSUndefined.Instance;
         }
         return SharpTSUndefined.Instance;
     }
@@ -897,6 +954,12 @@ public partial class Interpreter
                 obj = GetFunctionPrototype();
                 continue;
             }
+            if (obj is ISharpTSFunctionObject functionObject)
+            {
+                if (FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(name) is not null) return true;
+                obj = ObjectBuiltIns.PrototypeOf(this, functionObject);
+                continue;
+            }
             if (obj is SharpTSObject so)
             {
                 // SharpTSObject.HasProperty covers own fields + getters; add setters
@@ -931,6 +994,12 @@ public partial class Interpreter
                 if (record.HasSymbolProperty(symbol)
                     || record.TryGetSymbolAccessor(symbol, out _, out _)) return true;
                 current = GetRecordPrototype(record);
+                continue;
+            }
+            if (current is ISharpTSFunctionObject functionObject)
+            {
+                if (FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(symbol) is not null) return true;
+                current = ObjectBuiltIns.PrototypeOf(this, functionObject);
                 continue;
             }
             if (current is SharpTSArray array)
@@ -1090,6 +1159,9 @@ public partial class Interpreter
         // which binds BuiltInMethod and breaks identity with descriptor.value.
         if (obj is SharpTSObjectNamespace objectNamespace)
         {
+            if (TryReadDescriptor(objectNamespace.GetOwnPropertyDescriptor(get.Name.Lexeme),
+                    objectNamespace, out var descriptorValue))
+                return RuntimeValue.FromBoxed(descriptorValue);
             if (objectNamespace.HasOwnProperty(get.Name.Lexeme)
                 && objectNamespace.GetMember(get.Name.Lexeme) is { } ownMember)
             {
@@ -1242,6 +1314,8 @@ public partial class Interpreter
 
         // JS functions are objects — surface user-set properties before
         // falling through to built-in members (e.g. `bind`, `call`).
+        if (obj is ISharpTSFunctionObject functionObject)
+            return RuntimeValue.FromBoxed(GetPropertyValue(functionObject, memberName));
         if (obj is SharpTSFunction fn)
         {
             // Accessor defined via Object.defineProperty(fn, name, {get, set}).
@@ -2133,11 +2207,26 @@ public partial class Interpreter
         return false;
     }
 
+    private void SetFunctionObjectProperty(
+        ISharpTSFunctionObject function, string name, object? value, bool strictMode)
+    {
+        var ownDescriptor = FunctionObjectProperties.GetProperties(function, this).GetOwnPropertyDescriptor(name);
+        if (TryAssignThroughDescriptor(ownDescriptor, function, name, value, strictMode)) return;
+        if (ownDescriptor is null
+            && TryAssignThroughDescriptor(
+                GetFunctionPrototype().GetOwnPropertyDescriptor(name)
+                    ?? GetObjectPrototype().GetOwnPropertyDescriptor(name),
+                function, name, value, strictMode)) return;
+        FunctionObjectProperties.GetProperties(function, this).SetPropertyStrict(name, value, strictMode);
+    }
+
     /// <summary>
     /// Fallback for property access on built-in types and ISharpTSPropertyAccessor.
     /// </summary>
     private object? EvaluateGetOnFallback(object? obj, string memberName)
     {
+        if (obj is ISharpTSFunctionObject functionObject)
+            return GetPropertyValue(functionObject, memberName);
         if (obj is ISharpTSPrimitiveConstructor primitiveConstructor)
             return GetPropertyValue(primitiveConstructor, memberName);
 
@@ -2453,6 +2542,10 @@ public partial class Interpreter
         {
             if (memberName == "constructor")
                 return GetFunctionPrototype().GetMember(memberName);
+            if (callable is IBuiltInFunctionMetadata
+                && memberName is "name" or "length"
+                && FunctionBuiltIns.GetMember(callable, memberName) is { } metadataValue)
+                return metadataValue;
             if (GetFunctionPrototype().HasExtra(memberName))
                 return GetFunctionPrototype().TryGetExtra(memberName);
             var fnMember = FunctionBuiltIns.GetMember(callable, memberName);
@@ -2561,6 +2654,11 @@ public partial class Interpreter
         }
 
         // JS functions are objects — allow property assignment on them.
+        if (obj is ISharpTSFunctionObject functionObject)
+        {
+            SetFunctionObjectProperty(functionObject, set.Name.Lexeme, value, strictMode);
+            return value;
+        }
         if (obj is SharpTSFunction userFn)
         {
             // Accessor set path (Object.defineProperty setter).
@@ -2590,14 +2688,6 @@ public partial class Interpreter
         if (obj is SharpTSAsyncArrowFunction asyncArrowFn)
         {
             asyncArrowFn.SetProperty(set.Name.Lexeme, value);
-            return value;
-        }
-        if (obj is ISharpTSGeneratorFunctionValue generatorFunction)
-        {
-            var properties = generatorFunction.FunctionProperties.GetProperties(this);
-            if (!TryAssignThroughDescriptor(properties.GetOwnPropertyDescriptor(set.Name.Lexeme),
-                    obj, set.Name.Lexeme, value, strictMode))
-                properties.SetPropertyStrict(set.Name.Lexeme, value, strictMode);
             return value;
         }
         if (obj is BoundFunction boundFunction)

@@ -1120,18 +1120,9 @@ public partial class Interpreter
     private bool InstanceOfByPrototype(object? left, ISharpTSCallable ctor)
     {
         if (!IsJsObject(left)) return false;
-        object? protoObj = ctor switch
-        {
-            SharpTSFunction fn when fn.TryGetProperty("prototype", out var p) => p,
-            SharpTSArrowFunction af when af.TryGetProperty("prototype", out var p2) => p2,
-            ISharpTSGeneratorFunctionValue generator => generator.FunctionProperties.GetProperties(this).GetProperty("prototype"),
-            BuiltInMethod { OwnProperties: { } properties } when properties.TryGetValue("prototype", out var prototype)
-                => prototype,
-            _ => null,
-        };
-        if (ctor is ISharpTSGeneratorFunctionValue && IsJsObject(left) && !IsJsObject(protoObj))
-            throw new ThrowException(new SharpTSTypeError("Function has a non-object prototype in instanceof"));
-        if (protoObj is null) return false;
+        object? protoObj = GetPropertyValue(ctor, "prototype");
+        if (!IsJsObject(protoObj))
+            throw new ThrowException(new SharpTSTypeError("Function has non-object prototype in instanceof check"));
         object? current = left;
         for (int i = 0; i < 64 && current is not (null or SharpTSUndefined); i++)
         {
@@ -1166,10 +1157,27 @@ public partial class Interpreter
 
     private object EvaluateInstanceof(object? left, object? right)
     {
+        if (!IsJsObject(right))
+            throw new ThrowException(new SharpTSTypeError("Right-hand side of instanceof is not an object"));
+        var handler = GetSymbolPropertyValue(right!, SharpTSSymbol.HasInstance);
+        if (handler is not (null or SharpTSUndefined))
+        {
+            if (handler is not ISharpTSCallable callable
+                || handler is SharpTSProxy { IsCallable: false })
+                throw new ThrowException(new SharpTSTypeError("Symbol.hasInstance is not a function"));
+            return IsTruthy(FunctionBuiltIns.CallWithThis(this, callable, right, [left]));
+        }
+        // Buffer's callable namespace uses a specialized constructor sentinel.
+        if (right is not (ISharpTSCallable or SharpTSBufferConstructor)
+            || right is SharpTSProxy { IsCallable: false })
+            throw new ThrowException(new SharpTSTypeError("Right-hand side of instanceof is not callable"));
+
         // Bound functions delegate to their target, including through repeated
         // bindings. Their own prototype property does not participate.
         if (right is BoundFunction bound)
             return EvaluateInstanceof(left, bound.Target);
+
+        if (!IsJsObject(left)) return false;
 
         // `x instanceof Object` — the `Object` global resolves to the namespace
         // singleton (no SharpTSClass on the RHS), so brand-check structurally:
@@ -1265,7 +1273,7 @@ public partial class Interpreter
         // the same way — the test262 RegExp Symbol.split species-* tests
         // install function expressions as their species, and their
         // [[Construct]] result is checked via `instanceof species`.
-        if (right is SharpTSArrowFunction arrCtor && arrCtor.HasOwnThis)
+        if (right is SharpTSArrowFunction arrCtor)
             return InstanceOfByPrototype(left, arrCtor);
         if (right is ISharpTSGeneratorFunctionValue generatorConstructor)
             return InstanceOfByPrototype(left, generatorConstructor);
@@ -1274,7 +1282,7 @@ public partial class Interpreter
             return InstanceOfByPrototype(left, intrinsicConstructor);
 
         if (right is not SharpTSClass targetClass)
-            return false;
+            return InstanceOfByPrototype(left, (ISharpTSCallable)right);
 
         // Standard path: SharpTSInstance — walk the class chain
         if (left is SharpTSInstance instance)

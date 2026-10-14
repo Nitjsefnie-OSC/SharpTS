@@ -210,7 +210,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                     => proxy.TrapGetOwnPropertyDescriptor(sym, interpreter)
                         is not (null or SharpTSUndefined),
                 SharpTSObject obj => obj.HasSymbolProperty(sym),
-                ISharpTSGeneratorFunctionValue generator => generator.FunctionProperties.OwnProperties.HasSymbolProperty(sym),
+                ISharpTSFunctionObject function => function.OwnProperties.GetOwnPropertyDescriptor(sym) is not null,
                 SharpTSInstance inst => inst.HasSymbolProperty(sym),
                 SharpTSClass klass => klass.GetOwnStaticSymbolPropertyDescriptor(sym) is not null,
                 SharpTSClassPrototype prototype => prototype.GetOwnPropertyDescriptor(sym) is not null,
@@ -261,10 +261,9 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                 || klass.HasOwnStaticMember(key),
             // User functions materialize these intrinsic properties in their
             // descriptor store, so deletion remains observable here.
+            ISharpTSFunctionObject function => function.OwnProperties.GetOwnPropertyDescriptor(key) is not null,
             SharpTSFunction function => function.HasProperty(key),
             SharpTSArrowFunction arrow => arrow.HasProperty(key),
-            ISharpTSGeneratorFunctionValue generator => key is "name" or "length"
-                || generator.FunctionProperties.OwnProperties.HasProperty(key),
             SharpTSGlobalThis globalThis => globalThis.HasProperty(key),
             IDictionary<string, object?> dict => dict.ContainsKey(key),
             // Built-in functions expose `name` and `length` as own properties
@@ -448,6 +447,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                         && SharpTSPropertyDescriptor.FromAnyObject(descriptor).Enumerable,
                 SharpTSObject obj
                     => obj.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
+                ISharpTSFunctionObject function
+                    => function.OwnProperties.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
                 SharpTSInstance instance => instance.HasSymbolProperty(symbol),
                 SharpTSMath math
                     => math.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
@@ -488,6 +489,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
             SharpTSStringPrototype stringPrototype
                 => stringPrototype.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSFunction function => function.IsPropertyEnumerable(key),
+            ISharpTSFunctionObject function => function.OwnProperties.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSArrowFunction arrow => arrow.IsPropertyEnumerable(key),
             SharpTSArray array => array.IsPropertyEnumerable(key),
             IDictionary<string, object?> dict => dict.ContainsKey(key),

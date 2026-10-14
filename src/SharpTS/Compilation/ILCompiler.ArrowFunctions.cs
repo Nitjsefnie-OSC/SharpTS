@@ -34,6 +34,8 @@ public partial class ILCompiler
     private readonly Dictionary<Expr.ArrowFunction, object?> _arrowEnclosingCallable = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrowFunction> _arrowsNeedingFunctionDC = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrowFunction> _arrowsNeedingArrowDC = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Expr.ArrowFunction, HashSet<string>> _arrowClassDefinitionCaptures =
+        new(ReferenceEqualityComparer.Instance);
     // Maps each collected arrow (or `function` expression) to the AST node of
     // the top-level function that lexically contains it. Needed so
     // PropagateFunctionDCRequirements matches `$functionDC` field lookups
@@ -364,6 +366,13 @@ public partial class ILCompiler
                         continue;
                     }
 
+                    // These bindings belong to the evaluated class's outer
+                    // environment. Read/write its live capture cells through
+                    // the owner field instead of taking method-local snapshots.
+                    if (_arrowClassDefinitionCaptures.TryGetValue(arrow, out var classCaptures)
+                        && classCaptures.Contains(capturedVar))
+                        continue;
+
                     // Skip top-level captured vars - they'll be accessed through $entryPointDC.
                     // #1222 exception: when THIS arrow's capture is an unlifted top-level
                     // BLOCK-scoped binding, the same-named entry-DC field belongs to a
@@ -559,8 +568,9 @@ public partial class ILCompiler
                         _currentEnclosingFunctionName = GetDefinitionContext().GetQualifiedFunctionName(f.Name.Lexeme);
                         _currentEnclosingFunctionStmt = f;
                     }
-                    // Generator methods own invocation storage even inside a class factory.
-                    if (isClassMember && f.IsGenerator)
+                    // Every method owns its invocation storage, independently of the
+                    // function or arrow that evaluated its class definition.
+                    if (isClassMember)
                         _currentEnclosingFunctionStmt = f;
                     _currentEnclosingCallable = f;
                     _currentCollectStrict = previousStrict
@@ -759,6 +769,12 @@ public partial class ILCompiler
                 break;
             case Expr.ArrowFunction af:
                 var captures = _closures.Analyzer.GetCaptures(af);
+                var definitionCaptures = GetArrowClassDefinitionCaptures(af, captures);
+                if (definitionCaptures.Count > 0)
+                {
+                    _arrowClassDefinitionCaptures[af] = definitionCaptures;
+                    captures.Add(CompilationContext.SuperOwnerCaptureName);
+                }
                 if (_currentCollectClassName != null && _classExprs.Names.ContainsValue(_currentCollectClassName)
                     && ((_currentCollectStaticClassContext && captures.Contains("this"))
                         || ArrowUsesClassDefinition(af)))
@@ -1163,6 +1179,22 @@ public partial class ILCompiler
         return visitor.UsesDefinition;
     }
 
+    private HashSet<string> GetArrowClassDefinitionCaptures(
+        Expr.ArrowFunction arrow, HashSet<string> captures)
+    {
+        if (arrow.IsAsync || _currentCollectClassName == null) return [];
+        var expression = _classExprs.Names.FirstOrDefault(entry =>
+            entry.Value == _currentCollectClassName).Key;
+        if (expression == null) return [];
+
+        var classCaptures = _closures.Analyzer.GetCaptures(expression);
+        return captures.Where(name => name != expression.Name?.Lexeme
+            && classCaptures.Contains(name)
+            && ReferenceEquals(_closures.Analyzer.GetCaptureSource(arrow, name),
+                _closures.Analyzer.GetCaptureSource(expression, name)))
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
     private sealed class ArrowClassDefinitionVisitor(Func<Stmt.Class, bool> capturesOwner) : Parsing.Visitors.ControlledAstVisitor
     {
         public bool UsesDefinition { get; private set; }
@@ -1337,7 +1369,8 @@ public partial class ILCompiler
             if (_arrowEnclosingFunction.TryGetValue(arrow, out var enclosingStmt) &&
                 ResolveQualifiedName(enclosingStmt) is string enclosingFuncName &&
                 _closures.FunctionDisplayClassFields.TryGetValue(enclosingFuncName, out var funcDCFields) &&
-                captures.Any(funcDCFields.ContainsKey))
+                captures.Any(name => funcDCFields.ContainsKey(name)
+                    && ReferenceEquals(_closures.Analyzer.GetCaptureSource(arrow, name), enclosingStmt)))
             {
                 _arrowsNeedingFunctionDC.Add(arrow);
                 _closures.ArrowFunctionDCSource[arrow] = enclosingFuncName;
@@ -1683,6 +1716,8 @@ public partial class ILCompiler
                 {
                     ctx.FunctionDisplayClassFields = funcDCFields;
                     ctx.CapturedFunctionLocals = [.. funcDCFields.Keys];
+                    if (_arrowClassDefinitionCaptures.TryGetValue(arrow, out var classCaptures))
+                        ctx.CapturedFunctionLocals.ExceptWith(classCaptures);
                 }
 
                 // #838: redirect this arrow's write-captured block-scope shadows to their renamed DC

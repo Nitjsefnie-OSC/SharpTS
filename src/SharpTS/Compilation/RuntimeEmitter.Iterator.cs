@@ -862,12 +862,12 @@ public partial class RuntimeEmitter
         EmitGetIteratorDone(
             typeBuilder,
             runtime.IteratorProtocol,
-            new IteratorDoneInputs(runtime.Booleans, runtime.ObjectRead, new CompactIteratorResultInputs(runtime.DescriptorStorage, runtime.Records, _features.CompactObjectRecordIteratorResultShapes, _features.CompactObjectRecordShapes, _features.UsesDynamicPropertyDescriptors))
+            new IteratorDoneInputs(runtime.Booleans, runtime.ObjectRead, new CompactIteratorResultInputs(runtime.DescriptorStorage, runtime.Records, _features.CompactObjectRecordIteratorResultShapes, _features.CompactObjectRecordShapes, _features.UsesDynamicPropertyDescriptors, runtime.StableIteratorResults))
         );
         EmitGetIteratorValue(
             typeBuilder,
             runtime.IteratorProtocol,
-            new IteratorValueInputs(runtime.ObjectRead, new CompactIteratorResultInputs(runtime.DescriptorStorage, runtime.Records, _features.CompactObjectRecordIteratorResultShapes, _features.CompactObjectRecordShapes, _features.UsesDynamicPropertyDescriptors))
+            new IteratorValueInputs(runtime.ObjectRead, new CompactIteratorResultInputs(runtime.DescriptorStorage, runtime.Records, _features.CompactObjectRecordIteratorResultShapes, _features.CompactObjectRecordShapes, _features.UsesDynamicPropertyDescriptors, runtime.StableIteratorResults))
         );
         EmitInvokeIteratorNext(
             typeBuilder,

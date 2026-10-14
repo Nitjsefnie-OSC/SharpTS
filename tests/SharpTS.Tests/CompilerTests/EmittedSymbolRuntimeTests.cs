@@ -51,7 +51,7 @@ public sealed class EmittedSymbolRuntimeTests
         var first = new EmittedRuntime();
         var second = new EmittedRuntime();
         Assert.Equal(28, Handles(typeof(EmittedSymbolRuntime)).Length);
-        Assert.Equal(10, Handles(typeof(EmittedSymbolAccessorRuntime)).Length);
+        Assert.Equal(12, Handles(typeof(EmittedSymbolAccessorRuntime)).Length);
         Assert.NotSame(first.Symbols, second.Symbols);
         Assert.NotSame(first.SymbolAccessors, second.SymbolAccessors);
         Assert.Null(typeof(EmittedRuntime).GetProperty(nameof(EmittedRuntime.Symbols))!.SetMethod);
@@ -102,7 +102,8 @@ public sealed class EmittedSymbolRuntimeTests
         Assert.Contains("initialization", Assert.Throws<InvalidOperationException>(accessors.CompleteEmission).Message);
         var cctor = builder.DefineTypeInitializer().GetILGenerator();
         void EmitInitializer() => InvokeEmitter(emitter, "InitSymbolAccessorRegistry", cctor, accessors);
-        void EmitBodies() => InvokeEmitter(emitter, "EmitSymbolAccessorRegistryBodies", accessors, localSymbols, runtime.StringCoercion);
+        void EmitBodies() => InvokeEmitter(emitter, "EmitSymbolAccessorRegistryBodies", accessors, localSymbols,
+            runtime.StringCoercion, runtime.FunctionConstruction, runtime.FunctionValues, runtime.Symbols.MethodName);
         if (omitInitializer) EmitBodies(); else EmitInitializer();
         var error = Assert.Throws<InvalidOperationException>(accessors.CompleteEmission);
         Assert.Contains(omitInitializer ? "initialization" : "bodies", error.Message);
@@ -199,6 +200,34 @@ public sealed class EmittedSymbolRuntimeTests
             Assert.NotEqual(registered, foreign);
         }
         return registered;
+    }
+
+    [Fact]
+    public void StaticMethodCachePreservesEvaluatedSymbolsAndClosedGenericMethods()
+    {
+        var builder = NewAssembly();
+        var runtime = new RuntimeEmitter(TypeProvider.Runtime)
+            .EmitAll(builder.DefineDynamicModule("main"), Detect("const key = Symbol('same');"));
+        var assembly = SaveVerifyLoad(builder);
+        var runtimeType = assembly.GetType("$Runtime")!;
+        var symbols = assembly.GetType("$TSSymbol")!;
+        var first = Activator.CreateInstance(symbols, ["same"])!;
+        var second = Activator.CreateInstance(symbols, ["same"])!;
+        var stringMethod = typeof(ProbeGeneric<string>).GetMethod(nameof(ProbeGeneric<string>.StaticEcho))!;
+        var numberMethod = typeof(ProbeGeneric<int>).GetMethod(nameof(ProbeGeneric<int>.StaticEcho))!;
+        var cache = Assert.IsAssignableFrom<IDictionary>(
+            runtimeType.GetField(runtime.SymbolAccessors.StaticCallableCache.Name, StaticMembers)!.GetValue(null));
+        Assert.Empty(cache);
+        var canonical = Call(runtimeType, "GetOrCreateStaticSymbolMethod", stringMethod, first);
+        Assert.Same(canonical, Call(runtimeType, "GetOrCreateStaticSymbolMethod", stringMethod, first));
+        Call(runtimeType, "GetOrCreateStaticSymbolMethod", stringMethod, second);
+        var closed = Call(runtimeType, "GetOrCreateStaticSymbolMethod", numberMethod, first);
+        Assert.NotSame(canonical, closed);
+        Assert.Equal(3, cache.Count);
+        var keys = cache.Keys.Cast<(MethodInfo Method, object Symbol)>().ToArray();
+        Assert.Contains(keys, key => key.Method.Equals(stringMethod) && ReferenceEquals(key.Symbol, first));
+        Assert.Contains(keys, key => key.Method.Equals(stringMethod) && ReferenceEquals(key.Symbol, second));
+        Assert.Contains(keys, key => key.Method.Equals(numberMethod) && ReferenceEquals(key.Symbol, first));
     }
 
     private static void CheckSymbolStorage(Type runtime, object symbol)
@@ -303,6 +332,7 @@ public sealed class EmittedSymbolRuntimeTests
             "DefineSymbolAccessorRegistry",
             "InitSymbolAccessorRegistry",
             "EmitSymbolAccessorRegistryBodies",
+            "EmitGetOrCreateStaticSymbolMethod",
             "EmitRegisterSymbolMethodBody",
             "EmitSymbolGenericHelperBodies",
             "EmitRegisterSymbolAccessorBody",
@@ -430,5 +460,6 @@ public sealed class EmittedSymbolRuntimeTests
     public sealed class ProbeGeneric<T>
     {
         public T Echo(T value) => value;
+        public static T StaticEcho(T value) => value;
     }
 }

@@ -77,6 +77,7 @@ public abstract partial class ExpressionEmitterBase
             .FirstOrDefault(entry => ReferenceEquals(entry.Value, Ctx.CurrentClassBuilder)).Key;
         if (expression?.Name?.Lexeme == name)
         {
+            if (HasClassDefinitionCaptureShadow(name)) return false;
             if (!TryEmitOwnedClassDefinition()) return false;
         }
         else
@@ -84,9 +85,7 @@ public abstract partial class ExpressionEmitterBase
             // A named enclosing expression has no outer variable declaration to
             // capture. Its checked constructor binding identifies the lexical
             // self-name, whose evaluated definition travels in the owner chain.
-            if (Ctx.TryGetParameter(name, out _) || Ctx.Locals.GetLocal(name) != null
-                || GetHoistedVariableField(name) != null
-                || Ctx.CapturedFields?.ContainsKey(name) == true
+            if (HasClassDefinitionCaptureShadow(name)
                 || TryGetClassDefinitionCaptureSlot(name, out _)) return false;
             var constructor = Ctx.TypeMap?.Get(variable);
             if (constructor is not (SharpTS.TypeSystem.TypeInfo.Class or SharpTS.TypeSystem.TypeInfo.GenericClass))
@@ -183,7 +182,7 @@ public abstract partial class ExpressionEmitterBase
         return true;
     }
 
-    private bool HasClassDefinitionCaptureShadow(string name)
+    protected bool HasClassDefinitionCaptureShadow(string name)
     {
         if (Ctx.TryGetParameter(name, out _) || Ctx.Locals.GetLocal(name) != null
             || Ctx.CellBindingLocals.ContainsKey(name) || GetHoistedVariableField(name) != null

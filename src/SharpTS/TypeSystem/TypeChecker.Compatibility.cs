@@ -428,8 +428,12 @@ public partial class TypeChecker
     /// </summary>
     private bool IsCompatibleCore(TypeInfo expected, TypeInfo actual)
     {
-        // A generic constructor retains its declaration identity through typeof and aliases.
-        if (expected is TypeInfo.GenericClass && ReferenceEquals(expected, actual)) return true;
+        // Constructors retain declaration identity through typeof and aliases.
+        if (expected is TypeInfo.Class or TypeInfo.GenericClass && ReferenceEquals(expected, actual)) return true;
+        if (expected is TypeInfo.Class expectedClassConstructor &&
+            actual is TypeInfo.Class actualClassConstructor &&
+            expectedClassConstructor.Core.DeclarationId != 0 &&
+            expectedClassConstructor.Core.DeclarationId == actualClassConstructor.Core.DeclarationId) return true;
         if (expected is TypeInfo.GenericClass expectedConstructor &&
             actual is TypeInfo.GenericClass actualConstructor &&
             expectedConstructor.Core.DeclarationId != 0 &&

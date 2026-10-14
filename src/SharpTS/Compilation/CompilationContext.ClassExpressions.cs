@@ -42,6 +42,10 @@ public partial class CompilationContext
     internal FieldBuilder? ClassDefinitionOwnerField { get; set; }
     internal string? GuestThisVariableName { get; set; }
     internal bool HasGuestReceiver { get; set; }
+    internal bool CapturesClassConstructorReturn { get; set; }
+    internal bool IsDerivedClassConstructor { get; set; }
+    internal LocalBuilder? ClassConstructorReceiver { get; set; }
+    internal LocalBuilder? ClassConstructorReturnValue { get; set; }
     internal bool UseNominalSuperCallBridge { get; set; }
 
     // Variable name to class expression mapping (for static member access)

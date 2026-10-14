@@ -78,11 +78,11 @@ public partial class ILEmitter
             return;
         }
 
-        // A class body's lexical self-binding shadows every outer binding with the same
-        // spelling. Class expressions are emitted as Types rather than ordinary locals, so
-        // resolve that binding before the general variable/capture resolver.
+        // The class self-binding precedes outer bindings, while method parameters,
+        // locals and their closure storage can shadow it.
         if (_ctx.CurrentClassBuilder != null
-            && (name == _ctx.CurrentClassName || name == _ctx.CurrentClassShortName))
+            && (name == _ctx.CurrentClassName || name == _ctx.CurrentClassShortName)
+            && !HasClassDefinitionCaptureShadow(name))
         {
             IL.Emit(OpCodes.Ldtoken, _ctx.CurrentClassBuilder);
             IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(

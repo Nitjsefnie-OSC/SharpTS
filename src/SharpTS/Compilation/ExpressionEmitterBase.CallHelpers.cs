@@ -1500,6 +1500,7 @@ public abstract partial class ExpressionEmitterBase
     protected bool TryEmitClassStaticDispatch(Expr.Call c, Expr.Get methodGet)
     {
         if (methodGet.Object is not Expr.Variable classVar ||
+            HasClassDefinitionCaptureShadow(classVar.Name.Lexeme) ||
             !Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out var classBuilder))
         {
             return false;
@@ -1597,6 +1598,14 @@ public abstract partial class ExpressionEmitterBase
 
         // Type-first dispatch via TypeEmitterRegistry
         var objType = Ctx.TypeMap?.Get(methodGet.Object);
+        if (Ctx.TypeMapper.IsDynamicClassInstance(objType))
+        {
+            // A constructor replacement can carry its own method, while a
+            // fallthrough result still carries the class's implementation.
+            // Resolve both through the actual receiver before builtin fallbacks.
+            EmitDynamicMethodCallPreservingThis(methodGet.Object, methodName, c.Arguments);
+            return true;
+        }
         if (objType is TypeSystem.TypeInfo.Array
             && methodName == "includes"
             && (Ctx.RuntimeFeatures?.UsesDynamicPropertyDescriptors != false
@@ -2192,6 +2201,7 @@ public abstract partial class ExpressionEmitterBase
         // Use ResolvedClassType so chained call returns (whose type was captured while the
         // class was still a MutableClass) resolve to the frozen Class here.
         var receiverType = Ctx.TypeMap?.Get(receiver);
+        if (Ctx.TypeMapper.IsDynamicClassInstance(receiverType)) return false;
         if (receiverType is TypeSystem.TypeInfo.Instance instance)
         {
             simpleClassName = instance.ResolvedClassType switch
@@ -2863,12 +2873,12 @@ public abstract partial class ExpressionEmitterBase
         // Target is a non-object reference type. EmitExpression can leave a broader `object` on the
         // stack — an `any`-typed value, or a GetIndex/GetProperty result — that the callee's typed
         // string slot would reject at IL verification even though the JIT tolerates it. Emit the
-        // downcast the verifier needs (#1246). Only `string` qualifies: it is the one non-object
-        // reference slot whose runtime value is genuinely a CLR instance of the slot. Other reference
-        // targets carry a boxed-differently runtime value ($TSFunction for a Delegate, $Array for a
-        // List, $Promise for a Task — the last widened to `object` at the parameter slot by
-        // ParameterTypeResolver), so a castclass would throw; they keep their prior object store.
-        if (Types.IsString(targetType) && StackType != StackType.String)
+        // downcast the verifier needs (#1246). Ordinary user-class instance slots also need it
+        // after constructor return selection leaves an object on the stack. Replacement-capable
+        // instances use object slots and exit above. Delegate/List/Task runtime representations
+        // remain outside this conversion.
+        if ((Types.IsString(targetType) && StackType != StackType.String)
+            || Ctx.TypeMapper.IsUserClassReferenceType(targetType))
         {
             EnsureBoxed();
             IL.Emit(OpCodes.Castclass, targetType);

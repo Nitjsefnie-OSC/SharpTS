@@ -287,6 +287,8 @@ public sealed class NestedPrivateDeclarationTests
                             read(Outer: typeof Outer) { return Outer; }
                             local(value: typeof Outer) { const Outer = value; return Outer; }
                             arrow(Outer: typeof Outer) { return () => Outer; }
+                            localArrow(value: typeof Outer) { const Outer = value; return () => Outer; }
+                            nestedArrow(Outer: typeof Outer) { return () => () => Outer; }
                             capture(value: typeof Outer) {
                                 const Outer = value;
                                 return class Reader { read() { return Outer; } };
@@ -301,9 +303,9 @@ public sealed class NestedPrivateDeclarationTests
             const inner = new First().make();
             const Reader = inner.capture(Second);
             console.log(inner.read(Second) === Second, inner.local(Second) === Second, new Reader().read() === Second,
-                inner.arrow(Second)() === Second);
+                inner.arrow(Second)() === Second, inner.localArrow(Second)() === Second, inner.nestedArrow(Second)()() === Second);
             """;
-        Assert.Equal("true true true true\n", TestHarness.Run(source, mode));
+        Assert.Equal("true true true true true true\n", TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

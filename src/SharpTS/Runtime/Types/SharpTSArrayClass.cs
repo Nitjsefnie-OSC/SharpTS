@@ -131,7 +131,8 @@ public class SharpTSArrayClass : SharpTSClass
 
         if (hasUserConstructor && constructor != null)
         {
-            BindMethodToReceiver(constructor, instance).Call(interpreter, arguments);
+            var result = BindMethodToReceiver(constructor, instance).Call(interpreter, arguments);
+            return ResolveConstructorReturn(result, instance);
         }
         else
         {

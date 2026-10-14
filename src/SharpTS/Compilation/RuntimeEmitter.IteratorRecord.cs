@@ -10,12 +10,33 @@ public partial class RuntimeEmitter
         EmittedRecordStorageRuntime Records,
         IReadOnlySet<string> IteratorResultShapes,
         IReadOnlyDictionary<string, JsonSerializationShape.Record> Shapes,
-        bool UsesDynamicPropertyDescriptors
+        bool UsesDynamicPropertyDescriptors,
+        EmittedStableIteratorResultRuntime? StableResults
     );
 
 
     private void EmitCompactIteratorResultRead(ILGenerator il, CompactIteratorResultInputs inputs, string key)
     {
+        // Proven numeric next methods can return a value type even when an
+        // async consumer drives them through the ordinary iterator protocol.
+        // Its internal Value/Done fields do not participate in guest lookup.
+        if (inputs.StableResults is { } stable)
+        {
+            var fallback = il.DefineLabel();
+            var exact = il.DeclareLocal(stable.Type);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, stable.Type);
+            il.Emit(OpCodes.Brfalse, fallback);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Unbox_Any, stable.Type);
+            il.Emit(OpCodes.Stloc, exact);
+            il.Emit(OpCodes.Ldloca, exact);
+            il.Emit(OpCodes.Ldfld, key == "done" ? stable.Done : stable.Value);
+            if (key == "value") il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(fallback);
+        }
+
         foreach (string fingerprint in inputs.IteratorResultShapes.Order(StringComparer.Ordinal))
         {
             if (!inputs.Records.CompactTypes.TryGetValue(fingerprint, out var type))

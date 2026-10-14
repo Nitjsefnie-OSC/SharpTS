@@ -222,7 +222,7 @@ public sealed class NumericStorageSafetyTests
                     }
                 };
                 for (const value of iterable) total = total + value;
-                return 3;
+                return total;
             }
             iterate(3).then((value: number): void => console.log(value));
             """;

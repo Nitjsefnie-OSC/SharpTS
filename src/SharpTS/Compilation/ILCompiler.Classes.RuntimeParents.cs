@@ -22,6 +22,9 @@ public partial class ILCompiler
     private bool TryDefineRuntimeClassDeclaration(Stmt.Class declaration)
     {
         var leaf = Expr.GetSuperclassLeafName(declaration.SuperclassExpr);
+        bool expressionOwnedParent = ResolveClassExpressionParent(
+            _typeMap.GetClassType(declaration)?.Superclass, declaration.SuperclassExpr) != null;
+        if (expressionOwnedParent && declaration.Decorators is { Count: > 0 }) return false;
         // Declaration decorators and unsupported intrinsic heritage keep their
         // existing declaration handling; the expression adapter has no class
         // decorator metadata and must not relax its subclassing diagnostics.
@@ -30,7 +33,7 @@ public partial class ILCompiler
             && leaf is not ("Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer");
         if ((declaration.SuperclassExpr == null && !captureLexicalOwner) || declaration.IsDeclare) return false;
         if (!captureLexicalOwner && leaf != null && ((_typeMap.Get(declaration.SuperclassExpr!) is not TypeSystem.TypeInfo.Any
-            && (_classes.Builders.ContainsKey(GetDefinitionContext().ResolveClassName(leaf)) || _classExprs.VarToClassExpr.ContainsKey(leaf)))
+            && _classes.Builders.ContainsKey(GetDefinitionContext().ResolveClassName(leaf)) && !expressionOwnedParent)
             || Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(leaf)
             || leaf is "Array" or "Promise" or "Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer")) return false;
         if (!captureLexicalOwner && declaration.SuperclassExpr is Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 }) return false;
@@ -62,9 +65,25 @@ public partial class ILCompiler
         return true;
     }
 
-    private bool HasRuntimeParent(Expr.ClassExpr expression) => expression.SuperclassExpr != null
-        && (_classExprs.Builders[expression].BaseType == null || _classExprs.Builders[expression].BaseType == _types.Object)
-        && expression.SuperclassExpr is not Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 };
+    private bool HasRuntimeParent(Expr.ClassExpr expression)
+    {
+        // A CLR subclass can inherit a template whose guest parent is selected
+        // at runtime. Its bookkeeping constructor does not initialize that guest
+        // chain, so the child must use the same explicit-receiver factory path.
+        var visited = new HashSet<Expr.ClassExpr>(ReferenceEqualityComparer.Instance);
+        while (visited.Add(expression))
+        {
+            if (expression.SuperclassExpr == null
+                || expression.SuperclassExpr is Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 }) return false;
+            var parent = _classExprs.Builders[expression].BaseType;
+            if (parent == null || parent == _types.Object) return true;
+            if (parent.IsConstructedGenericType) parent = parent.GetGenericTypeDefinition();
+            var parentExpression = _classExprs.Builders.FirstOrDefault(entry => ReferenceEquals(entry.Value, parent)).Key;
+            if (parentExpression == null) return false;
+            expression = parentExpression;
+        }
+        return false;
+    }
 
     private static bool SupportsReceiverInitialization(Stmt.Class declaration)
     {

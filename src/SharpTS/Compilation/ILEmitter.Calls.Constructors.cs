@@ -187,6 +187,7 @@ public partial class ILEmitter
             // parameter slots receive the undefined sentinel before defaults run.
             EmitStaticCallArguments(n.Arguments, ctorBuilder);
             IL.Emit(OpCodes.Newobj, targetCtor);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
             SetStackUnknown();
             return;
         }
@@ -208,6 +209,7 @@ public partial class ILEmitter
             EmitOmittedArgument(ctorParams[i].ParameterType);
 
         IL.Emit(OpCodes.Newobj, targetCtor);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
         SetStackUnknown();
     }
 
@@ -297,6 +299,7 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Newobj, targetCtor);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
         SetStackUnknown();
     }
 
@@ -341,6 +344,7 @@ public partial class ILEmitter
     {
         EmitStaticCallArguments(n.Arguments, ctor);
         IL.Emit(OpCodes.Newobj, ctor);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
         SetStackUnknown();
     }
 
@@ -774,6 +778,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, ctorLocal);
         IL.Emit(OpCodes.Ldloc, argsArrayLocal);
         IL.Emit(OpCodes.Callvirt, invokeMethod);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
         IL.MarkLabel(constructionDone);
         IL.MarkLabel(builtInDone);
     }
@@ -844,6 +849,7 @@ public partial class ILEmitter
 
         var createInstanceMethod = _ctx.Types.GetMethod(_ctx.Types.Activator, "CreateInstance", _ctx.Types.Type, _ctx.Types.ObjectArray);
         IL.Emit(OpCodes.Call, createInstanceMethod!);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
 
         SetStackUnknown();
         return true;

@@ -21,8 +21,51 @@ public class TypeMapper
     private readonly ModuleBuilder _moduleBuilder;
     private readonly TypeProvider _types;
     private readonly Dictionary<int, string> _checkedClassNames = [];
+    private readonly HashSet<int> _dynamicClassInstances = [];
+
+    internal void RegisterDynamicClassInstance(int declarationId)
+    {
+        if (declarationId != 0) _dynamicClassInstances.Add(declarationId);
+    }
+
+    internal bool IsDynamicClassInstance(TypeInfo? type)
+    {
+        // A constructor's replacement can also become the result of derived construction.
+        if (_dynamicClassInstances.Count == 0) return false;
+        var visited = new HashSet<TypeInfo>(ReferenceEqualityComparer.Instance);
+        while (type != null && visited.Add(type))
+        {
+            if (type is TypeInfo.Instance instance)
+            {
+                type = instance.ResolvedClassType;
+                continue;
+            }
+            if (type is TypeInfo.InstantiatedGeneric generic)
+            {
+                type = generic.GenericDefinition;
+                continue;
+            }
+            var (declaration, superclass) = type switch
+            {
+                TypeInfo.Class c => (c.Core.DeclarationId, c.Core.Superclass),
+                TypeInfo.GenericClass c => (c.Core.DeclarationId, c.Core.Superclass),
+                TypeInfo.MutableClass c => (c.DeclarationId, c.Superclass),
+                _ => (0, (TypeInfo?)null)
+            };
+            if (_dynamicClassInstances.Contains(declaration)) return true;
+            type = superclass;
+        }
+        return false;
+    }
 
     internal void RegisterCheckedClassName(int declarationId, string name) => _checkedClassNames[declarationId] = name;
+
+    internal bool IsUserClassReferenceType(Type type)
+    {
+        if (_classBuilders is null || type == _types.Object || type.IsValueType) return false;
+        var definition = type.IsGenericType ? type.GetGenericTypeDefinition() : type;
+        return _classBuilders.Values.Any(builder => ReferenceEquals(builder, definition));
+    }
 
     private Type GetCheckedClassType(ClassMetadataCore core) => GetClassType(
         _checkedClassNames.GetValueOrDefault(core.DeclarationId, core.Name));
@@ -156,6 +199,7 @@ public class TypeMapper
         TypeInfo.Function => _types.Object, // Will be delegate at runtime
         TypeInfo.Promise p => MapPromiseType(p), // Promise<T> maps to Task<T>
         TypeInfo.Class c => GetCheckedClassType(c.Core),
+        TypeInfo.Instance i when IsDynamicClassInstance(i) => _types.Object,
         TypeInfo.Instance i => i.ClassType switch
         {
             TypeInfo.Class c => GetCheckedClassType(c.Core),
@@ -272,7 +316,8 @@ public class TypeMapper
         _ => _types.Object
     };
 
-    private Type MapInstanceTypeStrict(TypeInfo.Instance instance) => instance.ClassType switch
+    private Type MapInstanceTypeStrict(TypeInfo.Instance instance) => IsDynamicClassInstance(instance)
+        ? _types.Object : instance.ClassType switch
     {
         TypeInfo.Class c => GetCheckedClassType(c.Core),
         TypeInfo.GenericClass gc => GetCheckedClassType(gc.Core),

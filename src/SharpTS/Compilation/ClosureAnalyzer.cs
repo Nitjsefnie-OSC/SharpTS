@@ -402,7 +402,18 @@ public class ClosureAnalyzer : AstVisitorBase
             var definingFunc = FindDefiningFunction(name);
             foreach (var (expression, enclosingFunctions) in _classCaptureOwners)
                 if (definingFunc == null || enclosingFunctions.Contains(definingFunc))
+                {
                     _captures[expression].Add(name);
+                    // Class definitions retain the same live binding as their
+                    // methods' closures, even when a method declares a shadow
+                    // with the same spelling.
+                    if (definingFunc != null)
+                    {
+                        if (!_captureSources.TryGetValue(expression, out var classSources))
+                            _captureSources[expression] = classSources = [];
+                        classSources[name] = definingFunc;
+                    }
+                }
             if (definingFunc != null)
             {
                 // The variable is defined in some function, not at top level

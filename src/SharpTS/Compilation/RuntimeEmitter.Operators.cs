@@ -30,10 +30,14 @@ public partial class RuntimeEmitter
         EmittedClassDefinitionRuntime ClassDefinitions,
         EmittedClassPrototypeRuntime ClassPrototypes,
         EmittedAbortRuntime? Abort,
+        EmittedBooleanRuntime Booleans,
         EmittedBoxedPrimitiveRuntime BoxedPrimitives,
+        EmittedErrorRuntime Errors,
         EmittedFunctionBindingRuntime FunctionBindings,
         MethodBuilder GetFunctionMethod,
+        MethodBuilder InvokeMethodValue,
         EmittedObjectPrototypeRuntime ObjectPrototypes,
+        EmittedObjectReadRuntime ObjectRead,
         EmittedPromiseRuntime? Promise,
         EmittedSymbolRuntime Symbols,
         TypeBuilder TSFunctionType,
@@ -640,25 +644,93 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitInstanceOf(TypeBuilder typeBuilder, EmittedOperatorRuntime operators, InstanceOfInputs inputs)
+    private void DeclareInstanceOf(TypeBuilder typeBuilder, EmittedOperatorRuntime operators)
     {
-        var method = typeBuilder.DefineMethod(
+        operators.InstanceOf = typeBuilder.DefineMethod(
             "InstanceOf",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Boolean,
             [_types.Object, _types.Object]
         );
-        operators.InstanceOf = method;
+    }
+
+    private void EmitInstanceOf(TypeBuilder typeBuilder, EmittedOperatorRuntime operators, InstanceOfInputs inputs)
+    {
+        var method = operators.InstanceOf;
 
         var il = method.GetILGenerator();
         var falseLabel = il.DefineLabel();
         var trueLabel = il.DefineLabel();
+        var invalidRhsLabel = il.DefineLabel();
 
-        // if (instance == null || classType == null) return false
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, falseLabel);
+        // Protocol lookup precedes bound-target delegation and primitive-LHS
+        // shortcuts: a custom handler can accept null or any other guest value.
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Brfalse, invalidRhsLabel);
+
+        var ordinaryLabel = il.DefineLabel();
+        var lookupHandlerLabel = il.DefineLabel();
+        var rhsKind = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, operators.TypeOf);
+        il.Emit(OpCodes.Stloc, rhsKind);
+        il.Emit(OpCodes.Ldloc, rhsKind);
+        il.Emit(OpCodes.Ldstr, "object");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, lookupHandlerLabel);
+        il.Emit(OpCodes.Ldloc, rhsKind);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brfalse, invalidRhsLabel);
+        il.MarkLabel(lookupHandlerLabel);
+
+        var handler = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldsfld, inputs.Symbols.HasInstance);
+        il.Emit(OpCodes.Call, inputs.ObjectRead.Index);
+        il.Emit(OpCodes.Stloc, handler);
+        il.Emit(OpCodes.Ldloc, handler);
+        il.Emit(OpCodes.Brfalse, ordinaryLabel);
+        il.Emit(OpCodes.Ldloc, handler);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, ordinaryLabel);
+        il.Emit(OpCodes.Ldloc, handler);
+        il.Emit(OpCodes.Call, operators.TypeOf);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        var callableHandlerLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, callableHandlerLabel);
+        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
+            "Symbol.hasInstance is not a function");
+        il.MarkLabel(callableHandlerLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, handler);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
+        il.Emit(OpCodes.Call, inputs.Booleans.IsTruthy);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(ordinaryLabel);
+
+        var callableRhsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, rhsKind);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, callableRhsLabel);
+        // AbortSignal's callable namespace is represented by a dictionary.
+        if (inputs.Abort is not null)
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldsfld, inputs.Abort.NamespaceField);
+            il.Emit(OpCodes.Beq, callableRhsLabel);
+        }
+        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
+            "Right-hand side of instanceof is not callable");
+        il.MarkLabel(callableRhsLabel);
 
         // Delegate through each bound target so ordinary constructor prototype
         // lookup remains live and repeated bindings retain target identity.
@@ -680,6 +752,23 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notBound);
         }
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        var objectLhsLabel = il.DefineLabel();
+        var lhsKind = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, operators.TypeOf);
+        il.Emit(OpCodes.Stloc, lhsKind);
+        il.Emit(OpCodes.Ldloc, lhsKind);
+        il.Emit(OpCodes.Ldstr, "object");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, objectLhsLabel);
+        il.Emit(OpCodes.Ldloc, lhsKind);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.MarkLabel(objectLhsLabel);
 
         // A plain Dictionary RHS is never a constructor — letting it reach the
         // IsAssignableFrom fallback matched EVERY dict-shaped value (object
@@ -760,11 +849,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.GetFunctionMethod);
         il.Emit(OpCodes.Stloc, targetProtoLocal);
 
-        // If F has no .prototype somehow (e.g., bound function), fall back to
-        // false rather than walking — JS spec actually throws TypeError, but
-        // returning false matches what the previous implementation produced.
+        var checkPrototypeLabel = il.DefineLabel();
+        var validPrototypeLabel = il.DefineLabel();
+        var invalidPrototypeLabel = il.DefineLabel();
+        il.MarkLabel(checkPrototypeLabel);
         il.Emit(OpCodes.Ldloc, targetProtoLocal);
-        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Brfalse, invalidPrototypeLabel);
+        var prototypeKind = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, targetProtoLocal);
+        il.Emit(OpCodes.Call, operators.TypeOf);
+        il.Emit(OpCodes.Stloc, prototypeKind);
+        il.Emit(OpCodes.Ldloc, prototypeKind);
+        il.Emit(OpCodes.Ldstr, "object");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, validPrototypeLabel);
+        il.Emit(OpCodes.Ldloc, prototypeKind);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, validPrototypeLabel);
+        il.MarkLabel(invalidPrototypeLabel);
+        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
+            "Function has non-object prototype in instanceof check");
+        il.MarkLabel(validPrototypeLabel);
 
         // Walk through [[GetPrototypeOf]] so Proxy traps participate and their
         // non-extensible-target invariant is enforced.
@@ -955,13 +1061,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notTypeLabel);
-        // classType is not Type, get its type
+        // Other callable wrappers use the same ordinary prototype protocol.
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, inputs.ObjectRead.Property);
+        il.Emit(OpCodes.Stloc, targetProtoLocal);
+        il.Emit(OpCodes.Br, checkPrototypeLabel);
 
         il.MarkLabel(trueLabel);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -970,6 +1075,10 @@ public partial class RuntimeEmitter
         il.MarkLabel(falseLabel);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
+        il.MarkLabel(invalidRhsLabel);
+        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
+            "Right-hand side of instanceof is not an object");
+        operators.MarkInstanceOfBodyEmitted();
     }
 
     /// <summary>

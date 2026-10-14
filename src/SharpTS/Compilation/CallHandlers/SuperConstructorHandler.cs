@@ -64,6 +64,7 @@ public class SuperConstructorHandler : ICallHandler
         if (ctx.CurrentSuperclassName != null && BuiltInNames.IsErrorTypeName(ctx.CurrentSuperclassName))
         {
             EmitSuperErrorCtorCall(emitter, call.Arguments, ctx.CurrentSuperclassName);
+            CaptureConstructorReceiver(emitter);
             return true;
         }
 
@@ -74,6 +75,7 @@ public class SuperConstructorHandler : ICallHandler
         if (ctx.CurrentSuperclassName == "Array" && ctx.Runtime?.ArrayStorage.CtorFromCtorArgs != null)
         {
             EmitSuperArrayCtorCall(emitter, call.Arguments);
+            CaptureConstructorReceiver(emitter);
             return true;
         }
 
@@ -83,6 +85,7 @@ public class SuperConstructorHandler : ICallHandler
         if (ctx.CurrentSuperclassName == "Promise" && ctx.Runtime?.Promise is not null)
         {
             EmitSuperPromiseCtorCall(emitter, call.Arguments);
+            CaptureConstructorReceiver(emitter);
             return true;
         }
 
@@ -100,6 +103,7 @@ public class SuperConstructorHandler : ICallHandler
                 emitter.IL.Emit(OpCodes.Pop);
             }
             emitter.IL.Emit(OpCodes.Ldnull);
+            CaptureConstructorReceiver(emitter);
             emitter.SetStackUnknown();
             return true;
         }
@@ -308,7 +312,19 @@ public class SuperConstructorHandler : ICallHandler
             ctorToCall = EmitterTypeHelpers.ResolveConstructor(baseType, parentCtor);
 
         il.Emit(OpCodes.Call, ctorToCall);
+        CaptureConstructorReceiver(emitter);
         il.Emit(OpCodes.Ldnull);
         emitter.SetStackUnknown();
+    }
+
+    private static void CaptureConstructorReceiver(IEmitterContext emitter)
+    {
+        var ctx = emitter.Context;
+        if (ctx.ClassConstructorReceiver != null)
+        {
+            emitter.IL.Emit(OpCodes.Ldarg_0);
+            emitter.IL.Emit(OpCodes.Call, ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
+            emitter.IL.Emit(OpCodes.Stloc, ctx.ClassConstructorReceiver);
+        }
     }
 }

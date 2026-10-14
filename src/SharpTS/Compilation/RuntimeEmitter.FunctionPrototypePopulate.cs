@@ -24,6 +24,7 @@ public partial class RuntimeEmitter
         FieldInfo UndefinedInstance, Type UndefinedType, MethodBuilder InvokeMethodValue);
 
     private readonly record struct FunctionProtoBindHelperInputs(
+        FieldInfo UndefinedInstance,
         EmittedFunctionValueRuntime FunctionValues,
         EmittedFunctionBindingRuntime FunctionBindings,
         EmittedOperatorRuntime Operators,
@@ -66,6 +67,7 @@ public partial class RuntimeEmitter
         var bindHelper = EmitFunctionProtoBindHelper(
             typeBuilder,
             new FunctionProtoBindHelperInputs(
+                inputs.UndefinedInstance,
                 inputs.FunctionValues,
                 inputs.FunctionBindings,
                 inputs.Operators,
@@ -382,7 +384,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, argsLenLocal);
         il.MarkLabel(afterLenLabel);
 
-        // thisArg = argsLen > 0 ? args[0] : null
+        // thisArg = argsLen > 0 ? args[0] : undefined
         var noThisLabel = il.DefineLabel();
         var afterThisLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, argsLenLocal);
@@ -394,7 +396,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, thisArgLocal);
         il.Emit(OpCodes.Br, afterThisLabel);
         il.MarkLabel(noThisLabel);
-        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
         il.Emit(OpCodes.Stloc, thisArgLocal);
         il.MarkLabel(afterThisLabel);
 

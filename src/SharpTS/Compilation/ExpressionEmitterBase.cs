@@ -1740,6 +1740,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     {
                         IL.Emit(OpCodes.Unbox_Any, targetParamType);
                     }
+                    else if (Types.IsString(targetParamType)
+                        || Ctx.TypeMapper.IsUserClassReferenceType(targetParamType))
+                    {
+                        IL.Emit(OpCodes.Castclass, targetParamType);
+                    }
                 }
             }
 
@@ -1750,6 +1755,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             }
 
             IL.Emit(OpCodes.Newobj, targetCtor);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
             SetStackUnknown();
         }
         else
@@ -1855,6 +1861,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 {
                     IL.Emit(OpCodes.Unbox_Any, targetParamType);
                 }
+                else if (Types.IsString(targetParamType)
+                    || Ctx.TypeMapper.IsUserClassReferenceType(targetParamType))
+                {
+                    IL.Emit(OpCodes.Castclass, targetParamType);
+                }
             }
         }
 
@@ -1862,6 +1873,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             EmitOmittedArgument(ctorParams[i].ParameterType);
 
         IL.Emit(OpCodes.Newobj, classExprCtor);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
         SetStackUnknown();
     }
 

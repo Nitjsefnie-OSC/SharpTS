@@ -62,6 +62,20 @@ public sealed class EmittedSymbolAccessorRuntime
         internal set => SetHandle(ref _findOwnMethod, value);
     }
 
+    private FieldBuilder? _staticCallableCache;
+    public FieldBuilder StaticCallableCache
+    {
+        get => Require(_staticCallableCache);
+        internal set => SetHandle(ref _staticCallableCache, value);
+    }
+
+    private MethodBuilder? _getOrCreateStaticMethod;
+    public MethodBuilder GetOrCreateStaticMethod
+    {
+        get => Require(_getOrCreateStaticMethod);
+        internal set => SetHandle(ref _getOrCreateStaticMethod, value);
+    }
+
     private MethodBuilder? _registryKey;
     public MethodBuilder RegistryKey
     {
@@ -125,6 +139,8 @@ public sealed class EmittedSymbolAccessorRuntime
         _ = RegisterMethod;
         _ = FindMethod;
         _ = FindOwnMethod;
+        _ = StaticCallableCache;
+        _ = GetOrCreateStaticMethod;
         _ = RegistryKey;
         _ = ClosedOwner;
         _ = CloseAccessor;

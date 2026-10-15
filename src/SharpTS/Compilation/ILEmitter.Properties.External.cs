@@ -147,7 +147,8 @@ public partial class ILEmitter
         className = null!;
         field = null!;
         if (get.Object is not Expr.This) return false;
-        if (_ctx.IsInstanceMethod || _ctx.CurrentClassBuilder == null) return false;
+        if (_ctx.IsInstanceMethod || _ctx.CurrentClassBuilder == null
+            || _ctx.HasGuestReceiver || _ctx.GuestThisVariableName != null) return false;
         var name = _ctx.CurrentClassName;
         if (name == null) return false;
         // Own-only: this resolver feeds read-modify-write operator paths (postfix/prefix/compound),
@@ -240,8 +241,23 @@ public partial class ILEmitter
     /// Emits static member set on a class (used for both ClassName.property = value and this.property = value in static context).
     /// Returns true if successful, false if property not found.
     /// </summary>
-    private bool EmitStaticMemberSet(string className, System.Reflection.Emit.TypeBuilder classBuilder, string propertyName, Expr value)
+    private bool EmitStaticMemberSet(string className, System.Reflection.Emit.TypeBuilder classBuilder, Expr receiver, string propertyName, Expr value)
     {
+        if (_ctx.ClassRegistry!.RequiresSourceStaticSetterDispatch(className, propertyName))
+        {
+            // Resolve the live descriptor after preserving source evaluation order. Its
+            // callable adapter supplies the original constructor as the setter's this.
+            var receiverTemp = SpillBoxed(receiver);
+            var valueTemp = SpillBoxed(value);
+            IL.Emit(OpCodes.Ldloc, receiverTemp);
+            IL.Emit(OpCodes.Ldstr, propertyName);
+            IL.Emit(OpCodes.Ldloc, valueTemp);
+            EmitPropertyWrite(indexed: false);
+            IL.Emit(OpCodes.Ldloc, valueTemp);
+            SetStackUnknown();
+            return true;
+        }
+
         // Try static setter first (for auto-accessors and explicit static accessors)
         if (_ctx.ClassRegistry!.TryGetCallableStaticSetter(className, propertyName, classBuilder, out var staticSetter))
         {

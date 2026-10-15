@@ -37,6 +37,7 @@ public sealed class ClassRegistry
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _staticGetters;
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _staticSetters;
     private readonly HashSet<MethodBuilder> _sourceStaticGetters = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<MethodBuilder> _sourceStaticSetters = new(ReferenceEqualityComparer.Instance);
 
     // Generic parameters
     private readonly ClassGenericParameterRegistry _genericParameters;
@@ -505,6 +506,38 @@ public sealed class ClassRegistry
     internal void RegisterSourceStaticGetter(MethodBuilder getter)
         => _sourceStaticGetters.Add(getter);
 
+    internal void RegisterSourceStaticSetter(MethodBuilder setter)
+        => _sourceStaticSetters.Add(setter);
+
+    /// <summary>
+    /// Source accessor writes must consult the live descriptor and invoke its explicit guest
+    /// receiver adapter. A getter-only descriptor also claims the property, masking older setters.
+    /// Typed auto-accessors retain their CLR setter ABI when they are the nearest property.
+    /// </summary>
+    internal bool RequiresSourceStaticSetterDispatch(string className, string propertyName)
+    {
+        string? current = className;
+        for (int depth = 0; current != null && depth < 64; depth++)
+        {
+            MethodBuilder? getter = null;
+            MethodBuilder? setter = null;
+            _staticGetters.GetValueOrDefault(current)?.TryGetValue(propertyName, out getter);
+            _staticSetters.GetValueOrDefault(current)?.TryGetValue(propertyName, out setter);
+            if (getter != null || setter != null)
+                return (getter != null && _sourceStaticGetters.Contains(getter))
+                    || (setter != null && _sourceStaticSetters.Contains(setter));
+
+            if (HasOwnStaticDataMember(current, propertyName))
+                return false;
+            current = _superclass.GetValueOrDefault(current);
+        }
+        return false;
+    }
+
+    private bool HasOwnStaticDataMember(string className, string propertyName)
+        => (_staticFields.TryGetValue(className, out var fields) && fields.ContainsKey(propertyName))
+            || (_staticMethods.TryGetValue(className, out var methods) && methods.ContainsKey(propertyName));
+
     internal bool IsSourceStaticGetter(string className, string propertyName)
         => TryResolveStaticGetter(className, propertyName, out _, out var getter)
             && _sourceStaticGetters.Contains(getter);
@@ -526,6 +559,27 @@ public sealed class ClassRegistry
         }
         declaringClass = null!;
         getter = null!;
+        return false;
+    }
+
+    private bool TryResolveStaticSetter(string className, string propertyName, out string declaringClass, out MethodBuilder setter)
+    {
+        string? current = className;
+        for (int depth = 0; current != null && depth < 64; depth++)
+        {
+            if (_staticSetters.TryGetValue(current, out var setters) && setters.TryGetValue(propertyName, out var ownSetter))
+            {
+                declaringClass = current;
+                setter = ownSetter;
+                return true;
+            }
+            if ((_staticGetters.TryGetValue(current, out var getters) && getters.ContainsKey(propertyName))
+                || HasOwnStaticDataMember(current, propertyName))
+                break;
+            current = _superclass.GetValueOrDefault(current);
+        }
+        declaringClass = null!;
+        setter = null!;
         return false;
     }
 
@@ -715,7 +769,7 @@ public sealed class ClassRegistry
     /// </summary>
     public bool TryGetCallableStaticSetter(string qualifiedClassName, string propertyName, TypeBuilder classBuilder, out System.Reflection.MethodInfo? setter)
     {
-        if (!TryResolveStaticMember(_staticSetters, qualifiedClassName, propertyName, out var declaringClass, out var setterBuilder))
+        if (!TryResolveStaticSetter(qualifiedClassName, propertyName, out var declaringClass, out var setterBuilder))
         {
             setter = null;
             return false;

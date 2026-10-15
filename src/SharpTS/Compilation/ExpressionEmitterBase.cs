@@ -2456,7 +2456,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected bool TryEmitStaticClassMethodValue(Expr.Get g)
     {
-        if (Ctx.ClassDefinitionParameterIndex != null || Ctx.ClassDefinitionVariableName != null) return false;
+        if (Ctx.ClassDefinitionParameterIndex != null || Ctx.ClassDefinitionVariableName != null
+            || Ctx.HasGuestReceiver || Ctx.GuestThisVariableName != null) return false;
         if (g.Object is not Expr.This || Ctx.IsInstanceMethod || Ctx.CurrentClassBuilder == null)
             return false;
 

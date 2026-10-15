@@ -220,7 +220,8 @@ public partial class ILEmitter
 
         // Handle static member access via 'this' in static context (static blocks, static methods)
         // In static blocks, 'this' refers to the class constructor, so this.property accesses static members
-        if (g.Object is Expr.This && !_ctx.IsInstanceMethod && _ctx.ClassDefinitionParameterIndex == null && _ctx.CurrentClassBuilder != null)
+        if (g.Object is Expr.This && !_ctx.IsInstanceMethod && !_ctx.HasGuestReceiver
+            && _ctx.GuestThisVariableName == null && _ctx.ClassDefinitionParameterIndex == null && _ctx.CurrentClassBuilder != null)
         {
             // Use cached CurrentClassName instead of linear search
             string? currentClassName = _ctx.CurrentClassName;
@@ -1057,7 +1058,8 @@ public partial class ILEmitter
         }
 
         // Handle static property assignment via 'this' in static context (static blocks, static methods)
-        if (s.Object is Expr.This && !_ctx.IsInstanceMethod && _ctx.ClassDefinitionParameterIndex == null && _ctx.CurrentClassBuilder != null)
+        if (s.Object is Expr.This && !_ctx.IsInstanceMethod && !_ctx.HasGuestReceiver
+            && _ctx.GuestThisVariableName == null && _ctx.ClassDefinitionParameterIndex == null && _ctx.CurrentClassBuilder != null)
         {
             // First check for class expressions
             if (_ctx.CurrentClassExpr != null &&
@@ -1078,7 +1080,7 @@ public partial class ILEmitter
             if (currentClassName != null)
             {
                 // Emit as static field assignment on the current class
-                if (EmitStaticMemberSet(currentClassName, _ctx.CurrentClassBuilder, s.Name.Lexeme, s.Value))
+                if (EmitStaticMemberSet(currentClassName, _ctx.CurrentClassBuilder, s.Object, s.Name.Lexeme, s.Value))
                 {
                     return;
                 }
@@ -1093,7 +1095,7 @@ public partial class ILEmitter
             string resolvedClassName = _ctx.ResolveClassName(_ctx.TypeMap?.Get(classVar), classVar.Name.Lexeme);
             if (_ctx.Classes.TryGetValue(resolvedClassName, out var classBuilder))
             {
-                if (EmitStaticMemberSet(resolvedClassName, classBuilder, s.Name.Lexeme, s.Value))
+                if (EmitStaticMemberSet(resolvedClassName, classBuilder, s.Object, s.Name.Lexeme, s.Value))
                     return;
             }
         }

@@ -345,6 +345,8 @@ public partial class ILCompiler
                     else
                         GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, accessor.Name.Lexeme);
                 }
+                else if (accessor.IsStatic)
+                    GetClassRegistry().RegisterSourceStaticSetter(methodBuilder);
 
                 // Track getter/setter. Static accessors register in StaticGetters/StaticSetters
                 // keyed by original (camelCase) name, matching the auto-accessor convention and

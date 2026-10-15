@@ -61,6 +61,8 @@ public partial class ILCompiler
             else
                 GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, constantKey);
         }
+        else if (accessor.IsStatic)
+            GetClassRegistry().RegisterSourceStaticSetter(methodBuilder);
         if (constantKey != null)
         {
             var registry = isGetter
@@ -206,6 +208,8 @@ public partial class ILCompiler
             else
                 GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, accessor.Name.Lexeme);
         }
+        else if (accessor.IsStatic)
+            GetClassRegistry().RegisterSourceStaticSetter(methodBuilder);
         EmitAccessorBody(typeBuilder, accessor, methodBuilder, fieldsField);
     }
 

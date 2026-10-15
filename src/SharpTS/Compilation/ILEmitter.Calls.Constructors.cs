@@ -17,7 +17,7 @@ public partial class ILEmitter
         if (n.Callee is Expr.This && !_ctx.IsInstanceMethod && _ctx.CurrentClassExpr != null
             && _ctx.RuntimeClassDeclarations?.Values.Any(expression => ReferenceEquals(expression, _ctx.CurrentClassExpr)) == true)
         {
-            EmitRuntimeClassConstruction(n);
+            EmitDynamicConstruction(n);
             return;
         }
         // `new this(...)` inside a static method/accessor constructs the enclosing class.
@@ -33,7 +33,7 @@ public partial class ILEmitter
 
         if (IsRuntimeClassDeclarationReference(n.Callee))
         {
-            EmitRuntimeClassConstruction(n);
+            EmitDynamicConstruction(n);
             return;
         }
 

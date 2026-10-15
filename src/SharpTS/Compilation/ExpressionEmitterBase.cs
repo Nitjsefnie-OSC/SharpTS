@@ -1660,7 +1660,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     {
         if (IsRuntimeClassDeclarationReference(n.Callee))
         {
-            EmitRuntimeClassConstruction(n);
+            EmitDynamicConstruction(n);
             return;
         }
         var (namespaceParts, className) = ExtractQualifiedNameFromCallee(n.Callee);
@@ -1678,18 +1678,14 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     }
 
     /// <summary>
-    /// Emits a user-class constructor call with generic type support, argument temps (safe across
-    /// await/yield boundaries), and Activator.CreateInstance fallback.
+    /// Emits a user-class constructor call with generic type support and a
+    /// suspension-safe dynamic construction fallback.
     /// </summary>
     protected virtual void EmitUserClassNew(List<string> namespaceParts, string className, Expr.New n)
     {
         if (n.Callee is Expr.Variable variable && Ctx.VarToClassExpr?.ContainsKey(variable.Name.Lexeme) == true)
         {
-            EmitExpression(n.Callee);
-            EnsureBoxed();
-            EmitArgsArrayWithSpread(n.Arguments);
-            IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.Value);
-            SetStackUnknown();
+            EmitDynamicConstruction(n);
             return;
         }
         string resolvedClassName = ResolveClassNameForNew(namespaceParts, className);
@@ -1775,35 +1771,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             // dispatches Type → Activator, callable → InvokeValue, and throws
             // TypeError for non-constructables. Replaces the old behavior of
             // silently yielding null when the name didn't resolve.
-            EmitExpression(n.Callee);
-            EnsureBoxed();
-            var ctorTemp = IL.DeclareLocal(typeof(object));
-            IL.Emit(OpCodes.Stloc, ctorTemp);
-
-            List<LocalBuilder> argTemps = [];
-            foreach (var arg in n.Arguments)
-            {
-                EmitExpression(arg);
-                EnsureBoxed();
-                var temp = IL.DeclareLocal(typeof(object));
-                IL.Emit(OpCodes.Stloc, temp);
-                argTemps.Add(temp);
-            }
-
-            IL.Emit(OpCodes.Ldloc, ctorTemp);
-            IL.Emit(OpCodes.Ldc_I4, n.Arguments.Count);
-            IL.Emit(OpCodes.Newarr, Ctx.Types.Object);
-
-            for (int i = 0; i < argTemps.Count; i++)
-            {
-                IL.Emit(OpCodes.Dup);
-                IL.Emit(OpCodes.Ldc_I4, i);
-                IL.Emit(OpCodes.Ldloc, argTemps[i]);
-                IL.Emit(OpCodes.Stelem_Ref);
-            }
-
-            IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.Value);
-            SetStackUnknown();
+            EmitDynamicConstruction(n);
         }
     }
 

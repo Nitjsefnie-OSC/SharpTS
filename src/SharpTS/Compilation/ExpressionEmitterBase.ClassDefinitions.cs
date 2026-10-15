@@ -22,7 +22,7 @@ public abstract partial class ExpressionEmitterBase
             Ctx.TypeMap.GetClassType(declaration)?.Core.DeclarationId == declarationId);
     }
 
-    protected void EmitRuntimeClassConstruction(Expr.New expression)
+    protected void EmitDynamicConstruction(Expr.New expression)
     {
         var constructor = SpillBoxed(expression.Callee);
         EmitArgsArrayWithSpread(expression.Arguments);

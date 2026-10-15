@@ -610,6 +610,18 @@ public sealed class ClassRegistry
         return _privateElements.TryGet(qualifiedClassName, out var declaration) ? declaration.Storage : null;
     }
 
+    internal FieldInfo ResolvePrivateStorage(string owner, FieldBuilder storage)
+    {
+        var closed = GetClosedGenericDeclaringType(owner, owner, _builders[owner]);
+        return closed == null ? storage : EmitterTypeHelpers.ResolveField(closed, storage);
+    }
+
+    internal FieldInfo GetPrivateStorage(PrivateInstanceBridge bridge)
+    {
+        string owner = _builders.Keys.First(name => GetPrivateElements(name)?.InstanceBridge == bridge);
+        return ResolvePrivateStorage(owner, GetPrivateElements(owner)!.Storage!);
+    }
+
     public PrivateInstanceBridge? GetPrivateInstanceBridge(string qualifiedClassName)
         => _privateElements.TryGet(qualifiedClassName, out var declaration) ? declaration.InstanceBridge : null;
 

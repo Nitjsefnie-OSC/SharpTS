@@ -36,4 +36,8 @@ public interface IVariableResolver
     /// Loads 'this' reference onto the stack.
     /// </summary>
     void LoadThis();
+
+    // Lexical constructor arrows capture the binding, including before super(),
+    // rather than reading its currently uninitialized value.
+    bool TryLoadThisBindingCell() => false;
 }

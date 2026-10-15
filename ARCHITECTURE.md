@@ -2025,6 +2025,15 @@ guest `length`, defaults, rest parameters, or `arguments`. Arrow capture fields 
 value across suspension; field initializers establish `undefined`, while computed class keys
 run in their enclosing evaluation context.
 
+For classes whose constructors can return replacement objects, compiled construction keeps
+the CLR allocation for legal base chaining and owns a separate effective receiver cell.
+A successful `super()` binds that cell before defining this class's own fields; true arrows
+capture the cell itself so an arrow created before `super()` reads the eventual receiver.
+Private and auto-accessor state belongs to the selected object and its lexical class owner.
+Runtime-selected ordinary parents use an explicit-receiver initializer that returns their
+completed receiver to the child and factory. Constructor return completions remain raw until
+all `finally` blocks finish, then construction selects the returned object or bound receiver.
+
 ### Runtime tree-shaking
 
 `RuntimeFeatureDetector` derives a conservative feature set from the whole checked graph. The

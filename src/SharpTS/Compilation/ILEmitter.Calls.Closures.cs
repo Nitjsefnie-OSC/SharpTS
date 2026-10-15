@@ -124,7 +124,8 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Dup);
                 IL.Emit(OpCodes.Ldc_I4, i);
                 var captureName = captureOrder[i];
-                if (captureName == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
+                if (captureName == "this" && _resolver.TryLoadThisBindingCell()) { }
+                else if (captureName == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
                 else if (captureName == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
                 else if (arrowBuilder.StandaloneLiveCaptureFields.TryGetValue(captureName, out var liveField))
                 {
@@ -410,7 +411,7 @@ public partial class ILEmitter
                 // Routing through LoadThis() also picks up the minimatch
                 // `.map(s => s.map(ss => this.parse(ss)))` chain (case 1 fires for the
                 // parent arrow; class-method arg0 for the outermost).
-                _resolver.LoadThis();
+                if (!_resolver.TryLoadThisBindingCell()) _resolver.LoadThis();
             }
             else if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
             {

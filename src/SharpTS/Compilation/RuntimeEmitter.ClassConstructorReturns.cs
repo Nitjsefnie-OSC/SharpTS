@@ -100,6 +100,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, values);
         il.Emit(OpCodes.Ldc_I4_2);
         il.Emit(OpCodes.Ldelem_Ref);
+        var boundFallback = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brfalse, boundFallback);
+        il.Emit(OpCodes.Ldloc, values); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, boundFallback);
+        il.Emit(OpCodes.Pop);
+        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.ReferenceErrorConstructor,
+            "Must call super constructor before accessing this");
+        il.MarkLabel(boundFallback);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(original);
         il.Emit(OpCodes.Ldarg_0);

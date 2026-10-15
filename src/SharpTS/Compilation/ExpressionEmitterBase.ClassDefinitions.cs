@@ -329,6 +329,12 @@ public abstract partial class ExpressionEmitterBase
 
     protected bool TryEmitGuestThis()
     {
+        if (Resolver.TryLoadThisBindingCell())
+        {
+            ConstructorReceiverEmitter.ReadCell(IL, Ctx);
+            SetStackUnknown();
+            return true;
+        }
         if (Ctx.GuestThisVariableName is not { } name) return false;
         EmitVariable(new Expr.Variable(new Token(TokenType.IDENTIFIER, name, null, 0)));
         EnsureBoxed();

@@ -290,9 +290,28 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         }
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
+        List<Stmt> body = _declaration.Body;
+        if (constructionFrame?.Owner.Superclass is not null)
+        {
+            // The parser prepends these assignments before the source body.
+            // Derived parameter properties become observable only after super
+            // binds this and installs the owner's instance elements.
+            var parameterProperties = body.Where(IsSyntheticParameterProperty).ToList();
+            if (parameterProperties.Count != 0)
+            {
+                body = body.Where(statement => !IsSyntheticParameterProperty(statement)).ToList();
+                constructionFrame.SetParameterPropertyInitializer(() =>
+                {
+                    var initialization = interpreter.ExecuteBlock(parameterProperties, environment);
+                    if (initialization.Type == ExecutionResult.ResultType.Throw)
+                        throw ThrowException.FromResult(initialization.Value.ToObject(), initialization.FromGuestThrow);
+                });
+            }
+        }
+
         using var debugFrame = interpreter.EnterDebugFrame(
             _declaration.Name.Lexeme, environment, _declaration);
-        var result = interpreter.ExecuteBlock(_declaration.Body, environment);
+        var result = interpreter.ExecuteBlock(body, environment);
         if (result.Type == ExecutionResult.ResultType.Return)
         {
             return result.Value.ToObject();
@@ -314,7 +333,19 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         return SharpTSUndefined.Instance;
     }
 
+    private bool IsSyntheticParameterProperty(Stmt statement)
+        => statement is Stmt.Expression
+        {
+            Expr: Expr.Set { Object: Expr.This, Value: Expr.Variable value } set
+        } && _declaration.Parameters.Any(parameter => parameter.IsParameterProperty
+            && ReferenceEquals(set.Name, parameter.Name)
+            && ReferenceEquals(value.Name, parameter.Name));
+
     public SharpTSFunction Bind(SharpTSInstance instance)
+        => BindInstanceReceiver(instance);
+
+    /// <summary>Preserves the class receiver scope for an arbitrary guest object.</summary>
+    internal SharpTSFunction BindInstanceReceiver(object? instance)
     {
         if (_declaration.IsStatic) return BindThis(instance);
         RuntimeEnvironment environment = new(_closure);

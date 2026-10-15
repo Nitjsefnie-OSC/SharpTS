@@ -41,6 +41,8 @@ public partial class RuntimeEmitter
         il.MarkLabel(missing); il.Emit(OpCodes.Ldsfld, runtime.Sentinels.UndefinedInstance); il.Emit(OpCodes.Ret);
 
         il = definitions.InitializeReceiver.GetILGenerator();
+        var initializedReceiver = il.DeclareLocal(_types.Object);
+        var initialized = il.DefineLabel();
         var nothing = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Brfalse, nothing);
         var template = il.DeclareLocal(_types.Type);
@@ -66,11 +68,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_3); il.Emit(OpCodes.Ldarg_3); il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray)); il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Stloc, initializedReceiver);
         il.BeginCatchBlock(typeof(TargetInvocationException));
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "InnerException")!.GetGetMethod()!);
         il.Emit(OpCodes.Throw);
-        il.EndExceptionBlock(); il.MarkLabel(nothing); il.Emit(OpCodes.Ret);
+        il.EndExceptionBlock();
+        il.Emit(OpCodes.Br, initialized);
+        il.MarkLabel(nothing); il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Stloc, initializedReceiver);
+        il.MarkLabel(initialized); il.Emit(OpCodes.Ldloc, initializedReceiver); il.Emit(OpCodes.Ret);
 
         il = definitions.ReadPrototypeProperty.GetILGenerator();
         var prototype = il.DeclareLocal(_types.Object);

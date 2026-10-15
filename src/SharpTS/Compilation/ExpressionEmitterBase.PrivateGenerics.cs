@@ -110,11 +110,8 @@ public abstract partial class ExpressionEmitterBase
         var invalid = IL.DefineLabel();
         var valid = IL.DefineLabel();
         IL.Emit(OpCodes.Ldloc, receiver);
-        IL.Emit(OpCodes.Isinst, bridge.InterfaceType);
         IL.Emit(OpCodes.Brfalse, invalid);
-        IL.Emit(OpCodes.Ldloc, receiver);
-        IL.Emit(OpCodes.Castclass, bridge.InterfaceType);
-        IL.Emit(OpCodes.Callvirt, bridge.StorageGetter);
+        IL.Emit(OpCodes.Ldsfld, Ctx.ClassRegistry!.GetPrivateStorage(bridge));
         IL.Emit(OpCodes.Ldloc, receiver);
         IL.Emit(OpCodes.Ldloca, slots);
         var table = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<object, Dictionary<string, object?>>);

@@ -583,6 +583,11 @@ public class LocalVariableResolver : IVariableResolver
     /// <inheritdoc />
     public void LoadThis()
     {
+        if (TryLoadThisBindingCell())
+        {
+            ConstructorReceiverEmitter.ReadCell(_il, _ctx);
+            return;
+        }
         // 1. Captured this (closure)
         if (_ctx.CapturedFields?.TryGetValue("this", out var thisField) == true)
         {
@@ -662,6 +667,23 @@ public class LocalVariableResolver : IVariableResolver
         }
 
         _il.Emit(OpCodes.Ldnull);
+    }
+
+    public bool TryLoadThisBindingCell()
+    {
+        if (_ctx.ClassConstructorThisCell is { } cell)
+        {
+            _il.Emit(OpCodes.Ldloc, cell);
+            return true;
+        }
+        if (_ctx.CapturesConstructorThisCell
+            && _ctx.CapturedFields?.TryGetValue("this", out var field) == true)
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, field);
+            return true;
+        }
+        return false;
     }
 
     /// <summary>

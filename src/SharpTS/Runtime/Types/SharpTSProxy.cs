@@ -1093,10 +1093,23 @@ public class SharpTSProxy : ISharpTSCallable
     /// </summary>
     public bool TrapDefineProperty(
         string prop, object descriptor, Interpreter interpreter)
+        => TrapDefinePropertyCore(prop, descriptor, interpreter, classField: false);
+
+    internal bool TrapDefineField(object prop, object descriptor, Interpreter interpreter)
+        => TrapDefinePropertyCore(prop, descriptor, interpreter, classField: true);
+
+    private bool TrapDefinePropertyCore(
+        object prop, object descriptor, Interpreter interpreter, bool classField)
     {
         var trap = GetTrapCallable("defineProperty", interpreter);
         if (trap == null)
         {
+            if (classField)
+            {
+                ObjectBuiltIns.CreateDataPropertyOrThrow(interpreter, _target, prop,
+                    SharpTSPropertyDescriptor.FromAnyObject(descriptor).Value);
+                return true;
+            }
             try
             {
                 return ObjectBuiltIns.DefinePropertyOnProxyTarget(
@@ -1118,9 +1131,7 @@ public class SharpTSProxy : ISharpTSCallable
             trap, interpreter, [_target, prop, descriptor]));
         if (!trapResult) return false;
 
-        object? targetDescriptor = _target is SharpTSProxy proxy
-            ? proxy.TrapGetOwnPropertyDescriptor(prop, interpreter)
-            : ObjectBuiltIns.RuntimeGetOwnPropertyDescriptor(_target, prop);
+        object? targetDescriptor = GetTargetOwnPropertyDescriptor(prop, interpreter);
         bool targetHasProperty = targetDescriptor is not (null or SharpTSUndefined);
         var requested = SharpTSPropertyDescriptor.FromAnyObject(descriptor);
         if (!targetHasProperty)

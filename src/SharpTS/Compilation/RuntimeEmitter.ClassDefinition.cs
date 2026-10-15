@@ -70,7 +70,7 @@ public partial class RuntimeEmitter
                 _types.Object, [_types.Object]) : null;
         var initializeReceiver = _features.UsesUserClasses
             ? type.DefineMethod("InitializeReceiver", MethodAttributes.Public | MethodAttributes.Static,
-                _types.Void, [_types.Object, _types.Object, _types.ObjectArray, _types.Object]) : null;
+                _types.Object, [_types.Object, _types.Object, _types.ObjectArray, _types.Object]) : null;
         var getParent = _features.UsesUserClasses
             ? type.DefineMethod("GetParent", MethodAttributes.Public | MethodAttributes.Static,
                 _types.Object, [_types.Object]) : null;
@@ -117,6 +117,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, definition);
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         il.Emit(OpCodes.Stfld, definitions.PrivateMembers);
+        il.Emit(OpCodes.Ldloc, definition);
+        il.Emit(OpCodes.Ldfld, definitions.PrivateMembers);
+        il.Emit(OpCodes.Ldstr, "'instanceStorage");
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(typeof(System.Runtime.CompilerServices.ConditionalWeakTable<object, Dictionary<string, object?>>)));
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObjectSetItem);
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         il.Emit(OpCodes.Newobj, runtime.ObjectStorage.Constructor);
         il.Emit(OpCodes.Stloc, prototype);

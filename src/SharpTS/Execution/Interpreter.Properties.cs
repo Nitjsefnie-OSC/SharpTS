@@ -289,7 +289,7 @@ public partial class Interpreter
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/classes.html#this-at-runtime-in-classes">TypeScript this in Classes</seealso>
     private RuntimeValue EvaluateThis(Expr.This expr)
     {
-        return _environment.TryGet("this", out var value)
+        return _environment.TryGetThis(out var value)
             ? value
             : RuntimeValue.FromBoxed(GlobalThis);
     }
@@ -3152,6 +3152,10 @@ public partial class Interpreter
                 throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it"));
             return RuntimeValue.FromBoxed(staticMethod);
         }
+        if (owner is not null && obj is not null && owner.HasInstalledPrivateField(obj, fieldName))
+            return owner.GetPrivateFieldRV(obj, fieldName);
+        if (owner is not null && owner.DeclaresPrivateName(fieldName))
+            throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it or before initialization"));
         // Handle static private field access on class
         if (obj is SharpTSClass klass)
         {
@@ -3204,6 +3208,13 @@ public partial class Interpreter
             owner.SetStaticPrivateField(fieldName, value.ToObject());
             return value;
         }
+        if (owner is not null && obj is not null && owner.HasInstalledPrivateField(obj, fieldName))
+        {
+            owner.SetPrivateField(obj, fieldName, value.ToObject());
+            return value;
+        }
+        if (owner is not null && owner.DeclaresPrivateName(fieldName))
+            throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it or before initialization"));
         // Handle static private field assignment on class
         if (obj is SharpTSClass klass)
         {
@@ -3265,12 +3276,12 @@ public partial class Interpreter
             throw new ThrowException(new SharpTSTypeError($"{GetTypeofString(callee)} is not a function"));
         // Instance class methods keep the resolver's class-this scope and
         // lexical super binding. Callable fields use ordinary Call semantics.
-        if (receiver is SharpTSInstance instance && callable is
+        if (receiver is not null && callable is
             SharpTSFunction { PrivateOwner: not null, IsStaticMethod: false }
             or SharpTSAsyncFunction { PrivateOwner: not null, IsStaticMethod: false }
             or SharpTSGeneratorFunction { PrivateOwner: not null, IsStaticMethod: false }
             or SharpTSAsyncGeneratorFunction { PrivateOwner: not null, IsStaticMethod: false })
-            return RuntimeValue.FromBoxed(SharpTSClass.BindMethod(callable, instance).CallBoxed(this, arguments));
+            return RuntimeValue.FromBoxed(SharpTSClass.BindMethodToReceiver(callable, receiver).CallBoxed(this, arguments));
         return RuntimeValue.FromBoxed(FunctionBuiltIns.CallWithThis(this, callable, receiver, arguments));
     }
 

@@ -139,22 +139,9 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Ldloc, slots);
             }
         }
-        else if (declaration.InstanceBridge is { } bridge)
-            IL.Emit(OpCodes.Ldloc, EmitGenericPrivateBrandCheck(bridge, receiver, name));
         else
         {
-            var slots = IL.DeclareLocal(Types.DictionaryStringObject);
-            var storage = declaration.Storage!;
-            var template = Ctx.ClassExprFactories![expression].Template;
-            IL.Emit(OpCodes.Ldsfld, template.IsGenericType ? EmitterTypeHelpers.ResolveField(template, storage) : storage);
-            IL.Emit(OpCodes.Ldloc, receiver);
-            IL.Emit(OpCodes.Ldloca, slots);
-            IL.Emit(OpCodes.Callvirt, Types.GetMethod(storage.FieldType, "TryGetValue", Types.Object, Types.DictionaryStringObject.MakeByRefType()));
-            var valid = IL.DefineLabel();
-            IL.Emit(OpCodes.Brtrue, valid);
-            GuestErrorEmitter.ThrowTypeError(IL, Ctx.Runtime!, $"Cannot access private member #{name} before initialization");
-            IL.MarkLabel(valid);
-            IL.Emit(OpCodes.Ldloc, slots);
+            IL.Emit(OpCodes.Ldloc, EmitDefinitionPrivateSlots(definition, receiver, name));
         }
         IL.Emit(OpCodes.Ldstr, isStatic ? $"field:{name}" : name);
         if (value == null) IL.Emit(OpCodes.Callvirt, Types.GetMethod(Types.DictionaryStringObject, "get_Item", Types.String));
@@ -186,7 +173,9 @@ public abstract partial class ExpressionEmitterBase
         string name = call.Name.Lexeme.TrimStart('#');
         string owner = Ctx.ResolvePrivateMethodOwner(current, name);
         var value = Ctx.ClassRegistry?.GetPrivateMethodValue(owner, name);
-        if (value is null || (value.Definition == null && !value.Source.IsStatic
+        if (value is null || (!Ctx.HasGuestReceiver
+                && !Ctx.TypeMapper.IsDynamicClassInstance(Ctx.TypeMap?.GetClassType(owner))
+                && value.Definition == null && !value.Source.IsStatic
                 && !Parsing.Visitors.ArgumentsRefScanner.Contains(value.Source.Parameters, value.Source.Body,
                     treatEvalReferenceAsUse: true))) return false;
         var receiver = SpillGenericPrivateOperand(call.Object);
@@ -237,6 +226,8 @@ public abstract partial class ExpressionEmitterBase
             EmitGuestMethodInvocation(receiver, call.Arguments);
             return true;
         }
+        else if (definition != null)
+            slots = EmitDefinitionPrivateSlots(definition, receiver, name);
         else if (declaration.InstanceBridge is { } bridge)
             slots = EmitGenericPrivateBrandCheck(bridge, receiver, name);
         else
@@ -264,9 +255,9 @@ public abstract partial class ExpressionEmitterBase
         {
             EmitOrdinaryStaticPrivateBrandCheck(owner, receiver, name);
         }
-        else if (!value.Source.IsStatic && Ctx.ClassRegistry!.GetPrivateInstanceBridge(owner) is { } bridge)
+        else if (definition == null && !value.Source.IsStatic && Ctx.ClassRegistry!.GetPrivateInstanceBridge(owner) is { } bridge)
             EmitGenericPrivateBrandCheck(bridge, receiver, name);
-        else if (!value.Source.IsStatic)
+        else if (definition == null && !value.Source.IsStatic)
             EmitOrdinaryPrivateBrandCheck(owner, receiver, name);
         if (definition == null) IL.Emit(OpCodes.Ldsfld, value.Cache!);
         else
@@ -287,26 +278,47 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Stloc, definition);
         var invalid = IL.DefineLabel();
         var valid = IL.DefineLabel();
-        if (isStatic) IL.Emit(OpCodes.Ldloc, receiver);
+        if (isStatic)
+        {
+            IL.Emit(OpCodes.Ldloc, receiver);
+            IL.Emit(OpCodes.Ldloc, definition);
+            IL.Emit(OpCodes.Ceq);
+            IL.Emit(OpCodes.Brtrue, valid);
+        }
         else
         {
-            var expression = Ctx.ClassExprBuilders!.First(entry => entry.Value.FullName == owner).Key;
-            var factory = Ctx.ClassExprFactories![expression];
-            var field = Ctx.ClassExprDefinitionFields![expression];
-            var reference = factory.Template.IsGenericType ? EmitterTypeHelpers.ResolveField(factory.Template, field) : field;
-            IL.Emit(OpCodes.Ldloc, receiver);
-            IL.Emit(OpCodes.Isinst, reference.DeclaringType!);
-            IL.Emit(OpCodes.Brfalse, invalid);
-            IL.Emit(OpCodes.Ldloc, receiver);
-            IL.Emit(OpCodes.Castclass, reference.DeclaringType!);
-            IL.Emit(OpCodes.Ldfld, reference);
+            EmitDefinitionPrivateSlots(definition, receiver, name);
+            IL.Emit(OpCodes.Br, valid);
         }
-        IL.Emit(OpCodes.Ldloc, definition);
-        IL.Emit(OpCodes.Ceq);
-        IL.Emit(OpCodes.Brtrue, valid);
         IL.MarkLabel(invalid);
         GuestErrorEmitter.ThrowTypeError(IL, Ctx.Runtime!, $"Cannot access private member #{name} from an object whose class did not declare it");
         IL.MarkLabel(valid);
         return definition;
+    }
+
+    private LocalBuilder EmitDefinitionPrivateSlots(LocalBuilder definition, LocalBuilder receiver, string name)
+    {
+        var table = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<object, Dictionary<string, object?>>);
+        var slots = IL.DeclareLocal(Types.DictionaryStringObject);
+        var valid = IL.DefineLabel();
+        var invalid = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, receiver); IL.Emit(OpCodes.Brfalse, invalid);
+        EmitDefinitionPrivateTable(definition);
+        IL.Emit(OpCodes.Ldloc, receiver); IL.Emit(OpCodes.Ldloca, slots);
+        IL.Emit(OpCodes.Callvirt, Types.GetMethod(table, "TryGetValue", Types.Object, Types.DictionaryStringObject.MakeByRefType()));
+        IL.Emit(OpCodes.Brtrue, valid);
+        IL.MarkLabel(invalid);
+        GuestErrorEmitter.ThrowTypeError(IL, Ctx.Runtime!, $"Cannot access private member #{name} from an object whose class did not declare it");
+        IL.MarkLabel(valid);
+        return slots;
+    }
+
+    private void EmitDefinitionPrivateTable(LocalBuilder definition)
+    {
+        IL.Emit(OpCodes.Ldloc, definition);
+        IL.Emit(OpCodes.Ldfld, Ctx.Runtime!.ClassDefinitions.PrivateMembers);
+        IL.Emit(OpCodes.Ldstr, "'instanceStorage");
+        IL.Emit(OpCodes.Callvirt, Types.GetMethod(Types.DictionaryStringObject, "get_Item", Types.String));
+        IL.Emit(OpCodes.Castclass, typeof(System.Runtime.CompilerServices.ConditionalWeakTable<object, Dictionary<string, object?>>));
     }
 }

@@ -36,6 +36,12 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
         set { _ownsConstructionFrame = true; _constructionFrame = value; }
     }
 
+    internal bool TryGetThis(out RuntimeValue value)
+    {
+        ConstructionFrame?.EnsureThisBound();
+        return TryGet("this", out value);
+    }
+
     // Ordinary invocations own a slot, including undefined. True arrows and
     // ordinary block scopes inherit the nearest invocation's lexical slot.
     internal RuntimeValue NewTarget

@@ -426,7 +426,8 @@ public partial class Interpreter
         }
         // `this` is usually a SharpTSInstance, but built-in-backed instances
         // (Array subclass instances) are SharpTSArrays — bind generically.
-        object? thisReceiver = _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject();
+        _environment.TryGetThis(out var thisValue);
+        object? thisReceiver = thisValue.ToObject();
 
         if (expr.Method is { } property)
         {

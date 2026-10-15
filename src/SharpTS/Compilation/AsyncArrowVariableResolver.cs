@@ -24,6 +24,7 @@ public class AsyncArrowVariableResolver : IVariableResolver
     private readonly Dictionary<string, LocalBuilder> _locals;
     private readonly IReadOnlyDictionary<string, LocalBuilder>? _cellBindingLocals;
     private readonly FieldInfo? _strongBoxValueField;
+    internal CompilationContext? ConstructorContext { get; set; }
 
     /// <summary>
     /// Creates a new resolver for async arrow variable access.
@@ -105,9 +106,32 @@ public class AsyncArrowVariableResolver : IVariableResolver
     /// <inheritdoc />
     public void LoadThis()
     {
+        if (TryLoadThisBindingCell())
+        {
+            ConstructorReceiverEmitter.ReadCell(_il, ConstructorContext!);
+            return;
+        }
         if (_builder.IsCaptured("this") && _builder.CapturedFieldMap.TryGetValue("this", out var thisField))
             AsyncArrowStorageAccess.CapturedField(_builder, "this", thisField).EmitLoad(_il);
         else
             _il.Emit(OpCodes.Ldnull);
+    }
+
+    public bool TryLoadThisBindingCell()
+    {
+        if (ConstructorContext?.CapturesConstructorThisCell == true
+            && _builder.StandaloneCaptureFields.TryGetValue("this", out var standalone))
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, standalone);
+            return true;
+        }
+        if (ConstructorContext?.CapturesConstructorThisCell == true
+            && _builder.IsCaptured("this") && _builder.CapturedFieldMap.TryGetValue("this", out var field))
+        {
+            AsyncArrowStorageAccess.CapturedField(_builder, "this", field).EmitLoad(_il);
+            return true;
+        }
+        return false;
     }
 }

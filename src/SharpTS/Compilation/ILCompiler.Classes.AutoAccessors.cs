@@ -193,6 +193,8 @@ public partial class ILCompiler
                 classSetters[pascalName] = setter;
             }
         }
+        if (!autoAccessor.IsStatic && ClassNeedsConstructorReceiver(className))
+            DefineReceiverAutoAccessor(typeBuilder, autoAccessor, backingField);
     }
 
     /// <summary>

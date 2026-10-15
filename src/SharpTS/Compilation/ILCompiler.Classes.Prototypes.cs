@@ -299,6 +299,7 @@ public partial class ILCompiler
         }
 
         EmitKnownDeclaredAccessorDescriptors(il, typeBuilder);
+        EmitReceiverAutoAccessorDescriptors(il, typeBuilder);
 
         void EmitStaticDataDescriptor(string propertyName, MethodBuilder methodBuilder)
         {

@@ -235,6 +235,7 @@ public static class FunctionBuiltIns
     internal static ISharpTSCallable? BindClassReceiver(ISharpTSCallable callable, object? receiver)
         => callable switch
         {
+            SharpTSFunction fn when fn.PrivateOwner != null && !fn.IsStaticMethod => fn.BindInstanceReceiver(receiver),
             SharpTSFunction fn when fn.PrivateOwner != null => fn.BindThis(receiver),
             SharpTSAsyncFunction fn when fn.PrivateOwner != null => fn.BindThisValue(receiver),
             SharpTSGeneratorFunction fn when fn.PrivateOwner != null => fn.BindToReceiver(receiver!),

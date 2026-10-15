@@ -4276,6 +4276,11 @@ public partial class ILEmitter
         IL.Emit(_ctx.IsDerivedClassConstructor ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
         IL.Emit(OpCodes.Ldloc, _ctx.ClassConstructorReceiver!);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.DynamicConstruction.RecordClassReturn);
+        if (_ctx.IsRuntimeReceiverInitializer)
+        {
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Call, _ctx.Runtime.DynamicConstruction.ResolveClassReturn);
+        }
     }
 
     internal void EmitClassConstructorFallthrough()
@@ -4722,16 +4727,16 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, kind);
         builder.Emit_Brfalse(afterFinally);
 
-        if (_ctx.ReturnValueLocal != null)
+        if (_ctx.ReturnValueLocal != null || (_ctx.HasDeferredVoidReturn && _ctx.CapturesClassConstructorReturn))
         {
             var notReturn = builder.DefineLabel("js_finally_not_return");
             IL.Emit(OpCodes.Ldloc, kind);
             IL.Emit(OpCodes.Ldc_I4_1);
             builder.Emit_Bne_Un(notReturn);
-            IL.Emit(OpCodes.Ldloc, _ctx.ReturnValueLocal);
+            if (_ctx.ReturnValueLocal != null) IL.Emit(OpCodes.Ldloc, _ctx.ReturnValueLocal);
             if (_abruptCompletionScopes.TryPeek(out var outerCompletion))
             {
-                IL.Emit(OpCodes.Stloc, _ctx.ReturnValueLocal);
+                if (_ctx.ReturnValueLocal != null) IL.Emit(OpCodes.Stloc, _ctx.ReturnValueLocal);
                 IL.Emit(OpCodes.Ldc_I4_1);
                 IL.Emit(OpCodes.Stloc, outerCompletion.Kind);
                 builder.Emit_Leave(outerCompletion.RunFinally);
@@ -4742,6 +4747,7 @@ public partial class ILEmitter
             }
             else
             {
+                if (_ctx.CapturesClassConstructorReturn) PublishClassConstructorReturnCompletion();
                 IL.Emit(OpCodes.Ret);
             }
             builder.MarkLabel(notReturn);

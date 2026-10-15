@@ -105,9 +105,9 @@ public partial class Interpreter
         }
         else
         {
-            if (receiver is not SharpTSInstance instance || !owner.HasInstalledPrivateField(instance, name))
+            if (receiver is null || !owner.HasInstalledPrivateField(receiver, name))
                 throw new ThrowException(new SharpTSTypeError($"Cannot access private member {name} from an object whose class did not declare it or before initialization"));
-            current = owner.GetPrivateFieldRV(instance, name);
+            current = owner.GetPrivateFieldRV(receiver, name);
         }
 
         RuntimeValue right = await ctx.EvaluateExprAsync(compound.Value);

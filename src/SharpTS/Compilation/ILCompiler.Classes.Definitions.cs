@@ -41,7 +41,6 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_2);
             il.Emit(OpCodes.Call, _runtime.ClassDefinitions.InitializeReceiver);
-            il.Emit(OpCodes.Ldloc, receiver);
             il.Emit(OpCodes.Ret);
         }
         else

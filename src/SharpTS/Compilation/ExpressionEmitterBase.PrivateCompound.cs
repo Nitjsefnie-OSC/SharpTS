@@ -67,7 +67,8 @@ public abstract partial class ExpressionEmitterBase
         }
         else
         {
-            var slots = declaration.InstanceBridge is { } bridge
+            var slots = definition != null ? EmitDefinitionPrivateSlots(definition, receiver, name)
+                : declaration.InstanceBridge is { } bridge
                 ? EmitGenericPrivateBrandCheck(bridge, receiver, name)
                 : EmitOrdinaryPrivateBrandCheck(owner, receiver, name);
             IL.Emit(OpCodes.Ldloc, slots);

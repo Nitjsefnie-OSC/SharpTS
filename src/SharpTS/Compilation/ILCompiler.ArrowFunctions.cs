@@ -62,6 +62,8 @@ public partial class ILCompiler
     private string? _currentCollectClassName;
     private bool _currentCollectStaticClassContext;
     private bool _currentCollectStrict;
+    private bool _collectingInstanceFieldInitializer;
+    private readonly HashSet<Expr.ArrowFunction> _constructorReceiverArrows = new(ReferenceEqualityComparer.Instance);
     // Explicit block nesting while walking top-level statements. A function
     // declaration inside a top-level block can capture that block's lexical
     // bindings, so it must use the inner-function/display-class pipeline even
@@ -557,6 +559,8 @@ public partial class ILCompiler
                     var previousCallable = _currentEnclosingCallable;
                     var previousStrict = _currentCollectStrict;
                     var previousStaticClassContext = _currentCollectStaticClassContext;
+                    bool previousFunctionFieldInitializer = _collectingInstanceFieldInitializer;
+                    _collectingInstanceFieldInitializer = false;
                     _currentCollectStaticClassContext = isClassMember && f.IsStatic;
                     // A nested function declaration is a lambda-lift boundary: an arrow inside it captures
                     // from the function, not the enclosing async arrow. Clear the async-arrow cursor so a
@@ -596,11 +600,14 @@ public partial class ILCompiler
                     _currentEnclosingAsyncArrow = previousEnclosingAsyncArrowFn;
                     _currentCollectStrict = previousStrict;
                     _currentCollectStaticClassContext = previousStaticClassContext;
+                    _collectingInstanceFieldInitializer = previousFunctionFieldInitializer;
                 }
                 break;
             case Stmt.Class c:
                 foreach (var expression in ClassDefinitionExpressions.Enumerate(c))
                     CollectArrowsFromExpr(expression);
+                bool previousClassFieldInitializer = _collectingInstanceFieldInitializer;
+                _collectingInstanceFieldInitializer = false;
                 var previousClassName = _currentCollectClassName;
                 var previousStaticClassContextDeclaration = _currentCollectStaticClassContext;
                 _currentCollectClassName = GetQualifiedClassDeclarationName(c);
@@ -618,8 +625,18 @@ public partial class ILCompiler
                 foreach (var field in c.Fields)
                 {
                     _currentCollectStaticClassContext = field.IsStatic;
+                    bool previousFieldInitializer = _collectingInstanceFieldInitializer;
+                    _collectingInstanceFieldInitializer = !field.IsStatic;
                     if (field.Initializer != null)
                         CollectArrowsFromExpr(field.Initializer);
+                    _collectingInstanceFieldInitializer = previousFieldInitializer;
+                }
+                foreach (var accessor in c.AutoAccessors ?? [])
+                {
+                    _currentCollectStaticClassContext = accessor.IsStatic;
+                    _collectingInstanceFieldInitializer = !accessor.IsStatic;
+                    if (accessor.Initializer != null) CollectArrowsFromExpr(accessor.Initializer);
+                    _collectingInstanceFieldInitializer = false;
                 }
                 if (c.Accessors != null)
                 {
@@ -638,6 +655,7 @@ public partial class ILCompiler
                 }
                 _currentCollectClassName = previousClassName;
                 _currentCollectStaticClassContext = previousStaticClassContextDeclaration;
+                _collectingInstanceFieldInitializer = previousClassFieldInitializer;
                 break;
             case Stmt.If i:
                 CollectArrowsFromExpr(i.Condition);
@@ -770,6 +788,12 @@ public partial class ILCompiler
                 break;
             case Expr.ArrowFunction af:
                 var captures = _closures.Analyzer.GetCaptures(af);
+                if (!af.HasOwnThis && captures.Contains("this") && ClassNeedsConstructorReceiver(_currentCollectClassName)
+                    && (_collectingInstanceFieldInitializer || IsConstructorThisArrowParent(_currentEnclosingCallable)))
+                {
+                    _constructorReceiverArrows.Add(af);
+                    _guestReceiverArrows.Add(af);
+                }
                 var definitionCaptures = GetArrowClassDefinitionCaptures(af, captures);
                 if (definitionCaptures.Count > 0)
                 {
@@ -841,6 +865,8 @@ public partial class ILCompiler
                 var previousCallable = _currentEnclosingCallable;
                 var previousEnclosingAsyncArrow = _currentEnclosingAsyncArrow;
                 var previousStrict = _currentCollectStrict;
+                bool previousArrowFieldInitializer = _collectingInstanceFieldInitializer;
+                if (af.HasOwnThis) _collectingInstanceFieldInitializer = false;
                 _currentParentArrow = af;
                 _currentEnclosingCallable = af;
                 _currentCollectStrict = previousStrict
@@ -877,6 +903,7 @@ public partial class ILCompiler
                 _currentEnclosingCallable = previousCallable;
                 _currentEnclosingAsyncArrow = previousEnclosingAsyncArrow;
                 _currentCollectStrict = previousStrict;
+                _collectingInstanceFieldInitializer = previousArrowFieldInitializer;
                 break;
             case Expr.Binary b:
                 CollectArrowsFromExpr(b.Left);
@@ -1123,6 +1150,8 @@ public partial class ILCompiler
             case Expr.ClassExpr ce:
                 foreach (var expression in ClassDefinitionExpressions.Enumerate(ce))
                     CollectArrowsFromExpr(expression);
+                bool previousExpressionClassFieldInitializer = _collectingInstanceFieldInitializer;
+                _collectingInstanceFieldInitializer = false;
                 // Collect the class expression for later definition
                 CollectClassExpression(ce);
                 var previousClassNameCE = _currentCollectClassName;
@@ -1150,8 +1179,11 @@ public partial class ILCompiler
                 foreach (var field in ce.Fields)
                 {
                     _currentCollectStaticClassContext = field.IsStatic;
+                    bool previousExpressionFieldInitializer = _collectingInstanceFieldInitializer;
+                    _collectingInstanceFieldInitializer = !field.IsStatic;
                     if (field.Initializer != null)
                         CollectArrowsFromExpr(field.Initializer);
+                    _collectingInstanceFieldInitializer = previousExpressionFieldInitializer;
                 }
                 // Collect arrows in accessor bodies
                 if (ce.Accessors != null)
@@ -1170,6 +1202,7 @@ public partial class ILCompiler
                 _currentCollectClassName = previousClassNameCE;
                 _currentCollectStaticClassContext = previousStaticClassContextExpression;
                 _currentEnclosingCallable = prevCallableCE;
+                _collectingInstanceFieldInitializer = previousExpressionClassFieldInitializer;
                 break;
         }
     }
@@ -1650,6 +1683,7 @@ public partial class ILCompiler
             ? enclosingClassName
             : null;
         ctx.HasGuestReceiver = _guestReceiverArrows.Contains(arrow);
+        ctx.CapturesConstructorThisCell = _constructorReceiverArrows.Contains(arrow);
         ctx.IsStaticSuperContext = _arrowsInStaticClassContext.Contains(arrow);
         if (ctx.CurrentClassName != null)
         {

@@ -11,7 +11,7 @@ internal sealed class ClassConstructionFrame(
 
     internal SharpTSClass Owner { get; } = owner;
     internal object Allocation { get; } = allocation;
-    internal object Receiver { get; } = allocation;
+    internal object Receiver { get; private set; } = allocation;
     internal object? NewTarget { get; } = newTarget;
     internal RuntimeEnvironment? ThisBindingHome { get; private set; }
     internal bool SuperCompleted { get; private set; }
@@ -20,8 +20,30 @@ internal sealed class ClassConstructionFrame(
     internal object? ParentResult { get; private set; }
     internal bool RetryingFailedSuper { get; } = retryingFailedSuper;
     private int _superAttempts;
+    private Action? _initializeParameterProperties;
 
     internal void AttachThisBinding(RuntimeEnvironment environment) => ThisBindingHome = environment;
+
+    internal void SetParameterPropertyInitializer(Action initialize)
+    {
+        _initializeParameterProperties = initialize;
+        // A parameter default can complete super before the body prologue.
+        // Parameter values must be bound before their synthesized assignments.
+        if (SuperCompleted) InitializeParameterProperties();
+    }
+
+    private void InitializeParameterProperties()
+    {
+        var initialize = _initializeParameterProperties;
+        _initializeParameterProperties = null;
+        initialize?.Invoke();
+    }
+
+    internal void EnsureThisBound()
+    {
+        if (!ThisBound)
+            throw new ThrowException(new SharpTSReferenceError("Must call super constructor before accessing 'this'"));
+    }
 
     internal bool BeginSuperAttempt()
     {
@@ -36,10 +58,13 @@ internal sealed class ClassConstructionFrame(
     internal object? CompleteSuper(Interpreter interpreter, object? parentResult)
     {
         SuperCompleted = true;
+        Receiver = parentResult ?? throw new InvalidOperationException("Parent construction must select an object receiver.");
+        ThisBindingHome?.DefineRV("this", RuntimeValue.FromBoxed(Receiver));
         ThisBound = true;
         ParentResult = parentResult;
         InitializeOwnElements(interpreter);
-        return parentResult;
+        InitializeParameterProperties();
+        return Receiver;
     }
 
     internal void InitializeOwnElements(Interpreter interpreter)
@@ -49,7 +74,8 @@ internal sealed class ClassConstructionFrame(
         if (Elements != ElementProgress.NotStarted)
             throw new ThrowException(new SharpTSReferenceError("Class instance elements have already been initialized"));
         Elements = ElementProgress.Started;
-        Owner.InitializeOwnInstanceElements(interpreter, Receiver, RetryingFailedSuper);
+        Owner.InitializeOwnInstanceElements(interpreter, Receiver,
+            RetryingFailedSuper && ReferenceEquals(Receiver, Allocation));
         Elements = ElementProgress.Complete;
     }
 }

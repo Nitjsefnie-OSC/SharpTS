@@ -2010,7 +2010,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE so the
                 // closure shares this iteration's cell (the cell local is repointed to a fresh
                 // box each iteration). Checked first; cell bindings are never hoisted fields.
-                if (capturedVar == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
+                if (capturedVar == "this" && Resolver.TryLoadThisBindingCell()) { }
+                else if (capturedVar == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
                 else if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
                 else if (Ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
                 {

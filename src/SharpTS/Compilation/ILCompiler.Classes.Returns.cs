@@ -13,17 +13,34 @@ public partial class ILCompiler
         return visitor.HasReplacement;
     }
 
-    private static void ConfigureClassConstructorReturns(CompilationContext context, Stmt.Function? constructor, bool derived)
+    private void ConfigureClassConstructorReturns(CompilationContext context, Stmt.Function? constructor, bool derived, bool forceReceiver = false)
     {
+        context.AsyncArrowBuilders = _async.ArrowBuilders.Count > 0 ? _async.ArrowBuilders : null;
+        context.AsyncArrowOuterBuilders = _async.ArrowOuterBuilders;
+        context.AsyncArrowParentBuilders = _async.ArrowParentBuilders;
         var visitor = new ConstructorReplacementVisitor();
         foreach (var statement in constructor?.Body ?? [])
             visitor.Visit(statement);
-        context.CapturesClassConstructorReturn = visitor.HasReplacement;
+        var sourceType = context.CurrentClassExpr is { } expression
+            ? _typeMap.GetClassExprType(expression) : _typeMap.GetClassType(context.CurrentClassName ?? "");
+        bool needsReceiver = forceReceiver || visitor.HasReplacement || _typeMapper.IsDynamicClassInstance(sourceType);
+        context.CapturesClassConstructorReturn = needsReceiver;
         context.IsDerivedClassConstructor = derived;
-        if (visitor.HasReplacement)
+        if (needsReceiver)
         {
             context.ClassConstructorReceiver = context.IL.DeclareLocal(context.Types.Object);
             context.ClassConstructorReturnValue = context.IL.DeclareLocal(context.Types.Object);
+            context.IL.Emit(OpCodes.Ldsfld, context.Runtime!.Sentinels.UndefinedInstance);
+            context.IL.Emit(OpCodes.Stloc, context.ClassConstructorReceiver);
+            context.ClassConstructorThisCell = context.IL.DeclareLocal(context.Types.ObjectArray);
+            context.HasGuestReceiver = true;
+            context.IL.Emit(OpCodes.Ldc_I4_1);
+            context.IL.Emit(OpCodes.Newarr, context.Types.Object);
+            context.IL.Emit(OpCodes.Dup);
+            context.IL.Emit(OpCodes.Ldc_I4_0);
+            context.IL.Emit(OpCodes.Ldsfld, context.Runtime!.Sentinels.UndefinedInstance);
+            context.IL.Emit(OpCodes.Stelem_Ref);
+            context.IL.Emit(OpCodes.Stloc, context.ClassConstructorThisCell);
         }
     }
 
@@ -33,5 +50,20 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, context.Runtime!.DynamicConstruction.ResolveClassReturn);
         il.Emit(OpCodes.Stloc, context.ClassConstructorReceiver);
+        if (context.ClassConstructorThisCell is { } cell)
+        {
+            il.Emit(OpCodes.Ldloc, cell);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldloc, context.ClassConstructorReceiver);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+    }
+
+    private bool ClassNeedsConstructorReceiver(string? name)
+    {
+        if (name is null) return false;
+        var expression = _classExprs.Names.FirstOrDefault(entry => entry.Value == name).Key;
+        var type = expression is null ? _typeMap.GetClassType(name) : _typeMap.GetClassExprType(expression);
+        return _typeMapper.IsDynamicClassInstance(type);
     }
 }

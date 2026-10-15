@@ -153,7 +153,8 @@ public partial class Interpreter
         }
         if (reference is Expr.Super { Method: not null })
         {
-            object? receiver = ctx.Environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject();
+            ctx.Environment.TryGetThis(out var thisValue);
+            object? receiver = thisValue.ToObject();
             // EvaluateSuper performs the live lexical-home Get. A descriptor's
             // returned function is raw, so this call Reference supplies this.
             callee = (await ctx.EvaluateExprAsync(expression)).ToObject();

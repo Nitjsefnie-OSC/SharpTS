@@ -104,6 +104,20 @@ public partial class ILCompiler
         // SetProperty overrides use $EnsureFields, including when a base constructor
         // dispatches through the derived override before this constructor resumes.
         var ensureFields = _classes.PropertyDispatch.Require(className).EnsureFields;
+        var parameterProperties = ctx.ClassConstructorThisCell != null && classStmt.SuperclassExpr != null
+            ? constructor?.Body?.Where(statement => IsConstructorParameterProperty(statement, constructor)).ToList() ?? [] : [];
+        if (ctx.ClassConstructorThisCell != null)
+            EmitOnceOnlyConstructorElements(ctx, () =>
+            {
+                EmitEffectiveClassElements(ctx, classStmt.Fields,
+                    _typedInterop.PropertyBackingFields.GetValueOrDefault(className),
+                    _typedInterop.PropertyTypes.GetValueOrDefault(className),
+                    field => il.Emit(OpCodes.Ldsfld, _classes.DeferredDefinitions.RequireFieldKey(field)));
+                foreach (var accessor in classStmt.AutoAccessors?.Where(accessor => !accessor.IsStatic) ?? [])
+                    EmitReceiverAutoAccessorInitializer(ctx, accessor, className);
+                var parameterEmitter = new ILEmitter(ctx);
+                foreach (var assignment in parameterProperties) parameterEmitter.EmitStatement(assignment);
+            });
 
         // Initialize @lock decorator fields if present
         if (_locks.SyncLockFields.TryGetValue(className, out var syncLockField))
@@ -266,16 +280,19 @@ public partial class ILCompiler
         }
 
         if (constructor?.Body?.Any(ContainsSuperCall) != true)
+        {
             InitializeClassConstructorReceiver(ctx, il);
+            ctx.EmitConstructorOwnElements?.Invoke();
+        }
 
         // Emit instance field initializers to backing fields (before constructor body)
         bool deferPrivateInitialization = constructor?.Body != null
             && classStmt.SuperclassExpr != null
             && constructor.Body.Any(ContainsSuperCall);
         bool privateInitializationEmitted = !deferPrivateInitialization;
-        if (!deferPrivateInitialization) EmitOrderedFieldInitializers();
+        if (!deferPrivateInitialization && ctx.ClassConstructorThisCell == null) EmitOrderedFieldInitializers();
         // TypeScript 4.9+: Initialize instance auto-accessor backing fields
-        if (classStmt.AutoAccessors != null)
+        if (classStmt.AutoAccessors != null && ctx.ClassConstructorThisCell == null)
         {
             var instanceAutoAccessors = classStmt.AutoAccessors.Where(a => !a.IsStatic && a.Initializer != null).ToList();
             if (instanceAutoAccessors.Count > 0)
@@ -334,8 +351,9 @@ public partial class ILCompiler
             {
                 foreach (var stmt in constructor.Body)
                 {
+                    if (parameterProperties.Contains(stmt)) continue;
                     emitter.EmitStatement(stmt);
-                    if (!privateInitializationEmitted && ContainsSuperCall(stmt))
+                    if (ctx.ClassConstructorThisCell == null && !privateInitializationEmitted && ContainsSuperCall(stmt))
                     {
                         EmitOrderedFieldInitializers();
                         privateInitializationEmitted = true;
@@ -463,31 +481,66 @@ public partial class ILCompiler
 
     // Install the method brand before evaluating fields; each field becomes present
     // only after its initializer completes.
-    private LocalBuilder? EmitPrivateFieldStorage(ILGenerator il, string className)
+    private LocalBuilder? EmitPrivateFieldStorage(ILGenerator il, string className,
+        CompilationContext? context = null, ILEmitter? emitter = null)
     {
         var elements = _classes.PrivateElements.Require(className);
         if (elements.Storage is not { } storage) return null;
         var slots = il.DeclareLocal(_types.DictionaryStringObject);
+        var table = il.DeclareLocal(storage.FieldType);
+        if (context?.CurrentClassExpr != null && context.ClassDefinitionParameterIndex is { } definitionParameter)
+        {
+            il.Emit(OpCodes.Ldarg, definitionParameter);
+            il.Emit(OpCodes.Ldfld, _runtime.ClassDefinitions.PrivateMembers);
+            il.Emit(OpCodes.Ldstr, "'instanceStorage");
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "get_Item", _types.String));
+            il.Emit(OpCodes.Castclass, storage.FieldType);
+        }
+        else il.Emit(OpCodes.Ldsfld, GetClassRegistry().ResolvePrivateStorage(className, storage));
+        il.Emit(OpCodes.Stloc, table);
+        var receiver = il.DeclareLocal(_types.Object);
+        if (context?.ClassConstructorReceiver is { } effective) il.Emit(OpCodes.Ldloc, effective);
+        else il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, receiver);
+        var fresh = il.DefineLabel();
+        var ready = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, table); il.Emit(OpCodes.Ldloc, receiver); il.Emit(OpCodes.Ldloca, slots);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(storage.FieldType, "TryGetValue", _types.Object, _types.DictionaryStringObject.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, fresh);
+        if (elements.Methods.Count > 0)
+            GuestErrorEmitter.ThrowTypeError(il, _runtime, "Cannot initialize private methods twice on the same object");
+        il.Emit(OpCodes.Br, ready);
+        il.MarkLabel(fresh);
         il.Emit(OpCodes.Ldc_I4, elements.FieldNames.Count);
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.DictionaryStringObject, _types.Int32));
         il.Emit(OpCodes.Stloc, slots);
-        il.Emit(OpCodes.Ldsfld, EmitterTypeHelpers.SelfFieldReference(storage));
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, table);
+        il.Emit(OpCodes.Ldloc, receiver);
         il.Emit(OpCodes.Ldloc, slots);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(storage.FieldType, "Add", typeof(object), _types.DictionaryStringObject));
+        il.MarkLabel(ready);
         return slots;
     }
 
     private void EmitPrivateFieldInitializer(ILGenerator il, Stmt.Field field, LocalBuilder slots, ILEmitter emitter)
     {
-        il.Emit(OpCodes.Ldloc, slots);
-        il.Emit(OpCodes.Ldstr, field.Name.Lexeme.TrimStart('#'));
+        var value = il.DeclareLocal(_types.Object);
         if (field.Initializer is { } initializer)
         {
             emitter.EmitExpression(initializer);
             emitter.EmitBoxIfNeeded(initializer);
         }
         else il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
+        il.Emit(OpCodes.Stloc, value);
+        var fresh = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, slots); il.Emit(OpCodes.Ldstr, field.Name.Lexeme.TrimStart('#'));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
+        il.Emit(OpCodes.Brfalse, fresh);
+        GuestErrorEmitter.ThrowTypeError(il, _runtime, "Cannot initialize private field twice on the same object");
+        il.MarkLabel(fresh);
+        il.Emit(OpCodes.Ldloc, slots);
+        il.Emit(OpCodes.Ldstr, field.Name.Lexeme.TrimStart('#'));
+        il.Emit(OpCodes.Ldloc, value);
         il.Emit(OpCodes.Callvirt, _types.DictionaryStringObjectSetItem);
     }
 }

@@ -78,7 +78,7 @@ public partial class GeneratorMoveNextEmitter : IteratorMoveNextEmitter
             ctx.Locals,
             _builder.ThisField,
             ctx.CellBindingLocals,
-            ctx.Types.StrongBoxOfObjectValueField);
+            ctx.Types.StrongBoxOfObjectValueField) { ConstructorContext = ctx };
 
         // Define labels for each yield resume point
         foreach (var yieldPoint in _analysis.YieldPoints)

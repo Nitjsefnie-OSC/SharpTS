@@ -30,6 +30,7 @@ public partial class AsyncArrowMoveNextEmitter
 
     protected override void EmitThis()
     {
+        if (TryEmitGuestThis()) return;
         // Standalone async function expression: `this` is bound dynamically at
         // call time (fn.call/apply/bind) and snapshotted into OwnThisField by the
         // stub — read it rather than a lexical capture.

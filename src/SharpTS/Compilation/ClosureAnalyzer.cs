@@ -693,6 +693,13 @@ public class ClosureAnalyzer : AstVisitorBase
         }
         foreach (var expression in ClassDefinitionExpressions.Enumerate(stmt))
             Visit(expression);
+        // Initializers are invocation scopes too. Their nested true arrows
+        // must capture the class receiver rather than become static arrows.
+        AnalyzeFunctionBody(stmt, [], stmt.Fields.Where(field => field.Initializer != null)
+            .Select(field => (Stmt)new Stmt.Expression(field.Initializer!))
+            .Concat((stmt.AutoAccessors ?? []).Where(accessor => accessor.Initializer != null)
+                .Select(accessor => (Stmt)new Stmt.Expression(accessor.Initializer!)))
+            .ToList());
         foreach (var method in stmt.Methods)
         {
             // Skip overload signatures (no body)

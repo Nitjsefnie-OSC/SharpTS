@@ -35,25 +35,12 @@ public abstract partial class ExpressionEmitterBase
         {
             var definition = IL.DeclareLocal(Ctx.Runtime!.ClassDefinitions.Type);
             IL.Emit(OpCodes.Stloc, definition);
-            if (isStatic) IL.Emit(OpCodes.Ldloc, receiver);
-            else
-            {
-                var ownerExpression = Ctx.ClassExprBuilders!.First(entry => entry.Value.FullName == owner).Key;
-                var template = Ctx.ClassExprFactories![ownerExpression].Template;
-                var field = Ctx.ClassExprDefinitionFields![ownerExpression];
-                var reference = template.IsGenericType ? EmitterTypeHelpers.ResolveField(template, field) : field;
-                IL.Emit(OpCodes.Ldloc, receiver);
-                IL.Emit(OpCodes.Isinst, reference.DeclaringType!);
-                IL.Emit(OpCodes.Brfalse, absent);
-                IL.Emit(OpCodes.Ldloc, receiver);
-                IL.Emit(OpCodes.Castclass, reference.DeclaringType!);
-                IL.Emit(OpCodes.Ldfld, reference);
-            }
-            IL.Emit(OpCodes.Ldloc, definition);
-            IL.Emit(OpCodes.Ceq);
-            IL.Emit(OpCodes.Brfalse, absent);
             if (isStatic)
             {
+                IL.Emit(OpCodes.Ldloc, receiver);
+                IL.Emit(OpCodes.Ldloc, definition);
+                IL.Emit(OpCodes.Ceq);
+                IL.Emit(OpCodes.Brfalse, absent);
                 if (declaration.StaticMethods.ContainsKey(name)) IL.Emit(OpCodes.Ldc_I4_1);
                 else
                 {
@@ -64,7 +51,7 @@ public abstract partial class ExpressionEmitterBase
                 }
                 IL.Emit(OpCodes.Br, done);
             }
-            else EmitInstancePresence();
+            else EmitInstancePresence(definition);
         }
         else if (isStatic)
         {
@@ -102,14 +89,13 @@ public abstract partial class ExpressionEmitterBase
         IL.MarkLabel(done);
         SetStackType(StackType.Boolean);
 
-        void EmitInstancePresence()
+        void EmitInstancePresence(LocalBuilder? definition = null)
         {
             var slots = IL.DeclareLocal(Types.DictionaryStringObject);
-            if (declaration.InstanceBridge is { } bridge)
+            if (definition != null) EmitDefinitionPrivateTable(definition);
+            else if (declaration.InstanceBridge is { } bridge)
             {
-                IL.Emit(OpCodes.Ldloc, receiver); IL.Emit(OpCodes.Isinst, bridge.InterfaceType); IL.Emit(OpCodes.Brfalse, absent);
-                IL.Emit(OpCodes.Ldloc, receiver); IL.Emit(OpCodes.Castclass, bridge.InterfaceType);
-                IL.Emit(OpCodes.Callvirt, bridge.StorageGetter);
+                IL.Emit(OpCodes.Ldsfld, Ctx.ClassRegistry.GetPrivateStorage(bridge));
             }
             else IL.Emit(OpCodes.Ldsfld, declaration.Storage!);
             IL.Emit(OpCodes.Ldloc, receiver); IL.Emit(OpCodes.Ldloca, slots);

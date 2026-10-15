@@ -128,10 +128,7 @@ public partial class ILCompiler
             || declaration.Methods.Any(method => method.IsPrivate || method.IsAsync || method.IsGenerator
                 || method.TypeParams is { Count: > 0 } || method.ComputedKey != null
                 || method.Parameters.Any(parameter => parameter.IsParameterProperty || parameter.DestructuredProperties != null))) return false;
-        var returns = new ConstructorReplacementVisitor();
-        foreach (var statement in declaration.Methods.FirstOrDefault(method => method.Name.Lexeme == "constructor")?.Body ?? [])
-            returns.Visit(statement);
-        return !returns.HasReplacement;
+        return true;
     }
 
     private sealed class ConstructorReplacementVisitor : AstVisitorBase
@@ -148,7 +145,7 @@ public partial class ILCompiler
     {
         if (_receiverInitializers.TryGetValue(owner, out var existing)) return existing;
         var method = owner.DefineMethod("$InitializeReceiver", MethodAttributes.Public | MethodAttributes.Static,
-            _types.Void, [_types.Object, _types.ObjectArray, _types.Object, _types.Object]);
+            _types.Object, [_types.Object, _types.ObjectArray, _types.Object, _types.Object]);
         _receiverInitializers.Add(owner, method);
         return method;
     }
@@ -174,6 +171,11 @@ public partial class ILCompiler
         ApplyCapturedTopLevelVariableAccess(ctx);
         var emitter = new ILEmitter(ctx);
         var constructor = declaration.Methods.FirstOrDefault(source => source.Body != null && source.Name.Lexeme == "constructor" && !source.IsStatic);
+        ctx.CurrentMethodReturnType = _types.Void;
+        ctx.IsRuntimeReceiverInitializer = true;
+        ConfigureClassConstructorReturns(ctx, constructor, declaration.SuperclassExpr != null, forceReceiver: true);
+        EmitOnceOnlyConstructorElements(ctx, () => EmitEffectiveClassElements(ctx, declaration.Fields, null, null,
+            _ => throw new InvalidOperationException("Runtime receiver initializer cannot have computed fields.")));
         if (constructor?.Body != null && ReferencesArgumentsIdentifier(constructor.Body)
             && !constructor.Parameters.Any(parameter => parameter.Name.Lexeme == "arguments"))
         {
@@ -220,32 +222,28 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldarg_3);
             il.Emit(OpCodes.Call, _runtime.ClassDefinitions.InitializeReceiver);
+            il.Emit(OpCodes.Stloc, ctx.ClassConstructorReceiver!);
+            SetReceiverCell();
         }
-        bool initialized = false;
-        if (!explicitSuper) InitializeFields();
+        else if (!explicitSuper)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stloc, ctx.ClassConstructorReceiver!);
+            SetReceiverCell();
+        }
+        if (!explicitSuper) ctx.EmitConstructorOwnElements!();
         foreach (var statement in constructor?.Body ?? [])
-        {
             emitter.EmitStatement(statement);
-            if (!initialized && ContainsSuperCall(statement)) InitializeFields();
-        }
-        if (!initialized) InitializeFields();
-        emitter.FinalizeReturns();
+        emitter.EmitClassConstructorFallthrough();
         il.Emit(OpCodes.Ret);
+        emitter.FinalizeReturns();
 
-        void InitializeFields()
+        void SetReceiverCell()
         {
-            initialized = true;
-            bool previous = ctx.SuppressNewTarget;
-            ctx.SuppressNewTarget = true;
-            foreach (var field in declaration.Fields.Where(field => !field.IsStatic && !field.IsDeclare && !field.IsPrivate))
-            {
-                il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Ldstr, field.Name.Lexeme);
-                if (field.Initializer != null) { emitter.EmitExpression(field.Initializer); emitter.EmitBoxIfNeeded(field.Initializer); }
-                else il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
-                il.Emit(OpCodes.Call, _runtime.ObjectWrite.Index);
-            }
-            ctx.SuppressNewTarget = previous;
+            il.Emit(OpCodes.Ldloc, ctx.ClassConstructorThisCell!);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldloc, ctx.ClassConstructorReceiver!);
+            il.Emit(OpCodes.Stelem_Ref);
         }
     }
 

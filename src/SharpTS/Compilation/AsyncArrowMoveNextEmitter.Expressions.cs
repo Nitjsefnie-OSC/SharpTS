@@ -16,8 +16,21 @@ public partial class AsyncArrowMoveNextEmitter
     // (EmitVarDeclaration, EmitReturn, …) already EnsureBoxed before storing, so no eager boxing
     // is needed.
 
+    protected override bool TryEmitNewTargetCapture()
+    {
+        if (_builder.IsStandalone && _builder.StandaloneCaptureFields.TryGetValue(
+            CompilationContext.NewTargetCaptureName, out var target))
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, target);
+            return true;
+        }
+        return base.TryEmitNewTargetCapture();
+    }
+
     protected override void EmitThis()
     {
+        if (TryEmitGuestThis()) return;
         // Standalone async function expression: `this` is bound dynamically at
         // call time (fn.call/apply/bind) and snapshotted into OwnThisField by the
         // stub — read it rather than a lexical capture.
@@ -56,20 +69,5 @@ public partial class AsyncArrowMoveNextEmitter
 
         _il.Emit(OpCodes.Ldnull);
         SetStackType(StackType.Null);
-    }
-
-    protected override void EmitSuper(Expr.Super s)
-    {
-        if (_ctx!.IsStaticSuperContext)
-        {
-            base.EmitSuper(s);
-            return;
-        }
-        // Use the same lexical receiver loader as this/direct super calls,
-        // including standalone capture fields and outer async state machines.
-        EmitThis();
-        _il.Emit(OpCodes.Ldstr, s.Method?.Lexeme ?? "constructor");
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.ReflectedMethods.SuperMethod);
-        SetStackUnknown();
     }
 }

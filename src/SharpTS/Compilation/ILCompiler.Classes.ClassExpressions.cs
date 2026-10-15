@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Parsing;
+using SharpTS.Parsing.Visitors;
 using TSTypeInfo = SharpTS.TypeSystem.TypeInfo;
 
 namespace SharpTS.Compilation;
@@ -211,7 +212,10 @@ public partial class ILCompiler
                 field.TypeAnnotation != null &&
                 classGenericParams.Any(p => p.Name == field.TypeAnnotation);
             if (isGenericField)
+            {
+                DefineGuestDataField(typeBuilder, field, _types.Object);
                 continue;
+            }
             DefineClassExpressionProperty(typeBuilder, classExpr, field, classGenericParams);
         }
 
@@ -300,7 +304,10 @@ public partial class ILCompiler
         setterIL.Emit(OpCodes.Ldarg_0);
         setterIL.Emit(OpCodes.Ldarg_1);
         setterIL.Emit(OpCodes.Stfld, backingField);
+        if (propertyType == _types.Double || propertyType == _types.Boolean)
+            EmitClearGuestFieldOverride(setterIL, _classes.InstanceFieldsField[_classExprs.Names[classExpr]], fieldName);
         setterIL.Emit(OpCodes.Ret);
+        DefineGuestDataField(typeBuilder, field, propertyType, backingField, getter, setter);
 
         // Only link setter to property for non-readonly
         if (!field.IsReadonly)
@@ -405,6 +412,7 @@ public partial class ILCompiler
             && _functions.MethodsCapturingArguments.Contains(parentConstructor))
             _functions.MethodsCapturingArguments.Add(ctorBuilder);
         DefineClassPrototypeConstructor(typeBuilder);
+        DefineNewTargetConstructor(ctorBuilder, expression: true);
         DefineClassExpressionFactory(classExpr, typeBuilder, ctorBuilder, ctorParamTypes);
 
         // Define static methods (computed symbol-keyed methods are handled by
@@ -506,7 +514,10 @@ public partial class ILCompiler
                 );
 
                 if (accessor.Kind.Type == TokenType.GET)
+                {
+                    GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, accessorName);
                     _classExprs.Getters[classExpr][pascalName] = methodBuilder;
+                }
                 else
                     _classExprs.Setters[classExpr][pascalName] = methodBuilder;
             }
@@ -706,6 +717,8 @@ public partial class ILCompiler
         var ctorBuilder = _classExprs.Constructors[classExpr];
         var constructor = classExpr.Methods.FirstOrDefault(m => !m.IsStatic && m.Name.Lexeme == "constructor" && m.Body != null);
 
+        var canonicalConstructor = ctorBuilder;
+        ctorBuilder = NewTargetConstructor(ctorBuilder);
         var il = ctorBuilder.GetILGenerator();
         if (HasRuntimeParent(classExpr))
         {
@@ -716,9 +729,12 @@ public partial class ILCompiler
             return;
         }
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg, ctorBuilder.GetParameters().Length);
+        il.Emit(OpCodes.Ldarg, canonicalConstructor.GetParameters().Length);
         il.Emit(OpCodes.Stfld, EmitterTypeHelpers.SelfFieldReference(_classExprs.DefinitionFields[classExpr]));
         var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, fieldsField, ctorBuilder);
+        ctx.ClassDefinitionParameterIndex = canonicalConstructor.GetParameters().Length;
+        ctx.ClassDefinitionThisParameterIndex = 0;
+        if (ctorBuilder != canonicalConstructor) ctx.NewTargetParameterIndex = ctorBuilder.GetParameters().Length;
         ctx.IsInstanceMethod = true;
         if (constructor != null)
             SetupSyncMethodFunctionDisplayClass(ctx, il, constructor);
@@ -744,6 +760,25 @@ public partial class ILCompiler
         // If there's an explicit constructor body, it should contain super() call
         bool hasExplicitSuperCall = constructor?.Body?.Any(stmt => ContainsSuperCall(stmt)) ?? false;
         bool initializersEmitted = false;
+        var parameterProperties = ctx.ClassConstructorThisCell != null && classExpr.SuperclassExpr != null
+            ? constructor?.Body?.Where(statement => IsConstructorParameterProperty(statement, constructor)).ToList() ?? [] : [];
+        if (ctx.ClassConstructorThisCell != null)
+            EmitOnceOnlyConstructorElements(ctx, () =>
+            {
+                EmitEffectiveClassElements(ctx, classExpr.Fields, _classExprs.BackingFields[classExpr],
+                    _classExprs.PropertyTypes[classExpr], field =>
+                    {
+                        var keys = _classExprs.Factories[classExpr].Keys;
+                        int index = Enumerable.Range(0, keys.Count).First(index => ReferenceEquals(keys[index], field.ComputedKey));
+                        il.Emit(OpCodes.Ldarg, ctx.ClassDefinitionParameterIndex!.Value);
+                        il.Emit(OpCodes.Castclass, _runtime.ClassDefinitions.Type);
+                        il.Emit(OpCodes.Ldfld, _runtime.ClassDefinitions.Keys);
+                        il.Emit(OpCodes.Ldc_I4, index);
+                        il.Emit(OpCodes.Ldelem_Ref);
+                    });
+                var parameterEmitter = new ILEmitter(ctx);
+                foreach (var assignment in parameterProperties) parameterEmitter.EmitStatement(assignment);
+            });
 
         if (!hasExplicitSuperCall)
         {
@@ -821,9 +856,11 @@ public partial class ILCompiler
                         il.Emit(OpCodes.Ldarg, guestArgument++);
                     else emitter.EmitOmittedArgument(p.ParameterType);
                 }
+                var bodyConstructor = NewTargetConstructor(baseCtor);
+                if (bodyConstructor != baseCtor) EmitForwardedNewTarget(ctx);
                 var baseType = typeBuilder.BaseType;
                 il.Emit(OpCodes.Call, baseType?.IsConstructedGenericType == true
-                    ? EmitterTypeHelpers.ResolveConstructor(baseType, baseCtor) : baseCtor);
+                    ? EmitterTypeHelpers.ResolveConstructor(baseType, bodyConstructor) : bodyConstructor);
             }
             else
             {
@@ -833,7 +870,11 @@ public partial class ILCompiler
             }
         }
         if (!hasExplicitSuperCall)
+        {
             InitializeClassConstructorReceiver(ctx, il);
+            ctx.EmitConstructorOwnElements?.Invoke();
+            if (ctx.ClassConstructorThisCell != null) initializersEmitted = true;
+        }
         if (constructor != null)
         {
             // Define parameters with typed parameter types from constructor signature
@@ -844,7 +885,7 @@ public partial class ILCompiler
                 ctx.DefineParameter(constructor.Parameters[i].Name.Lexeme, i + 1, paramType);
             }
 
-            var constructorParamTypes = ctorBuilder.GetParameters().SkipLast(1).Select(p => p.ParameterType).ToArray();
+            var constructorParamTypes = canonicalConstructor.GetParameters().SkipLast(1).Select(p => p.ParameterType).ToArray();
             EmitFunctionEnvironmentPrologue(
                 il,
                 ctx,
@@ -858,7 +899,7 @@ public partial class ILCompiler
 
             // Base-class fields are initialized before the constructor body. Derived-class
             // fields are initialized immediately after the explicit super() establishes this.
-            if (!hasExplicitSuperCall)
+            if (!hasExplicitSuperCall && ctx.ClassConstructorThisCell == null)
             {
                 EmitInstanceFieldInitializers();
                 initializersEmitted = true;
@@ -868,8 +909,9 @@ public partial class ILCompiler
             {
                 foreach (var stmt in constructor.Body)
                 {
+                    if (parameterProperties.Contains(stmt)) continue;
                     emitter.EmitStatement(stmt);
-                    if (!initializersEmitted && ContainsSuperCall(stmt))
+                    if (ctx.ClassConstructorThisCell == null && !initializersEmitted && ContainsSuperCall(stmt))
                     {
                         EmitInstanceFieldInitializers();
                         initializersEmitted = true;
@@ -878,7 +920,7 @@ public partial class ILCompiler
             }
         }
 
-        if (!initializersEmitted)
+        if (!initializersEmitted && ctx.ClassConstructorThisCell == null)
             EmitInstanceFieldInitializers();
 
         if (ctx.CapturesClassConstructorReturn)
@@ -892,7 +934,15 @@ public partial class ILCompiler
 
         void EmitInstanceFieldInitializers()
         {
-            var privateStorage = EmitPrivateFieldStorage(il, className);
+            bool previous = ctx.SuppressNewTarget;
+            ctx.SuppressNewTarget = true;
+            EmitInstanceFieldInitializersCore();
+            ctx.SuppressNewTarget = previous;
+        }
+
+        void EmitInstanceFieldInitializersCore()
+        {
+            var privateStorage = EmitPrivateFieldStorage(il, className, ctx, emitter);
             foreach (var field in classExpr.Fields.Where(f => !f.IsStatic && !f.IsDeclare && (f.IsPrivate || f.Initializer != null || f.ComputedKey != null)))
             {
                 if (field.IsPrivate)
@@ -934,9 +984,17 @@ public partial class ILCompiler
                     emitter.EmitExpression(field.Initializer!);
 
                     Type targetType = _classExprs.PropertyTypes[classExpr][pascalName];
-                    EmitTypeConversion(il, emitter, field.Initializer!, targetType);
-
-                    il.Emit(OpCodes.Stfld, backingField);
+                    if (GetClassRegistry().TryGetOwnGuestDataField((TypeBuilder)backingField.DeclaringType!, fieldName, out var guestField)
+                        && guestField.IsPrimitive)
+                    {
+                        emitter.EmitBoxIfNeeded(field.Initializer!);
+                        il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(guestField.GuestSetter));
+                    }
+                    else
+                    {
+                        EmitTypeConversion(il, emitter, field.Initializer!, targetType);
+                        il.Emit(OpCodes.Stfld, backingField);
+                    }
                 }
                 else
                 {
@@ -1032,31 +1090,32 @@ public partial class ILCompiler
     /// </summary>
     private static bool ContainsSuperCall(Stmt stmt)
     {
-        return stmt switch
-        {
-            Stmt.Expression expr => ContainsSuperCallInExpr(expr.Expr),
-            Stmt.Block block => block.Statements.Any(ContainsSuperCall),
-            Stmt.If ifStmt => ContainsSuperCallInExpr(ifStmt.Condition) ||
-                              ContainsSuperCall(ifStmt.ThenBranch) ||
-                              (ifStmt.ElseBranch != null && ContainsSuperCall(ifStmt.ElseBranch)),
-            _ => false
-        };
+        var visitor = new ConstructorSuperVisitor();
+        visitor.Visit(stmt);
+        return visitor.Found;
     }
 
-    /// <summary>
-    /// Checks if an expression contains a super() call.
-    /// </summary>
-    private static bool ContainsSuperCallInExpr(Expr expr)
+    private sealed class ConstructorSuperVisitor : AstVisitorBase
     {
-        return expr switch
+        public bool Found { get; private set; }
+        protected override void VisitCall(Expr.Call expression)
         {
-            Expr.Call call => call.Callee is Expr.Super,
-            Expr.Binary bin => ContainsSuperCallInExpr(bin.Left) || ContainsSuperCallInExpr(bin.Right),
-            Expr.PrivateIn presence => ContainsSuperCallInExpr(presence.Object),
-            Expr.Logical log => ContainsSuperCallInExpr(log.Left) || ContainsSuperCallInExpr(log.Right),
-            Expr.Grouping grp => ContainsSuperCallInExpr(grp.Expression),
-            _ => false
-        };
+            if (expression.Callee is Expr.Super { Method: null or { Lexeme: "constructor" } }) Found = true;
+            base.VisitCall(expression);
+        }
+        protected override void VisitFunction(Stmt.Function statement) { }
+        protected override void VisitArrowFunction(Expr.ArrowFunction expression)
+        {
+            if (!expression.HasOwnThis) base.VisitArrowFunction(expression);
+        }
+        protected override void VisitClass(Stmt.Class statement)
+        {
+            foreach (var expression in ClassDefinitionExpressions.Enumerate(statement)) Visit(expression);
+        }
+        protected override void VisitClassExpr(Expr.ClassExpr expression)
+        {
+            foreach (var key in ClassDefinitionExpressions.Enumerate(expression)) Visit(key);
+        }
     }
 
     /// <summary>

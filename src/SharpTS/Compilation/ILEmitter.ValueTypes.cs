@@ -36,15 +36,25 @@ public partial class ILEmitter
     }
 
     /// <summary>
-    /// Boxes a value type result if needed to maintain object semantics.
-    /// No-op for void or reference types.
+    /// Marshals a CLR result into the guest representation. Numeric primitives
+    /// become boxed doubles, matching the interpreter's DotNetMarshaller boundary.
+    /// Object-typed results are inspected without coercing nonnumeric payloads.
     /// </summary>
     /// <param name="type">The type of the value on the stack.</param>
     private void BoxResultIfValueType(Type type)
     {
-        if (type.IsValueType && type != typeof(void))
+        if (type == _ctx.Types.Object)
+            ClrNumericInteropEmitter.EmitNormalizeBoxed(IL, _ctx.Types);
+        else if (type == typeof(decimal))
         {
-            IL.Emit(OpCodes.Box, type);
+            IL.Emit(OpCodes.Call, typeof(Convert).GetMethod(nameof(Convert.ToDouble), [typeof(decimal)])!);
+            IL.Emit(OpCodes.Box, _ctx.Types.Double);
+        }
+        else if (type.IsValueType && type != typeof(void))
+        {
+            DelegateAdapterEmitter.EmitBoxForTS(IL, type);
+            if (Nullable.GetUnderlyingType(type) != null)
+                ClrNumericInteropEmitter.EmitNormalizeBoxed(IL, _ctx.Types);
         }
     }
 }

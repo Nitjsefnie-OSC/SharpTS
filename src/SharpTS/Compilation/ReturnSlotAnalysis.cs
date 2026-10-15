@@ -32,14 +32,15 @@ internal static class ReturnSlotAnalysis
     /// Expression-bodied arrows have no <c>Stmt.Return</c>; the body expression is the return value.
     /// </summary>
     public static bool ExpressionReturnMayBeUndefined(Expr? expr, TypeMap? typeMap) =>
-        expr != null && typeMap != null && typeMap.IsUndefinedReachableReturn(expr);
+        expr != null && typeMap != null && (typeMap.IsUndefinedReachableReturn(expr) ||
+            PrimitiveFieldValueAnalysis.ReturnsRawField(expr, typeMap));
 
     private static bool StatementHasFlaggedReturn(Stmt stmt, TypeMap typeMap)
     {
         switch (stmt)
         {
             case Stmt.Return ret:
-                return ret.Value != null && typeMap.IsUndefinedReachableReturn(ret.Value);
+                return ExpressionReturnMayBeUndefined(ret.Value, typeMap);
 
             case Stmt.Block b:
                 return BlockReturnsMayBeUndefined(b.Statements, typeMap);

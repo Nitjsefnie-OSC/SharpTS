@@ -451,7 +451,7 @@ public partial class RuntimeEmitter
         EmittedObjectDescriptorRuntime descriptors,
         DefinePropertyProxyReceiverInputs inputs,
         MethodBuilder method,
-        LocalBuilder propNameLocal
+        LocalBuilder propertyKeyLocal
     )
     {
         // Proxy [[DefineOwnProperty]] dispatch. The callback lets the runtime
@@ -472,7 +472,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Newarr, _types.Object);
             il.Emit(OpCodes.Dup);
             il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Ldloc, propNameLocal);
+            il.Emit(OpCodes.Ldloc, propertyKeyLocal);
             il.Emit(OpCodes.Stelem_Ref);
             il.Emit(OpCodes.Dup);
             il.Emit(OpCodes.Ldc_I4_1);
@@ -543,6 +543,7 @@ public partial class RuntimeEmitter
         var descriptorLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
         var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
         var propNameLocal = il.DeclareLocal(_types.String);
+        var propertyKeyLocal = il.DeclareLocal(_types.Object);
         var valueLocal = il.DeclareLocal(_types.Object);
         var notDictLabel = il.DefineLabel();
         var setDescriptorDoneLabel = il.DefineLabel();
@@ -552,13 +553,13 @@ public partial class RuntimeEmitter
             new DefinePropertyReceiverValidationInputs(inputs.Errors, inputs.Symbols, inputs.UndefinedType)
         );
 
-        EmitDefinePropertySymbolReceiver(
-            il,
-            new DefinePropertySymbolReceiverInputs(inputs.DescriptorStorage, inputs.Errors, inputs.Symbols),
-            method,
-            descriptorLocal
-        );
-
+        // Normalize the key once, preserving Symbols for Proxy dispatch before
+        // an ordinary receiver's Symbol storage path can handle the definition.
+        var symbolKeyLabel = il.DefineLabel();
+        var propertyKeyReadyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.Symbols.IsSymbol);
+        il.Emit(OpCodes.Brtrue, symbolKeyLabel);
         // propName = $Runtime.ToJsString(prop) — ECMA-262 §7.1.19 ToPropertyKey
         // string path via the spec-shaped ToString. Avoids the prop.ToString()
         // Callvirt-on-null NRE for `Object.defineProperty(obj, null, ...)`,
@@ -567,7 +568,13 @@ public partial class RuntimeEmitter
         // `defineProperty(obj, [1], ...)` lands at key "1" (matches V8/SM).
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, inputs.StringCoercion.ToJsString);
+        il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Stloc, propNameLocal);
+        il.Emit(OpCodes.Br, propertyKeyReadyLabel);
+        il.MarkLabel(symbolKeyLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.MarkLabel(propertyKeyReadyLabel);
+        il.Emit(OpCodes.Stloc, propertyKeyLocal);
 
         EmitDefinePropertyProxyReceiver(
             il,
@@ -580,7 +587,14 @@ public partial class RuntimeEmitter
                 inputs.ObjectState
             ),
             method,
-            propNameLocal
+            propertyKeyLocal
+        );
+
+        EmitDefinePropertySymbolReceiver(
+            il,
+            new DefinePropertySymbolReceiverInputs(inputs.DescriptorStorage, inputs.Errors, inputs.Symbols),
+            method,
+            descriptorLocal
         );
 
         var (lenWasCoercedLocal, lenValLocal, coercedLenLocal) =

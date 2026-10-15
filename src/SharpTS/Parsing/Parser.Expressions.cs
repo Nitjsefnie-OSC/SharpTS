@@ -132,7 +132,8 @@ public partial class Parser
             return DispatchAssignmentTarget(expr, value, "Invalid compound assignment target.",
                 onVariable: (name, val) => new Expr.CompoundAssign(name, op, val),
                 onGet: (get, val) => new Expr.CompoundSet(get.Object, get.Name, op, val),
-                onGetIndex: (gi, val) => new Expr.CompoundSetIndex(gi.Object, gi.Index, op, val));
+                onGetIndex: (gi, val) => new Expr.CompoundSetIndex(gi.Object, gi.Index, op, val),
+                onGetPrivate: (gp, val) => new Expr.CompoundSetPrivate(gp.Object, gp.Name, op, val));
         }
 
         // Logical assignment operators (&&=, ||=, ??=) - have short-circuit semantics
@@ -544,6 +545,9 @@ public partial class Parser
 
         if (Match(TokenType.NEW))
         {
+            Token keyword = Previous();
+            if (Match(TokenType.DOT))
+                return ParseCallChain(ParseNewTarget(keyword));
             // Parse the callee expression: can be identifier, member access, or parenthesized expression
             // Examples: new ClassName(), new Namespace.Class(), new (condition ? A : B)()
             Expr callee = ParseNewCallee();
@@ -756,7 +760,13 @@ public partial class Parser
 
         // Nested `new`: `new new X()` parses as `new (new X())` — the inner `new X()`
         // is itself a MemberExpression callee.
-        if (Match(TokenType.NEW))
+        if (Check(TokenType.NEW) && CheckNext(TokenType.DOT))
+        {
+            Token keyword = Advance();
+            Advance();
+            callee = ParseNewTarget(keyword);
+        }
+        else if (Match(TokenType.NEW))
         {
             Expr innerCallee = ParseNewCallee();
             List<string>? innerTypeArgs = TryParseTypeArguments(out var innerTypeArgNodes);
@@ -815,6 +825,14 @@ public partial class Parser
         }
 
         return callee;
+    }
+
+    private Expr ParseNewTarget(Token keyword)
+    {
+        Token property = ConsumePropertyName("Expect 'target' after 'new.'.");
+        if (property.Lexeme != "target")
+            throw new ParseError("'target' is the only valid meta property for 'new'.", "TS17012");
+        return CompleteExpression(new Expr.NewTarget(keyword), keyword.Start);
     }
 
     private Expr Primary()
@@ -952,8 +970,11 @@ public partial class Parser
                 // If next is `,`, consume and continue (may be trailing).
                 if (!Match(TokenType.COMMA)) break;
             }
+            bool hasTrailingComma = Previous().Type == TokenType.COMMA;
             Consume(TokenType.RIGHT_BRACKET, "Expect ']' after array elements.");
-            return new Expr.ArrayLiteral(elements, holeIndices);
+            var array = new Expr.ArrayLiteral(elements, holeIndices);
+            if (hasTrailingComma) _literalsWithTrailingComma.Add(array);
+            return array;
         }
 
         if (Match(TokenType.LEFT_BRACE))
@@ -1193,8 +1214,11 @@ public partial class Parser
                 RecordError("',' expected.", "TS1005");
                 Advance();
             }
+            bool hasTrailingComma = Previous().Type == TokenType.COMMA;
             Consume(TokenType.RIGHT_BRACE, "Expect '}' after object literal.");
-            return new Expr.ObjectLiteral(properties);
+            var obj = new Expr.ObjectLiteral(properties);
+            if (hasTrailingComma) _literalsWithTrailingComma.Add(obj);
+            return obj;
         }
 
         // async function expression: async function [name]() {} or async function*() {}

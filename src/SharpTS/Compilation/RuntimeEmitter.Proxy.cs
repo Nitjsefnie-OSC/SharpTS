@@ -165,7 +165,7 @@ public partial class RuntimeEmitter
         EmitProxyTypeCheck(il, emitLoadObj, proxyLabel, notProxyLabel);
 
         il.MarkLabel(proxyLabel);
-        // Call TrapGetCompiled(string prop, Func<object,string,object>) via
+        // Call the receiver-aware TrapGetCompiled property-key bridge via
         // reflection. The fallback delegate returns to this emitted runtime's
         // ordinary Get implementation when the handler has no get trap.
         EmitProxyMethodCallUnwrapped(il, inputs.InvokeMethodUnwrapped, emitLoadObj, "TrapGetCompiled", () =>
@@ -185,7 +185,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ldftn, inputs.Reflect.Get);
             il.Emit(OpCodes.Newobj, _types.GetConstructor(
-                typeof(Func<object, string, object, object?>), _types.Object, _types.IntPtr));
+                typeof(Func<object, object, object, object?>), _types.Object, _types.IntPtr));
             il.Emit(OpCodes.Stelem_Ref);
             il.Emit(OpCodes.Dup);
             il.Emit(OpCodes.Ldc_I4_3);

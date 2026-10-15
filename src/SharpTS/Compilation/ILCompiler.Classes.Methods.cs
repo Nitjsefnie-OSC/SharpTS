@@ -12,6 +12,7 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class ILCompiler
 {
+    private readonly HashSet<MethodBuilder> _rawObservingPrimitiveMethodCores = [];
     /// <summary>
     /// Defines all class methods (without emitting bodies) so they're available for
     /// direct dispatch in async state machines.
@@ -73,6 +74,19 @@ public partial class ILCompiler
         // registration through a resolved name while still requiring a distinct
         // prototype constructor on each module-qualified TypeBuilder.
         DefineClassPrototypeConstructor(typeBuilder);
+
+        // The direct-super proof must see prototype accessors and unknown
+        // computed keys even when the method-only lookup reaches an ancestor.
+        var registry = GetClassRegistry();
+        foreach (var accessor in classStmt.Accessors ?? [])
+            if (!accessor.IsStatic)
+                registry.RegisterInstancePrototypeBarrier(typeBuilder,
+                    accessor.ComputedKey == null ? accessor.Name.Lexeme : null);
+        foreach (var accessor in classStmt.AutoAccessors ?? [])
+            if (!accessor.IsStatic)
+                registry.RegisterInstancePrototypeBarrier(typeBuilder, accessor.Name.Lexeme);
+        if (classStmt.Methods.Any(method => !method.IsStatic && !method.IsPrivate && method.ComputedKey != null))
+            registry.RegisterInstancePrototypeBarrier(typeBuilder, null);
 
         // Skip if instance methods are already defined for this class
         if (_classes.InstanceMethods.ContainsKey(qualifiedClassName))
@@ -136,6 +150,7 @@ public partial class ILCompiler
                 MarkJsVariadicConstructor(ctorBuilder);
 
             _classes.Constructors[qualifiedClassName] = ctorBuilder;
+            DefineNewTargetConstructor(ctorBuilder);
             RegisterArgumentsCapturingMethod(ctorBuilder, constructor?.Body, constructor?.Parameters);
             if (constructor == null && classStmt.SuperclassExpr != null)
             {
@@ -227,7 +242,7 @@ public partial class ILCompiler
             );
 
             if (TryResolveTypedPrimitiveMethodCoreReturnType(
-                    classStmt, method, out Type? coreReturnType))
+                    typeBuilder, classStmt, method, out Type? coreReturnType))
             {
                 int coreId = _classes.TypedPrimitiveMethodCoreBuilders.Count;
                 string coreName;
@@ -244,6 +259,8 @@ public partial class ILCompiler
                     paramTypes);
                 MarkCompilerGenerated(coreBuilder);
                 _classes.TypedPrimitiveMethodCoreBuilders[method] = coreBuilder;
+                if (PrimitiveFieldValueAnalysis.Reads(method.Body!, _typeMap).Count > 0)
+                    _rawObservingPrimitiveMethodCores.Add(coreBuilder);
                 if (!_classes.TypedPrimitiveInstanceMethodCores.TryGetValue(
                         qualifiedClassName, out var classCores))
                 {
@@ -252,6 +269,9 @@ public partial class ILCompiler
                 }
                 classCores[method.Name.Lexeme] = coreBuilder;
             }
+
+            if (method.IsGenerator)
+                GetClassRegistry().RegisterSourceGeneratorMethod(methodBuilder);
 
             // Track instance method for direct dispatch
             if (!_classes.InstanceMethods.TryGetValue(qualifiedClassName, out var classMethods))
@@ -321,6 +341,15 @@ public partial class ILCompiler
                     paramTypes
                 );
                 _classes.AccessorBuilders[accessor] = methodBuilder;
+                if (accessor.Kind.Type == TokenType.GET)
+                {
+                    if (accessor.IsStatic)
+                        GetClassRegistry().RegisterSourceStaticGetter(methodBuilder);
+                    else
+                        GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, accessor.Name.Lexeme);
+                }
+                else if (accessor.IsStatic)
+                    GetClassRegistry().RegisterSourceStaticSetter(methodBuilder);
 
                 // Track getter/setter. Static accessors register in StaticGetters/StaticSetters
                 // keyed by original (camelCase) name, matching the auto-accessor convention and
@@ -410,6 +439,7 @@ public partial class ILCompiler
     }
 
     private bool TryResolveTypedPrimitiveMethodCoreReturnType(
+        TypeBuilder owner,
         Stmt.Class classStatement,
         Stmt.Function method,
         out Type returnType)
@@ -450,8 +480,13 @@ public partial class ILCompiler
             TSTypeInfo.OverloadedFunction overload => overload.Implementation,
             _ => null
         };
+        var primitiveReads = PrimitiveFieldValueAnalysis.Reads(body, _typeMap);
         if (functionType is null
-            || ReturnSlotAnalysis.BlockReturnsMayBeUndefined(body, _typeMap))
+            || (primitiveReads.Count == 0 && ReturnSlotAnalysis.BlockReturnsMayBeUndefined(body, _typeMap))
+            || (primitiveReads.Count > 0 && (primitiveReads.Any(read => read.Object is not Expr.This) ||
+                !PrimitiveFieldValueAnalysis.NativeMethodPreservesFields(method, _typeMap) ||
+                primitiveReads.Any(read => !GetClassRegistry().TryGetPrimitiveGuestField(
+                    owner.FullName!, read.Name.Lexeme, out _)))))
             return false;
 
         returnType = ParameterTypeResolver.ResolveReturnType(
@@ -1045,6 +1080,9 @@ public partial class ILCompiler
             classMethods[method.Name.Lexeme] = methodBuilder;
         }
 
+        if (method.IsGenerator)
+            GetClassRegistry().RegisterSourceGeneratorMethod(methodBuilder);
+
         // #703: a user class method invoked as a value (extracted, `.bind()`-ed, or passed
         // as a callback → `$TSFunction.Invoke`) must pad omitted trailing optional args with
         // the `undefined` sentinel, matching the direct-call path. Marking is safe for direct
@@ -1090,8 +1128,29 @@ public partial class ILCompiler
         }
 
         _classes.TypedPrimitiveMethodCoreBuilders.TryGetValue(method, out var typedCoreBuilder);
-        MethodBuilder bodyBuilder = typedCoreBuilder ?? methodBuilder;
+        PrimitiveGuestField[] rawFields = method.Body is null ? [] : PrimitiveFieldValueAnalysis.Reads(method.Body, _typeMap)
+            .Where(read => read.Object is Expr.This)
+            .Select(read => read.Name.Lexeme).Distinct(StringComparer.Ordinal)
+            .Select(name => GetClassRegistry().TryGetPrimitiveGuestField(typeBuilder.FullName!, name, out var field) ? field : null)
+            .OfType<PrimitiveGuestField>().ToArray();
+        MethodBuilder? boxedBody = null;
+        if (typedCoreBuilder is not null && rawFields.Length > 0)
+        {
+            boxedBody = typeBuilder.DefineMethod("$boxed$" + typedCoreBuilder.Name,
+                MethodAttributes.Private | MethodAttributes.HideBySig, _types.Object,
+                methodBuilder.GetParameters().Select(parameter => parameter.ParameterType).ToArray());
+            MarkCompilerGenerated(boxedBody);
+            EmitSynchronousInstanceMethodBody(typeBuilder, method, fieldsField, boxedBody, nativeFieldReads: false);
+        }
+        EmitSynchronousInstanceMethodBody(typeBuilder, method, fieldsField,
+            typedCoreBuilder ?? methodBuilder, nativeFieldReads: typedCoreBuilder is not null && rawFields.Length > 0);
+        if (typedCoreBuilder is not null)
+            EmitTypedPrimitiveMethodWrapper(methodBuilder, typedCoreBuilder, boxedBody, rawFields);
+    }
 
+    private void EmitSynchronousInstanceMethodBody(TypeBuilder typeBuilder, Stmt.Function method,
+        FieldInfo fieldsField, MethodBuilder bodyBuilder, bool nativeFieldReads)
+    {
         // Check if method has @lock decorator
         bool hasLock = HasLockDecorator(method);
 
@@ -1100,6 +1159,7 @@ public partial class ILCompiler
         ctx.CurrentMethodReturnType = bodyBuilder.ReturnType;
         ctx.FieldsField = fieldsField;
         ctx.IsInstanceMethod = true;
+        ctx.NativePrimitiveFieldReads = nativeFieldReads;
         // Async arrow support (for async arrows inside non-async methods)
         ctx.AsyncArrowBuilders = _async.ArrowBuilders.Count > 0 ? _async.ArrowBuilders : null;
         ctx.AsyncArrowOuterBuilders = _async.ArrowOuterBuilders;
@@ -1281,19 +1341,38 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ret);
         }
 
-        if (typedCoreBuilder is not null)
-            EmitTypedPrimitiveMethodWrapper(methodBuilder, typedCoreBuilder);
-
     }
 
     private void EmitTypedPrimitiveMethodWrapper(
         MethodBuilder wrapper,
-        MethodBuilder core)
+        MethodBuilder core,
+        MethodBuilder? boxedBody,
+        IReadOnlyList<PrimitiveGuestField> rawFields)
     {
         if (core.GetParameters().Length > 0)
             wrapper.SetCustomAttribute(_runtime!.FunctionAttributes.SourceParametersCtor,
                 CustomAttributeEncoder.EmptyBlob);
         var il = wrapper.GetILGenerator();
+        var fallback = il.DefineLabel();
+        if (boxedBody is not null)
+        {
+            if (_features?.UsesDynamicPropertyDescriptors != false ||
+                _features.UsesClassPrototypeMutation || _features.UsesObjectIntegrityMutation)
+                il.Emit(OpCodes.Br, fallback);
+            foreach (var field in rawFields)
+            {
+                if (!GetClassRegistry().CanUseNativePrimitiveField(field) ||
+                    !EmitterTypeHelpers.TryResolveInstanceDispatch((TypeBuilder)wrapper.DeclaringType!,
+                        field.HasRawOverride, wrapper.DeclaringType as TypeBuilder, out _, out var guard))
+                {
+                    il.Emit(OpCodes.Br, fallback);
+                    break;
+                }
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Callvirt, guard);
+                il.Emit(OpCodes.Brtrue, fallback);
+            }
+        }
         il.Emit(OpCodes.Ldarg_0);
         var parameters = core.GetParameters();
         for (int i = 0; i < parameters.Length; i++)
@@ -1306,5 +1385,14 @@ public partial class ILCompiler
         il.Emit(OpCodes.Call, core);
         il.Emit(OpCodes.Box, core.ReturnType);
         il.Emit(OpCodes.Ret);
+        if (boxedBody is not null)
+        {
+            il.MarkLabel(fallback);
+            il.Emit(OpCodes.Ldarg_0);
+            for (int i = 0; i < parameters.Length; i++)
+                il.Emit(OpCodes.Ldarg, i + 1);
+            il.Emit(OpCodes.Call, boxedBody);
+            il.Emit(OpCodes.Ret);
+        }
     }
 }

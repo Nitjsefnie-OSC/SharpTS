@@ -811,6 +811,17 @@ behavior. Tests preserve overload selection, stable cached wrappers, cache
 isolation, exception identity, inherited lookup, generator and async super values, Invoke/Call
 fallback behavior and standalone crypto/event dispatch.
 
+Instance `super` property values use `ClassDefinitions.ReadSuper` with the lexical
+class home and actual receiver, including captured arrows and state machines.
+The prototype reader respects live own descriptors and dynamic data before
+advancing to the parent; getterless accessors return undefined. Unchanged nominal
+method values use the lexical nonvirtual bridge while retaining source argument
+padding, rest packing and non-constructor metadata. Superclass calls resolve that
+live property before arguments and invoke it with the saved receiver, including
+optional calls and transparent reference wrappers. Unchanged fixed-signature
+calls retain nominal dispatch only when the runtime feature proofs exclude
+prototype, descriptor and integrity mutation.
+
 Required `FunctionIntrospection` owns function-property lookup and constructor
 capability declarations. Both bodies are emitted at their original separate
 locations; completion follows constructor-capability emission. The two helpers
@@ -819,10 +830,12 @@ Tests cover early property availability, fresh wrappers and prototype caches,
 name/length overrides, missing properties, bound constructor capabilities,
 reused emitters and isolated deployment.
 
-Required `FunctionPrototypes` owns the Function prototype singleton field and
-its early population declaration. The original later body marks population as
-emitted before completion; declaring both handles alone cannot complete the
-owner. Six helpers receive their owner and exact dependencies, using the shared
+Required `FunctionPrototypes` owns the Function prototype singleton field,
+its early population declaration, and the forward-declared apply argument-list
+preparer. Both method bodies must be marked emitted before completion; declaring
+the three handles alone cannot complete the owner. Apply shares ordinary indexed
+Get and strict length coercion across intrinsic and per-target wrappers. Helpers
+receive their owner and exact dependencies, using the shared
 scoped descriptor installers and explicit error metadata. Original declaration,
 static initialization and wrapper construction order remain unchanged. Tests
 cover forward declarations, fresh dictionaries/wrappers, idempotent population,
@@ -864,7 +877,7 @@ controller use remains standalone, and selecting any records its soft runtime
 dependency at the original point before the helper declaration. Opposite-input,
 repeated-emitter, hosted and isolated console-input checks cover these contracts.
 
-Operators use required `Operators` ownership for eleven declarations, including
+Operators use required `Operators` ownership for twelve declarations, including
 numeric updates, comparison, classification, membership, addition and equality.
 Equality keeps its early declaration and validated late body. Completion checks
 every declaration and rejects later metadata writes. Thirteen existing helpers
@@ -874,15 +887,23 @@ while its existing scoped implementation is preserved. Comparison helpers retain
 the absent-runtime fallback and require declared operators when a runtime is
 supplied. Declaration order, guest semantics and deployment remain unchanged.
 
+The `instanceof` operator resolves custom Symbol handlers before calling the
+ordinary instance-check core. `Function.prototype[Symbol.hasInstance]` calls that
+core directly, avoiding recursive handler lookup on its receiver. Bound receivers
+delegate through the full operator on their target. The intrinsic has a canonical
+callable value stored under the actual Symbol key, with all three descriptor
+attributes false.
+
 Named, computed, field and strict writes use required `ObjectWrite` ownership
-for six declarations. Property keeps its early declaration and validated late
+for seven declarations. Property keeps its early declaration and validated late
 body; completion checks every handle and rejects subsequent metadata writes.
 Twelve helpers receive scoped owners and exact dependencies. Optional receiver
 branches follow supplied metadata, while Proxy selection is explicit. The
 redundant whole-holder Proxy adapter is removed; its declaration reads remain
 inside selected branches and its existing exact call record is preserved.
-Strict/sloppy behavior, setter receivers, descriptor and Symbol rules, declaration
-order, mutable guest state and deployment remain unchanged.
+Strict and sloppy Symbol writes share `SetSymbolIndex`, which accepts an explicit
+strictness flag and performs one inherited descriptor walk. Inherited non-writable
+data descriptors reject assignment; setters and Proxy traps run once.
 
 Property, index, field, list, length and element reads use required `ObjectRead`
 ownership for six declarations. Property keeps its early declaration and late
@@ -1989,6 +2010,29 @@ handle cache. DNS's best-effort host synchronization preserves per-assembly emit
 configuration and intentionally mutable process-level host configuration; resolver state
 belongs to each instance. See the [legacy bridge audit](docs/compiler-ownership/I04.md)
 for target identities, lifetimes and hosted/absent-runtime verification.
+
+### Construction context
+
+Construction carries the actual `new.target` explicitly through bound functions, Reflect,
+Proxy, and superclass construction. Interpreter invocation environments own that value;
+ordinary calls establish `undefined`, and true arrows retain their enclosing environment.
+Compiled ordinary functions keep their canonical callable entry and metadata identity. When
+the program uses `new.target`, a `$NewTargetCore` marker identifies an internal body with an
+appended context parameter. Ordinary entries supply `undefined`; constructed invocation shapes
+the guest arguments before appending the context. Guest class constructors use internal
+constructor cores with the same forwarding rule. The hidden parameter never contributes to
+guest `length`, defaults, rest parameters, or `arguments`. Arrow capture fields retain the
+value across suspension; field initializers establish `undefined`, while computed class keys
+run in their enclosing evaluation context.
+
+For classes whose constructors can return replacement objects, compiled construction keeps
+the CLR allocation for legal base chaining and owns a separate effective receiver cell.
+A successful `super()` binds that cell before defining this class's own fields; true arrows
+capture the cell itself so an arrow created before `super()` reads the eventual receiver.
+Private and auto-accessor state belongs to the selected object and its lexical class owner.
+Runtime-selected ordinary parents use an explicit-receiver initializer that returns their
+completed receiver to the child and factory. Constructor return completions remain raw until
+all `finally` blocks finish, then construction selects the returned object or bound receiver.
 
 ### Runtime tree-shaking
 

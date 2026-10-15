@@ -117,6 +117,7 @@ public partial class RuntimeEmitter
         EmitLookup(_types.Double, "isFinite",      inputs.Numbers.IsFinite, 1);
         EmitLookup(_types.Double, "isInteger",     inputs.Numbers.IsInteger, 1);
         EmitLookup(_types.Double, "isSafeInteger", inputs.Numbers.IsSafeInteger, 1);
+        EmitLookup(_types.Double, "parseInt",      inputs.Numbers.ParseInt, 2);
 
         // Number's constants are JavaScript own properties, not CLR field names.
         // In particular NaN must remain readable when native CLR probes are skipped.

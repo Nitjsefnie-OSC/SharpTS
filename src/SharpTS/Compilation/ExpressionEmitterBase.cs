@@ -296,6 +296,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case Expr.This:
                 EmitThis();
                 break;
+            case Expr.NewTarget:
+                EmitNewTargetValue();
+                break;
             case Expr.Super s:
                 EmitSuper(s);
                 break;
@@ -304,6 +307,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 break;
             case Expr.CompoundSet cs:
                 EmitCompoundSet(cs);
+                break;
+            case Expr.CompoundSetPrivate privateCompound:
+                EmitCompoundSetPrivate(privateCompound);
                 break;
             case Expr.CompoundSetIndex csi:
                 EmitCompoundSetIndex(csi);
@@ -794,32 +800,28 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         }
     }
 
+    protected void EmitNewTargetValue()
+    {
+        if (Ctx.SuppressNewTarget)
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Sentinels.UndefinedInstance);
+        else if (Ctx.NewTargetParameterIndex is { } argument)
+            IL.Emit(OpCodes.Ldarg, argument);
+        else if (!TryEmitNewTargetCapture())
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Sentinels.UndefinedInstance);
+        SetStackUnknown();
+    }
+
+    protected virtual bool TryEmitNewTargetCapture() =>
+        Resolver.TryLoadVariable(CompilationContext.NewTargetCaptureName) != null;
+
     /// <summary>
-    /// Emits a super method access. Default loads 'this' via EmitThis(), then calls GetSuperMethod.
-    /// ILEmitter and AsyncArrowMoveNextEmitter override with their own this-loading logic.
+    /// Reads a super property from the lexical class home with the actual receiver.
+    /// EmitThis supplies captured receivers for arrows and state machines.
     /// </summary>
     protected virtual void EmitSuper(Expr.Super s)
     {
-        if (Ctx.IsStaticSuperContext)
-        {
-            var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
-            EmitGuestSuperValue(s.Method?.Lexeme ?? "constructor", receiver);
-            return;
-        }
-        var thisField = GetThisField();
-        if (thisField != null)
-        {
-            IL.Emit(OpCodes.Ldarg_0);
-            IL.Emit(OpCodes.Ldfld, thisField);
-        }
-        else
-        {
-            IL.Emit(OpCodes.Ldnull);
-        }
-
-        IL.Emit(OpCodes.Ldstr, s.Method?.Lexeme ?? "constructor");
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.ReflectedMethods.SuperMethod);
-        SetStackUnknown();
+        var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
+        EmitGuestSuperValue(s.Method?.Lexeme ?? "constructor", receiver);
     }
 
     /// <summary>
@@ -1656,6 +1658,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitNew(Expr.New n)
     {
+        if (IsRuntimeClassDeclarationReference(n.Callee))
+        {
+            EmitDynamicConstruction(n);
+            return;
+        }
         var (namespaceParts, className) = ExtractQualifiedNameFromCallee(n.Callee);
 
         if (namespaceParts.Count == 0 && n.Callee is Expr.Variable && TryEmitBuiltInConstructor(className, n.Arguments))
@@ -1671,18 +1678,14 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     }
 
     /// <summary>
-    /// Emits a user-class constructor call with generic type support, argument temps (safe across
-    /// await/yield boundaries), and Activator.CreateInstance fallback.
+    /// Emits a user-class constructor call with generic type support and a
+    /// suspension-safe dynamic construction fallback.
     /// </summary>
     protected virtual void EmitUserClassNew(List<string> namespaceParts, string className, Expr.New n)
     {
         if (n.Callee is Expr.Variable variable && Ctx.VarToClassExpr?.ContainsKey(variable.Name.Lexeme) == true)
         {
-            EmitExpression(n.Callee);
-            EnsureBoxed();
-            EmitArgsArrayWithSpread(n.Arguments);
-            IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.Value);
-            SetStackUnknown();
+            EmitDynamicConstruction(n);
             return;
         }
         string resolvedClassName = ResolveClassNameForNew(namespaceParts, className);
@@ -1768,35 +1771,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             // dispatches Type → Activator, callable → InvokeValue, and throws
             // TypeError for non-constructables. Replaces the old behavior of
             // silently yielding null when the name didn't resolve.
-            EmitExpression(n.Callee);
-            EnsureBoxed();
-            var ctorTemp = IL.DeclareLocal(typeof(object));
-            IL.Emit(OpCodes.Stloc, ctorTemp);
-
-            List<LocalBuilder> argTemps = [];
-            foreach (var arg in n.Arguments)
-            {
-                EmitExpression(arg);
-                EnsureBoxed();
-                var temp = IL.DeclareLocal(typeof(object));
-                IL.Emit(OpCodes.Stloc, temp);
-                argTemps.Add(temp);
-            }
-
-            IL.Emit(OpCodes.Ldloc, ctorTemp);
-            IL.Emit(OpCodes.Ldc_I4, n.Arguments.Count);
-            IL.Emit(OpCodes.Newarr, Ctx.Types.Object);
-
-            for (int i = 0; i < argTemps.Count; i++)
-            {
-                IL.Emit(OpCodes.Dup);
-                IL.Emit(OpCodes.Ldc_I4, i);
-                IL.Emit(OpCodes.Ldloc, argTemps[i]);
-                IL.Emit(OpCodes.Stelem_Ref);
-            }
-
-            IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.Value);
-            SetStackUnknown();
+            EmitDynamicConstruction(n);
         }
     }
 
@@ -2035,7 +2010,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE so the
                 // closure shares this iteration's cell (the cell local is repointed to a fresh
                 // box each iteration). Checked first; cell bindings are never hoisted fields.
-                if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+                if (capturedVar == "this" && Resolver.TryLoadThisBindingCell()) { }
+                else if (capturedVar == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
+                else if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
                 else if (Ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
                 {
                     IL.Emit(OpCodes.Ldloc, cellLocal);
@@ -2480,7 +2457,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected bool TryEmitStaticClassMethodValue(Expr.Get g)
     {
-        if (Ctx.ClassDefinitionParameterIndex != null || Ctx.ClassDefinitionVariableName != null) return false;
+        if (Ctx.ClassDefinitionParameterIndex != null || Ctx.ClassDefinitionVariableName != null
+            || Ctx.HasGuestReceiver || Ctx.GuestThisVariableName != null) return false;
         if (g.Object is not Expr.This || Ctx.IsInstanceMethod || Ctx.CurrentClassBuilder == null)
             return false;
 

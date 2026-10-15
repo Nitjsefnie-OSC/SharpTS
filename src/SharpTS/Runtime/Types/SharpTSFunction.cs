@@ -234,6 +234,14 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
                 && Parsing.DirectivePrologue.HasUseStrict(_declaration.Body));
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
+        => CallCore(interpreter, arguments, RuntimeValue.Undefined);
+
+    internal object? CallConstructed(Interpreter interpreter, List<object?> arguments, object? newTarget,
+        ClassConstructionFrame? constructionFrame = null)
+        => CallCore(interpreter, arguments, RuntimeValue.FromBoxed(newTarget), constructionFrame);
+
+    private object? CallCore(Interpreter interpreter, List<object?> arguments, RuntimeValue newTarget,
+        ClassConstructionFrame? constructionFrame = null)
     {
         if (_declaration.Body == null)
         {
@@ -251,6 +259,8 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             : new RuntimeEnvironment(closure);
         environment.PrivateClass = PrivateOwner;
         environment.StaticSuper = _declaration.IsStatic;
+        environment.NewTarget = newTarget;
+        environment.ConstructionFrame = constructionFrame;
 
         // JS calling convention: if `this` isn't bound by a receiver
         // (bare call `foo()`), it defaults to the global object in
@@ -266,6 +276,9 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
+        // Bind(instance) owns the existing receiver closure; BindThis owns the
+        // activation slot. Keep those resolver scope distances unchanged.
+        constructionFrame?.AttachThisBinding(_hasBoundThis ? environment : _closure);
 
         // Bind the JS-spec `arguments` array-like to the current call's args.
         // Arrow functions do NOT bind `arguments` — they inherit from the
@@ -277,9 +290,28 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         }
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
+        List<Stmt> body = _declaration.Body;
+        if (constructionFrame?.Owner.Superclass is not null)
+        {
+            // The parser prepends these assignments before the source body.
+            // Derived parameter properties become observable only after super
+            // binds this and installs the owner's instance elements.
+            var parameterProperties = body.Where(IsSyntheticParameterProperty).ToList();
+            if (parameterProperties.Count != 0)
+            {
+                body = body.Where(statement => !IsSyntheticParameterProperty(statement)).ToList();
+                constructionFrame.SetParameterPropertyInitializer(() =>
+                {
+                    var initialization = interpreter.ExecuteBlock(parameterProperties, environment);
+                    if (initialization.Type == ExecutionResult.ResultType.Throw)
+                        throw ThrowException.FromResult(initialization.Value.ToObject(), initialization.FromGuestThrow);
+                });
+            }
+        }
+
         using var debugFrame = interpreter.EnterDebugFrame(
             _declaration.Name.Lexeme, environment, _declaration);
-        var result = interpreter.ExecuteBlock(_declaration.Body, environment);
+        var result = interpreter.ExecuteBlock(body, environment);
         if (result.Type == ExecutionResult.ResultType.Return)
         {
             return result.Value.ToObject();
@@ -301,7 +333,19 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         return SharpTSUndefined.Instance;
     }
 
+    private bool IsSyntheticParameterProperty(Stmt statement)
+        => statement is Stmt.Expression
+        {
+            Expr: Expr.Set { Object: Expr.This, Value: Expr.Variable value } set
+        } && _declaration.Parameters.Any(parameter => parameter.IsParameterProperty
+            && ReferenceEquals(set.Name, parameter.Name)
+            && ReferenceEquals(value.Name, parameter.Name));
+
     public SharpTSFunction Bind(SharpTSInstance instance)
+        => BindInstanceReceiver(instance);
+
+    /// <summary>Preserves the class receiver scope for an arbitrary guest object.</summary>
+    internal SharpTSFunction BindInstanceReceiver(object? instance)
     {
         if (_declaration.IsStatic) return BindThis(instance);
         RuntimeEnvironment environment = new(_closure);
@@ -372,6 +416,8 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             : new RuntimeEnvironment(closure);
         environment.PrivateClass = PrivateOwner;
         environment.StaticSuper = _declaration.IsStatic;
+        environment.NewTarget = RuntimeValue.Undefined;
+        environment.ConstructionFrame = null;
 
         // See Call() for rationale on bound-this and default-this.
         if (_hasBoundThis)
@@ -439,6 +485,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
     // null = no specialization; empty = `a - b`; otherwise `a.<property> - b.<property>`.
     // One reference keeps the footprint of every other arrow function small.
     private readonly string? _simpleSortProperty;
+    private readonly SharpTSArrowFunction? _selfReference;
     // Receiver bound via Bind(). Stored on the function itself rather than
     // wrapping _closure with an extra scope — otherwise runtime scope depth
     // wouldn't match the resolver's static distances and outer captures break.
@@ -479,6 +526,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
     // fresh intrinsic descriptors/prototype only to discard them is unnecessary.
     private SharpTSArrowFunction(SharpTSArrowFunction source, object receiver)
     {
+        _selfReference = source._selfReference ?? source;
         _declaration = source._declaration;
         _closure = source._closure;
         _arity = source._arity;
@@ -707,25 +755,35 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
                 && Parsing.DirectivePrologue.HasUseStrict(_declaration.BlockBody));
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
+        => CallCore(interpreter, arguments, RuntimeValue.Undefined);
+
+    internal object? CallConstructed(Interpreter interpreter, List<object?> arguments, object? newTarget)
+        => CallCore(interpreter, arguments, RuntimeValue.FromBoxed(newTarget));
+
+    private object? CallCore(Interpreter interpreter, List<object?> arguments, RuntimeValue newTarget)
     {
         // Check for function-level "use strict" directive in block body
         bool functionStrict = IsStrict;
         RuntimeEnvironment environment = functionStrict
             ? new RuntimeEnvironment(_closure, strictMode: true)
             : new RuntimeEnvironment(_closure);
+        if (HasOwnThis)
+        {
+            environment.NewTarget = newTarget;
+            environment.ConstructionFrame = null;
+        }
 
         // Named function expression: bind the self-reference in the same scope
         // as parameters so recursion works (`function f(n) { return f(n-1); }`)
         // while keeping outer-variable distances consistent with the resolver.
         if (_declaration.Name != null)
         {
-            environment.Define(_declaration.Name.Lexeme, this);
+            environment.Define(_declaration.Name.Lexeme, _selfReference ?? this);
         }
 
         // Defaults can observe their own arguments binding before the body runs.
         if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
             environment.Define("arguments", new SharpTSArguments(arguments));
-        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         // Receiver bound via Bind() is stored on the function itself, not in an
         // extra closure scope — see field comment on _boundThis.
@@ -733,7 +791,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
         {
             environment.Define("this", _boundThis);
         }
-        else if (HasOwnThis && !_closure.TryGet("this", out _))
+        else if (HasOwnThis)
         {
             // ECMA-262: a function expression invoked as `fn()` (bare call) has
             // its own `this` — globalThis in sloppy mode, undefined in strict
@@ -749,6 +807,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
+        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         using var debugFrame = interpreter.EnterDebugFrame(
             _declaration.Name?.Lexeme ?? "<arrow>", environment, _declaration);
@@ -793,13 +852,18 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
         RuntimeEnvironment environment = functionStrict
             ? new RuntimeEnvironment(_closure, strictMode: true)
             : new RuntimeEnvironment(_closure);
+        if (HasOwnThis)
+        {
+            environment.NewTarget = RuntimeValue.Undefined;
+            environment.ConstructionFrame = null;
+        }
 
         // Named function expression: bind the self-reference in the same scope as
         // parameters so recursion works (`function f(n) { return f(n-1); }`) while
         // keeping outer-variable distances consistent with the resolver.
         if (_declaration.Name != null)
         {
-            environment.Define(_declaration.Name.Lexeme, this);
+            environment.Define(_declaration.Name.Lexeme, _selfReference ?? this);
         }
 
         // True arrows inherit arguments; own-this expressions snapshot before defaults.
@@ -809,19 +873,18 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             for (int i = 0; i < arguments.Length; i++) argsList.Add(arguments[i].ToObject());
             environment.Define("arguments", new SharpTSArguments(argsList));
         }
-        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
-
         if (_hasBoundThis)
         {
             environment.Define("this", _boundThis);
         }
-        else if (HasOwnThis && !_closure.TryGet("this", out _))
+        else if (HasOwnThis)
         {
             // ECMA-262: function-expression's own `this` is globalThis (sloppy)
             // or undefined (strict). Mirrors the legacy Call path above.
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
+        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
 
         using var debugFrame = interpreter.EnterDebugFrame(
             _declaration.Name?.Lexeme ?? "<arrow>", environment, _declaration);
@@ -866,14 +929,8 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
     /// <returns>A new SharpTSArrowFunction with 'this' bound.</returns>
     public SharpTSArrowFunction Bind(object thisObject)
     {
-        // Share user-property storage so `obj.fn[k] = v` round-trips across
-        // multiple `obj.fn` reads (each read produces a fresh bound copy via
-        // EvaluateGetOnRecordRV's Bind-on-read for method-call binding;
-        // SpeciesConstructor and similar protocols depend on
-        // `re.constructor[Symbol.species]` surviving from set to subsequent
-        // get). Eagerly materialize so a later mutation on either copy lands
-        // in the same dict instead of branching into a private one via the
-        // lazy `??=` init.
+        // Receiver views share metadata and user-property storage with the
+        // canonical function returned by property reads.
         return new SharpTSArrowFunction(this, thisObject);
     }
 

@@ -427,6 +427,7 @@ public partial class ILCompiler
             // pad with the `undefined` sentinel (JS semantics), not CLR null. (#640)
             MarkPadsUndefined(_innerFunctionMethods[func]);
             MarkFunctionLength(_innerFunctionMethods[func], func.Parameters);
+            DefineNewTargetBody(_innerFunctionMethods[func]);
         }
     }
 
@@ -443,7 +444,7 @@ public partial class ILCompiler
             {
                 _modules.CurrentPath = NormalizeToEmissionPath(fnModule);
             }
-            var method = _innerFunctionMethods[func];
+            var method = NewTargetBody(_innerFunctionMethods[func]);
             var hasDisplayClass = _innerFunctionDisplayClasses.TryGetValue(func, out var displayClass);
 
             var il = ((MethodBuilder)method).GetILGenerator();
@@ -452,6 +453,7 @@ public partial class ILCompiler
             _innerFunctionParamTypes.TryGetValue(func, out var innerParamTypes);
 
             var ctx = CreateModuleMemberContext(il, ((MethodBuilder)method));
+            ConfigureNewTargetBody(ctx, (MethodBuilder)method);
             ctx.IsStrictMode = _strictInnerFunctions.Contains(func)
                 || _isStrictMode
                 || BodyDeclaresUseStrict(func.Body);
@@ -465,7 +467,7 @@ public partial class ILCompiler
             // Enable self-reference: the function can call itself by name
             ctx.InnerFunctionMethodsByName = new Dictionary<string, MethodBuilder>
             {
-                [func.Name.Lexeme] = method
+                [func.Name.Lexeme] = _innerFunctionMethods[func]
             };
             ctx.InnerFunctionDisplayClassesByName = hasDisplayClass
                 ? new Dictionary<string, TypeBuilder> { [func.Name.Lexeme] = displayClass! }
@@ -724,7 +726,7 @@ public partial class ILCompiler
 
     private void PredeclareCapturedLexicalLocals(ILGenerator il, CompilationContext ctx, List<Stmt> statements)
     {
-        var lexicalTokens = new Dictionary<string, Token>(StringComparer.Ordinal);
+        var lexicalTokens = new Dictionary<string, object>(StringComparer.Ordinal);
         foreach (var statement in statements)
         {
             switch (statement)
@@ -735,6 +737,9 @@ public partial class ILCompiler
                 case Stmt.Var { IsVar: false } lexical:
                     lexicalTokens[lexical.Name.Lexeme] = lexical.Name;
                     break;
+                case Stmt.Class declaration when _runtimeClassDeclarations.ContainsKey(declaration):
+                    lexicalTokens[declaration.Name.Lexeme] = declaration;
+                    break;
                 case Stmt.Sequence sequence:
                     foreach (var nested in sequence.Statements)
                     {
@@ -742,6 +747,8 @@ public partial class ILCompiler
                             lexicalTokens[nestedConst.Name.Lexeme] = nestedConst.Name;
                         else if (nested is Stmt.Var { IsVar: false } nestedLexical)
                             lexicalTokens[nestedLexical.Name.Lexeme] = nestedLexical.Name;
+                        else if (nested is Stmt.Class nestedClass && _runtimeClassDeclarations.ContainsKey(nestedClass))
+                            lexicalTokens[nestedClass.Name.Lexeme] = nestedClass;
                     }
                     break;
             }
@@ -1080,7 +1087,7 @@ public partial class ILCompiler
                     if (existingLocal.LocalType.IsValueType)
                         il.Emit(OpCodes.Box, existingLocal.LocalType);
 
-                    if (ctx.Locals.TryGetTag(capturedVar, out var lexicalTag) && lexicalTag is Token)
+                    if (ctx.Locals.TryGetTag(capturedVar, out var lexicalTag) && lexicalTag is Token or Stmt.Class)
                     {
                         if (!ctx.LexicalCaptureWriteBacks.TryGetValue(capturedVar, out var writeBacks))
                             ctx.LexicalCaptureWriteBacks[capturedVar] = writeBacks = [];

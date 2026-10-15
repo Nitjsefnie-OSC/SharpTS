@@ -137,16 +137,17 @@ public class EmittedAsyncLocalStorageRuntimeTests
         Assert.Null(Read());
         var initial = new object();
         enter.Invoke(storage, [initial]);
-        Assert.Equal(42, Run("outer", () =>
+        // Host callback integers become guest Numbers at the $TSFunction boundary.
+        Assert.Equal(42d, Assert.IsType<double>(Run("outer", () =>
         {
             Assert.Equal("outer", Read());
             Assert.Equal("inner", Run("inner", Read));
             Assert.Equal("outer", Read());
-            Assert.Equal(42, Exit(() => { Assert.Null(Read()); return 42; }));
+            Assert.Equal(42d, Assert.IsType<double>(Exit(() => { Assert.Null(Read()); return 42; })));
             Assert.Equal("outer", Read());
             Assert.Null(get.Invoke(other, null));
             return 42;
-        }));
+        })));
         Assert.Same(initial, Read());
         var expected = new InvalidOperationException("callback failed");
         var runError = Assert.Throws<TargetInvocationException>(() => Run("throwing", () =>

@@ -8,6 +8,9 @@ public partial class StandaloneDllTests
     [Theory]
     [InlineData("issue")]
     [InlineData("data")]
+    [InlineData("setter-issue")]
+    [InlineData("name")]
+    [InlineData("parse-int")]
     public void Isolated_Issue2024NumberConstructorDescriptors_VerifyDefinitions(string name)
     {
         var row = NumberConstructorDescriptorTests.Cases().Single(row => (string)row[0] == name);

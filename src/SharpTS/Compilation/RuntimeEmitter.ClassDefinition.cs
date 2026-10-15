@@ -19,7 +19,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
         il.Emit(OpCodes.Ret);
-        var factoryType = typeof(Func<object[], object, object>);
+        var factoryType = typeof(Func<object[], object, object, object>);
         var template = type.DefineField("Template", _types.Type, FieldAttributes.Assembly);
         var factory = type.DefineField("Factory", factoryType, FieldAttributes.Assembly);
         var prototype = type.DefineField("Prototype", _types.Object, FieldAttributes.Assembly);
@@ -31,7 +31,7 @@ public partial class RuntimeEmitter
             ? type.DefineMethod("Create", MethodAttributes.Public | MethodAttributes.Static,
                 type, [_types.Type, factoryType, _types.String, _types.Double, _types.Object, _types.ObjectArray, _types.ObjectArray]) : null;
         var construct = type.DefineMethod("Construct", MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object, [type, _types.ObjectArray]);
+            _types.Object, [type, _types.ObjectArray, _types.Object]);
         var read = type.DefineMethod("ReadProperty", MethodAttributes.Public | MethodAttributes.Static,
             _types.Object, [type, _types.String]);
         var invoke = type.DefineMethod("Invoke", MethodAttributes.Public, _types.Object, [_types.ObjectArray]);
@@ -70,7 +70,7 @@ public partial class RuntimeEmitter
                 _types.Object, [_types.Object]) : null;
         var initializeReceiver = _features.UsesUserClasses
             ? type.DefineMethod("InitializeReceiver", MethodAttributes.Public | MethodAttributes.Static,
-                _types.Void, [_types.Object, _types.Object, _types.ObjectArray]) : null;
+                _types.Object, [_types.Object, _types.Object, _types.ObjectArray, _types.Object]) : null;
         var getParent = _features.UsesUserClasses
             ? type.DefineMethod("GetParent", MethodAttributes.Public | MethodAttributes.Static,
                 _types.Object, [_types.Object]) : null;
@@ -117,6 +117,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, definition);
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         il.Emit(OpCodes.Stfld, definitions.PrivateMembers);
+        il.Emit(OpCodes.Ldloc, definition);
+        il.Emit(OpCodes.Ldfld, definitions.PrivateMembers);
+        il.Emit(OpCodes.Ldstr, "'instanceStorage");
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(typeof(System.Runtime.CompilerServices.ConditionalWeakTable<object, Dictionary<string, object?>>)));
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObjectSetItem);
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         il.Emit(OpCodes.Newobj, runtime.ObjectStorage.Constructor);
         il.Emit(OpCodes.Stloc, prototype);
@@ -260,7 +265,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, definitions.Factory);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Func<object[], object, object>), "Invoke", _types.ObjectArray, _types.Object));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Func<object[], object, object, object>), "Invoke", _types.ObjectArray, _types.Object, _types.Object));
         il.Emit(OpCodes.Ret);
 
         il = definitions.ReadProperty.GetILGenerator();
@@ -272,21 +278,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, ownDescriptor);
         il.Emit(OpCodes.Ldloc, ownDescriptor);
         il.Emit(OpCodes.Brfalse, inheritedProperty);
-        var dataProperty = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, ownDescriptor);
-        il.Emit(OpCodes.Callvirt, storage.DescriptorGetter.GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, dataProperty);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, ownDescriptor);
-        il.Emit(OpCodes.Callvirt, storage.DescriptorGetter.GetGetMethod()!);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Call, runtime.Invocation.Method);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(dataProperty);
-        il.Emit(OpCodes.Ldloc, ownDescriptor);
-        il.Emit(OpCodes.Callvirt, storage.DescriptorValue.GetGetMethod()!);
-        il.Emit(OpCodes.Ret);
+        EmitDescriptorReadAndReturn(il, storage, ownDescriptor,
+            () => il.Emit(OpCodes.Ldarg_0), runtime.Invocation.Method,
+            runtime.Sentinels.UndefinedInstance, runtime.Sentinels.UndefinedType);
         il.MarkLabel(inheritedProperty);
         var noParentProperty = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);

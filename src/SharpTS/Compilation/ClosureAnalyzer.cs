@@ -17,6 +17,13 @@ namespace SharpTS.Compilation;
 /// <seealso cref="CompilationContext"/>
 public class ClosureAnalyzer : AstVisitorBase
 {
+    private readonly IReadOnlyDictionary<Stmt.Class, Expr.ClassExpr>? _runtimeClassDeclarations;
+
+    public ClosureAnalyzer(IReadOnlyDictionary<Stmt.Class, Expr.ClassExpr>? runtimeClassDeclarations = null)
+    {
+        _runtimeClassDeclarations = runtimeClassDeclarations;
+    }
+
     // Maps each function AST node to the set of variable names it captures
     private readonly Dictionary<object, HashSet<string>> _captures = [];
 
@@ -313,6 +320,8 @@ public class ClosureAnalyzer : AstVisitorBase
                 DeclareVariable(lt.Name.Lexeme, isPerIterationBinding: true);
             else if (stmt is Stmt.Const ct)
                 DeclareVariable(ct.Name.Lexeme, isPerIterationBinding: true);
+            else if (stmt is Stmt.Class cl)
+                DeclareVariable(cl.Name.Lexeme, isPerIterationBinding: true);
         }
     }
 
@@ -676,9 +685,21 @@ public class ClosureAnalyzer : AstVisitorBase
 
     protected override void VisitClass(Stmt.Class stmt)
     {
-        DeclareVariable(stmt.Name.Lexeme);
+        DeclareVariable(stmt.Name.Lexeme, isPerIterationBinding: true);
+        if (_runtimeClassDeclarations?.TryGetValue(stmt, out var runtimeExpression) == true)
+        {
+            VisitClassExpr(runtimeExpression);
+            return;
+        }
         foreach (var expression in ClassDefinitionExpressions.Enumerate(stmt))
             Visit(expression);
+        // Initializers are invocation scopes too. Their nested true arrows
+        // must capture the class receiver rather than become static arrows.
+        AnalyzeFunctionBody(stmt, [], stmt.Fields.Where(field => field.Initializer != null)
+            .Select(field => (Stmt)new Stmt.Expression(field.Initializer!))
+            .Concat((stmt.AutoAccessors ?? []).Where(accessor => accessor.Initializer != null)
+                .Select(accessor => (Stmt)new Stmt.Expression(accessor.Initializer!)))
+            .ToList());
         foreach (var method in stmt.Methods)
         {
             // Skip overload signatures (no body)
@@ -940,6 +961,16 @@ public class ClosureAnalyzer : AstVisitorBase
     protected override void VisitThis(Expr.This expr)
     {
         CaptureLexicalThis();
+    }
+
+    protected override void VisitNewTarget(Expr.NewTarget expr)
+    {
+        foreach (var frame in _functionStack)
+        {
+            if (frame is not Expr.ArrowFunction { HasOwnThis: false } arrow) break;
+            _captures[arrow].Add(CompilationContext.NewTargetCaptureName);
+            _allCapturedVariables.Add(CompilationContext.NewTargetCaptureName);
+        }
     }
 
     protected override void VisitSuper(Expr.Super expr)

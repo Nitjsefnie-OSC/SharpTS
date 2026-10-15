@@ -14,6 +14,14 @@ public static class FunctionBuiltIns
     private static readonly BuiltInMethod _call = BuiltInMethod.CreateV2("call", 0, int.MaxValue, Call).WithSpecLength(1).AsNonConstructor();
     private static readonly BuiltInMethod _apply = BuiltInMethod.CreateV2("apply", 0, 2, Apply).WithSpecLength(2).AsNonConstructor();
 
+    internal static BuiltInMethod CreateHasInstanceMethod()
+        => BuiltInMethod.CreateV2("[Symbol.hasInstance]", 0, int.MaxValue,
+            static (interpreter, receiver, args) => RuntimeValue.FromBoolean(
+                interpreter.OrdinaryHasInstance(
+                    args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance,
+                    receiver.ToObject())))
+            .WithSpecLength(1).AsNonConstructor();
+
     /// <summary>
     /// Returns the unbound singleton callable for a Function.prototype method
     /// (call/apply/bind), or null. Lets <c>Function.prototype.call</c> and
@@ -109,7 +117,8 @@ public static class FunctionBuiltIns
     private static RuntimeValue Bind(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var callable = receiver.ToObject() as ISharpTSCallable
-            ?? throw new Exception("Runtime Error: bind called on non-function.");
+            ?? throw new ThrowException(new SharpTSTypeError(
+                "Function.prototype.bind called on incompatible receiver"));
         if (callable is SharpTSProxy { IsCallable: false })
             throw new ThrowException(new SharpTSTypeError(
                 "Function.prototype.bind called on incompatible receiver"));
@@ -136,7 +145,8 @@ public static class FunctionBuiltIns
     private static RuntimeValue Call(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var callable = receiver.ToObject() as ISharpTSCallable
-            ?? throw new Exception("Runtime Error: call invoked on non-function.");
+            ?? throw new ThrowException(new SharpTSTypeError(
+                "Function.prototype.call called on incompatible receiver"));
 
         var thisArg = args.Length > 0 ? args[0].ToObject() : DefaultThisArgument(callable);
         var callArgs = new List<object?>(Math.Max(0, args.Length - 1));
@@ -148,32 +158,36 @@ public static class FunctionBuiltIns
 
     /// <summary>
     /// Function.prototype.apply(thisArg, argsArray)
-    /// Calls the function with the specified 'this' value and arguments as an array.
+    /// Calls the function with the specified 'this' value and an array-like argument list.
     /// </summary>
     private static RuntimeValue Apply(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var callable = receiver.ToObject() as ISharpTSCallable
-            ?? throw new Exception("Runtime Error: apply invoked on non-function.");
+            ?? throw new ThrowException(new SharpTSTypeError(
+                "Function.prototype.apply called on incompatible receiver"));
+        if (callable is SharpTSProxy { IsCallable: false })
+            throw new ThrowException(new SharpTSTypeError(
+                "Function.prototype.apply called on incompatible receiver"));
 
         var thisArg = args.Length > 0 ? args[0].ToObject() : DefaultThisArgument(callable);
         var argsArray = args.Length > 1 ? args[1].ToObject() : null;
 
-        List<object?> callArgs;
-        if (argsArray is null or SharpTSUndefined)
+        var callArgs = new List<object?>();
+        if (argsArray is not (null or SharpTSUndefined))
         {
-            callArgs = new List<object?>();
-        }
-        else if (argsArray is SharpTSArray tsArray)
-        {
-            callArgs = new List<object?>(tsArray);
-        }
-        else if (argsArray is List<object?> list)
-        {
-            callArgs = new List<object?>(list);
-        }
-        else
-        {
-            throw new Exception("Runtime Error: apply second argument must be an array or null.");
+            if (!args[1].IsObject)
+                throw new ThrowException(new SharpTSTypeError(
+                    "Function.prototype.apply argument list must be an object"));
+
+            long length = ArrayBuiltIns.ToLength(
+                interp.GetPropertyValue(argsArray, "length"), interp);
+            for (long index = 0; index < length; index++)
+            {
+                // Get every index, including holes and inherited/non-enumerable
+                // properties. The length is captured before any indexed getter.
+                callArgs.Add(interp.GetPropertyValue(argsArray,
+                    index.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            }
         }
 
         return RuntimeValue.FromBoxed(InvokeWithThis(interp, callable, thisArg, callArgs));
@@ -221,6 +235,7 @@ public static class FunctionBuiltIns
     internal static ISharpTSCallable? BindClassReceiver(ISharpTSCallable callable, object? receiver)
         => callable switch
         {
+            SharpTSFunction fn when fn.PrivateOwner != null && !fn.IsStaticMethod => fn.BindInstanceReceiver(receiver),
             SharpTSFunction fn when fn.PrivateOwner != null => fn.BindThis(receiver),
             SharpTSAsyncFunction fn when fn.PrivateOwner != null => fn.BindThisValue(receiver),
             SharpTSGeneratorFunction fn when fn.PrivateOwner != null => fn.BindToReceiver(receiver!),

@@ -56,14 +56,18 @@ public sealed class StringBooleanConstructorDescriptorTests
         foreach (string constructor in new[] { "String", "Boolean" })
         {
             foreach (object[] row in NumberConstructorDescriptorTests.Cases()
-                         .Where(row => (string)row[0] != "intrinsics"))
+                         // Reuse shared descriptor operations, excluding
+                         // Number-only intrinsic and parsing properties.
+                         .Where(row => (string)row[0] is "issue" or "data" or "accessors"
+                             or "setter-issue" or "name" or "invariants" or "symbols"))
             {
                 var modes = (string)row[0] is "issue" or "data" or "invariants"
                     ? new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
                     : new[] { ExecutionMode.Interpreted };
                 foreach (ExecutionMode mode in modes)
                     yield return [constructor + " " + row[0],
-                        ((string)row[1]).Replace("Number", constructor), row[2], mode];
+                        ((string)row[1]).Replace("Number", constructor),
+                        ((string)row[2]).Replace("Number", constructor), mode];
             }
             yield return [constructor + " native", NativeSource.Replace("CONSTRUCTOR", constructor),
                 constructor + " false false true 1 false false true\ntrue false false false true\n"

@@ -652,6 +652,12 @@ public partial class RuntimeEmitter
             _types.Boolean,
             [_types.Object, _types.Object]
         );
+        operators.OrdinaryHasInstance = typeBuilder.DefineMethod(
+            "OrdinaryHasInstance",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object, _types.Object]
+        );
     }
 
     private void EmitInstanceOf(TypeBuilder typeBuilder, EmittedOperatorRuntime operators, InstanceOfInputs inputs)
@@ -659,8 +665,6 @@ public partial class RuntimeEmitter
         var method = operators.InstanceOf;
 
         var il = method.GetILGenerator();
-        var falseLabel = il.DefineLabel();
-        var trueLabel = il.DefineLabel();
         var invalidRhsLabel = il.DefineLabel();
 
         // Protocol lookup precedes bound-target delegation and primitive-LHS
@@ -731,6 +735,34 @@ public partial class RuntimeEmitter
         GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
             "Right-hand side of instanceof is not callable");
         il.MarkLabel(callableRhsLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, operators.OrdinaryHasInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(invalidRhsLabel);
+        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
+            "Right-hand side of instanceof is not an object");
+
+        // The intrinsic invokes this core directly, without reading its own
+        // inherited Symbol.hasInstance property and recursively redispatching.
+        il = operators.OrdinaryHasInstance.GetILGenerator();
+        var falseLabel = il.DefineLabel();
+        var trueLabel = il.DefineLabel();
+        var callableReceiver = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, operators.TypeOf);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, callableReceiver);
+        if (inputs.Abort is not null)
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldsfld, inputs.Abort.NamespaceField);
+            il.Emit(OpCodes.Beq, callableReceiver);
+        }
+        il.Emit(OpCodes.Br, falseLabel);
+        il.MarkLabel(callableReceiver);
 
         // Delegate through each bound target so ordinary constructor prototype
         // lookup remains live and repeated bindings retain target identity.
@@ -1075,9 +1107,6 @@ public partial class RuntimeEmitter
         il.MarkLabel(falseLabel);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
-        il.MarkLabel(invalidRhsLabel);
-        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
-            "Right-hand side of instanceof is not an object");
         operators.MarkInstanceOfBodyEmitted();
     }
 

@@ -5,7 +5,7 @@ namespace SharpTS.Tests.SharedTests;
 
 /// <summary>
 /// Pins the compiled numeric-equality fast path in <c>ILEmitter.EmitEqualityBinary</c>: when both
-/// operands are statically <c>number</c>, <c>===</c>/<c>!==</c>/<c>==</c>/<c>!=</c> emit a raw IEEE
+/// operands are actually emitted as native doubles, <c>===</c>/<c>!==</c>/<c>==</c>/<c>!=</c> emit a raw IEEE
 /// <c>ceq</c> on doubles instead of boxing both operands, dispatching <c>Object.Equals</c>, and
 /// boxing the boolean result. This mirrors the long-standing numeric relational fast path
 /// (<c>&lt;</c>/<c>&gt;</c>) directly above it and was the dominant per-iteration cost in

@@ -45,6 +45,7 @@ public abstract class AstVisitorBase
             case Expr.SetPrivate e: VisitSetPrivate(e); break;
             case Expr.CallPrivate e: VisitCallPrivate(e); break;
             case Expr.This e: VisitThis(e); break;
+            case Expr.NewTarget e: VisitNewTarget(e); break;
             case Expr.New e: VisitNew(e); break;
             case Expr.ArrayLiteral e: VisitArrayLiteral(e); break;
             case Expr.ObjectLiteral e: VisitObjectLiteral(e); break;
@@ -53,6 +54,7 @@ public abstract class AstVisitorBase
             case Expr.Super e: VisitSuper(e); break;
             case Expr.CompoundAssign e: VisitCompoundAssign(e); break;
             case Expr.CompoundSet e: VisitCompoundSet(e); break;
+            case Expr.CompoundSetPrivate e: VisitCompoundSetPrivate(e); break;
             case Expr.CompoundSetIndex e: VisitCompoundSetIndex(e); break;
             case Expr.LogicalAssign e: VisitLogicalAssign(e); break;
             case Expr.LogicalSet e: VisitLogicalSet(e); break;
@@ -249,6 +251,8 @@ public abstract class AstVisitorBase
             Visit(arg);
     }
 
+    protected virtual void VisitNewTarget(Expr.NewTarget expr) { }
+
     protected virtual void VisitThis(Expr.This expr)
     {
         // Leaf node - no children to visit
@@ -300,6 +304,12 @@ public abstract class AstVisitorBase
     }
 
     protected virtual void VisitCompoundSet(Expr.CompoundSet expr)
+    {
+        Visit(expr.Object);
+        Visit(expr.Value);
+    }
+
+    protected virtual void VisitCompoundSetPrivate(Expr.CompoundSetPrivate expr)
     {
         Visit(expr.Object);
         Visit(expr.Value);

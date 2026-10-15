@@ -16,7 +16,7 @@ public partial class ILCompiler
         while (declaration.Methods.Any(method => method.Name.Lexeme == name))
             name += "_";
         var factory = owner.DefineMethod(name, MethodAttributes.Private | MethodAttributes.Static,
-            _types.Object, [_types.ObjectArray]);
+            _types.Object, [_types.ObjectArray, _types.Object]);
         owner.SetCustomAttribute(_runtime.DynamicConstruction.FactoryAttributeConstructor,
             CustomAttributeEncoder.Encode(_runtime.DynamicConstruction.FactoryAttributeConstructor, name));
 
@@ -128,7 +128,9 @@ public partial class ILCompiler
 
         Type self = owner.IsGenericTypeDefinition
             ? EmitGenerics.MakeGenericType(owner, owner.GetGenericArguments()) : owner;
-        il.Emit(OpCodes.Newobj, self == owner ? constructor : EmitterTypeHelpers.ResolveConstructor(self, constructor));
+        var bodyConstructor = NewTargetConstructor(constructor);
+        if (bodyConstructor != constructor) il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Newobj, self == owner ? bodyConstructor : EmitterTypeHelpers.ResolveConstructor(self, bodyConstructor));
         il.Emit(OpCodes.Call, _runtime.DynamicConstruction.ResolveClassReturn);
         if (!publishesArguments)
         {

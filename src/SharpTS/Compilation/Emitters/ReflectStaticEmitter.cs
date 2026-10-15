@@ -96,8 +96,7 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
                 else
                     il.Emit(OpCodes.Ldnull);
 
-                il.Emit(OpCodes.Call, ctx.Runtime!.StringCoercion.ToJsString);
-                var keyLocal = il.DeclareLocal(ctx.Types.String);
+                var keyLocal = il.DeclareLocal(ctx.Types.Object);
                 il.Emit(OpCodes.Stloc, keyLocal);
                 il.Emit(OpCodes.Ldloc, targetLocal);
                 il.Emit(OpCodes.Ldloc, keyLocal);
@@ -110,7 +109,7 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
                 {
                     il.Emit(OpCodes.Ldloc, targetLocal);
                 }
-                il.Emit(OpCodes.Call, ctx.Runtime.Reflect.Get);
+                il.Emit(OpCodes.Call, ctx.Runtime!.Reflect.Get);
                 return true;
             }
 
@@ -332,6 +331,7 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
             case "construct":
             {
                 // Reflect.construct(target, argsList, newTarget?)
+                var target = il.DeclareLocal(ctx.Types.Object);
                 if (arguments.Count > 0)
                 {
                     emitter.EmitExpression(arguments[0]);
@@ -340,6 +340,8 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
                 else
                     il.Emit(OpCodes.Ldnull);
 
+                il.Emit(OpCodes.Stloc, target);
+                il.Emit(OpCodes.Ldloc, target);
                 if (arguments.Count > 1)
                 {
                     emitter.EmitExpression(arguments[1]);
@@ -355,7 +357,7 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
                     emitter.EmitBoxIfNeeded(arguments[2]);
                 }
                 else
-                    il.Emit(OpCodes.Ldnull);
+                    il.Emit(OpCodes.Ldloc, target);
 
                 il.Emit(OpCodes.Call, ctx.Runtime!.Reflect.RequireNamespace().Construct);
                 return true;

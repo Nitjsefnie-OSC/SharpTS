@@ -596,6 +596,7 @@ public partial class TypeChecker
         }
 
         var thisFuncType = new TypeInfo.Function(paramTypes, funcReturnType, requiredParams, hasRest, thisType, paramNames);
+        _newTargetSourceTypes[funcStmt] = thisFuncType;
         RegisterEditorSignature(thisFuncType, funcStmt, funcStmt.Name);
         var overloadKey = (_environment, funcName);
 
@@ -748,6 +749,7 @@ public partial class TypeChecker
         // Both callers guarantee a body: CheckFunctionDeclaration returns early for body-less
         // overload/ambient signatures, and RefineHoistedFunctionReturnType filters them out.
         List<Stmt> body = funcStmt.Body!;
+        _newTargetSourceTypes[funcStmt] = new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, thisType, paramNames);
 
         // The enclosing environment, where the (possibly refined) function type is registered.
         TypeEnvironment previousEnv = _environment;

@@ -124,7 +124,9 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Dup);
                 IL.Emit(OpCodes.Ldc_I4, i);
                 var captureName = captureOrder[i];
-                if (captureName == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+                if (captureName == "this" && _resolver.TryLoadThisBindingCell()) { }
+                else if (captureName == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
+                else if (captureName == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
                 else if (arrowBuilder.StandaloneLiveCaptureFields.TryGetValue(captureName, out var liveField))
                 {
                     StandaloneAsyncCaptureEmitter.EmitReference(IL, _ctx, liveField, captureName);
@@ -355,7 +357,7 @@ public partial class ILEmitter
             // so declaration emission can refresh the snapshot with the
             // initialized value, preserving the binding after the TDZ ends.
             if (_ctx.Locals.TryGetTag(capturedVar, out var lexicalTag)
-                && lexicalTag is Token)
+                && lexicalTag is Token or Stmt.Class)
             {
                 var lexicalDcInstance = IL.DeclareLocal(displayClass);
                 IL.Emit(OpCodes.Dup);
@@ -385,7 +387,9 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Dup); // Keep display class on stack
 
             // Load the captured variable's current value
-            if (capturedVar == CompilationContext.SuperOwnerCaptureName)
+            if (capturedVar == CompilationContext.NewTargetCaptureName)
+                EmitNewTargetValue();
+            else if (capturedVar == CompilationContext.SuperOwnerCaptureName)
             {
                 if (!TryEmitOwnedClassDefinition())
                     throw new InvalidOperationException("A static super closure requires its lexical class definition.");
@@ -407,7 +411,7 @@ public partial class ILEmitter
                 // Routing through LoadThis() also picks up the minimatch
                 // `.map(s => s.map(ss => this.parse(ss)))` chain (case 1 fires for the
                 // parent arrow; class-method arg0 for the outermost).
-                _resolver.LoadThis();
+                if (!_resolver.TryLoadThisBindingCell()) _resolver.LoadThis();
             }
             else if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
             {

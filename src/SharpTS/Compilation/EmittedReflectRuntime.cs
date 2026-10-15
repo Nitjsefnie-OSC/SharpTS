@@ -17,6 +17,13 @@ public sealed class EmittedReflectRuntime
         internal set => SetHandle(ref _get, value);
     }
 
+    private MethodBuilder? _toPropertyKey;
+    public MethodBuilder ToPropertyKey
+    {
+        get => Require(_toPropertyKey);
+        internal set => SetHandle(ref _toPropertyKey, value);
+    }
+
     public EmittedReflectAssignment? Assignment { get; private set; }
 
     public EmittedReflectAssignment RequireAssignment() => Assignment
@@ -76,6 +83,7 @@ public sealed class EmittedReflectRuntime
     {
         EnsureMutable();
         _ = Get;
+        _ = ToPropertyKey;
         if (Namespace is not null)
             _ = RequireAssignment();
 

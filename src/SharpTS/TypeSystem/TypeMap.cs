@@ -43,6 +43,10 @@ public class TypeMap
     private readonly HashSet<Stmt.Var> _stableNumericStateMachineLocals = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Stmt.Parameter> _stableNumericStateMachineParameters = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.Get> _stableExactPrimitiveMethodCalls = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Expr.Get> _nativePrimitiveFieldMethodCalls = new(ReferenceEqualityComparer.Instance);
+
+    internal void MarkNativePrimitiveFieldMethodCall(Expr.Get method) => _nativePrimitiveFieldMethodCalls.Add(method);
+    internal bool IsNativePrimitiveFieldMethodCall(Expr.Get method) => _nativePrimitiveFieldMethodCalls.Contains(method);
     private readonly HashSet<Expr> _stablePrimitivePromiseAllIterables = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrayLiteral> _stablePrimitivePromiseAllInputInitializers = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.Variable> _stablePrimitivePromiseAllPushReceivers = new(ReferenceEqualityComparer.Instance);
@@ -81,6 +85,14 @@ public class TypeMap
     /// CLR signature (override-safe value-type default-parameter widening, #737).
     /// </summary>
     public IReadOnlyDictionary<string, TypeInfo.Class> ClassTypes => _classTypes;
+
+    // Identity-backed inventory includes same-named declarations in distinct
+    // scopes and class expressions; name lookup alone is not a whole-program set.
+    internal IEnumerable<TypeInfo.Class> CheckedClassDefinitions =>
+        _classDeclarations.Values.Concat(_classExprTypes.Values);
+
+    internal bool HasClassExpressionHeritage =>
+        _classExprTypes.Keys.Any(expression => expression.SuperclassExpr is not null);
 
     /// <summary>
     /// Registers a class expression type by expression reference for IL compiler lookup.

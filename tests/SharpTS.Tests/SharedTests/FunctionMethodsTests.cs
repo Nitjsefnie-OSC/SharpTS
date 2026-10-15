@@ -60,7 +60,7 @@ public class FunctionMethodsTests
     }
 
     [Theory, ModeData]
-    public void Bind_Rejects_NonCallable_FunctionPrototype_Inheritor(ExecutionMode mode)
+    public void PrototypeMethods_Reject_NonCallable_FunctionPrototype_Inheritor(ExecutionMode mode)
     {
         var source = """
             const value: any = Object.create(Function.prototype);
@@ -70,9 +70,21 @@ public class FunctionMethodsTests
             } catch (error) {
                 console.log(error instanceof TypeError);
             }
+            try {
+                value.call();
+                console.log(false);
+            } catch (error) {
+                console.log(error instanceof TypeError);
+            }
+            try {
+                value.apply();
+                console.log(false);
+            } catch (error) {
+                console.log(error instanceof TypeError);
+            }
             """;
 
-        Assert.Equal("true\n", TestHarness.Run(source, mode));
+        Assert.Equal("true\ntrue\ntrue\n", TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

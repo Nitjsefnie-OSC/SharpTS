@@ -1110,6 +1110,10 @@ public partial class ILCompiler
                 AnalyzeArrowExprForAwaits(cs.Object, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 AnalyzeArrowExprForAwaits(cs.Value, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
+            case Expr.CompoundSetPrivate privateCompound:
+                AnalyzeArrowExprForAwaits(privateCompound.Object, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
+                AnalyzeArrowExprForAwaits(privateCompound.Value, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
+                break;
             case Expr.CompoundSetIndex csi:
                 AnalyzeArrowExprForAwaits(csi.Object, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 AnalyzeArrowExprForAwaits(csi.Index, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
@@ -1383,6 +1387,7 @@ public partial class ILCompiler
 
         // Create a new context for arrow MoveNext emission
         var ctx = CreateNestedAsyncArrowContext(il, parentCtx, arrowBuilder.MoveNextMethod);
+        ctx.CapturesConstructorThisCell = _constructorReceiverArrows.Contains(arrow);
         if (arrowBuilder.CapturedFieldMap.ContainsKey(CompilationContext.SuperOwnerCaptureName))
             ctx.ClassDefinitionVariableName = CompilationContext.SuperOwnerCaptureName;
 
@@ -1953,6 +1958,7 @@ public partial class ILCompiler
             if (arrowBuilder.StandaloneCaptureFields.ContainsKey(CompilationContext.SuperOwnerCaptureName))
                 ctx.ClassDefinitionVariableName = CompilationContext.SuperOwnerCaptureName;
             ctx.HasGuestReceiver = _guestReceiverArrows.Contains(arrow);
+            ctx.CapturesConstructorThisCell = _constructorReceiverArrows.Contains(arrow);
             ApplyCapturedTopLevelVariableAccess(ctx);
             // #1222: lets the shadow-capture check distinguish a #1201-lifted binding
             // (home = entry-DC field, must stay live) from a block-scoped shadow

@@ -107,119 +107,9 @@ public partial class Interpreter
             }
         }
 
-        // Evaluate the callee expression to get the class/constructor
-        object? klass = (await ctx.EvaluateExprAsync(newExpr.Callee)).ToObject();
-        List<object?> evaluatedArguments = await EvaluateNewArgumentsCore(ctx, newExpr.Arguments);
-
-        while (klass is BoundFunction boundConstructor)
-        {
-            evaluatedArguments = boundConstructor.PrependArguments(evaluatedArguments);
-            klass = boundConstructor.Target;
-        }
-
-        // Handle Proxy construct trap
-        if (klass is SharpTSProxy proxy)
-        {
-            return proxy.TrapConstruct(evaluatedArguments, this);
-        }
-
-        // Constructor-function pattern: `function Foo() { if (!(this instanceof Foo)) return new Foo(); this.x = 1; }`.
-        // Node's CJS packages (e.g. yallist) rely on JS `new` semantics
-        // binding `this` to a fresh object whose prototype is Foo.prototype.
-        // Without this, `self instanceof Yallist` is false and packages
-        // recurse infinitely.
-        if (klass is SharpTSFunction { IsConstructible: true } userFn)
-        {
-            // Build a new `this` object backed by the function's prototype.
-            if (!userFn.TryGetProperty("prototype", out var protoObj))
-            {
-                protoObj = CreateFunctionPrototype(userFn);
-                userFn.SetProperty("prototype", protoObj);
-            }
-            var newThis = CreateConstructedThis(protoObj);
-            var bound = userFn.BindThis(newThis);
-            var result = bound.CallBoxed(this, evaluatedArguments);
-            // JS spec: if the constructor returns an object (incl. a function), use
-            // it; otherwise use the new `this` (#446).
-            return IsConstructorReturnObject(result) ? result : newThis;
-        }
-
-        // Function expressions (named or anonymous) used as constructors:
-        // `var Ctor = function(x) { this.x = x; }; new Ctor(1);` or
-        // `(function Foo(){...})()`-defined constructors. Same semantics as
-        // SharpTSFunction case above — without this, `new fnExpr(...)` falls
-        // through to the generic ISharpTSCallable branch which loses the
-        // `this`-binding/prototype-link/return-value-fallback dance and
-        // returns null. The harness's
-        // `Test262Error = function(m) { __orig.call(this,m); this.name = ... }`
-        // wrapper depends on this — without it, `new Test262Error("x")` is
-        // null and every assert.* throws "Only instances and objects have
-        // properties" instead of the spec'd Test262Error.
-        if (klass is SharpTSArrowFunction { IsConstructible: true } userArrowFn)
-        {
-            // Function expressions have prototype too — lazy-create on first read.
-            if (!userArrowFn.TryGetProperty("prototype", out var protoObj))
-            {
-                protoObj = CreateFunctionPrototype(userArrowFn);
-                userArrowFn.SetProperty("prototype", protoObj);
-            }
-            var newThis = CreateConstructedThis(protoObj);
-            var bound = userArrowFn.Bind(newThis);
-            var result = bound.CallBoxed(this, evaluatedArguments);
-            return IsConstructorReturnObject(result) ? result : newThis;
-        }
-
-        // Prototype-method wrappers and Object.prototype unbound methods are
-        // not constructors per ECMA-262. They look callable but `new` on them
-        // must surface a TypeError (covers \`new Error.prototype.toString()\`
-        // and the not-a-constructor.js Test262 cluster). BuiltInMethod
-        // explicitly stays constructable here because Intl.DateTimeFormat,
-        // RegExp, Date, Map, Set, etc. are registered as BuiltInMethod and
-        // need to support \`new\`.
-        if (IsNonConstructorWrapper(klass))
-        {
-            throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
-        }
-
-        if (klass is SharpTSStringNamespace)
-            return BuiltInConstructorFactory.TryCreate(
-                BuiltInNames.String, evaluatedArguments, this);
-        if (klass is SharpTSNumberNamespace)
-            return BuiltInConstructorFactory.TryCreate(
-                BuiltInNames.Number, evaluatedArguments, this);
-        if (klass is SharpTSBooleanNamespace)
-            return BuiltInConstructorFactory.TryCreate(
-                BuiltInNames.Boolean, evaluatedArguments, this);
-
-        // Handle callable constructors (like SharpTSEventEmitterConstructor)
-        // These implement ISharpTSCallable and are used for module-imported types.
-        if (klass is ISharpTSCallable callable && klass is not SharpTSClass)
-        {
-            try
-            {
-                return callable.CallBoxed(this, evaluatedArguments);
-            }
-            catch (Exception ex) when (IsNativeConstructorFailure(ex))
-            {
-                throw new ThrowException(new SharpTSError(ex.Message));
-            }
-        }
-
-        if (klass is not SharpTSClass sharpClass)
-        {
-            // ECMA-262: invoking `new X` on a non-constructor surfaces as
-            // TypeError. Routed through ThrowException so guest code sees a
-            // real TypeError instance for `assert.throws(TypeError, ...)`.
-            throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
-        }
-
-        // Runtime check for abstract class instantiation (backup to type checker)
-        if (sharpClass.IsAbstract)
-        {
-            throw new InterpreterException($"Cannot create an instance of abstract class '{sharpClass.Name}'.");
-        }
-
-        return sharpClass.CallBoxed(this, evaluatedArguments);
+        object? target = (await ctx.EvaluateExprAsync(newExpr.Callee)).ToObject();
+        List<object?> arguments = await EvaluateNewArgumentsCore(ctx, newExpr.Arguments);
+        return Construct(target, arguments, target);
     }
 
     /// <summary>
@@ -244,52 +134,67 @@ public partial class Interpreter
     /// SpeciesConstructor in RegExp Symbol.split / Symbol.matchAll).
     /// </summary>
     internal object? Construct(object? callable, IList<object?> args)
+        => Construct(callable, args, callable);
+
+    internal object? Construct(object? callable, IList<object?> args, object? newTarget)
     {
+        if (ReflectBuiltIns.IsNotConstructor(callable) || ReflectBuiltIns.IsNotConstructor(newTarget))
+            throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
+
         while (callable is BoundFunction boundConstructor)
         {
             args = boundConstructor.PrependArguments(args);
+            if (ReferenceEquals(newTarget, boundConstructor))
+                newTarget = boundConstructor.Target;
             callable = boundConstructor.Target;
         }
-        if (IsNonConstructorWrapper(callable))
-        {
-            throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
-        }
+
+        if (callable is SharpTSProxy proxy)
+            return proxy.TrapConstruct([.. args], this, newTarget);
         if (callable is SharpTSFunction userFn)
         {
-            if (!userFn.TryGetProperty("prototype", out var protoObj))
-            {
-                protoObj = CreateFunctionPrototype(userFn);
-                userFn.SetProperty("prototype", protoObj);
-            }
-            var newThis = CreateConstructedThis(protoObj);
-            var bound = userFn.BindThis(newThis);
-            var result = bound.CallBoxed(this, [.. args]);
+            var newThis = CreateConstructedThis(GetConstructorPrototype(newTarget));
+            var result = userFn.BindThis(newThis).CallConstructed(this, [.. args], newTarget);
             return IsConstructorReturnObject(result) ? result : newThis;
         }
         if (callable is SharpTSArrowFunction { IsConstructible: true } arrowFn)
         {
-            if (!arrowFn.TryGetProperty("prototype", out var protoObj))
-            {
-                protoObj = CreateFunctionPrototype(arrowFn);
-                arrowFn.SetProperty("prototype", protoObj);
-            }
-            var newThis = CreateConstructedThis(protoObj);
-            var bound = arrowFn.Bind(newThis);
-            var result = bound.CallBoxed(this, [.. args]);
+            var newThis = CreateConstructedThis(GetConstructorPrototype(newTarget));
+            var result = arrowFn.Bind(newThis).CallConstructed(this, [.. args], newTarget);
             return IsConstructorReturnObject(result) ? result : newThis;
         }
-        // Built-in constructor (e.g. RegExp via SharpTSBuiltInConstructor).
-        // BuiltInConstructorFactory handles the factory dispatch.
-        if (callable is SharpTSBuiltInConstructor builtIn)
+        if (callable is SharpTSClass sharpClass)
         {
+            if (sharpClass.IsAbstract)
+                throw new InterpreterException($"Cannot create an instance of abstract class '{sharpClass.Name}'.");
+            return sharpClass.Construct(this, [.. args], newTarget);
+        }
+        if (callable is SharpTSBuiltInConstructor builtIn && BuiltInConstructorFactory.IsBuiltIn(builtIn.Name))
             return BuiltInConstructorFactory.TryCreate(builtIn.Name, [.. args], this);
-        }
-        // Fallback: treat as a callable; Reflect.construct shape.
-        if (callable is ISharpTSCallable c)
+        if (callable is SharpTSStringNamespace)
+            return BuiltInConstructorFactory.TryCreate(BuiltInNames.String, [.. args], this);
+        if (callable is SharpTSNumberNamespace)
+            return BuiltInConstructorFactory.TryCreate(BuiltInNames.Number, [.. args], this);
+        if (callable is SharpTSBooleanNamespace)
+            return BuiltInConstructorFactory.TryCreate(BuiltInNames.Boolean, [.. args], this);
+        if (callable is ISharpTSCallable nativeConstructor)
         {
-            return c.CallBoxed(this, [.. args]);
+            try
+            {
+                return nativeConstructor.CallBoxed(this, [.. args]);
+            }
+            catch (Exception ex) when (IsNativeConstructorFailure(ex))
+            {
+                throw new ThrowException(new SharpTSError(ex.Message));
+            }
         }
-        throw new InterpreterException("TypeError: Construct called on non-callable.");
+        throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
+    }
+
+    private object GetConstructorPrototype(object? newTarget)
+    {
+        object? prototype = GetPropertyValue(newTarget, "prototype");
+        return IsConstructorReturnObject(prototype) ? prototype! : GetObjectPrototype();
     }
 
     /// <summary>
@@ -342,104 +247,9 @@ public partial class Interpreter
             }
         }
 
-        // Evaluate the callee expression to get the class/constructor
-        object? klass = Evaluate(newExpr.Callee);
-        List<object?> evaluatedArguments = EvaluateNewArguments(newExpr.Arguments);
-
-        while (klass is BoundFunction boundConstructor)
-        {
-            evaluatedArguments = boundConstructor.PrependArguments(evaluatedArguments);
-            klass = boundConstructor.Target;
-        }
-
-        // Handle Proxy construct trap
-        if (klass is SharpTSProxy proxy)
-        {
-            return proxy.TrapConstructRV(evaluatedArguments, this);
-        }
-
-        // Constructor-function pattern: `function Foo() { this.x = 1 }` called with `new`.
-        // Build a fresh `this` with prototype linkage, bind it, then call —
-        // so `this instanceof Foo` returns true (Node CJS pattern used by
-        // e.g. yallist, EventEmitter sub-classes).
-        if (klass is SharpTSFunction { IsConstructible: true } userFn)
-        {
-            if (!userFn.TryGetProperty("prototype", out var protoObj))
-            {
-                protoObj = CreateFunctionPrototype(userFn);
-                userFn.SetProperty("prototype", protoObj);
-            }
-            var newThis = CreateConstructedThis(protoObj);
-            var bound = userFn.BindThis(newThis);
-            var result = bound.CallBoxed(this, evaluatedArguments);
-            return RuntimeValue.FromBoxed(IsConstructorReturnObject(result) ? result : newThis);
-        }
-
-        // Function expressions used as constructors — same shape as
-        // SharpTSFunction case above. The Test262 harness's Test262Error
-        // wrapper relies on this (`new Test262Error("...")`); without the
-        // case, every assert.* throw lands as null instead of a usable error.
-        if (klass is SharpTSArrowFunction { IsConstructible: true } userArrowFn)
-        {
-            if (!userArrowFn.TryGetProperty("prototype", out var protoObj))
-            {
-                protoObj = CreateFunctionPrototype(userArrowFn);
-                userArrowFn.SetProperty("prototype", protoObj);
-            }
-            var newThis = CreateConstructedThis(protoObj);
-            var bound = userArrowFn.Bind(newThis);
-            var result = bound.CallBoxed(this, evaluatedArguments);
-            return RuntimeValue.FromBoxed(IsConstructorReturnObject(result) ? result : newThis);
-        }
-
-        // Prototype-method wrappers and Object.prototype unbound methods are
-        // not constructors per ECMA-262 — see async path above.
-        if (IsNonConstructorWrapper(klass))
-        {
-            throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
-        }
-
-        // A constructor obtained through an alias still performs [[Construct]];
-        // calling the namespace would incorrectly return a primitive String.
-        if (klass is SharpTSStringNamespace)
-            return BuiltInConstructorFactory.TryCreateRV(
-                BuiltInNames.String, evaluatedArguments, this);
-        if (klass is SharpTSNumberNamespace)
-            return BuiltInConstructorFactory.TryCreateRV(
-                BuiltInNames.Number, evaluatedArguments, this);
-        if (klass is SharpTSBooleanNamespace)
-            return BuiltInConstructorFactory.TryCreateRV(
-                BuiltInNames.Boolean, evaluatedArguments, this);
-
-        // Handle callable constructors. Many built-in constructors are
-        // registered as BuiltInMethod, so we accept any ISharpTSCallable here.
-        if (klass is ISharpTSCallable callable && klass is not SharpTSClass)
-        {
-            try
-            {
-                return RuntimeValue.FromBoxed(callable.CallBoxed(this, evaluatedArguments));
-            }
-            catch (Exception ex) when (IsNativeConstructorFailure(ex))
-            {
-                throw new ThrowException(new SharpTSError(ex.Message));
-            }
-        }
-
-        if (klass is not SharpTSClass sharpClass)
-        {
-            // ECMA-262: invoking `new X` on a non-constructor surfaces as
-            // TypeError. Routed through ThrowException so guest code sees a
-            // real TypeError instance for `assert.throws(TypeError, ...)`.
-            throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
-        }
-
-        // Runtime check for abstract class instantiation (backup to type checker)
-        if (sharpClass.IsAbstract)
-        {
-            throw new InterpreterException($"Cannot create an instance of abstract class '{sharpClass.Name}'.");
-        }
-
-        return sharpClass.CallRV(this, evaluatedArguments);
+        object? target = Evaluate(newExpr.Callee);
+        List<object?> arguments = EvaluateNewArguments(newExpr.Arguments);
+        return RuntimeValue.FromBoxed(Construct(target, arguments, target));
     }
 
     /// <summary>
@@ -479,7 +289,7 @@ public partial class Interpreter
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/classes.html#this-at-runtime-in-classes">TypeScript this in Classes</seealso>
     private RuntimeValue EvaluateThis(Expr.This expr)
     {
-        return _environment.TryGet("this", out var value)
+        return _environment.TryGetThis(out var value)
             ? value
             : RuntimeValue.FromBoxed(GlobalThis);
     }
@@ -595,7 +405,7 @@ public partial class Interpreter
         => GetPropertyValueFromChain(obj, name, receiver);
 
     private object? GetPropertyValueFromChain(
-        object? current, string name, object? receiver)
+        object? current, string name, object? receiver, bool bindClassMethods = false)
     {
         for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
         {
@@ -678,6 +488,20 @@ public partial class Interpreter
                 if (record.HasSetter(name)) return SharpTSUndefined.Instance;
                 if (record.Fields.TryGetValue(name, out var value)) return value;
                 current = GetRecordPrototype(record);
+                continue;
+            }
+
+            if (current is SharpTSClassPrototype classPrototype)
+            {
+                if (TryReadDescriptor(classPrototype.GetOwnPropertyDescriptor(name),
+                        receiver, out var prototypeValue))
+                    return prototypeValue;
+                if (classPrototype.TryGetOwnMember(name, out var member))
+                    return bindClassMethods && member is ISharpTSCallable method
+                        && member is not SharpTSClass
+                        ? SharpTSClass.BindMethodToReceiver(method, receiver!)
+                        : member;
+                current = ObjectBuiltIns.PrototypeOf(this, classPrototype);
                 continue;
             }
 
@@ -817,7 +641,28 @@ public partial class Interpreter
             {
                 if (TryReadDescriptor(prototype.GetOwnPropertyDescriptor(symbol), receiver, out var value))
                     return value;
-                current = prototype.Class.Superclass?.Prototype ?? (object)GetObjectPrototype();
+                current = prototype.Class.Superclass?.Prototype
+                    ?? (ReferenceEquals(prototype.Class, SharpTSArrayClass.ArrayBase)
+                        ? (object)GetArrayPrototype() : GetObjectPrototype());
+                continue;
+            }
+            if (current is SharpTSArrayPrototype arrayPrototype)
+            {
+                var symbols = (ISharpTSSymbolPropertyBag)arrayPrototype;
+                if (symbols.TryGetSymbolAccessor(symbol, out var getter, out _))
+                    return getter is null
+                        ? SharpTSUndefined.Instance
+                        : BindAccessorToObject(getter, receiver).CallBoxed(this, []);
+                if (symbols.HasSymbolProperty(symbol))
+                    return symbols.GetBySymbol(symbol);
+                if (ReferenceEquals(symbol, SharpTSSymbol.Iterator))
+                {
+                    var iterator = arrayPrototype.GetMember("values");
+                    return iterator is ArrayPrototypeMethodWrapper wrapper && receiver is SharpTSArray
+                        ? wrapper.Bind(receiver)
+                        : iterator ?? SharpTSUndefined.Instance;
+                }
+                current = GetObjectPrototype();
                 continue;
             }
             if (current is SharpTSObject record)
@@ -873,11 +718,24 @@ public partial class Interpreter
                         : BindAccessorToObject(getter, receiver).CallBoxed(this, []);
                 if (array.HasSymbolProperty(symbol))
                     return array.GetBySymbol(symbol);
-                if (ReferenceEquals(symbol, SharpTSSymbol.Iterator))
-                    return PerformIndexGet(null!, array, symbol).ToObject();
-                current = array.HasExplicitPrototype
-                    ? array.ExplicitPrototype
-                    : GetArrayPrototype();
+                if (array.HasExplicitPrototype)
+                {
+                    current = array.ExplicitPrototype;
+                    continue;
+                }
+                if (array is SharpTSArraySubclassInstance subclass
+                    && TryReadDescriptor(subclass.Klass.FindInstanceSymbolPropertyDescriptor(symbol),
+                        receiver, out var inheritedValue))
+                    return inheritedValue;
+                current = GetArrayPrototype();
+                continue;
+            }
+
+            if (current is ISharpTSPrimitiveConstructor primitiveConstructor)
+            {
+                if (TryReadDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(symbol), receiver, out var value))
+                    return value;
+                current = GetFunctionPrototype();
                 continue;
             }
 
@@ -912,8 +770,7 @@ public partial class Interpreter
 
     internal object? GetPrimitiveConstructorSymbolValue(
         ISharpTSPrimitiveConstructor primitiveConstructor, SharpTSSymbol symbol, object? receiver)
-        => TryReadDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(symbol), receiver, out var value)
-            ? value : SharpTSUndefined.Instance;
+        => GetSymbolPropertyValue(primitiveConstructor, symbol, receiver!);
 
     /// <summary>
     /// ECMA-262 §7.3.11 HasProperty(O, P): true when <paramref name="obj"/> or
@@ -1000,6 +857,12 @@ public partial class Interpreter
             {
                 if (FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(symbol) is not null) return true;
                 current = ObjectBuiltIns.PrototypeOf(this, functionObject);
+                continue;
+            }
+            if (current is ISharpTSPrimitiveConstructor primitiveConstructor)
+            {
+                if (primitiveConstructor.GetOwnPropertyDescriptor(symbol) is not null) return true;
+                current = GetFunctionPrototype();
                 continue;
             }
             if (current is SharpTSArray array)
@@ -1939,18 +1802,10 @@ public partial class Interpreter
     {
         // Parsed records and ordinary object literals have no accessor overlay.
         // Read their data property once instead of probing getter storage,
-        // ContainsKey, and then the dictionary indexer. Callable values still
-        // retain member-access binding semantics.
+        // ContainsKey, and then the dictionary indexer. A data read returns
+        // its stored value; an actual member call supplies the receiver.
         if (simpleObj.TryGetOrdinaryDataProperty(memberName, out var ownValue))
         {
-            if (ownValue is not ISharpTSCallable)
-                return RuntimeValue.FromBoxed(ownValue);
-
-            if (!simpleObj.ShouldPreserveCallableValueIdentity(memberName)
-                && TryBindReceiverForMethodAccess(ownValue, simpleObj) is { } boundMethod)
-            {
-                return RuntimeValue.FromObject(boundMethod);
-            }
             return RuntimeValue.FromBoxed(ownValue);
         }
 
@@ -1964,11 +1819,7 @@ public partial class Interpreter
 
         if (simpleObj.HasProperty(memberName))
         {
-            var value = simpleObj.GetProperty(memberName);
-            if (!simpleObj.ShouldPreserveCallableValueIdentity(memberName)
-                && TryBindReceiverForMethodAccess(value, simpleObj) is { } boundMethod)
-                return RuntimeValue.FromObject(boundMethod);
-            return RuntimeValue.FromBoxed(value);
+            return RuntimeValue.FromBoxed(simpleObj.GetProperty(memberName));
         }
 
         // Prototype-chain fallback. Walks via __proto__ (which SharpTSObject
@@ -1992,10 +1843,7 @@ public partial class Interpreter
                 }
                 if (proto.HasProperty(memberName))
                 {
-                    var value = proto.GetProperty(memberName);
-                    if (TryBindReceiverForMethodAccess(value, simpleObj) is { } boundMethod)
-                        return RuntimeValue.FromObject(boundMethod);
-                    return RuntimeValue.FromBoxed(value);
+                    return RuntimeValue.FromBoxed(proto.GetProperty(memberName));
                 }
                 object? next = proto.HasProperty("__proto__") ? proto.GetProperty("__proto__") : null;
                 if (ReferenceEquals(next, proto)) break;
@@ -2018,6 +1866,8 @@ public partial class Interpreter
                 }
                 break;
             }
+            if (current is SharpTSFunctionPrototype functionPrototype)
+                return RuntimeValue.FromBoxed(GetPropertyValue(functionPrototype, memberName, simpleObj));
             // `function Foo(){}; Foo.prototype = new Array(1,2,3)` — an array standing in as a
             // prototype. Instances must inherit both its own indexed/named data and the
             // Array.prototype methods, the latter applied to the *original* receiver so
@@ -2207,6 +2057,24 @@ public partial class Interpreter
         return false;
     }
 
+    // Inspect actual prototypes rather than assuming every callable immediately
+    // inherits Function.prototype (generator functions have another level).
+    internal SharpTSPropertyDescriptor? FindInheritedSymbolDescriptor(object target, SharpTSSymbol symbol)
+    {
+        object? current = ObjectBuiltIns.PrototypeOf(this, target);
+        for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
+        {
+            // A Proxy requires its [[Set]] protocol rather than ordinary
+            // descriptor probing, which would expose the wrong traps (#2221).
+            if (current is SharpTSProxy) return null;
+            object? descriptor = ObjectBuiltIns.RuntimeGetOwnPropertyDescriptor(current, symbol);
+            if (descriptor is not (null or SharpTSUndefined))
+                return SharpTSPropertyDescriptor.FromAnyObject(descriptor);
+            current = ObjectBuiltIns.PrototypeOf(this, current);
+        }
+        return null;
+    }
+
     private void SetFunctionObjectProperty(
         ISharpTSFunctionObject function, string name, object? value, bool strictMode)
     {
@@ -2348,9 +2216,7 @@ public partial class Interpreter
         }
         if (obj is SharpTSFunctionPrototype fnProto)
         {
-            return fnProto.GetMember(memberName)
-                ?? InheritedObjectPrototypeMember(fnProto, memberName)
-                ?? SharpTSUndefined.Instance;
+            return GetPropertyValue(fnProto, memberName);
         }
         if (obj is SharpTSFunctionProtoToString fnToStr)
         {
@@ -3286,6 +3152,10 @@ public partial class Interpreter
                 throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it"));
             return RuntimeValue.FromBoxed(staticMethod);
         }
+        if (owner is not null && obj is not null && owner.HasInstalledPrivateField(obj, fieldName))
+            return owner.GetPrivateFieldRV(obj, fieldName);
+        if (owner is not null && owner.DeclaresPrivateName(fieldName))
+            throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it or before initialization"));
         // Handle static private field access on class
         if (obj is SharpTSClass klass)
         {
@@ -3338,6 +3208,13 @@ public partial class Interpreter
             owner.SetStaticPrivateField(fieldName, value.ToObject());
             return value;
         }
+        if (owner is not null && obj is not null && owner.HasInstalledPrivateField(obj, fieldName))
+        {
+            owner.SetPrivateField(obj, fieldName, value.ToObject());
+            return value;
+        }
+        if (owner is not null && owner.DeclaresPrivateName(fieldName))
+            throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it or before initialization"));
         // Handle static private field assignment on class
         if (obj is SharpTSClass klass)
         {
@@ -3399,12 +3276,12 @@ public partial class Interpreter
             throw new ThrowException(new SharpTSTypeError($"{GetTypeofString(callee)} is not a function"));
         // Instance class methods keep the resolver's class-this scope and
         // lexical super binding. Callable fields use ordinary Call semantics.
-        if (receiver is SharpTSInstance instance && callable is
+        if (receiver is not null && callable is
             SharpTSFunction { PrivateOwner: not null, IsStaticMethod: false }
             or SharpTSAsyncFunction { PrivateOwner: not null, IsStaticMethod: false }
             or SharpTSGeneratorFunction { PrivateOwner: not null, IsStaticMethod: false }
             or SharpTSAsyncGeneratorFunction { PrivateOwner: not null, IsStaticMethod: false })
-            return RuntimeValue.FromBoxed(SharpTSClass.BindMethod(callable, instance).CallBoxed(this, arguments));
+            return RuntimeValue.FromBoxed(SharpTSClass.BindMethodToReceiver(callable, receiver).CallBoxed(this, arguments));
         return RuntimeValue.FromBoxed(FunctionBuiltIns.CallWithThis(this, callable, receiver, arguments));
     }
 

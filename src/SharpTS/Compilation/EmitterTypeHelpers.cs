@@ -167,7 +167,7 @@ internal static class EmitterTypeHelpers
         out MethodInfo callTarget)
     {
         callTarget = method;
-        for (Type? t = fromClass.BaseType; t != null; t = t.BaseType)
+        for (Type? t = GetInstantiatedBaseType(fromClass); t != null; t = GetInstantiatedBaseType(t))
         {
             if (t.IsGenericType && ReferenceEquals(t.GetGenericTypeDefinition(), declType))
             {
@@ -180,6 +180,38 @@ internal static class EmitterTypeHelpers
             }
         }
         return false; // no instantiation of the declaring type found
+    }
+
+    private static Type? GetInstantiatedBaseType(Type type)
+    {
+        if (!type.IsConstructedGenericType) return type.BaseType;
+        var definition = type.GetGenericTypeDefinition();
+        if (definition.BaseType is not { } parent) return null;
+        var parameters = definition.GetGenericArguments();
+        var arguments = type.GetGenericArguments();
+        var replacements = new Dictionary<Type, Type>();
+        for (int index = 0; index < parameters.Length; index++)
+            replacements.Add(parameters[index], arguments[index]);
+        return SubstituteBaseTypeArguments(parent, replacements);
+    }
+
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "Substituted array types are Reflection.Emit signature shapes serialized into the output assembly. The native compiler host never allocates these arrays or instantiates their element types.")]
+    private static Type SubstituteBaseTypeArguments(Type type, IReadOnlyDictionary<Type, Type> replacements)
+    {
+        if (replacements.TryGetValue(type, out var argument)) return argument;
+        if (type.IsArray)
+        {
+            var element = SubstituteBaseTypeArguments(type.GetElementType()!, replacements);
+            return type.IsSZArray ? element.MakeArrayType() : element.MakeArrayType(type.GetArrayRank());
+        }
+        if (type.IsByRef) return SubstituteBaseTypeArguments(type.GetElementType()!, replacements).MakeByRefType();
+        if (type.IsPointer) return SubstituteBaseTypeArguments(type.GetElementType()!, replacements).MakePointerType();
+        if (!type.IsConstructedGenericType) return type;
+        return EmitGenerics.MakeGenericType(type.GetGenericTypeDefinition(),
+            type.GetGenericArguments().Select(argumentType => SubstituteBaseTypeArguments(argumentType, replacements)).ToArray());
     }
 
     /// <summary>

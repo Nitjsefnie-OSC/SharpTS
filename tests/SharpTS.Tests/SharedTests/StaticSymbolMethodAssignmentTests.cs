@@ -29,8 +29,8 @@ public sealed class StaticSymbolMethodAssignmentTests
             TestHarness.RunInterpreted(source));
     }
 
-    [Fact]
-    public void AssignmentReplacesDeclaredMethodsAndShadowsInheritedMethods()
+    [Theory, ModeData]
+    public void AssignmentReplacesDeclaredMethodsAndShadowsInheritedMethods(ExecutionMode mode)
     {
         const string source = """
             const key = Symbol("method");
@@ -50,7 +50,7 @@ public sealed class StaticSymbolMethodAssignmentTests
             console.log(base[key] === undefined);
             """;
         Assert.Equal("true true\n2 false 1\n4 false 2 3\ntrue 2 3\ntrue\n",
-            TestHarness.RunInterpreted(source));
+            TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

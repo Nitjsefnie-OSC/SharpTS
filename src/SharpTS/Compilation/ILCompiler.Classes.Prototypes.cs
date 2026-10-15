@@ -132,7 +132,10 @@ public partial class ILCompiler
         // CLR cannot instantiate an abstract Type. Concrete subclasses still use
         // the abstract base's compiler-only constructor to initialize its fields.
         if ((typeBuilder.Attributes & TypeAttributes.Abstract) != 0)
+        {
+            EmitKnownDeclaredAccessorDescriptors(il, typeBuilder, staticOnly: true);
             return;
+        }
 
         DefineClassPrototypeConstructor(typeBuilder);
 
@@ -295,18 +298,8 @@ public partial class ILCompiler
             }
         }
 
-        var declaration = _classes.Declarations.FirstOrDefault(source => !_runtimeClassDeclarations.ContainsKey(source)
-            && _classes.DeclarationNames.GetValueOrDefault(source) == typeBuilder.FullName);
-        foreach (var accessor in (declaration?.Accessors ?? []).Where(accessor => accessor.ComputedKey == null))
-        {
-            // A later data method replaces both halves of an earlier accessor.
-            if (declaration!.Methods.Any(method => method.Body != null && !method.IsPrivate && method.ComputedKey == null
-                    && method.IsStatic == accessor.IsStatic && (method.IsStatic || method.Name.Lexeme != "constructor")
-                    && method.Name.Lexeme == accessor.Name.Lexeme && method.Name.Start > accessor.Name.Start)) continue;
-            if (_classes.AccessorBuilders.TryGetValue(accessor, out var accessorMethod))
-                EmitDeclaredAccessorDescriptor(il, typeBuilder, accessor, accessorMethod,
-                    () => il.Emit(OpCodes.Ldstr, accessor.Name.Lexeme));
-        }
+        EmitKnownDeclaredAccessorDescriptors(il, typeBuilder);
+        EmitReceiverAutoAccessorDescriptors(il, typeBuilder);
 
         void EmitStaticDataDescriptor(string propertyName, MethodBuilder methodBuilder)
         {
@@ -349,6 +342,37 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Castclass, _types.MethodInfo);
             }
             il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.Constructor);
+        }
+    }
+
+    private Stmt.Class? GetNominalClassDeclaration(TypeBuilder typeBuilder)
+        => _classes.Declarations.FirstOrDefault(source => !_runtimeClassDeclarations.ContainsKey(source)
+            && _classes.DeclarationNames.GetValueOrDefault(source) == typeBuilder.FullName);
+
+    private void EmitKnownDeclaredAccessorDescriptors(ILGenerator il, TypeBuilder typeBuilder, bool staticOnly = false)
+    {
+        var declaration = GetNominalClassDeclaration(typeBuilder);
+        bool hasDeferredKeys = _classes.DeferredDefinitions.TryGet(typeBuilder, out _);
+        var computedAccessors = _classes.ComputedMembers.GetAccessors(typeBuilder);
+        foreach (var accessor in (declaration?.Accessors ?? []).OrderBy(accessor => accessor.Name.Start))
+        {
+            if (staticOnly && !accessor.IsStatic) continue;
+            string? name = accessor.ComputedKey == null ? accessor.Name.Lexeme
+                : accessor.IsStatic && !hasDeferredKeys ? GetConstantComputedAccessorName(accessor.ComputedKey) : null;
+            if (name is null) continue;
+
+            // A later data method replaces both halves of an earlier accessor.
+            if (declaration!.Methods.Any(method => method.Body != null && !method.IsPrivate && method.ComputedKey == null
+                    && method.IsStatic == accessor.IsStatic && (method.IsStatic || method.Name.Lexeme != "constructor")
+                    && method.Name.Lexeme == name && method.Name.Start > accessor.Name.Start)) continue;
+            MethodBuilder? accessorMethod = null;
+            if (accessor.ComputedKey == null)
+                _classes.AccessorBuilders.TryGetValue(accessor, out accessorMethod);
+            else
+                accessorMethod = computedAccessors.FirstOrDefault(entry => ReferenceEquals(entry.Accessor, accessor)).Method;
+            if (accessorMethod != null)
+                EmitDeclaredAccessorDescriptor(il, typeBuilder, accessor, accessorMethod,
+                    () => il.Emit(OpCodes.Ldstr, name));
         }
     }
 }

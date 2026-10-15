@@ -648,6 +648,11 @@ internal sealed class GeneratorArrowLifter
                 var o = RewriteExpr(cs.Object); var v = RewriteExpr(cs.Value);
                 return ReferenceEquals(o, cs.Object) && ReferenceEquals(v, cs.Value) ? cs : new Expr.CompoundSet(o, cs.Name, cs.Operator, v);
             }
+            case Expr.CompoundSetPrivate cs:
+            {
+                var o = RewriteExpr(cs.Object); var v = RewriteExpr(cs.Value);
+                return ReferenceEquals(o, cs.Object) && ReferenceEquals(v, cs.Value) ? cs : new Expr.CompoundSetPrivate(o, cs.Name, cs.Operator, v);
+            }
             case Expr.CompoundSetIndex csi:
             {
                 var o = RewriteExpr(csi.Object); var idx = RewriteExpr(csi.Index); var v = RewriteExpr(csi.Value);
@@ -780,7 +785,7 @@ internal sealed class GeneratorArrowLifter
 
             default:
                 // Leaf / type-only / declaration-only nodes carry no nested generator expression:
-                // Literal, Variable, This, Super, RegexLiteral, ImportMeta. Returned unchanged.
+                // Literal, Variable, This, NewTarget, Super, RegexLiteral, ImportMeta. Returned unchanged.
                 return expr;
         }
     }

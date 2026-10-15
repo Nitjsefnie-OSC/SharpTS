@@ -75,5 +75,20 @@ public sealed class SharpTSClassPrototype : ISharpTSMutableBuiltIn
         return null;
     }
 
+    // A chain reader must check only this prototype's virtual members before
+    // advancing, so an ancestor's live overlay can shadow its declared method.
+    internal bool TryGetOwnMember(string name, out object? value)
+    {
+        if (_overlay.TryGetOverride(name, out value))
+            return _overlay.HasExtra(name);
+        if (name == "constructor")
+        {
+            value = _klass;
+            return true;
+        }
+        value = _klass.FindOwnMethod(name);
+        return value is not null;
+    }
+
     public override string ToString() => $"[object {_klass.Name}]";
 }

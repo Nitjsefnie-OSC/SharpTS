@@ -22,14 +22,22 @@ public class SuperConstructorHandler : ICallHandler
             return false;
 
         var ctx = emitter.Context;
-        if (ctx.HasGuestReceiver && ctx.ClassDefinitionParameterIndex is { } definitionParameter)
+        if (ctx.IsRuntimeReceiverInitializer && ctx.ClassDefinitionParameterIndex is { } definitionParameter)
         {
             emitter.IL.Emit(OpCodes.Ldarg, definitionParameter);
             emitter.IL.Emit(OpCodes.Call, ctx.Runtime!.ClassDefinitions.GetParent);
             emitter.IL.Emit(OpCodes.Ldarg_0);
             emitter.EmitArgsArrayWithSpread(call.Arguments);
+            if (ctx.NewTargetParameterIndex is { } targetIndex) emitter.IL.Emit(OpCodes.Ldarg, targetIndex);
+            else emitter.IL.Emit(OpCodes.Ldsfld, ctx.Runtime.Sentinels.UndefinedInstance);
             emitter.IL.Emit(OpCodes.Call, ctx.Runtime.ClassDefinitions.InitializeReceiver);
-            emitter.IL.Emit(OpCodes.Ldarg_0);
+            emitter.IL.Emit(OpCodes.Stloc, ctx.ClassConstructorReceiver!);
+            emitter.IL.Emit(OpCodes.Ldloc, ctx.ClassConstructorThisCell!);
+            emitter.IL.Emit(OpCodes.Ldc_I4_0);
+            emitter.IL.Emit(OpCodes.Ldloc, ctx.ClassConstructorReceiver!);
+            emitter.IL.Emit(OpCodes.Stelem_Ref);
+            ctx.EmitConstructorOwnElements?.Invoke();
+            emitter.IL.Emit(OpCodes.Ldloc, ctx.ClassConstructorReceiver!);
             emitter.SetStackUnknown();
             return true;
         }
@@ -64,7 +72,7 @@ public class SuperConstructorHandler : ICallHandler
         if (ctx.CurrentSuperclassName != null && BuiltInNames.IsErrorTypeName(ctx.CurrentSuperclassName))
         {
             EmitSuperErrorCtorCall(emitter, call.Arguments, ctx.CurrentSuperclassName);
-            CaptureConstructorReceiver(emitter);
+            CompleteConstructorSuper(emitter);
             return true;
         }
 
@@ -75,7 +83,7 @@ public class SuperConstructorHandler : ICallHandler
         if (ctx.CurrentSuperclassName == "Array" && ctx.Runtime?.ArrayStorage.CtorFromCtorArgs != null)
         {
             EmitSuperArrayCtorCall(emitter, call.Arguments);
-            CaptureConstructorReceiver(emitter);
+            CompleteConstructorSuper(emitter);
             return true;
         }
 
@@ -85,7 +93,7 @@ public class SuperConstructorHandler : ICallHandler
         if (ctx.CurrentSuperclassName == "Promise" && ctx.Runtime?.Promise is not null)
         {
             EmitSuperPromiseCtorCall(emitter, call.Arguments);
-            CaptureConstructorReceiver(emitter);
+            CompleteConstructorSuper(emitter);
             return true;
         }
 
@@ -102,8 +110,7 @@ public class SuperConstructorHandler : ICallHandler
                 emitter.EmitBoxIfNeeded(argument);
                 emitter.IL.Emit(OpCodes.Pop);
             }
-            emitter.IL.Emit(OpCodes.Ldnull);
-            CaptureConstructorReceiver(emitter);
+            CompleteConstructorSuper(emitter);
             emitter.SetStackUnknown();
             return true;
         }
@@ -224,8 +231,6 @@ public class SuperConstructorHandler : ICallHandler
         il.Emit(OpCodes.Call, ctx.Runtime!.Errors.DefineMessageProperty);
         il.MarkLabel(skipMessageDescriptorLabel);
 
-        il.Emit(OpCodes.Ldnull); // super() returns undefined
-        emitter.SetStackUnknown();
     }
 
     /// <summary>
@@ -251,8 +256,6 @@ public class SuperConstructorHandler : ICallHandler
         }
         il.Emit(OpCodes.Call, ctx.Runtime!.ArrayStorage.CtorFromCtorArgs);
 
-        il.Emit(OpCodes.Ldnull); // super() returns undefined
-        emitter.SetStackUnknown();
     }
 
     /// <summary>
@@ -280,8 +283,6 @@ public class SuperConstructorHandler : ICallHandler
         il.Emit(OpCodes.Call, ctx.Runtime!.RequirePromise().FromExecutor);
         il.Emit(OpCodes.Call, ctx.Runtime!.RequirePromise().Ctor);
 
-        il.Emit(OpCodes.Ldnull); // super() returns undefined
-        emitter.SetStackUnknown();
     }
 
     private static void EmitSuperCtorCall(IEmitterContext emitter, ConstructorBuilder parentCtor, List<Expr> arguments)
@@ -306,18 +307,22 @@ public class SuperConstructorHandler : ICallHandler
             il.Emit(OpCodes.Isinst, ctx.Runtime.ClassDefinitions.Type);
         }
 
-        System.Reflection.ConstructorInfo ctorToCall = parentCtor;
+        var bodyConstructor = ctx.NewTargetConstructorBodies?.GetValueOrDefault(parentCtor) ?? parentCtor;
+        if (bodyConstructor != parentCtor)
+        {
+            if (ctx.NewTargetParameterIndex is { } index) il.Emit(OpCodes.Ldarg, index);
+            else il.Emit(OpCodes.Ldsfld, ctx.Runtime!.Sentinels.UndefinedInstance);
+        }
+        System.Reflection.ConstructorInfo ctorToCall = bodyConstructor;
         Type? baseType = ctx.CurrentClassBuilder?.BaseType;
         if (baseType != null && baseType.IsGenericType && baseType.IsConstructedGenericType)
-            ctorToCall = EmitterTypeHelpers.ResolveConstructor(baseType, parentCtor);
+            ctorToCall = EmitterTypeHelpers.ResolveConstructor(baseType, bodyConstructor);
 
         il.Emit(OpCodes.Call, ctorToCall);
-        CaptureConstructorReceiver(emitter);
-        il.Emit(OpCodes.Ldnull);
-        emitter.SetStackUnknown();
+        CompleteConstructorSuper(emitter);
     }
 
-    private static void CaptureConstructorReceiver(IEmitterContext emitter)
+    private static void CompleteConstructorSuper(IEmitterContext emitter)
     {
         var ctx = emitter.Context;
         if (ctx.ClassConstructorReceiver != null)
@@ -325,6 +330,17 @@ public class SuperConstructorHandler : ICallHandler
             emitter.IL.Emit(OpCodes.Ldarg_0);
             emitter.IL.Emit(OpCodes.Call, ctx.Runtime!.DynamicConstruction.ResolveClassReturn);
             emitter.IL.Emit(OpCodes.Stloc, ctx.ClassConstructorReceiver);
+            if (ctx.ClassConstructorThisCell is { } cell)
+            {
+                emitter.IL.Emit(OpCodes.Ldloc, cell);
+                emitter.IL.Emit(OpCodes.Ldc_I4_0);
+                emitter.IL.Emit(OpCodes.Ldloc, ctx.ClassConstructorReceiver);
+                emitter.IL.Emit(OpCodes.Stelem_Ref);
+            }
         }
+        ctx.EmitConstructorOwnElements?.Invoke();
+        if (ctx.ClassConstructorReceiver is { } receiver) emitter.IL.Emit(OpCodes.Ldloc, receiver);
+        else emitter.IL.Emit(OpCodes.Ldarg_0);
+        emitter.SetStackUnknown();
     }
 }

@@ -77,6 +77,13 @@ public record struct HoistedCompactRecordEntry(
 /// <seealso cref="LocalsManager"/>
 public partial class CompilationContext
 {
+    internal const string NewTargetCaptureName = "<>newTarget";
+    internal int? NewTargetParameterIndex { get; set; }
+    internal IReadOnlyDictionary<ConstructorBuilder, ConstructorBuilder>? NewTargetConstructorBodies { get; set; }
+    internal bool SuppressNewTarget { get; set; }
+    // Only the guarded native body of a primitive method may assume its source
+    // primitive fields have no raw guest override.
+    internal bool NativePrimitiveFieldReads { get; set; }
     private readonly HashSet<MethodBuilder> _sourceParameterMethods = [];
     // ============================================
     // Core Compilation Infrastructure

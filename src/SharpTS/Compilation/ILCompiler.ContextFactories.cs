@@ -64,6 +64,7 @@ public partial class ILCompiler
                 _classes.TypedPrimitiveInstanceMethodCores.Count > 0
                     ? _classes.TypedPrimitiveInstanceMethodCores
                     : null,
+            RawObservingPrimitiveMethodCores = _rawObservingPrimitiveMethodCores,
             FunctionGenericParameters = _functions.GenericParameters,
             SuspensionFreePrimitiveAsyncCores =
                 _async.StableSuspensionFreePrimitiveCores.Count > 0
@@ -102,6 +103,7 @@ public partial class ILCompiler
             BlockScopedClassBuilders = _classes.BlockScopedBuilders,
             LexicalEnclosingClasses = _classes.LexicalEnclosingClasses,
             ClassRegistry = GetClassRegistry(),
+            NewTargetConstructorBodies = _newTargetConstructors,
             DotNetNamespace = _modules.CurrentDotNetNamespace,
             ModuleNames = _modules.Names,
             // Ambient strict mode; bodies with their own "use strict" prologue override this.

@@ -392,6 +392,8 @@ public partial class ILCompiler
                 {
                     DefineInstanceProperty(typeBuilder, className, field, classGenericParams);
                 }
+                else if (field.ComputedKey == null)
+                    DefineGuestDataField(typeBuilder, field, _types.Object);
             }
         }
 
@@ -585,7 +587,7 @@ public partial class ILCompiler
             MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot,
             storage.FieldType, Type.EmptyTypes);
         var il = implementation.GetILGenerator();
-        il.Emit(OpCodes.Ldsfld, EmitterTypeHelpers.SelfFieldReference(storage));
+        il.Emit(OpCodes.Ldsfld, GetClassRegistry().ResolvePrivateStorage(owner.FullName!, storage));
         il.Emit(OpCodes.Ret);
         owner.DefineMethodOverride(implementation, getter);
         foreach (var (name, method) in methods)

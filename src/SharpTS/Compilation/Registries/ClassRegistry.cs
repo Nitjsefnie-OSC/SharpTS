@@ -12,7 +12,7 @@ namespace SharpTS.Compilation.Registries;
 /// with repeated null checks. It walks inheritance chains for instance member resolution
 /// and handles module-qualified name resolution.
 /// </remarks>
-public sealed class ClassRegistry
+public sealed partial class ClassRegistry
 {
     public PrivateMethodValue? GetPrivateMethodValue(string owner, string name) =>
         _privateElements.TryGet(owner, out var declaration) && declaration.MethodValues.TryGetValue(name, out var value) ? value : null;
@@ -25,14 +25,19 @@ public sealed class ClassRegistry
     // Instance members
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _instanceMethods;
     private readonly Dictionary<(TypeBuilder Owner, MethodBuilder Parent), (Type Receiver, MethodInfo Target)> _superCallBridges = [];
+    private readonly HashSet<MethodBuilder> _sourceGeneratorMethods = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _instanceGetters;
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _instanceSetters;
+    private readonly Dictionary<MethodBuilder, string?> _sourceInstanceGetters = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<TypeBuilder, HashSet<string?>> _instancePrototypeBarriers = new(ReferenceEqualityComparer.Instance);
 
     // Static members
     private readonly Dictionary<string, Dictionary<string, FieldBuilder>> _staticFields;
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _staticMethods;
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _staticGetters;
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _staticSetters;
+    private readonly HashSet<MethodBuilder> _sourceStaticGetters = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<MethodBuilder> _sourceStaticSetters = new(ReferenceEqualityComparer.Instance);
 
     // Generic parameters
     private readonly ClassGenericParameterRegistry _genericParameters;
@@ -211,13 +216,42 @@ public sealed class ClassRegistry
 
     #region Instance Method Resolution (with inheritance walking)
 
+    internal void RegisterSourceGeneratorMethod(MethodBuilder method)
+        => _sourceGeneratorMethods.Add(method);
+
+    internal void RegisterInstancePrototypeBarrier(TypeBuilder owner, string? name)
+    {
+        if (!_instancePrototypeBarriers.TryGetValue(owner, out var names))
+            _instancePrototypeBarriers[owner] = names = [];
+        names.Add(name);
+    }
+
+    internal bool HasInstancePrototypeBarrier(string className, string name, MethodBuilder target)
+    {
+        for (string? current = className; current != null; current = _superclass.GetValueOrDefault(current))
+        {
+            // A computed member may evaluate to any string. Named accessors are
+            // prototype properties; unlike instance fields, they can shadow the
+            // farther method selected by the nominal method-only registry.
+            if (_builders.TryGetValue(current, out var owner)
+                && _instancePrototypeBarriers.TryGetValue(owner, out var names)
+                && (names.Contains(null) || names.Contains(name)))
+                return true;
+            if (_instanceMethods.TryGetValue(current, out var methods)
+                && methods.TryGetValue(name, out var method) && ReferenceEquals(method, target))
+                return false;
+        }
+        return true;
+    }
+
     /// <summary>
     /// State-machine methods cannot make a nonvirtual call to a virtual parent method:
     /// the CLR requires that call's receiver to be the enclosing class's own this.
     /// Keep that call in a compiler-only method on the lexical class.
     /// The bridge is absent from the published JavaScript method registry.
     /// </summary>
-    internal (Type Receiver, MethodInfo Target) GetOrCreateSuperCallBridge(TypeBuilder owner, MethodBuilder parent)
+    internal (Type Receiver, MethodInfo Target) GetOrCreateSuperCallBridge(
+        TypeBuilder owner, MethodBuilder parent, EmittedFunctionAttributesRuntime attributes)
     {
         var key = (owner, parent);
         if (_superCallBridges.TryGetValue(key, out var cached))
@@ -227,7 +261,7 @@ public sealed class ClassRegistry
             throw new InvalidOperationException($"Cannot resolve super method {parent.Name} on {owner.Name}.");
 
         var parameters = parent.GetParameters();
-        var attributes = MethodAttributes.Assembly | MethodAttributes.HideBySig;
+        var methodAttributes = MethodAttributes.Assembly | MethodAttributes.HideBySig;
         Type receiver = owner;
         MethodBuilder? contractMethod = null;
         var parameterTypes = parameters.Select(parameter => parameter.ParameterType).ToArray();
@@ -242,14 +276,16 @@ public sealed class ClassRegistry
             contractMethod = contract.DefineMethod("Invoke",
                 MethodAttributes.Public | MethodAttributes.Abstract | MethodAttributes.Virtual,
                 parent.ReturnType, parameterTypes);
+            MarkSuperBridgeCallable(contractMethod, attributes, _sourceGeneratorMethods.Contains(parent));
             contract.CreateType();
             EmitTypeDefinitions.AddInterfaceImplementation(owner, contract);
             receiver = contract;
-            attributes |= MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot;
+            methodAttributes |= MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot;
         }
 
-        var bridge = owner.DefineMethod($"<>super${_superCallBridges.Count}", attributes,
+        var bridge = owner.DefineMethod($"<>super${_superCallBridges.Count}", methodAttributes,
             parent.ReturnType, parameterTypes);
+        MarkSuperBridgeCallable(bridge, attributes, _sourceGeneratorMethods.Contains(parent));
         if (contractMethod != null)
             owner.DefineMethodOverride(bridge, contractMethod);
         var il = bridge.GetILGenerator();
@@ -261,6 +297,22 @@ public sealed class ClassRegistry
         var result = (receiver, (MethodInfo?)contractMethod ?? bridge);
         _superCallBridges.Add(key, result);
         return result;
+    }
+
+    private static void MarkSuperBridgeCallable(MethodBuilder method, EmittedFunctionAttributesRuntime attributes,
+        bool isGenerator)
+    {
+        // These markers do not affect direct calls. They preserve source argument
+        // padding and non-constructibility if the bridge becomes a method value.
+        method.SetCustomAttribute(attributes.PadUndefinedCtor,
+            CustomAttributeEncoder.Encode(attributes.PadUndefinedCtor));
+        method.SetCustomAttribute(attributes.SourceParametersCtor,
+            CustomAttributeEncoder.Encode(attributes.SourceParametersCtor));
+        // Generator method values retain their own prototype, matching the
+        // original source method's marker policy.
+        if (!isGenerator)
+            method.SetCustomAttribute(attributes.NonConstructibleCtor,
+                CustomAttributeEncoder.Encode(attributes.NonConstructibleCtor));
     }
 
     /// <summary>
@@ -311,10 +363,19 @@ public sealed class ClassRegistry
             if (_instanceGetters.TryGetValue(current, out var getters) &&
                 getters.TryGetValue(propertyName, out var getter))
                 return getter;
+            if (_instanceSetters.TryGetValue(current, out var setters) && setters.ContainsKey(propertyName))
+                return null;
             current = _superclass.GetValueOrDefault(current);
         }
         return null;
     }
+
+    internal void RegisterSourceInstanceGetter(MethodBuilder getter, string? propertyName)
+        => _sourceInstanceGetters[getter] = propertyName;
+
+    internal bool IsSourceInstanceGetter(MethodBuilder getter) => _sourceInstanceGetters.ContainsKey(getter);
+
+    internal string? GetSourceInstanceGetterName(MethodBuilder getter) => _sourceInstanceGetters.GetValueOrDefault(getter);
 
     /// <summary>
     /// Resolves an instance setter by walking up the inheritance chain.
@@ -432,13 +493,93 @@ public sealed class ClassRegistry
     /// </summary>
     public bool TryGetStaticGetter(string qualifiedClassName, string propertyName, out MethodBuilder? getter)
     {
-        if (TryResolveStaticMember(_staticGetters, qualifiedClassName, propertyName, out _, out var g))
+        if (TryResolveStaticGetter(qualifiedClassName, propertyName, out _, out var g))
         {
             getter = g;
             return true;
         }
 
         getter = null;
+        return false;
+    }
+
+    internal void RegisterSourceStaticGetter(MethodBuilder getter)
+        => _sourceStaticGetters.Add(getter);
+
+    internal void RegisterSourceStaticSetter(MethodBuilder setter)
+        => _sourceStaticSetters.Add(setter);
+
+    /// <summary>
+    /// Source accessor writes must consult the live descriptor and invoke its explicit guest
+    /// receiver adapter. A getter-only descriptor also claims the property, masking older setters.
+    /// Typed auto-accessors retain their CLR setter ABI when they are the nearest property.
+    /// </summary>
+    internal bool RequiresSourceStaticSetterDispatch(string className, string propertyName)
+    {
+        string? current = className;
+        for (int depth = 0; current != null && depth < 64; depth++)
+        {
+            MethodBuilder? getter = null;
+            MethodBuilder? setter = null;
+            _staticGetters.GetValueOrDefault(current)?.TryGetValue(propertyName, out getter);
+            _staticSetters.GetValueOrDefault(current)?.TryGetValue(propertyName, out setter);
+            if (getter != null || setter != null)
+                return (getter != null && _sourceStaticGetters.Contains(getter))
+                    || (setter != null && _sourceStaticSetters.Contains(setter));
+
+            if (HasOwnStaticDataMember(current, propertyName))
+                return false;
+            current = _superclass.GetValueOrDefault(current);
+        }
+        return false;
+    }
+
+    private bool HasOwnStaticDataMember(string className, string propertyName)
+        => (_staticFields.TryGetValue(className, out var fields) && fields.ContainsKey(propertyName))
+            || (_staticMethods.TryGetValue(className, out var methods) && methods.ContainsKey(propertyName));
+
+    internal bool IsSourceStaticGetter(string className, string propertyName)
+        => TryResolveStaticGetter(className, propertyName, out _, out var getter)
+            && _sourceStaticGetters.Contains(getter);
+
+    private bool TryResolveStaticGetter(string className, string propertyName, out string declaringClass, out MethodBuilder getter)
+    {
+        string? current = className;
+        for (int depth = 0; current != null && depth < 64; depth++)
+        {
+            if (_staticGetters.TryGetValue(current, out var getters) && getters.TryGetValue(propertyName, out var ownGetter))
+            {
+                declaringClass = current;
+                getter = ownGetter;
+                return true;
+            }
+            if (_staticSetters.TryGetValue(current, out var setters) && setters.ContainsKey(propertyName))
+                break;
+            current = _superclass.GetValueOrDefault(current);
+        }
+        declaringClass = null!;
+        getter = null!;
+        return false;
+    }
+
+    private bool TryResolveStaticSetter(string className, string propertyName, out string declaringClass, out MethodBuilder setter)
+    {
+        string? current = className;
+        for (int depth = 0; current != null && depth < 64; depth++)
+        {
+            if (_staticSetters.TryGetValue(current, out var setters) && setters.TryGetValue(propertyName, out var ownSetter))
+            {
+                declaringClass = current;
+                setter = ownSetter;
+                return true;
+            }
+            if ((_staticGetters.TryGetValue(current, out var getters) && getters.ContainsKey(propertyName))
+                || HasOwnStaticDataMember(current, propertyName))
+                break;
+            current = _superclass.GetValueOrDefault(current);
+        }
+        declaringClass = null!;
+        setter = null!;
         return false;
     }
 
@@ -467,6 +608,18 @@ public sealed class ClassRegistry
     public FieldBuilder? GetPrivateFieldStorage(string qualifiedClassName)
     {
         return _privateElements.TryGet(qualifiedClassName, out var declaration) ? declaration.Storage : null;
+    }
+
+    internal FieldInfo ResolvePrivateStorage(string owner, FieldBuilder storage)
+    {
+        var closed = GetClosedGenericDeclaringType(owner, owner, _builders[owner]);
+        return closed == null ? storage : EmitterTypeHelpers.ResolveField(closed, storage);
+    }
+
+    internal FieldInfo GetPrivateStorage(PrivateInstanceBridge bridge)
+    {
+        string owner = _builders.Keys.First(name => GetPrivateElements(name)?.InstanceBridge == bridge);
+        return ResolvePrivateStorage(owner, GetPrivateElements(owner)!.Storage!);
     }
 
     public PrivateInstanceBridge? GetPrivateInstanceBridge(string qualifiedClassName)
@@ -585,7 +738,7 @@ public sealed class ClassRegistry
     /// </summary>
     public bool TryGetCallableStaticGetter(string qualifiedClassName, string propertyName, TypeBuilder classBuilder, out System.Reflection.MethodInfo? getter)
     {
-        if (!TryResolveStaticMember(_staticGetters, qualifiedClassName, propertyName, out var declaringClass, out var getterBuilder))
+        if (!TryResolveStaticGetter(qualifiedClassName, propertyName, out var declaringClass, out var getterBuilder))
         {
             getter = null;
             return false;
@@ -628,7 +781,7 @@ public sealed class ClassRegistry
     /// </summary>
     public bool TryGetCallableStaticSetter(string qualifiedClassName, string propertyName, TypeBuilder classBuilder, out System.Reflection.MethodInfo? setter)
     {
-        if (!TryResolveStaticMember(_staticSetters, qualifiedClassName, propertyName, out var declaringClass, out var setterBuilder))
+        if (!TryResolveStaticSetter(qualifiedClassName, propertyName, out var declaringClass, out var setterBuilder))
         {
             setter = null;
             return false;

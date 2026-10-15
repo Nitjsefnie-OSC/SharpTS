@@ -82,10 +82,25 @@ public partial class TypeChecker
                 ? GetStaticMethods(current)?.GetValueOrDefault(expr.Method.Lexeme)
                     ?? GetStaticProperties(current)?.GetValueOrDefault(expr.Method.Lexeme)
                 : GetMethods(current)?.GetValueOrDefault(expr.Method.Lexeme);
+            bool isAccessor = false;
+            if (!isStatic && methodType == null)
+            {
+                // A setter-only descriptor still declares the read type in
+                // TypeScript, and must stop lookup before an ancestor getter.
+                methodType = GetGetters(current)?.GetValueOrDefault(expr.Method.Lexeme)
+                    ?? GetSetters(current)?.GetValueOrDefault(expr.Method.Lexeme);
+                isAccessor = methodType != null;
+                if (methodType == null && GetFieldTypes(current)?.ContainsKey(expr.Method.Lexeme) == true)
+                    throw new TypeCheckException(
+                        $" Class field '{expr.Method.Lexeme}' defined by the parent class is not accessible in the child class via super.",
+                        expr.Method.Line, tsCode: "TS2855");
+            }
             if (methodType != null)
             {
                 if (isStatic)
                     EnforceStaticMemberAccess(current, expr.Method);
+                else if (isAccessor)
+                    EnforceSuperAccessorReadAccess(current, expr.Method);
                 else if (GetMethodAccess(current)?.GetValueOrDefault(expr.Method.Lexeme) == AccessModifier.Private)
                     throw new TypeCheckException($" Property '{expr.Method.Lexeme}' is private and only accessible within class '{GetClassName(current)}'.", tsCode: "TS2341");
                 ObserveSourceMemberSelection(expr.Method, current, isStatic ? MemberFacet.Static : MemberFacet.Instance);
@@ -95,6 +110,26 @@ public partial class TypeChecker
         }
 
         throw new TypeCheckException($" Property '{expr.Method.Lexeme}' does not exist on superclass '{superName}'.", tsCode: "TS2339");
+    }
+
+    private void EnforceSuperAccessorReadAccess(TypeInfo declaringClass, Token memberName)
+    {
+        AccessModifier access = GetFieldAccess(declaringClass)?.GetValueOrDefault(memberName.Lexeme)
+            ?? AccessModifier.Public;
+        if (access == AccessModifier.Public) return;
+        int declaringId = SelectedSourceClassId(declaringClass);
+        bool sameDeclaration = _currentClass is { } current &&
+            (current.Core.DeclarationId == declaringId ||
+                Members.IsSameSourceClass(current.Core.DeclarationId, declaringId));
+        if (access == AccessModifier.Private && !sameDeclaration)
+            throw new TypeCheckException(
+                $" Property '{memberName.Lexeme}' is private and only accessible within class '{GetClassName(declaringClass)}'.",
+                memberName.Line, tsCode: "TS2341");
+        if (access == AccessModifier.Protected && !sameDeclaration &&
+            (_currentClass == null || !SourceDerivesFromDeclaration(_currentClass, declaringId)))
+            throw new TypeCheckException(
+                $" Property '{memberName.Lexeme}' is protected and only accessible within class '{GetClassName(declaringClass)}' and its subclasses.",
+                memberName.Line, tsCode: "TS2445");
     }
 
     private TypeInfo CheckThis(Expr.This expr)

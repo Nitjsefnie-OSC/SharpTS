@@ -276,6 +276,7 @@ public partial class TypeChecker
     // execution-oriented built-in fallbacks used by standalone checking.
     private bool _hasDefaultLibraries;
     private BindingSymbol? _defaultLibraryArrayBinding;
+    private readonly Dictionary<string, BindingSymbol> _defaultLibraryErrorBindings = new(StringComparer.Ordinal);
     private bool _hasEs2023IntlLibrary;
     private readonly HashSet<string> _globalObjectLexicalNames = new(StringComparer.Ordinal);
     private readonly HashSet<string> _globalObjectVarNames = new(StringComparer.Ordinal);
@@ -1345,6 +1346,7 @@ public partial class TypeChecker
     /// </summary>
     public TypeMap Check(List<Stmt> statements, SourceDocument? sourceDocument)
     {
+        IndexNewTargetContexts(statements);
         _globalDeclarationEnvironment = _environment;
         Bindings.Clear();
         _members?.Clear();
@@ -1435,6 +1437,7 @@ public partial class TypeChecker
         List<Stmt> statements,
         SourceDocument? sourceDocument)
     {
+        IndexNewTargetContexts(statements);
         _globalDeclarationEnvironment = _environment;
         Bindings.Clear();
         _members?.Clear();
@@ -1730,6 +1733,7 @@ public partial class TypeChecker
     /// <returns>A TypeMap containing resolved types for all expressions across all modules</returns>
     public TypeMap CheckModules(List<ParsedModule> modules, ModuleResolver resolver)
     {
+        IndexNewTargetContexts(modules.SelectMany(module => module.Statements));
         Bindings.Clear();
         _members?.Clear();
         _sourceClassNesting = null;
@@ -1756,6 +1760,7 @@ public partial class TypeChecker
         _moduleResolver = resolver;
         _hasDefaultLibraries = modules.Any(module => module.IsDefaultLibrary);
         _defaultLibraryArrayBinding = null;
+        _defaultLibraryErrorBindings.Clear();
         _hasEs2023IntlLibrary = modules.Any(module =>
             module.IsDefaultLibrary &&
             module.Path.Contains("lib.es2023.intl.d.ts", StringComparison.OrdinalIgnoreCase));
@@ -1847,6 +1852,7 @@ public partial class TypeChecker
             foreach (var module in modules.Where(module => module.IsDefaultLibrary))
                 PrepareModule(module);
             _defaultLibraryArrayBinding = scriptEnv.GetValueBinding("Array");
+            CaptureDefaultLibraryErrorBindings(scriptEnv);
             foreach (var module in modules.Where(module => !module.IsDefaultLibrary && module.IsScript))
                 PrepareModule(module);
             foreach (var module in modules.Where(module => !module.IsDefaultLibrary && !module.IsScript))
@@ -3124,6 +3130,7 @@ public partial class TypeChecker
         Expr.Grouping g => TryGetExprLine(g.Expression),
         Expr.Variable v => v.Name.Line,
         Expr.This t => t.Keyword.Line,
+        Expr.NewTarget nt => nt.Keyword.Line,
         Expr.ImportMeta im => im.Keyword.Line,
         Expr.Set s => s.Name.Line,
         Expr.Get g => g.Name.Line,
@@ -3134,6 +3141,7 @@ public partial class TypeChecker
         Expr.Unary u => u.Operator.Line,
         Expr.CompoundAssign ca => ca.Name.Line,
         Expr.CompoundSet cs => cs.Name.Line,
+        Expr.CompoundSetPrivate cs => cs.Operator.Line,
         Expr.Call c => TryGetExprLine(c.Callee),
         Expr.New n => TryGetExprLine(n.Callee),
         // Index forms carry no token of their own — attribute to their object's line so a write

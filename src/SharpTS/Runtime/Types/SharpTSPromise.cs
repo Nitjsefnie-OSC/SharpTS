@@ -57,6 +57,12 @@ public class SharpTSPromise : ITypeCategorized
     public void SetOwnProperty(string name, object? value)
         => (_ownProperties ??= [])[name] = value;
 
+    internal void DefineOwnDataField(string name, object? value)
+    {
+        _accessors?.Remove(name);
+        SetOwnProperty(name, value);
+    }
+
     /// <summary>
     /// Registers an own accessor pair from <c>Object.defineProperty</c>. Either
     /// half may be null (one-sided accessor); a later definition on the same key

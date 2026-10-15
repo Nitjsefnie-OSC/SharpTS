@@ -10,6 +10,8 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class ILCompiler
 {
+    private readonly Dictionary<TypeBuilder, HashSet<string>> _autoAccessorFieldNames = new(ReferenceEqualityComparer.Instance);
+
     /// <summary>
     /// Defines an auto-accessor as a .NET property with private backing field.
     /// </summary>
@@ -24,6 +26,12 @@ public partial class ILCompiler
         GenericTypeParameterBuilder[]? classGenericParams)
     {
         string propName = autoAccessor.Name.Lexeme;
+        if (!autoAccessor.IsStatic)
+        {
+            if (!_autoAccessorFieldNames.TryGetValue(typeBuilder, out var names))
+                _autoAccessorFieldNames[typeBuilder] = names = new(StringComparer.Ordinal);
+            names.Add(propName);
+        }
         string pascalName = NamingConventions.ToPascalCase(propName);
         Type propertyType = GetAutoAccessorType(autoAccessor, className, classGenericParams);
 
@@ -120,6 +128,7 @@ public partial class ILCompiler
         }
         else
         {
+            GetClassRegistry().RegisterSourceInstanceGetter(getter, propName);
             if (!_classes.InstanceGetters.TryGetValue(className, out var classGetters))
             {
                 classGetters = [];
@@ -192,6 +201,8 @@ public partial class ILCompiler
                 classSetters[pascalName] = setter;
             }
         }
+        if (!autoAccessor.IsStatic && ClassNeedsConstructorReceiver(className))
+            DefineReceiverAutoAccessor(typeBuilder, autoAccessor, backingField);
     }
 
     /// <summary>

@@ -42,16 +42,10 @@ public partial class ILCompiler
             ApplyCapturedTopLevelVariableAccess(ctx, memberBodyExports: true);
             return ctx;
         }, owner.FullName!);
-        // A generic owner's initializer runs for every closed CLR instantiation.
-        // Keep the JavaScript accessor value independent of those initializations.
+        // The evaluated property key is available at descriptor registration.
+        // Keep one JavaScript accessor value across closed CLR instantiations.
         var value = type.DefineField("Value", _types.Object,
-            FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly);
-        var initializer = type.DefineTypeInitializer().GetILGenerator();
-        initializer.Emit(OpCodes.Newobj, constructor);
-        EmitMethodInfoLiteral(initializer, method, type);
-        initializer.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.Constructor);
-        initializer.Emit(OpCodes.Stsfld, value);
-        initializer.Emit(OpCodes.Ret);
+            FieldAttributes.Public | FieldAttributes.Static);
         type.CreateType();
         var result = (type, constructor, method, value);
         _declarationAccessorValues.Add(accessor, result);
@@ -106,6 +100,25 @@ public partial class ILCompiler
         il.Emit(OpCodes.Newobj, storage.DescriptorConstructor); il.Emit(OpCodes.Stloc, descriptor);
         il.MarkLabel(useExisting);
         var adapter = DefineDeclarationAccessorValue(owner, accessor, method);
+        var haveValue = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, adapter.Value);
+        il.Emit(OpCodes.Brtrue, haveValue);
+        var target = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Newobj, adapter.Constructor);
+        il.Emit(OpCodes.Stloc, target);
+        var metadata = il.DeclareLocal(_runtime.FunctionValues.Type);
+        il.Emit(OpCodes.Ldloc, target);
+        EmitMethodInfoLiteral(il, adapter.Method, adapter.Type);
+        il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.Constructor);
+        il.Emit(OpCodes.Stloc, metadata);
+        il.Emit(OpCodes.Ldloc, target);
+        EmitMethodInfoLiteral(il, adapter.Method, adapter.Type);
+        EmitAccessorFunctionName(il, key, accessor.Kind.Type == TokenType.GET);
+        il.Emit(OpCodes.Ldloc, metadata);
+        il.Emit(OpCodes.Callvirt, _runtime.FunctionValues.LengthGetter);
+        il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.CachedConstructor);
+        il.Emit(OpCodes.Stsfld, adapter.Value);
+        il.MarkLabel(haveValue);
         il.Emit(OpCodes.Ldloc, descriptor);
         il.Emit(OpCodes.Ldsfld, adapter.Value);
         il.Emit(OpCodes.Callvirt, (accessor.Kind.Type == TokenType.GET ? storage.DescriptorGetter : storage.DescriptorSetter).GetSetMethod()!);
@@ -123,5 +136,17 @@ public partial class ILCompiler
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item", _types.Object, _types.Object));
         il.MarkLabel(done);
         il.MarkLabel(registrationDone);
+    }
+
+    private void EmitAccessorFunctionName(ILGenerator il, LocalBuilder key, bool isGetter)
+    {
+        il.Emit(OpCodes.Ldstr, isGetter ? "get " : "set ");
+        il.Emit(OpCodes.Ldloc, key);
+        // Registration keys are already strings or Symbols. Passing the string
+        // through as fallback avoids converting or evaluating a guest key again.
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Call, _runtime.Symbols.MethodName);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
     }
 }

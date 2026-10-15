@@ -71,16 +71,17 @@ public class SharpTSGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceive
     /// </summary>
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
-        // Create environment and bind parameters (like a regular function)
-        RuntimeEnvironment closure = _declaration.IsStatic
+        // The resolver places a class receiver scope between a method and its
+        // enclosing closure. PrivateOwner also identifies public class methods.
+        bool isClassMethod = PrivateOwner != null || _declaration.IsStatic;
+        bool ownsStrictThis = isClassMethod || _declaration.IsPrivate;
+        RuntimeEnvironment closure = isClassMethod
             ? new RuntimeEnvironment(_closure, strictMode: true) : _closure;
         RuntimeEnvironment environment = new(closure,
-            strictMode: _declaration.IsPrivate || _declaration.IsStatic ? true : null)
+            strictMode: ownsStrictThis ? true : null)
             { PrivateClass = PrivateOwner, StaticSuper = _declaration.IsStatic };
-        if (_declaration.IsPrivate || _declaration.IsStatic)
-        {
-            environment.Define("this", _thisBound ? _boundThis : SharpTSUndefined.Instance);
-        }
+        environment.NewTarget = RuntimeValue.Undefined;
+        environment.ConstructionFrame = null;
         // #775: a generator expression / object generator method binds its own dynamic `this`. The bound
         // receiver (or globalThis for a plain call) is defined in the generator's OWN body environment —
         // NOT a new parent scope inserted above the closure — so a captured enclosing-function local keeps
@@ -91,6 +92,10 @@ public class SharpTSGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceive
             environment.Define("this", _boundThis);
             if (_boundSuper != null)
                 environment.Define("super", _boundSuper);
+        }
+        else if (ownsStrictThis)
+        {
+            environment.Define("this", SharpTSUndefined.Instance);
         }
         else if (_declaration.HasDynamicThis)
         {
@@ -183,6 +188,11 @@ public class SharpTSArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
         RuntimeEnvironment environment = new(_closure);
+        if (HasOwnThis)
+        {
+            environment.NewTarget = RuntimeValue.Undefined;
+            environment.ConstructionFrame = null;
+        }
         // Named generator function expression: bind self-reference alongside params.
         if (_declaration.Name != null)
         {

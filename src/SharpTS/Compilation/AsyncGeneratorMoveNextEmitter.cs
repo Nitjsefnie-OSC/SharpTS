@@ -110,7 +110,7 @@ public partial class AsyncGeneratorMoveNextEmitter : IteratorMoveNextEmitter
             ctx.Locals,
             _builder.ThisField,
             ctx.CellBindingLocals,
-            ctx.Types.StrongBoxOfObjectValueField);
+            ctx.Types.StrongBoxOfObjectValueField) { ConstructorContext = ctx };
 
         // Define labels for each suspension resume point
         foreach (var suspensionPoint in _analysis.SuspensionPoints)

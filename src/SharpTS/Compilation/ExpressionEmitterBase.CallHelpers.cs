@@ -1265,6 +1265,7 @@ public abstract partial class ExpressionEmitterBase
         Expr.Assign a => ExprContainsSuspension(a.Value),
         Expr.CompoundAssign ca => ExprContainsSuspension(ca.Value),
         Expr.CompoundSet cs => ExprContainsSuspension(cs.Object) || ExprContainsSuspension(cs.Value),
+        Expr.CompoundSetPrivate privateCompound => ExprContainsSuspension(privateCompound.Object) || ExprContainsSuspension(privateCompound.Value),
         Expr.CompoundSetIndex csi => ExprContainsSuspension(csi.Object) || ExprContainsSuspension(csi.Index) || ExprContainsSuspension(csi.Value),
         Expr.LogicalAssign la => ExprContainsSuspension(la.Value),
         Expr.LogicalSet lst => ExprContainsSuspension(lst.Object) || ExprContainsSuspension(lst.Value),
@@ -2000,15 +2001,8 @@ public abstract partial class ExpressionEmitterBase
     /// </summary>
     private void EmitOptionalCall(Expr.Call c)
     {
+        if (TryEmitGuestSuperCall(c)) return;
         var reference = UnwrapCallReference(c.Callee);
-
-        // A resolvable super method must use a non-virtual base call.  Looking
-        // it up dynamically from the derived instance re-enters the override
-        // and recurses; since the method exists, the optional callable check is
-        // known to succeed and the direct call is semantically equivalent.
-        if (reference is Expr.Super { Method: not null } super
-            && TryEmitSuperMethodCall(super.Method.Lexeme, c.Arguments))
-            return;
 
         var nullishLabel = IL.DefineLabel();
         var endLabel = IL.DefineLabel();
@@ -2268,13 +2262,13 @@ public abstract partial class ExpressionEmitterBase
 
         string resolvedSuperName = Ctx.ResolveClassName(superclassName);
         var methodBuilder = Ctx.ResolveInstanceMethod(resolvedSuperName, methodName);
-        if (methodBuilder == null)
+        if (methodBuilder == null || !CanEmitNominalSuperMethodCall(resolvedSuperName, methodName, methodBuilder, arguments))
             return false;
 
         if (Ctx.CurrentClassBuilder is not { } owner || Ctx.ClassRegistry is not { } registry)
             return false;
 
-        var (receiverType, callTarget) = registry.GetOrCreateSuperCallBridge(owner, methodBuilder);
+        var (receiverType, callTarget) = registry.GetOrCreateSuperCallBridge(owner, methodBuilder, Ctx.Runtime!.FunctionAttributes);
 
         var methodParams = methodBuilder.GetParameters();
 

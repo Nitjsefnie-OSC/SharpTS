@@ -65,16 +65,17 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
-        // Create a new environment for this generator invocation
-        RuntimeEnvironment closure = _declaration.IsStatic
+        // Match the resolver's one class receiver scope without adding a
+        // parent scope to ordinary or lifted object generator declarations.
+        bool isClassMethod = PrivateOwner != null || _declaration.IsStatic;
+        bool ownsStrictThis = isClassMethod || _declaration.IsPrivate;
+        RuntimeEnvironment closure = isClassMethod
             ? new RuntimeEnvironment(_closure, strictMode: true) : _closure;
         RuntimeEnvironment environment = new(closure,
-            strictMode: _declaration.IsPrivate || _declaration.IsStatic ? true : null)
+            strictMode: ownsStrictThis ? true : null)
             { PrivateClass = PrivateOwner, StaticSuper = _declaration.IsStatic };
-        if (_declaration.IsPrivate || _declaration.IsStatic)
-        {
-            environment.Define("this", _thisBound ? _boundThis : SharpTSUndefined.Instance);
-        }
+        environment.NewTarget = RuntimeValue.Undefined;
+        environment.ConstructionFrame = null;
 
         // #775: an async generator expression / object method binds its own dynamic `this`. The bound
         // receiver (or globalThis for a plain call) is defined in the generator's OWN body environment,
@@ -84,6 +85,10 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
             environment.Define("this", _boundThis);
             if (_boundSuper != null)
                 environment.Define("super", _boundSuper);
+        }
+        else if (ownsStrictThis)
+        {
+            environment.Define("this", SharpTSUndefined.Instance);
         }
         else if (_declaration.HasDynamicThis)
         {
@@ -180,6 +185,11 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSGeneratorFunctionValue
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
         RuntimeEnvironment environment = new(_closure);
+        if (HasOwnThis)
+        {
+            environment.NewTarget = RuntimeValue.Undefined;
+            environment.ConstructionFrame = null;
+        }
         // Named async generator function expression: bind self-reference alongside params.
         if (_declaration.Name != null)
         {

@@ -527,8 +527,8 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldloc, returnLocal);
             if (method.ReturnType.IsArray)
                 EmitExternalArrayReturn(method.ReturnType);
-            else if (method.ReturnType.IsValueType)
-                IL.Emit(OpCodes.Box, method.ReturnType);
+            else
+                BoxResultIfValueType(method.ReturnType);
             IL.Emit(OpCodes.Stelem_Ref);
         }
 
@@ -540,8 +540,8 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldloc, local);
             if (elementType.IsArray)
                 EmitExternalArrayReturn(elementType);
-            else if (elementType.IsValueType)
-                IL.Emit(OpCodes.Box, elementType);
+            else
+                BoxResultIfValueType(elementType);
             IL.Emit(OpCodes.Stelem_Ref);
         }
 

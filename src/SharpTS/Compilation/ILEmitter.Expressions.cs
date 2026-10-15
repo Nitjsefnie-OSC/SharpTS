@@ -61,11 +61,14 @@ public partial class ILEmitter
         // Block-scoped class locals start as undefined and are initialized at
         // the declaration statement. Observe the class TDZ before ordinary
         // local resolution.
-        if (_ctx.Locals.TryGetTag(name, out var classTag) && classTag is Stmt.Class)
+        if (_ctx.Locals.TryGetTag(name, out var classTag) && classTag is Stmt.Class classDeclaration)
         {
             var local = _ctx.Locals.GetLocal(name)!;
             var initializedLabel = IL.DefineLabel();
-            IL.Emit(OpCodes.Ldloc, local);
+            if (_ctx.RuntimeClassDeclarations?.ContainsKey(classDeclaration) != true
+                || !_resolver.TryLoadVariable(name).HasValue)
+                IL.Emit(OpCodes.Ldloc, local);
+            _ctx.EmitLexicalTdzValueCheck(IL, name);
             IL.Emit(OpCodes.Dup);
             IL.Emit(OpCodes.Isinst, _ctx.Runtime!.Sentinels.UndefinedType);
             IL.Emit(OpCodes.Brfalse, initializedLabel);
@@ -873,20 +876,6 @@ public partial class ILEmitter
         SetStackUnknown();
     }
 
-    protected override void EmitSuper(Expr.Super s)
-    {
-        if (_ctx.IsStaticSuperContext)
-        {
-            var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
-            EmitGuestSuperValue(s.Method?.Lexeme ?? "constructor", receiver);
-            return;
-        }
-        // Super method values use the lexical receiver, including arrow captures.
-        // Note: super() constructor calls are handled in EmitCall, not here
-        EmitThis();
-        IL.Emit(OpCodes.Ldstr, s.Method?.Lexeme ?? "constructor");
-        EmitCallUnknown(_ctx.Runtime!.ReflectedMethods.SuperMethod);
-    }
 
     protected override void EmitTernary(Expr.Ternary t)
     {

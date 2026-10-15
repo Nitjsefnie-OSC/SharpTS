@@ -9,6 +9,13 @@ public sealed class EmittedFunctionValueRuntime
     internal EmittedFunctionValueRuntime() { }
     public bool IsComplete { get; private set; }
 
+    private MethodBuilder? _invokeConstructed;
+    public MethodBuilder InvokeConstructed
+    {
+        get => Require(_invokeConstructed);
+        internal set => SetHandle(ref _invokeConstructed, value);
+    }
+
     private TypeBuilder? _type;
     public TypeBuilder Type
     {
@@ -145,6 +152,7 @@ public sealed class EmittedFunctionValueRuntime
         _ = Type;
         _ = Invoke;
         _ = InvokeWithThis;
+        _ = InvokeConstructed;
         _ = GetTarget;
         _ = BindThis;
         _ = LengthGetter;

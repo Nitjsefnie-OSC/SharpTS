@@ -13,6 +13,7 @@ public partial class ILCompiler
     /// </summary>
     private void DefineHasFieldsInterfaceMethods(TypeBuilder typeBuilder, string className, FieldInfo fieldsField)
     {
+        GetClassRegistry().RegisterGuestFieldOwner(className, typeBuilder);
         var methodAttrs = MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig;
 
         // The expando dictionary is deliberately absent from a newly constructed instance.
@@ -79,11 +80,13 @@ public partial class ILCompiler
         _classes.PropertyDispatch.Declare(className, typeBuilder, new ClassPropertyDispatch(
             ensureFields, fieldsGetter, getPropertyMethod, setPropertyMethod,
             hasPropertyMethod, fieldsField));
+        EmitGuestDataFieldBodies(typeBuilder, fieldsField, ensureFields);
     }
 
     private void EmitEnsureFieldsBody(MethodBuilder method, FieldInfo fieldsField)
     {
         var il = method.GetILGenerator();
+        fieldsField = EmitterTypeHelpers.SelfFieldReference(fieldsField);
 
         if (fieldsField.IsStatic)
         {
@@ -120,6 +123,7 @@ public partial class ILCompiler
         LocalBuilder fieldsLocal,
         Label missingLabel)
     {
+        fieldsField = EmitterTypeHelpers.SelfFieldReference(fieldsField);
         if (fieldsField.IsStatic)
         {
             il.Emit(OpCodes.Ldsfld, fieldsField);
@@ -176,80 +180,85 @@ public partial class ILCompiler
         MethodInfo ensureFields)
     {
         _typedInterop.PropertyBackingFields.TryGetValue(className, out var backingFields);
-        EmitGetFieldsBodyCore(method, backingFields, ensureFields, GetInheritedBackingFieldNames(className));
-    }
-
-    private IEnumerable<string> GetInheritedBackingFieldNames(string className)
-    {
-        if (!_classes.Superclass.TryGetValue(className, out var parent) || parent == null)
-            yield break;
-        foreach (var name in GetInheritedBackingFieldNames(parent))
-            yield return name;
-        if (_typedInterop.PropertyBackingFields.TryGetValue(parent, out var fields))
-            foreach (var name in fields.Keys)
-                yield return NamingConventions.ToCamelCase(name);
+        EmitGetFieldsBodyCore(method, backingFields, ensureFields);
     }
 
     private void EmitGetFieldsBodyCore(
         MethodBuilder method,
         Dictionary<string, FieldBuilder>? backingFields,
-        MethodInfo ensureFields,
-        IEnumerable<string>? inheritedFieldNames = null)
+        MethodInfo ensureFields)
     {
         var il = method.GetILGenerator();
-
-        // Check if this class has typed backing fields
-        if (backingFields == null || backingFields.Count == 0)
+        var owner = (TypeBuilder)method.DeclaringType!;
+        var ownFields = GetClassRegistry().GetOwnGuestDataFields(owner).ToArray();
+        var parent = owner.BaseType;
+        var parentDefinition = parent?.IsConstructedGenericType == true ? parent.GetGenericTypeDefinition() : parent;
+        ClassPropertyDispatch? parentDispatch = null;
+        if (parentDefinition is TypeBuilder parentBuilder)
+            _classes.PropertyDispatch.TryGet(parentBuilder, out parentDispatch);
+        if ((backingFields == null || backingFields.Count == 0) && ownFields.Length == 0 && parentDispatch == null)
         {
-            // No typed backing fields - materialize the compatibility dictionary on demand.
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(ensureFields));
             il.Emit(OpCodes.Ret);
             return;
         }
-
-        // Declared fields precede properties added later. Inherited fields represented
-        // in this store precede this class's fields; retain their current dynamic values.
-        var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item");
         var fields = il.DeclareLocal(_types.DictionaryStringObject);
         var result = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, result);
+        if (parentDispatch != null)
+        {
+            if (!EmitterTypeHelpers.TryResolveInstanceDispatch(owner, parentDispatch.GetFields, owner, out _, out var parentGet))
+                throw new InvalidOperationException("Cannot resolve inherited field snapshot owner.");
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, parentGet);
+            il.Emit(OpCodes.Stloc, fields);
+            // Auto backing slots retain their existing owner-local compatibility
+            // projection; they are prototype accessors, not inherited own data.
+            HashSet<string> autoNames = new(StringComparer.Ordinal);
+            HashSet<string> dataNames = new(StringComparer.Ordinal);
+            for (Type? ancestor = parent; ancestor != null; ancestor = ancestor.BaseType)
+            {
+                var definition = ancestor.IsConstructedGenericType ? ancestor.GetGenericTypeDefinition() : ancestor;
+                if (definition is not TypeBuilder builder) break;
+                if (_autoAccessorFieldNames.TryGetValue(builder, out var names)) autoNames.UnionWith(names);
+                dataNames.UnionWith(GetClassRegistry().GetOwnGuestDataFields(builder).Select(field => field.SourceName));
+            }
+            autoNames.ExceptWith(dataNames);
+            EmitAppendFieldSnapshot(il, fields, result, overwrite: true, autoNames);
+        }
+        var setItem = _types.DictionaryStringObjectSetItem;
+        foreach (var field in ownFields)
+        {
+            il.Emit(OpCodes.Ldloc, result);
+            il.Emit(OpCodes.Ldstr, field.SourceName);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(field.GuestGetter));
+            il.Emit(OpCodes.Callvirt, setItem);
+        }
+        foreach (var (name, backing) in backingFields ?? [])
+        {
+            if (ownFields.Any(field => ReferenceEquals(field.BackingField, backing))) continue;
+            il.Emit(OpCodes.Ldloc, result);
+            il.Emit(OpCodes.Ldstr, NamingConventions.ToCamelCase(name));
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, EmitterTypeHelpers.SelfFieldReference(backing));
+            if (backing.FieldType.IsValueType || backing.FieldType.IsGenericParameter)
+                il.Emit(OpCodes.Box, backing.FieldType);
+            il.Emit(OpCodes.Callvirt, setItem);
+        }
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(ensureFields));
         il.Emit(OpCodes.Stloc, fields);
-        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
-        il.Emit(OpCodes.Stloc, result);
+        EmitAppendFieldSnapshot(il, fields, result, overwrite: false);
+        il.Emit(OpCodes.Ldloc, result);
+        il.Emit(OpCodes.Ret);
+    }
 
-        var inheritedValue = il.DeclareLocal(_types.Object);
-        foreach (var name in inheritedFieldNames ?? [])
-        {
-            var absent = il.DefineLabel();
-            il.Emit(OpCodes.Ldloc, fields);
-            il.Emit(OpCodes.Ldstr, name);
-            il.Emit(OpCodes.Ldloca, inheritedValue);
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject,
-                "TryGetValue", [_types.String, _types.Object.MakeByRefType()])!);
-            il.Emit(OpCodes.Brfalse, absent);
-            il.Emit(OpCodes.Ldloc, result);
-            il.Emit(OpCodes.Ldstr, name);
-            il.Emit(OpCodes.Ldloc, inheritedValue);
-            il.Emit(OpCodes.Callvirt, setItem);
-            il.MarkLabel(absent);
-        }
-
-        // result["propName"] = this._BackingField; for each typed property
-        foreach (var (propName, backingField) in backingFields)
-        {
-            var camelName = NamingConventions.ToCamelCase(propName);
-            il.Emit(OpCodes.Ldloc, result);
-            il.Emit(OpCodes.Ldstr, camelName);
-            il.Emit(OpCodes.Ldarg_0); // this
-            il.Emit(OpCodes.Ldfld, backingField);
-            if (backingField.FieldType.IsValueType)
-                il.Emit(OpCodes.Box, backingField.FieldType);
-            il.Emit(OpCodes.Callvirt, setItem);
-        }
-
-        // Append expandos without replacing the authoritative typed backing values.
+    private void EmitAppendFieldSnapshot(ILGenerator il, LocalBuilder fields, LocalBuilder result, bool overwrite,
+        IReadOnlySet<string>? excludedNames = null)
+    {
         var enumeratorType = _types.DictionaryStringObjectEnumerator;
         var enumerator = il.DeclareLocal(enumeratorType);
         var entry = il.DeclareLocal(_types.KeyValuePairStringObject);
@@ -265,18 +274,24 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldloca, enumerator);
         il.Emit(OpCodes.Call, _types.GetProperty(enumeratorType, "Current").GetGetMethod()!);
         il.Emit(OpCodes.Stloc, entry);
+        foreach (var name in excludedNames ?? new HashSet<string>())
+        {
+            il.Emit(OpCodes.Ldloca, entry);
+            il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Key").GetGetMethod()!);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brtrue, loop);
+        }
         il.Emit(OpCodes.Ldloc, result);
         il.Emit(OpCodes.Ldloca, entry);
         il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Key").GetGetMethod()!);
         il.Emit(OpCodes.Ldloca, entry);
         il.Emit(OpCodes.Call, _types.GetProperty(_types.KeyValuePairStringObject, "Value").GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject,
-            "TryAdd", [_types.String, _types.Object])!);
-        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Callvirt, overwrite ? _types.DictionaryStringObjectSetItem
+            : _types.GetMethod(_types.DictionaryStringObject, "TryAdd", [_types.String, _types.Object])!);
+        if (!overwrite) il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Br, loop);
         il.MarkLabel(done);
-        il.Emit(OpCodes.Ldloc, result);
-        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
@@ -399,6 +414,7 @@ public partial class ILCompiler
         var tryFieldsLabel = il.DefineLabel();
         var tryMethodsLabel = il.DefineLabel();
         var returnNullLabel = il.DefineLabel();
+        EmitDictionaryGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: false);
 
         // 1. Check typed properties with backing fields (compile-time dispatch)
         if (_typedInterop.PropertyBackingFields.TryGetValue(className, out var backingFields))
@@ -422,10 +438,15 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Brfalse, nextLabel);
 
                 il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Ldfld, backingField);
-                // Box value types
-                if (backingField.FieldType.IsValueType)
+                if (GetClassRegistry().TryGetOwnGuestDataField((TypeBuilder)method.DeclaringType!, jsName, out var guestField))
+                    il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(guestField.GuestGetter));
+                else
+                {
+                il.Emit(OpCodes.Ldfld, EmitterTypeHelpers.SelfFieldReference(backingField));
+                // GetProperty returns object even when the backing slot is T.
+                if (backingField.FieldType.IsValueType || backingField.FieldType.IsGenericParameter)
                     il.Emit(OpCodes.Box, backingField.FieldType);
+                }
                 il.Emit(OpCodes.Ret);
 
                 il.MarkLabel(nextLabel);
@@ -443,19 +464,9 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Ret);
 
-        // 2b. If this class extends Error, fall back to Error base class properties
         il.MarkLabel(tryMethodsLabel);
+        EmitInheritedGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: false);
         EmitClassPrototypeFieldFallback(il);
-        if (IsErrorSubclass(className))
-        {
-            EmitErrorPropertyFallback(il, "name", _runtime.Errors.GetName);
-            EmitErrorPropertyFallback(il, "message", _runtime.Errors.GetMessage);
-            EmitErrorPropertyFallback(il, "stack", _runtime.Errors.GetStack);
-        }
-
-        // 2d. `instance.constructor` → the class (a System.Type value). See
-        // EmitConstructorPropertyBranch; after own fields so they can shadow it.
-        EmitConstructorPropertyBranch(il, _classes.Builders[className]);
 
         // 2c. Check instance getters (accessors with `get` keyword). JS semantics: reading
         // `obj.foo` where `foo` is a getter must INVOKE the getter and return its result.
@@ -466,14 +477,12 @@ public partial class ILCompiler
         {
             foreach (var (getterPascalName, getterMethod) in instanceGetters)
             {
-                // Getters are registered by PascalCase method-name convention (no "get_" prefix
-                // in InstanceGetters dict — the dict value keys match PascalCase property names).
-                // JS access is camelCase; accept both forms to match InstanceGetters' key style.
-                var camelName = NamingConventions.ToCamelCase(getterPascalName);
+                var guestName = GetClassRegistry().GetSourceInstanceGetterName(getterMethod)
+                    ?? NamingConventions.ToCamelCase(getterPascalName);
                 var nextLabel = il.DefineLabel();
 
                 il.Emit(OpCodes.Ldarg_1);
-                il.Emit(OpCodes.Ldstr, camelName);
+                il.Emit(OpCodes.Ldstr, guestName);
                 il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
                 il.Emit(OpCodes.Brfalse, nextLabel);
 
@@ -493,6 +502,16 @@ public partial class ILCompiler
                 il.MarkLabel(nextLabel);
             }
         }
+
+        if (IsErrorSubclass(className))
+        {
+            EmitErrorPropertyFallback(il, "name", _runtime.Errors.GetName);
+            EmitErrorPropertyFallback(il, "message", _runtime.Errors.GetMessage);
+            EmitErrorPropertyFallback(il, "stack", _runtime.Errors.GetStack);
+        }
+
+        // Declared accessors also take precedence over the implicit constructor.
+        EmitConstructorPropertyBranch(il, _classes.Builders[className]);
 
         // 3. Check instance methods (compile-time dispatch)
         // (redefine label after error property fallback — previous tryMethodsLabel was already marked)
@@ -561,8 +580,8 @@ public partial class ILCompiler
         // (RegisterSymbolMethod), but named/string-index access (obj.dyn, obj["dyn"]) funnels here
         // rather than through the symbol-key branch, so consult the registry as a fallback. Gated on
         // this class declaring a computed method to keep the common no-computed-method path untouched.
-        // FindSymbolMethod walks the receiver's base chain, so an inherited key still resolves once
-        // base-fallthrough reaches the declaring class's GetProperty.
+        // Only this body's declaring owner may claim the result. Inherited methods
+        // must wait until a nearer setter-only accessor can stop base fallthrough.
         if (classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
         {
             var noStrMethodLabel = il.DefineLabel();
@@ -573,6 +592,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Stloc, strMethodLocal);
             il.Emit(OpCodes.Ldloc, strMethodLocal);
             il.Emit(OpCodes.Brfalse, noStrMethodLabel);
+            EmitComputedMethodOwnerCheck(il, strMethodLocal, _classes.Builders[className], noStrMethodLabel);
             // return new $TSFunction(this, (MethodInfo)mi)  — receiver-bound, mirroring the symbol path.
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldloc, strMethodLocal);
@@ -581,6 +601,10 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noStrMethodLabel);
         }
+
+        // Evaluated computed members may supply the other accessor half or a
+        // later data method. Only claim a missing getter after those own reads.
+        EmitSetterOnlyUndefinedBranches(il, classStmt.Accessors, backingFields);
 
         // 4. Not found on this class — delegate to the base class's GetProperty
         // so inherited members resolve under dynamic dispatch (else fall back to
@@ -601,6 +625,7 @@ public partial class ILCompiler
     {
         var il = method.GetILGenerator();
         var setFieldsLabel = il.DefineLabel();
+        EmitDictionaryGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: true);
 
         // 1. Check typed properties with backing fields (compile-time dispatch)
         _typedInterop.PropertyBackingFields.TryGetValue(className, out var backingFields);
@@ -609,7 +634,9 @@ public partial class ILCompiler
             foreach (var (propName, backingField) in backingFields)
             {
                 // Convert PascalCase property name to camelCase for JS-style access
-                var camelName = NamingConventions.ToCamelCase(propName);
+                var camelName = classStmt.Fields.FirstOrDefault(field => !field.IsStatic && !field.IsPrivate
+                    && NamingConventions.ToPascalCase(field.Name.Lexeme) == propName)?.Name.Lexeme
+                    ?? NamingConventions.ToCamelCase(propName);
                 var nextLabel = il.DefineLabel();
 
                 // if (name == "camelName") { this.backingField = value; return; }
@@ -620,12 +647,17 @@ public partial class ILCompiler
 
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Ldarg_2);
+                if (GetClassRegistry().TryGetOwnGuestDataField((TypeBuilder)method.DeclaringType!, camelName, out var guestField))
+                    il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(guestField.GuestSetter));
+                else
+                {
                 // Unbox value types
                 if (backingField.FieldType.IsValueType)
                     il.Emit(OpCodes.Unbox_Any, backingField.FieldType);
                 else if (backingField.FieldType != _types.Object)
                     il.Emit(OpCodes.Castclass, backingField.FieldType);
                 il.Emit(OpCodes.Stfld, backingField);
+                }
                 il.Emit(OpCodes.Ret);
 
                 il.MarkLabel(nextLabel);
@@ -676,6 +708,7 @@ public partial class ILCompiler
         // _fields and that entry then shadows the getter on subsequent reads (#293).
         _classes.InstanceGetters.TryGetValue(className, out var instanceGetters);
         EmitGetterOnlyNoOpBranches(il, instanceGetters, instanceSettersForNoOp: _classes.InstanceSetters.GetValueOrDefault(className), backingFields);
+        EmitInheritedGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: true);
 
         // 2. Fall back to _fields dictionary
         il.MarkLabel(setFieldsLabel);
@@ -729,6 +762,36 @@ public partial class ILCompiler
         }
     }
 
+    private void EmitSetterOnlyUndefinedBranches(
+        ILGenerator il,
+        IReadOnlyList<Stmt.Accessor>? accessors,
+        Dictionary<string, FieldBuilder>? backingFields)
+    {
+        var namedAccessors = (accessors ?? []).Where(accessor => !accessor.IsStatic)
+            .Select(accessor => (Accessor: accessor, Name: accessor.ComputedKey switch
+            {
+                null => accessor.Name.Lexeme,
+                Expr.Literal { Value: string name } => name,
+                _ => null,
+            })).Where(entry => entry.Name != null).ToArray();
+        var getterNames = namedAccessors.Where(entry => entry.Accessor.Kind.Type == TokenType.GET)
+            .Select(entry => entry.Name!).ToHashSet(StringComparer.Ordinal);
+        foreach (var name in namedAccessors.Where(entry => entry.Accessor.Kind.Type == TokenType.SET)
+                     .Select(entry => entry.Name!).Distinct(StringComparer.Ordinal))
+        {
+            if (getterNames.Contains(name) || backingFields?.ContainsKey(NamingConventions.ToPascalCase(name)) == true)
+                continue;
+            var next = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, next);
+            il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(next);
+        }
+    }
+
     /// <summary>
     /// Emits the $IHasFields interface method bodies for a class expression.
     /// This overload uses _classExprs dictionaries instead of _classes dictionaries.
@@ -773,14 +836,14 @@ public partial class ILCompiler
         var tryFieldsLabel = il.DefineLabel();
         var tryMethodsLabel = il.DefineLabel();
         var returnNullLabel = il.DefineLabel();
+        EmitDictionaryGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: false);
 
         // 1. Check typed properties with backing fields (compile-time dispatch)
         if (_classExprs.BackingFields.TryGetValue(classExpr, out var backingFields))
         {
             foreach (var (propName, backingField) in backingFields)
             {
-                // Convert PascalCase property name to camelCase for JS-style access
-                var camelName = NamingConventions.ToCamelCase(propName);
+                var camelName = GetClassExpressionFieldGuestName(classExpr, propName);
                 var nextLabel = il.DefineLabel();
 
                 // if (name == "camelName") return this.backingField;
@@ -790,10 +853,15 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Brfalse, nextLabel);
 
                 il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Ldfld, backingField);
-                // Box value types
-                if (backingField.FieldType.IsValueType)
+                if (GetClassRegistry().TryGetOwnGuestDataField((TypeBuilder)method.DeclaringType!, camelName, out var guestField))
+                    il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(guestField.GuestGetter));
+                else
+                {
+                il.Emit(OpCodes.Ldfld, EmitterTypeHelpers.SelfFieldReference(backingField));
+                // GetProperty returns object even when the backing slot is T.
+                if (backingField.FieldType.IsValueType || backingField.FieldType.IsGenericParameter)
                     il.Emit(OpCodes.Box, backingField.FieldType);
+                }
                 il.Emit(OpCodes.Ret);
 
                 il.MarkLabel(nextLabel);
@@ -820,29 +888,21 @@ public partial class ILCompiler
         // backing-field names are already handled (and returned) by section 1, so those entries
         // become dead branches here — matching the class-declaration registry's behavior.
         il.MarkLabel(tryMethodsLabel);
+        EmitInheritedGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: false);
 
+        EmitInheritedClassExpressionFieldReads(il, classExpr);
         EmitClassPrototypeFieldFallback(il);
-
-        if (_classes.ErrorSubclasses.Contains(className))
-        {
-            EmitErrorPropertyFallback(il, "name", _runtime.Errors.GetName);
-            EmitErrorPropertyFallback(il, "message", _runtime.Errors.GetMessage);
-            EmitErrorPropertyFallback(il, "stack", _runtime.Errors.GetStack);
-        }
-
-        // 2d. `instance.constructor` → the class (a System.Type value). See
-        // EmitConstructorPropertyBranch; after own fields so they can shadow it.
-        EmitConstructorPropertyBranch(il, _classExprs.Builders[classExpr]);
 
         if (_classExprs.Getters.TryGetValue(classExpr, out var instanceGetters))
         {
             foreach (var (getterPascalName, getterMethod) in instanceGetters)
             {
-                var camelName = NamingConventions.ToCamelCase(getterPascalName);
+                var guestName = GetClassRegistry().GetSourceInstanceGetterName(getterMethod)
+                    ?? NamingConventions.ToCamelCase(getterPascalName);
                 var nextLabel = il.DefineLabel();
 
                 il.Emit(OpCodes.Ldarg_1);
-                il.Emit(OpCodes.Ldstr, camelName);
+                il.Emit(OpCodes.Ldstr, guestName);
                 il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
                 il.Emit(OpCodes.Brfalse, nextLabel);
 
@@ -859,6 +919,15 @@ public partial class ILCompiler
                 il.MarkLabel(nextLabel);
             }
         }
+
+        if (_classes.ErrorSubclasses.Contains(className))
+        {
+            EmitErrorPropertyFallback(il, "name", _runtime.Errors.GetName);
+            EmitErrorPropertyFallback(il, "message", _runtime.Errors.GetMessage);
+            EmitErrorPropertyFallback(il, "stack", _runtime.Errors.GetStack);
+        }
+
+        EmitConstructorPropertyBranch(il, _classExprs.Builders[classExpr]);
 
         // 3. Check instance methods (compile-time dispatch)
         if (_classExprs.InstanceMethods.TryGetValue(classExpr, out var instanceMethods))
@@ -935,6 +1004,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Stloc, computedMethodLocal);
             il.Emit(OpCodes.Ldloc, computedMethodLocal);
             il.Emit(OpCodes.Brfalse, noComputedMethodLabel);
+            EmitComputedMethodOwnerCheck(il, computedMethodLocal, _classExprs.Builders[classExpr], noComputedMethodLabel);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldloc, computedMethodLocal);
             il.Emit(OpCodes.Castclass, _types.MethodInfo);
@@ -943,11 +1013,72 @@ public partial class ILCompiler
             il.MarkLabel(noComputedMethodLabel);
         }
 
+        _classExprs.BackingFields.TryGetValue(classExpr, out var classExprBackingFields);
+        EmitSetterOnlyUndefinedBranches(il, classExpr.Accessors, classExprBackingFields);
+
         // 4. Not found on this class — delegate to the base class's GetProperty
         // so inherited members resolve under dynamic dispatch (else fall back to
         // returning $Undefined).
         il.MarkLabel(returnNullLabel);
         EmitGetPropertyBaseFallthrough(il, _classExprs.Builders[classExpr].BaseType);
+    }
+
+    private void EmitInheritedClassExpressionFieldReads(ILGenerator il, Expr.ClassExpr expression)
+    {
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+        Type? parent = _classExprs.Builders[expression].BaseType;
+        while (parent != null)
+        {
+            var definition = parent.IsConstructedGenericType ? parent.GetGenericTypeDefinition() : parent;
+            var parentExpression = _classExprs.Builders.FirstOrDefault(entry => ReferenceEquals(entry.Value, definition)).Key;
+            var declaration = _classes.Declarations.FirstOrDefault(source =>
+                !_runtimeClassDeclarations.ContainsKey(source)
+                && _classes.DeclarationNames.TryGetValue(source, out var name)
+                && _classes.Builders.TryGetValue(name, out var builder) && ReferenceEquals(builder, definition));
+            var fields = parentExpression?.Fields ?? declaration?.Fields;
+            var backingFields = parentExpression != null
+                ? _classExprs.BackingFields.GetValueOrDefault(parentExpression)
+                : declaration != null
+                    ? _typedInterop.PropertyBackingFields.GetValueOrDefault(_classes.DeclarationNames[declaration])
+                    : null;
+            foreach (var field in fields ?? [])
+            {
+                if (field.IsStatic || field.IsPrivate || field.IsDeclare || field.ComputedKey != null
+                    || backingFields?.ContainsKey(NamingConventions.ToPascalCase(field.Name.Lexeme)) != true
+                    || !seenNames.Add(field.Name.Lexeme)) continue;
+                var next = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldstr, field.Name.Lexeme);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+                il.Emit(OpCodes.Brfalse, next);
+                // A field inherited through the CLR chain remains own data on this
+                // instance. Read its declaring body's field branch before any
+                // prototype compatibility view can expose an uninitialized field.
+                EmitGetPropertyBaseFallthrough(il, parent);
+                il.MarkLabel(next);
+            }
+            parent = definition.BaseType is { } nextParent
+                ? ResolveInheritedConstructorSlot(nextParent, parent) : null;
+        }
+    }
+
+    private static string GetClassExpressionFieldGuestName(Expr.ClassExpr expression, string propertyName) =>
+        expression.Fields.FirstOrDefault(field => !field.IsStatic && !field.IsPrivate && !field.IsDeclare
+            && field.ComputedKey == null && NamingConventions.ToPascalCase(field.Name.Lexeme) == propertyName)
+            ?.Name.Lexeme ?? NamingConventions.ToCamelCase(propertyName);
+
+    private void EmitComputedMethodOwnerCheck(ILGenerator il, LocalBuilder method, TypeBuilder owner, Label notOwn)
+    {
+        // Base GetProperty bodies still receive the original derived instance.
+        // Normalize the closed method owner rather than using receiver.GetType().
+        il.Emit(OpCodes.Ldloc, method);
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(MemberInfo), "DeclaringType").GetGetMethod()!);
+        il.Emit(OpCodes.Call, _runtime.SymbolAccessors.RegistryKey);
+        il.Emit(OpCodes.Ldtoken, owner);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Call, _runtime.SymbolAccessors.RegistryKey);
+        il.Emit(OpCodes.Bne_Un, notOwn);
     }
 
     /// <summary>
@@ -1067,14 +1198,14 @@ public partial class ILCompiler
     {
         var il = method.GetILGenerator();
         var setFieldsLabel = il.DefineLabel();
+        EmitDictionaryGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: true);
 
         // 1. Check typed properties with backing fields (compile-time dispatch)
         if (_classExprs.BackingFields.TryGetValue(classExpr, out var backingFields))
         {
             foreach (var (propName, backingField) in backingFields)
             {
-                // Convert PascalCase property name to camelCase for JS-style access
-                var camelName = NamingConventions.ToCamelCase(propName);
+                var camelName = GetClassExpressionFieldGuestName(classExpr, propName);
                 var nextLabel = il.DefineLabel();
 
                 // if (name == "camelName") { this.backingField = value; return; }
@@ -1085,12 +1216,17 @@ public partial class ILCompiler
 
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Ldarg_2);
+                if (GetClassRegistry().TryGetOwnGuestDataField((TypeBuilder)method.DeclaringType!, camelName, out var guestField))
+                    il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(guestField.GuestSetter));
+                else
+                {
                 // Unbox value types
                 if (backingField.FieldType.IsValueType)
                     il.Emit(OpCodes.Unbox_Any, backingField.FieldType);
                 else if (backingField.FieldType != _types.Object)
                     il.Emit(OpCodes.Castclass, backingField.FieldType);
                 il.Emit(OpCodes.Stfld, backingField);
+                }
                 il.Emit(OpCodes.Ret);
 
                 il.MarkLabel(nextLabel);
@@ -1141,6 +1277,7 @@ public partial class ILCompiler
         // EmitSetPropertyBody. Without this the write shadows the getter via _fields (#293).
         _classExprs.Getters.TryGetValue(classExpr, out var classExprGetters);
         EmitGetterOnlyNoOpBranches(il, classExprGetters, _classExprs.Setters.GetValueOrDefault(classExpr), backingFields);
+        EmitInheritedGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: true);
 
         // 2. Fall back to _fields dictionary
         il.MarkLabel(setFieldsLabel);

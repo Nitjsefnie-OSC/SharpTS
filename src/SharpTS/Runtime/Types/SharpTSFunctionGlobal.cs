@@ -57,7 +57,8 @@ public sealed class SharpTSFunctionGlobal : ISharpTSCallable
 /// </summary>
 public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSSymbolPropertyBag
 {
-    private readonly PrototypePropertyOverlay _overlay = new(IsBuiltIn);
+    private readonly PrototypePropertyOverlay _overlay = new(IsBuiltIn,
+        initialStringKeys: ["length", "name", "constructor", "apply", "bind", "call", "toString"]);
 
     public SharpTSFunctionPrototype()
     {
@@ -65,6 +66,9 @@ public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSS
             "", writable: false, enumerable: false, configurable: true));
         _overlay.DefineProperty("length", new SharpTSPropertyDescriptor(
             0d, writable: false, enumerable: false, configurable: true));
+        _overlay.DefineProperty(SharpTSSymbol.HasInstance, new SharpTSPropertyDescriptor(
+            BuiltIns.FunctionBuiltIns.CreateHasInstanceMethod(),
+            writable: false, enumerable: false, configurable: false));
     }
 
     public bool HasExtra(string name) => _overlay.HasExtra(name);
@@ -76,6 +80,14 @@ public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSS
         => _overlay.GetOwnPropertyDescriptor(name);
     public ISharpTSCallable? GetExtraGetter(string name) => _overlay.GetGetter(name);
     public ISharpTSCallable? GetExtraSetter(string name) => _overlay.GetSetter(name);
+
+    public bool DefineProperty(SharpTSSymbol symbol, SharpTSPropertyDescriptor descriptor)
+        => _overlay.DefineProperty(symbol, descriptor);
+    public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(SharpTSSymbol symbol)
+        => _overlay.GetOwnPropertyDescriptor(symbol);
+    public IEnumerable<SharpTSSymbol> GetSymbolPropertyNames() => _overlay.GetSymbolPropertyNames();
+    public bool DeleteBySymbolStrict(SharpTSSymbol symbol, bool strictMode)
+        => !_overlay.HasSymbolProperty(symbol) || _overlay.DeleteBySymbolStrict(symbol, strictMode);
 
     bool ISharpTSSymbolPropertyBag.HasSymbolProperty(SharpTSSymbol symbol)
         => _overlay.HasSymbolProperty(symbol);
@@ -97,6 +109,8 @@ public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSS
     public bool DeleteProperty(string name) => _overlay.DeleteProperty(name);
 
     public IEnumerable<string> OwnEnumerableKeys() => _overlay.OwnEnumerableKeys();
+
+    internal IEnumerable<string> OwnStringKeys() => _overlay.OwnVisibleStringKeys();
 
     public object? GetMember(string name)
     {

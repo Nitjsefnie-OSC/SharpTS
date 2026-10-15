@@ -102,7 +102,7 @@ public partial class Interpreter : IDisposable
     /// </summary>
     internal object? GetCurrentThis()
     {
-        if (_environment.TryGet("this", out var value))
+        if (_environment.TryGetThis(out var value))
             return value.ToObject();
         return null;
     }

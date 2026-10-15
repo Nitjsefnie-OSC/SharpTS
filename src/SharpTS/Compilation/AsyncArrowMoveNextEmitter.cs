@@ -135,7 +135,7 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
 
         // Create variable resolver for hoisted fields, locals, and captured variables
         _resolver = new AsyncArrowVariableResolver(_il, _builder, _locals,
-            ctx.CellBindingLocals, ctx.Types.StrongBoxOfObjectValueField);
+            ctx.CellBindingLocals, ctx.Types.StrongBoxOfObjectValueField) { ConstructorContext = ctx };
 
         // Create labels for each await state
         for (int i = 0; i < _analysis.AwaitPointCount; i++)

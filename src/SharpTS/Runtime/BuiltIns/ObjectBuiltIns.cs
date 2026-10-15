@@ -157,6 +157,11 @@ public static partial class ObjectBuiltIns
                     yield return new(key,
                         includeValues ? interpreter.GetPropertyValue(primitiveConstructor, key) : null);
                 yield break;
+            case SharpTSFunctionPrototype functionPrototype:
+                foreach (var key in functionPrototype.OwnEnumerableKeys().ToList())
+                    yield return new(key,
+                        includeValues ? interpreter.GetPropertyValue(functionPrototype, key) : null);
+                yield break;
             case ISharpTSFunctionObject function:
                 foreach (var key in FunctionObjectProperties.GetProperties(function, interpreter).OwnEnumerableKeys().ToList())
                     yield return new(key, includeValues ? interpreter.GetPropertyValue(function, key) : null);
@@ -611,6 +616,10 @@ public static partial class ObjectBuiltIns
                         throw new ThrowException(new SharpTSTypeError(
                             "Cannot redefine symbol property"));
                     }
+                    return target;
+                case SharpTSFunctionPrototype functionPrototype:
+                    if (!functionPrototype.DefineProperty(symKey, descriptor))
+                        throw new ThrowException(new SharpTSTypeError("Cannot redefine symbol property"));
                     return target;
                 case SharpTSJSON json:
                     if (!json.DefineProperty(symKey, descriptor))
@@ -1186,6 +1195,9 @@ public static partial class ObjectBuiltIns
             case SharpTSBigIntPrototype bigIntPrototype
                 when bigIntPrototype.GetOwnPropertyDescriptor(key) is { } descriptor:
                 return descriptor.ToObject();
+            case SharpTSFunctionPrototype functionPrototype
+                when functionPrototype.GetOwnPropertyDescriptor(key) is { } descriptor:
+                return descriptor.ToObject();
             default:
                 return SharpTSUndefined.Instance;
         }
@@ -1369,6 +1381,8 @@ public static partial class ObjectBuiltIns
                 .Concat(obj.GetSymbolPropertyNames().Cast<object?>()).ToList(),
             ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.OwnStringKeys().Cast<object?>()
                 .Concat(primitiveConstructor.GetSymbolPropertyNames().Cast<object?>()).ToList(),
+            SharpTSFunctionPrototype functionPrototype => ((SharpTSArray)GetOwnPropertyNames(interpreter, [target])!)
+                .Concat(functionPrototype.GetSymbolPropertyNames().Cast<object?>()).ToList(),
             SharpTSInstance inst => inst.GetFieldNames().Cast<object?>().ToList(),
             SharpTSArray arr => GetOwnPropertyNamesFromArray(arr),
             SharpTSRegExp regex => regex.OwnStringKeys().Cast<object?>().ToList(),
@@ -1403,7 +1417,7 @@ public static partial class ObjectBuiltIns
     /// <summary>
     /// Object.getOwnPropertyNames(obj) - returns an array of all own property names (including non-enumerable).
     /// </summary>
-    private static object? GetOwnPropertyNames(Interpreter interpreter, List<object?> args)
+    internal static object? GetOwnPropertyNames(Interpreter interpreter, List<object?> args)
     {
         var target = args[0];
 
@@ -1419,6 +1433,7 @@ public static partial class ObjectBuiltIns
                     .Concat(StaticMemberNames.Cast<object?>()).ToList(),
             SharpTSObject obj => GetOwnPropertyNamesFromObject(obj),
             ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.OwnStringKeys().Cast<object?>().ToList(),
+            SharpTSFunctionPrototype functionPrototype => functionPrototype.OwnStringKeys().Cast<object?>().ToList(),
             SharpTSProxy proxy => proxy.TrapOwnPropertyKeys(interpreter)
                 .OfType<string>().Cast<object?>().ToList(),
             SharpTSInstance inst => inst.GetFieldNames().Select(k => (object?)k).ToList(),
@@ -1827,6 +1842,8 @@ public static partial class ObjectBuiltIns
             SharpTSMath math => math.GetSymbolPropertyNames().Select(s => (object?)s).ToList(),
             SharpTSStringPrototype stringPrototype
                 => stringPrototype.GetSymbolPropertyNames().Select(s => (object?)s).ToList(),
+            SharpTSFunctionPrototype functionPrototype
+                => functionPrototype.GetSymbolPropertyNames().Cast<object?>().ToList(),
             Dictionary<string, object?> dict => PropertyDescriptorStore.GetSymbolKeys(dict)
                                                   .Select(s => (object?)s).ToList(),
             _ => []

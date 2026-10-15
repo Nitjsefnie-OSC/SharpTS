@@ -52,6 +52,13 @@ public sealed class EmittedObjectWriteRuntime
         internal set => SetHandle(ref _indexStrict, value);
     }
 
+    private MethodBuilder? _symbolIndex;
+    public MethodBuilder SymbolIndex
+    {
+        get => Require(_symbolIndex);
+        internal set => SetHandle(ref _symbolIndex, value);
+    }
+
     internal void MarkPropertyBodyEmitted()
     {
         EnsureMutable();
@@ -88,6 +95,7 @@ public sealed class EmittedObjectWriteRuntime
         _ = FieldsPropertyStrict;
         _ = Index;
         _ = IndexStrict;
+        _ = SymbolIndex;
         if (!_propertyBodyEmitted)
             throw new InvalidOperationException("Object write Property body has not been emitted.");
         IsComplete = true;

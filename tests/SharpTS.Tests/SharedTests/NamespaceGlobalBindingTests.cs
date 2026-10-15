@@ -42,6 +42,20 @@ public class NamespaceGlobalBindingTests
     }
 
     [Theory, ModeData]
+    public void NamespaceSentinels_IndirectConstruction_Throws(ExecutionMode mode)
+    {
+        var source = """
+            const namespaces: any[] = [AbortSignal, Intl];
+            for (const constructor of namespaces) {
+                try { new constructor(); }
+                catch (error) { console.log("threw"); }
+            }
+            """;
+
+        Assert.Equal("threw\nthrew\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
     public void Intl_ValuePosition_AndMemberConstruction(ExecutionMode mode)
     {
         var source = """

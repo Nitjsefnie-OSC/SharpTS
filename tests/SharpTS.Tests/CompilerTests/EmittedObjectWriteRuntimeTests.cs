@@ -34,7 +34,7 @@ public sealed class EmittedObjectWriteRuntimeTests
         var first = new EmittedRuntime(); var second = new EmittedRuntime();
         Assert.NotSame(first.ObjectWrite, second.ObjectWrite);
         Assert.False(first.ObjectWrite.IsComplete); Assert.False(second.ObjectWrite.IsComplete);
-        Assert.Equal(6, Handles(typeof(EmittedObjectWriteRuntime)).Length);
+        Assert.Equal(7, Handles(typeof(EmittedObjectWriteRuntime)).Length);
         Assert.Null(typeof(EmittedRuntime).GetProperty(nameof(EmittedRuntime.ObjectWrite))!.SetMethod);
     }
 
@@ -76,7 +76,7 @@ public sealed class EmittedObjectWriteRuntimeTests
                 try { Call(methodName,args); throw new InvalidOperationException("Strict write did not throw: "+methodName); }
                 catch(TargetInvocationException error) { Assert.True(error.InnerException is not null && error.InnerException.Message.Contains("TypeError",StringComparison.Ordinal),"Wrong strict error: "+error); }
             }
-            var names=new[]{"SetProperty","SetPropertyStrict","SetFieldsProperty","SetFieldsPropertyStrict","SetIndex","SetIndexStrict"};
+            var names=new[]{"SetProperty","SetPropertyStrict","SetFieldsProperty","SetFieldsPropertyStrict","SetIndex","SetIndexStrict","SetSymbolIndex"};
             var tokens=names.Select(n=>rt.GetMethod(n)!.MetadataToken).ToArray();
             Assert.True(tokens[0]==tokens.Min(),"Property forward declaration moved");
             Call("SetProperty",shared,"persist",2d);
@@ -217,7 +217,7 @@ public sealed class EmittedObjectWriteRuntimeTests
         foreach (var name in FormerHandles) Assert.Null(typeof(EmittedRuntime).GetProperty(name));
     }
 
-    private static readonly string[] ScopedMethods = ["EmitSetFieldsProperty", "EmitSetFieldsPropertyStrict", "EmitSetProperty", "EmitToLengthBoxed", "EmitSetPropertyStrict", "EmitSetIndexStrict", "EmitSetIndex", "EmitProxySetPropertyCheck", "EmitProxySetIndexCheck", "EmitGlobalThisSetRedirect", "EmitDefineDataDescriptorFromValue", "EmitInvokePdsSetterWithValueAndReturn", "DeclareObjectWriteProperty", "EmitProxySetCompiledCall"];
+    private static readonly string[] ScopedMethods = ["EmitSetFieldsProperty", "EmitSetFieldsPropertyStrict", "EmitSetProperty", "EmitToLengthBoxed", "EmitSetPropertyStrict", "EmitSetIndexStrict", "EmitSetIndex", "EmitSetSymbolIndexBody", "EmitProxySetPropertyCheck", "EmitProxySetIndexCheck", "EmitGlobalThisSetRedirect", "EmitDefineDataDescriptorFromValue", "EmitInvokePdsSetterWithValueAndReturn", "DeclareObjectWriteProperty", "EmitProxySetCompiledCall"];
     private static readonly string[] FormerHandles = ["SetProperty", "SetPropertyStrict", "SetFieldsProperty", "SetFieldsPropertyStrict", "SetIndex", "SetIndexStrict"];
     private static void Fill(object owner, string? missing = null)
     {

@@ -9,6 +9,7 @@ public partial class RuntimeEmitter
         EmittedClassDefinitionRuntime ClassDefinitions,
         EmittedDynamicConstructionRuntime DynamicConstruction,
         EmittedBoxedPrimitiveRuntime BoxedPrimitives,
+        EmittedBooleanRuntime Booleans,
         EmittedErrorRuntime Errors,
         EmittedFunctionConstructionRuntime FunctionConstruction,
         EmittedFunctionValueRuntime FunctionValues,
@@ -60,7 +61,7 @@ public partial class RuntimeEmitter
         ConstructDynamicValueInputs inputs
     )
     {
-        var method = dynamicConstruction.Value;
+        var method = dynamicConstruction.ConstructWithNewTarget;
 
         var il = method.GetILGenerator();
         var throwLabel = il.DefineLabel();
@@ -71,6 +72,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Brfalse, notClassDefinition);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, inputs.ClassDefinitions.Construct);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notClassDefinition);
@@ -188,6 +190,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notNumberTypeLabel);
 
+        // Boolean construction uses truthiness without invoking primitive
+        // conversion hooks, and omission initializes the wrapper to false.
+        var notBooleanTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Boolean);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Bne_Un, notBooleanTypeLabel);
+        il.Emit(OpCodes.Ldstr, "Boolean");
+        var booleanArgPresentLabel = il.DefineLabel();
+        var booleanValueReadyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brtrue, booleanArgPresentLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Br, booleanValueReadyLabel);
+        il.MarkLabel(booleanArgPresentLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Call, inputs.Booleans.IsTruthy);
+        il.MarkLabel(booleanValueReadyLabel);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Call, inputs.BoxedPrimitives.New);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBooleanTypeLabel);
+
         var notFunctionType = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldtoken, inputs.FunctionValues.Type);
@@ -221,7 +250,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, attributes);
         il.Emit(OpCodes.Ldlen);
         il.Emit(OpCodes.Brfalse, useClrConstructor);
-        il.Emit(OpCodes.Ldtoken, typeof(Func<object[], object>));
+        il.Emit(OpCodes.Ldtoken, typeof(Func<object[], object, object>));
         il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
         il.Emit(OpCodes.Ldloc, constructorType);
         il.Emit(OpCodes.Ldloc, attributes);
@@ -232,9 +261,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly));
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
         il.Emit(OpCodes.Call, _types.GetMethod(typeof(Delegate), "CreateDelegate", _types.Type, typeof(MethodInfo)));
-        il.Emit(OpCodes.Castclass, typeof(Func<object[], object>));
+        il.Emit(OpCodes.Castclass, typeof(Func<object[], object, object>));
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Func<object[], object>), "Invoke", _types.ObjectArray));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Func<object[], object, object>), "Invoke", _types.ObjectArray, _types.Object));
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(useClrConstructor);
@@ -254,7 +284,8 @@ public partial class RuntimeEmitter
         // Callable values ($TSFunction and wrappers) → NewOnFunction(ctor, args)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, dynamicConstruction.Function);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, dynamicConstruction.FunctionWithNewTarget);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(throwLabel);

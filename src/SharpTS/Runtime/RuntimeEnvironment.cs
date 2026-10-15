@@ -23,6 +23,32 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     private bool _hasDirectBinding;
     private SharpTSClass? _privateClass;
     private bool? _staticSuper;
+    private bool _ownsNewTarget;
+    private RuntimeValue _newTarget;
+    private bool _ownsConstructionFrame;
+    private ClassConstructionFrame? _constructionFrame;
+
+    // Ordinary invocations and class initializers explicitly own a null slot;
+    // true arrows and blocks inherit their lexical constructor invocation.
+    internal ClassConstructionFrame? ConstructionFrame
+    {
+        get => _ownsConstructionFrame ? _constructionFrame : Enclosing?.ConstructionFrame;
+        set { _ownsConstructionFrame = true; _constructionFrame = value; }
+    }
+
+    internal bool TryGetThis(out RuntimeValue value)
+    {
+        ConstructionFrame?.EnsureThisBound();
+        return TryGet("this", out value);
+    }
+
+    // Ordinary invocations own a slot, including undefined. True arrows and
+    // ordinary block scopes inherit the nearest invocation's lexical slot.
+    internal RuntimeValue NewTarget
+    {
+        get => _ownsNewTarget ? _newTarget : Enclosing?.NewTarget ?? RuntimeValue.Undefined;
+        set { _ownsNewTarget = true; _newTarget = value; }
+    }
 
     // The super facet follows the lexical method, including through arrows;
     // rebinding this must not change which parent member is selected.

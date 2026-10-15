@@ -75,6 +75,7 @@ public partial class Interpreter
     internal RuntimeValue VisitCallPrivate(Expr.CallPrivate cp) => EvaluateCallPrivate(cp);
     internal RuntimeValue VisitThis(Expr.This thisExpr) => EvaluateThis(thisExpr);
     internal RuntimeValue VisitNew(Expr.New newExpr) => EvaluateNew(newExpr);
+    internal RuntimeValue VisitNewTarget(Expr.NewTarget newTarget) => _environment.NewTarget;
     internal RuntimeValue VisitArrayLiteral(Expr.ArrayLiteral array) => EvaluateArray(array);
     internal RuntimeValue VisitObjectLiteral(Expr.ObjectLiteral obj) => EvaluateObject(obj);
     internal RuntimeValue VisitGetIndex(Expr.GetIndex getIndex) => EvaluateGetIndex(getIndex);
@@ -82,6 +83,7 @@ public partial class Interpreter
     internal RuntimeValue VisitSuper(Expr.Super super) => EvaluateSuper(super);
     internal RuntimeValue VisitCompoundAssign(Expr.CompoundAssign compound) => EvaluateCompoundAssign(compound);
     internal RuntimeValue VisitCompoundSet(Expr.CompoundSet compoundSet) => EvaluateCompoundSet(compoundSet);
+    internal RuntimeValue VisitCompoundSetPrivate(Expr.CompoundSetPrivate compoundSet) => EvaluateCompoundSetPrivateCore(_syncContext, compoundSet).GetAwaiter().GetResult();
     internal RuntimeValue VisitCompoundSetIndex(Expr.CompoundSetIndex compoundSetIndex) => EvaluateCompoundSetIndex(compoundSetIndex);
     internal RuntimeValue VisitLogicalAssign(Expr.LogicalAssign logical) => EvaluateLogicalAssign(logical);
     internal RuntimeValue VisitLogicalSet(Expr.LogicalSet logicalSet) => EvaluateLogicalSet(logicalSet);
@@ -156,6 +158,7 @@ public partial class Interpreter
     internal ValueTask<RuntimeValue> VisitCallPrivateAsync(Expr.CallPrivate cp) => new(EvaluateCallPrivateAsync(cp));
     internal ValueTask<RuntimeValue> VisitThisAsync(Expr.This thisExpr) => new(EvaluateThis(thisExpr));
     internal ValueTask<RuntimeValue> VisitNewAsync(Expr.New newExpr) => new(EvaluateNewAsync(newExpr));
+    internal ValueTask<RuntimeValue> VisitNewTargetAsync(Expr.NewTarget newTarget) => new(_environment.NewTarget);
     internal ValueTask<RuntimeValue> VisitArrayLiteralAsync(Expr.ArrayLiteral array) => new(EvaluateArrayAsync(array));
     internal ValueTask<RuntimeValue> VisitObjectLiteralAsync(Expr.ObjectLiteral obj) => new(EvaluateObjectAsync(obj));
     internal ValueTask<RuntimeValue> VisitGetIndexAsync(Expr.GetIndex getIndex) => EvaluateGetIndexCore(_asyncContext, getIndex);
@@ -163,6 +166,7 @@ public partial class Interpreter
     internal ValueTask<RuntimeValue> VisitSuperAsync(Expr.Super super) => new(EvaluateSuper(super));
     internal ValueTask<RuntimeValue> VisitCompoundAssignAsync(Expr.CompoundAssign compound) => EvaluateCompoundAssignCore(_asyncContext, compound);
     internal ValueTask<RuntimeValue> VisitCompoundSetAsync(Expr.CompoundSet compoundSet) => EvaluateCompoundSetCore(_asyncContext, compoundSet);
+    internal ValueTask<RuntimeValue> VisitCompoundSetPrivateAsync(Expr.CompoundSetPrivate compoundSet) => EvaluateCompoundSetPrivateCore(_asyncContext, compoundSet);
     internal ValueTask<RuntimeValue> VisitCompoundSetIndexAsync(Expr.CompoundSetIndex compoundSetIndex) => EvaluateCompoundSetIndexCore(_asyncContext, compoundSetIndex);
     internal ValueTask<RuntimeValue> VisitLogicalAssignAsync(Expr.LogicalAssign logical) => EvaluateLogicalAssignCore(_asyncContext, logical);
     internal ValueTask<RuntimeValue> VisitLogicalSetAsync(Expr.LogicalSet logicalSet) => EvaluateLogicalSetCore(_asyncContext, logicalSet);
@@ -322,7 +326,7 @@ public partial class Interpreter
 
         try
         {
-            SharpTSClass.BindMethodToReceiver(thenFn, thenable).Call(this, [resolve, reject]);
+            FunctionBuiltIns.CallWithThis(this, thenFn, thenable, [resolve, reject]);
         }
         catch (ThrowException tex)
         {
@@ -378,7 +382,7 @@ public partial class Interpreter
     /// <returns>The result of calling the tag function.</returns>
     private RuntimeValue EvaluateTaggedTemplateLiteral(Expr.TaggedTemplateLiteral tagged)
     {
-        object? tag = Evaluate(tagged.Tag);
+        object? tag = EvaluateMemberCallReference(_syncContext, tagged.Tag).GetAwaiter().GetResult();
 
         if (tag is not ISharpTSCallable callable)
             throw new InterpreterException("Tagged template tag must be a function.");
@@ -397,53 +401,66 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Evaluates a super method access, binding the superclass method to the current instance.
+    /// Evaluates a lexical super property access with the current receiver.
     /// </summary>
     /// <param name="expr">The super expression AST node.</param>
-    /// <returns>The bound method from the superclass.</returns>
+    /// <returns>The property value, or a constructor callable for super().</returns>
     /// <remarks>
-    /// Retrieves the superclass from the environment and looks up the method,
-    /// then binds it to the current instance for proper <c>this</c> context.
-    /// For constructor calls (super()), if no explicit constructor exists, returns a
-    /// no-op callable to match TypeScript's implicit default constructor behavior.
+    /// Retrieves the superclass from the lexical environment and reads its live
+    /// prototype chain. Accessors use the actual <c>this</c> receiver; unchanged
+    /// declared methods retain their existing bound-method convention.
+    /// Constructor calls capture their lexical invocation and execute every parent
+    /// class level before installing this owner's instance elements.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/classes.html#super-calls">TypeScript super Calls</seealso>
     private RuntimeValue EvaluateSuper(Expr.Super expr)
     {
         SharpTSClass superclass = _environment.Get(expr.Keyword).AsObject<SharpTSClass>()!;
+        if (expr.Method is null)
+        {
+            // Capture the lexical invocation before arguments run. Nested new or
+            // callbacks must not replace this pending constructor boundary.
+            var frame = _environment.ConstructionFrame
+                ?? throw new ThrowException(new SharpTSReferenceError("super() is not available outside a constructor"));
+            return RuntimeValue.FromObject(new SuperConstructorCallable(superclass, frame));
+        }
         // `this` is usually a SharpTSInstance, but built-in-backed instances
         // (Array subclass instances) are SharpTSArrays — bind generically.
-        object? thisReceiver = _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject();
+        _environment.TryGetThis(out var thisValue);
+        object? thisReceiver = thisValue.ToObject();
 
-        if (expr.Method != null && _environment.StaticSuper)
-            return RuntimeValue.FromBoxed(EvaluateGetOnClass(superclass, expr.Method.Lexeme, thisReceiver));
-
-        // super() with null Method means constructor call
-        string methodName = expr.Method?.Lexeme ?? "constructor";
-        ISharpTSCallable? method = superclass.FindMethod(methodName);
-
-        // If no constructor exists, return a no-op callable for super() calls
-        // This matches TypeScript's implicit default constructor behavior
-        if (method == null && methodName == "constructor")
+        if (expr.Method is { } property)
         {
-            return RuntimeValue.FromObject(new NoOpCallable());
+            if (_environment.StaticSuper)
+                return RuntimeValue.FromBoxed(EvaluateGetOnClass(
+                    superclass, property.Lexeme, thisReceiver));
+
+            // The lexical method owner remains fixed when a method is inherited
+            // or borrowed, while the home prototype's parent is read live.
+            object? superPrototype = _environment.PrivateClass is { } owner
+                ? ObjectBuiltIns.PrototypeOf(this, owner.Prototype)
+                : superclass.Prototype;
+            return RuntimeValue.FromBoxed(GetPropertyValueFromChain(
+                superPrototype, property.Lexeme, thisReceiver, bindClassMethods: true));
         }
 
-        if (method == null)
-        {
-            throw new InterpreterException($"Undefined property '{methodName}'.");
-        }
-
-        return RuntimeValue.FromObject(SharpTSClass.BindMethodToReceiver(method, thisReceiver!));
+        throw new InvalidOperationException("Expected a super property.");
     }
 
-    /// <summary>
-    /// A no-op callable used for super() calls when the parent class has no explicit constructor.
-    /// </summary>
-    private class NoOpCallable : ISharpTSCallable
+    private sealed class SuperConstructorCallable(
+        SharpTSClass superclass, ClassConstructionFrame frame) : ISharpTSNonConstructorCallable
     {
-        public int Arity() => 0;
-        public object? Call(Interpreter interpreter, List<object?> arguments) => null;
+        public int Arity() => superclass.Arity();
+        public object? Call(Interpreter interpreter, List<object?> arguments)
+        {
+            // Full second-allocation/effect ordering for duplicate super is a
+            // separate boundary (#2283); reject with a guest error before reusing
+            // this allocation's private brands or retrying partial elements.
+            bool retryingFailedSuper = frame.BeginSuperAttempt();
+            var parentResult = superclass.ExecuteConstructorLevel(
+                interpreter, frame.Allocation, arguments, frame.NewTarget, retryingFailedSuper);
+            return frame.CompleteSuper(interpreter, parentResult);
+        }
     }
 
     /// <summary>
@@ -1144,6 +1161,10 @@ public partial class Interpreter
                 ? GetSymbolPropertyValue(functionObject, functionSymbol)
                 : GetPropertyValue(functionObject, ToPropertyKeyString(index)));
 
+        if (obj is ISharpTSPrimitiveConstructor primitiveConstructor && index is SharpTSSymbol constructorSymbol)
+            return RuntimeValue.FromBoxed(GetPrimitiveConstructorSymbolValue(
+                primitiveConstructor, constructorSymbol, primitiveConstructor));
+
         if (obj is ISharpTSSymbolPropertyBag symbolBag
             && index is SharpTSSymbol bagSymbol)
         {
@@ -1202,34 +1223,16 @@ public partial class Interpreter
             return RuntimeValue.Undefined;
         }
 
-        // Symbol-valued array properties are ordinary own properties and must
-        // preserve null (rather than confusing it with a missing property).
-        // An own value/accessor also shadows Array.prototype's @@iterator.
-        if (obj is SharpTSArray array && index is SharpTSSymbol arraySymbol)
-        {
-            if (array.TryGetSymbolAccessor(arraySymbol, out var getter, out _))
-            {
-                return getter is null
-                    ? RuntimeValue.Undefined
-                    : RuntimeValue.FromBoxed(
-                        BindAccessorToObject(getter, array).Call(this, []));
-            }
-            if (array.HasSymbolProperty(arraySymbol))
-                return RuntimeValue.FromBoxed(array.GetBySymbol(arraySymbol));
+        // Bound functions and native callable values inherit the same Symbol
+        // protocol surface, while classes first consult their static descriptors.
+        if (obj is ISharpTSCallable callable && index is SharpTSSymbol callableSymbol)
+            return RuntimeValue.FromBoxed(GetSymbolPropertyValue(callable, callableSymbol));
 
-            // Arrays inherit @@iterator from Array.prototype. Return the
-            // realm's values method bound to this instance.
-            if (ReferenceEquals(arraySymbol, SharpTSSymbol.Iterator))
-            {
-                var iteratorMethod = GetArrayPrototype().GetMember("values");
-                return RuntimeValue.FromBoxed(
-                    iteratorMethod is ArrayPrototypeMethodWrapper wrapper
-                        ? wrapper.Bind(array)
-                        : iteratorMethod ?? SharpTSUndefined.Instance);
-            }
+        // Array Symbol reads share the presence-aware protocol lookup, including
+        // subclass descriptors and an explicitly replaced prototype chain.
+        if (obj is SharpTSArray array && index is SharpTSSymbol arraySymbol)
             return RuntimeValue.FromBoxed(
                 GetSymbolPropertyValue(array, arraySymbol));
-        }
 
         if (obj is SharpTSObject symbolObject && index is SharpTSSymbol objectSymbol)
         {
@@ -1304,11 +1307,8 @@ public partial class Interpreter
         }
         if (obj is SharpTSArrayPrototype arrayProto)
         {
-            if (ReferenceEquals(index, SharpTSSymbol.Iterator))
-            {
-                return RuntimeValue.FromBoxed(
-                    arrayProto.GetMember("values") ?? SharpTSUndefined.Instance);
-            }
+            if (index is SharpTSSymbol prototypeSymbol)
+                return RuntimeValue.FromBoxed(GetSymbolPropertyValue(arrayProto, prototypeSymbol));
             var key = PropertyKeyConverter.ToPropertyKeyString(index);
             if (arrayProto.GetExtraGetter(key) is { } getter)
                 return BindAccessorToObject(getter, arrayProto).CallV2(
@@ -1475,7 +1475,7 @@ public partial class Interpreter
     private object? GetClassSymbolValue(SharpTSClass klass, SharpTSSymbol symbol)
     {
         return TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), klass, out var value)
-            ? value : SharpTSUndefined.Instance;
+            ? value : GetSymbolPropertyValue(GetFunctionPrototype(), symbol, klass);
     }
 
     /// <summary>
@@ -1574,10 +1574,12 @@ public partial class Interpreter
         {
             if (index is SharpTSSymbol functionSymbol)
             {
+                var properties = FunctionObjectProperties.GetProperties(functionObject, this);
                 if (!TryAssignThroughDescriptor(
-                        functionObject.OwnProperties.GetOwnPropertyDescriptor(functionSymbol),
+                        properties.GetOwnPropertyDescriptor(functionSymbol)
+                            ?? FindInheritedSymbolDescriptor(functionObject, functionSymbol),
                         functionObject, functionSymbol.ToString(), value, strictMode))
-                    functionObject.OwnProperties.SetBySymbolStrict(functionSymbol, value, strictMode);
+                    properties.SetBySymbolStrict(functionSymbol, value, strictMode);
             }
             else SetFunctionObjectProperty(functionObject, ToPropertyKeyString(index), value, strictMode);
             return RuntimeValue.FromBoxed(value);
@@ -1586,9 +1588,14 @@ public partial class Interpreter
         if (obj is ISharpTSSymbolPropertyBag symbolBag
             && index is SharpTSSymbol bagSymbol)
         {
-            if (obj is not ISharpTSPrimitiveConstructor symbolConstructor
-                || !TryAssignThroughDescriptor(symbolConstructor.GetOwnPropertyDescriptor(bagSymbol),
-                    symbolConstructor, bagSymbol.ToString(), value, strictMode))
+            var descriptor = obj switch
+            {
+                ISharpTSPrimitiveConstructor symbolConstructor => symbolConstructor.GetOwnPropertyDescriptor(bagSymbol)
+                    ?? FindInheritedSymbolDescriptor(symbolConstructor, bagSymbol),
+                SharpTSFunctionPrototype functionPrototype => functionPrototype.GetOwnPropertyDescriptor(bagSymbol),
+                _ => null
+            };
+            if (!TryAssignThroughDescriptor(descriptor, obj, bagSymbol.ToString(), value, strictMode))
                 symbolBag.SetBySymbolStrict(bagSymbol, value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
@@ -1599,7 +1606,8 @@ public partial class Interpreter
             var properties = generatorFunction.FunctionProperties.GetProperties(this);
             if (index is SharpTSSymbol symbol)
             {
-                if (!TryAssignThroughDescriptor(properties.GetOwnPropertyDescriptor(symbol), obj, symbol.ToString(), value, strictMode))
+                if (!TryAssignThroughDescriptor(properties.GetOwnPropertyDescriptor(symbol)
+                        ?? FindInheritedSymbolDescriptor(obj, symbol), obj, symbol.ToString(), value, strictMode))
                     properties.SetBySymbolStrict(symbol, value, strictMode);
             }
             else
@@ -1619,6 +1627,11 @@ public partial class Interpreter
             // reads.
             if (index is SharpTSSymbol fnSym)
             {
+                if (!fn.TryGetSymbolProperty(fnSym, out _)
+                    && !fn.TryGetSymbolAccessor(fnSym, out _, out _)
+                    && TryAssignThroughDescriptor(FindInheritedSymbolDescriptor(fn, fnSym),
+                        fn, fnSym.ToString(), value, strictMode))
+                    return RuntimeValue.FromBoxed(value);
                 fn.SetBySymbol(fnSym, value);
                 return RuntimeValue.FromBoxed(value);
             }
@@ -1629,6 +1642,11 @@ public partial class Interpreter
         {
             if (index is SharpTSSymbol arrSym)
             {
+                if (!afn.TryGetSymbolProperty(arrSym, out _)
+                    && !afn.TryGetSymbolAccessor(arrSym, out _, out _)
+                    && TryAssignThroughDescriptor(FindInheritedSymbolDescriptor(afn, arrSym),
+                        afn, arrSym.ToString(), value, strictMode))
+                    return RuntimeValue.FromBoxed(value);
                 afn.SetBySymbol(arrSym, value);
                 return RuntimeValue.FromBoxed(value);
             }
@@ -1653,6 +1671,10 @@ public partial class Interpreter
         }
         if (obj is SharpTSJSON or SharpTSDate or BoundFunction)
         {
+            if (obj is BoundFunction && index is SharpTSSymbol inheritedSymbol
+                && TryAssignThroughDescriptor(FindInheritedSymbolDescriptor(obj, inheritedSymbol),
+                    obj, inheritedSymbol.ToString(), value, strictMode))
+                return RuntimeValue.FromBoxed(value);
             string propertyName = PropertyKeyConverter.ToPropertyKeyString(index);
             var name = new Token(TokenType.IDENTIFIER, propertyName, null, 0);
             var set = new Expr.Set(null!, name, null!);
@@ -1932,7 +1954,8 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.ClassSymbol t:
-                if (TryAssignThroughDescriptor(t.Target.FindStaticSymbolAccessorDescriptor(t.Key),
+                if (TryAssignThroughDescriptor(t.Target.FindStaticSymbolAccessorDescriptor(t.Key)
+                        ?? FindInheritedSymbolDescriptor(t.Target, t.Key),
                         t.Target, t.Key.ToString(), value, strictMode)) break;
                 if (t.Target.FindStaticSymbolSetter(t.Key) is { } staticSymSetter)
                 {
@@ -2175,7 +2198,7 @@ public partial class Interpreter
                 {
                     if (!field.IsStatic) instancePrivateFields.Add(field);
                     else staticPrivateFields[field.Name.Lexeme] = !hasStaticInitializers && field.Initializer != null
-                        ? Evaluate(field.Initializer) : SharpTSUndefined.Instance;
+                        ? EvaluateEarlyStaticInitializer(field.Initializer) : SharpTSUndefined.Instance;
                 }
                 else if (field.IsStatic)
                 {
@@ -2183,7 +2206,7 @@ public partial class Interpreter
                     {
                         // Old behavior: evaluate immediately
                         object? fieldValue = field.Initializer != null
-                            ? Evaluate(field.Initializer)
+                            ? EvaluateEarlyStaticInitializer(field.Initializer)
                             : null;
                         staticProperties[field.Name.Lexeme] = fieldValue;
                     }
@@ -2363,6 +2386,13 @@ public partial class Interpreter
                 }
             }
 
+            // Initialize the captured lexical self before static initializers
+            // can invoke methods and accessors that close over it.
+            if (classExpr.Name != null)
+            {
+                classEnv.Assign(classExpr.Name, klass);
+            }
+
             // Execute static initializers in declaration order (if present)
             if (hasStaticInitializers)
             {
@@ -2370,6 +2400,8 @@ public partial class Interpreter
                 // Also make the class name available so code like Foo.x works
                 var staticEnv = new RuntimeEnvironment(_environment, strictMode: true)
                     { PrivateClass = klass, StaticSuper = true };
+                staticEnv.NewTarget = RuntimeValue.Undefined;
+                staticEnv.ConstructionFrame = null;
                 staticEnv.Define("this", klass);
                 if (classExpr.Name != null)
                 {
@@ -2414,12 +2446,6 @@ public partial class Interpreter
                         }
                     }
                 }
-            }
-
-            // Update self-reference if named
-            if (classExpr.Name != null)
-            {
-                classEnv.Assign(classExpr.Name, klass);
             }
 
             return RuntimeValue.FromObject(klass);

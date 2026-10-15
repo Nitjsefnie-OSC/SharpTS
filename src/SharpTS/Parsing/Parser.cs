@@ -35,6 +35,9 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
     private readonly DecoratorMode _decoratorMode = decoratorMode;
     private int _current = 0;
     private int _tempVarCounter = 0;
+    // Cover literals may contain a trailing comma, but their assignment-pattern
+    // interpretation cannot have one after rest. Keep that syntax off the AST.
+    private readonly HashSet<Expr> _literalsWithTrailingComma = new(ReferenceEqualityComparer.Instance);
     private int _ambientNamespaceDepth = 0;
     private int _ambientClassDepth = 0;
     private bool _isDeclarationFile = false;
@@ -189,6 +192,17 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
                 insertAt++;
             }
             statements.Insert(insertAt, BuildJsxRuntimeImport());
+        }
+
+        // Validate source function environments before lowering can lift a callable out
+        // of its original lexical position. Unchecked JavaScript also runs this pass.
+        foreach (var (expression, context) in NewTargetContextIndex.Collect(statements))
+        {
+            expression.SourceTypeScriptContextAllowed = context.IsTypeScriptAllowed;
+            if (!context.IsJavaScriptAllowed)
+                _diagnostics.AddError(DiagnosticCode.ParseError,
+                    "'new.target' is not allowed outside a function.",
+                    new SourceLocation(_filePath, expression.Keyword.Line), "TS17013");
         }
 
         // Apply var hoisting to the top-level (module/script) statement list. Function bodies

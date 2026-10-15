@@ -8,8 +8,38 @@ namespace SharpTS.Compilation;
 public partial class ILCompiler
 {
     private readonly Dictionary<Stmt.Class, Expr.ClassExpr> _runtimeClassDeclarations = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Stmt.Class> _repeatingClassDeclarations = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<TypeBuilder, MethodBuilder> _receiverInitializers = new(ReferenceEqualityComparer.Instance);
     private bool _usesRuntimeParents;
+
+    private void PrepareRepeatingClassDeclarations(IEnumerable<Stmt> statements)
+    {
+        var collector = new ClassDeclarationCollector();
+        foreach (var statement in statements) collector.Visit(statement);
+        foreach (var (declaration, owner) in collector.LexicalOwners)
+            _classes.DeclarationLexicalOwners[declaration] = owner;
+        foreach (var declaration in collector.RepeatingDeclarations)
+        {
+            var leaf = Expr.GetSuperclassLeafName(declaration.SuperclassExpr);
+            if (declaration.IsDeclare || declaration.Decorators is { Count: > 0 }
+                || declaration.AutoAccessors is { Count: > 0 }
+                || declaration.Methods.Any(method => method.Decorators is { Count: > 0 }
+                    || method.Parameters.Any(parameter => parameter.Decorators is { Count: > 0 }))
+                || declaration.Fields.Any(field => field.Decorators is { Count: > 0 })
+                || (declaration.Accessors?.Any(accessor => accessor.Decorators is { Count: > 0 }) ?? false)
+                || Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(leaf ?? "")
+                || leaf is "Array" or "Promise" or "Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer")
+                continue;
+            _repeatingClassDeclarations.Add(declaration);
+            _runtimeClassDeclarations.TryAdd(declaration, CreateRuntimeClassExpression(declaration));
+        }
+    }
+
+    private static Expr.ClassExpr CreateRuntimeClassExpression(Stmt.Class declaration) =>
+        new(declaration.Name, declaration.TypeParams,
+            declaration.SuperclassExpr, declaration.SuperclassTypeArgs, declaration.Methods,
+            declaration.Fields, declaration.Accessors, declaration.AutoAccessors, declaration.Interfaces,
+            declaration.InterfaceTypeArgs, declaration.IsAbstract, declaration.StaticInitializers);
 
     private bool HasLexicalClassExpressionOwner(Stmt.Class declaration)
     {
@@ -21,6 +51,7 @@ public partial class ILCompiler
 
     private bool TryDefineRuntimeClassDeclaration(Stmt.Class declaration)
     {
+        bool repeating = _repeatingClassDeclarations.Contains(declaration);
         var leaf = Expr.GetSuperclassLeafName(declaration.SuperclassExpr);
         bool expressionOwnedParent = ResolveClassExpressionParent(
             _typeMap.GetClassType(declaration)?.Superclass, declaration.SuperclassExpr) != null;
@@ -31,18 +62,14 @@ public partial class ILCompiler
         bool captureLexicalOwner = HasLexicalClassExpressionOwner(declaration)
             && declaration.Decorators is not { Count: > 0 }
             && leaf is not ("Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer");
-        if ((declaration.SuperclassExpr == null && !captureLexicalOwner) || declaration.IsDeclare) return false;
-        if (!captureLexicalOwner && leaf != null && ((_typeMap.Get(declaration.SuperclassExpr!) is not TypeSystem.TypeInfo.Any
+        if ((declaration.SuperclassExpr == null && !captureLexicalOwner && !repeating) || declaration.IsDeclare) return false;
+        if (!captureLexicalOwner && !repeating && leaf != null && ((_typeMap.Get(declaration.SuperclassExpr!) is not TypeSystem.TypeInfo.Any
             && _classes.Builders.ContainsKey(GetDefinitionContext().ResolveClassName(leaf)) && !expressionOwnedParent)
             || Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(leaf)
             || leaf is "Array" or "Promise" or "Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer")) return false;
-        if (!captureLexicalOwner && declaration.SuperclassExpr is Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 }) return false;
-        var expression = new Expr.ClassExpr(declaration.Name, declaration.TypeParams,
-            declaration.SuperclassExpr, declaration.SuperclassTypeArgs, declaration.Methods,
-            declaration.Fields, declaration.Accessors, declaration.AutoAccessors, declaration.Interfaces,
-            declaration.InterfaceTypeArgs, declaration.IsAbstract, declaration.StaticInitializers);
-        _runtimeClassDeclarations.Add(declaration, expression);
-        _usesRuntimeParents |= declaration.SuperclassExpr != null;
+        if (!captureLexicalOwner && !repeating && declaration.SuperclassExpr is Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 }) return false;
+        if (!_runtimeClassDeclarations.TryGetValue(declaration, out var expression))
+            _runtimeClassDeclarations.Add(declaration, expression = CreateRuntimeClassExpression(declaration));
         if (_typeMap.GetClassType(declaration) is { } checkedType) _typeMap.SetClassExprType(expression, checkedType);
         CollectClassExpression(expression);
         _classExprs.Names[expression] = GetDefinitionContext().GetQualifiedClassName(_classExprs.Names[expression]);
@@ -59,9 +86,15 @@ public partial class ILCompiler
             _classes.LexicalEnclosingClasses[_classExprs.Names[expression]] = ownerName;
         }
         DefineClassExpression(expression);
+        _usesRuntimeParents |= declaration.SuperclassExpr != null && (!repeating || HasRuntimeParent(expression));
         _classes.BlockScopedBuilders[declaration] = _classExprs.Builders[expression];
         _classes.DeclarationNames[declaration] = _classExprs.Names[expression];
         _classes.DeclarationNamespaces[declaration] = _currentNamespacePath;
+        if (_typeMap.GetClassType(declaration) is { } declaredType)
+        {
+            _typeMapper.RegisterCheckedClassName(declaredType.Core.DeclarationId, _classExprs.Names[expression]);
+            _typeMap.SetClassType(_classExprs.Names[expression], declaredType);
+        }
         return true;
     }
 
@@ -95,10 +128,7 @@ public partial class ILCompiler
             || declaration.Methods.Any(method => method.IsPrivate || method.IsAsync || method.IsGenerator
                 || method.TypeParams is { Count: > 0 } || method.ComputedKey != null
                 || method.Parameters.Any(parameter => parameter.IsParameterProperty || parameter.DestructuredProperties != null))) return false;
-        var returns = new ConstructorReplacementVisitor();
-        foreach (var statement in declaration.Methods.FirstOrDefault(method => method.Name.Lexeme == "constructor")?.Body ?? [])
-            returns.Visit(statement);
-        return !returns.HasReplacement;
+        return true;
     }
 
     private sealed class ConstructorReplacementVisitor : AstVisitorBase
@@ -115,7 +145,7 @@ public partial class ILCompiler
     {
         if (_receiverInitializers.TryGetValue(owner, out var existing)) return existing;
         var method = owner.DefineMethod("$InitializeReceiver", MethodAttributes.Public | MethodAttributes.Static,
-            _types.Void, [_types.Object, _types.ObjectArray, _types.Object]);
+            _types.Object, [_types.Object, _types.ObjectArray, _types.Object, _types.Object]);
         _receiverInitializers.Add(owner, method);
         return method;
     }
@@ -136,10 +166,16 @@ public partial class ILCompiler
         ctx.HasGuestReceiver = true;
         ctx.GuestThisVariableName = "__this";
         ctx.ClassDefinitionParameterIndex = 2;
+        ctx.NewTargetParameterIndex = 3;
         ctx.DefineParameter("__this", 0, _types.Object);
         ApplyCapturedTopLevelVariableAccess(ctx);
         var emitter = new ILEmitter(ctx);
         var constructor = declaration.Methods.FirstOrDefault(source => source.Body != null && source.Name.Lexeme == "constructor" && !source.IsStatic);
+        ctx.CurrentMethodReturnType = _types.Void;
+        ctx.IsRuntimeReceiverInitializer = true;
+        ConfigureClassConstructorReturns(ctx, constructor, declaration.SuperclassExpr != null, forceReceiver: true);
+        EmitOnceOnlyConstructorElements(ctx, () => EmitEffectiveClassElements(ctx, declaration.Fields, null, null,
+            _ => throw new InvalidOperationException("Runtime receiver initializer cannot have computed fields.")));
         if (constructor?.Body != null && ReferencesArgumentsIdentifier(constructor.Body)
             && !constructor.Parameters.Any(parameter => parameter.Name.Lexeme == "arguments"))
         {
@@ -184,30 +220,30 @@ public partial class ILCompiler
             il.Emit(OpCodes.Call, _runtime.ClassDefinitions.GetParent);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_3);
             il.Emit(OpCodes.Call, _runtime.ClassDefinitions.InitializeReceiver);
+            il.Emit(OpCodes.Stloc, ctx.ClassConstructorReceiver!);
+            SetReceiverCell();
         }
-        bool initialized = false;
-        if (!explicitSuper) InitializeFields();
+        else if (!explicitSuper)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stloc, ctx.ClassConstructorReceiver!);
+            SetReceiverCell();
+        }
+        if (!explicitSuper) ctx.EmitConstructorOwnElements!();
         foreach (var statement in constructor?.Body ?? [])
-        {
             emitter.EmitStatement(statement);
-            if (!initialized && ContainsSuperCall(statement)) InitializeFields();
-        }
-        if (!initialized) InitializeFields();
-        emitter.FinalizeReturns();
+        emitter.EmitClassConstructorFallthrough();
         il.Emit(OpCodes.Ret);
+        emitter.FinalizeReturns();
 
-        void InitializeFields()
+        void SetReceiverCell()
         {
-            initialized = true;
-            foreach (var field in declaration.Fields.Where(field => !field.IsStatic && !field.IsDeclare && !field.IsPrivate))
-            {
-                il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Ldstr, field.Name.Lexeme);
-                if (field.Initializer != null) { emitter.EmitExpression(field.Initializer); emitter.EmitBoxIfNeeded(field.Initializer); }
-                else il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
-                il.Emit(OpCodes.Call, _runtime.ObjectWrite.Index);
-            }
+            il.Emit(OpCodes.Ldloc, ctx.ClassConstructorThisCell!);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldloc, ctx.ClassConstructorReceiver!);
+            il.Emit(OpCodes.Stelem_Ref);
         }
     }
 
@@ -235,6 +271,7 @@ public partial class ILCompiler
             var ctx = CreateModuleMemberContext(method.GetILGenerator(), method);
             ctx.CurrentClassBuilder = owner; ctx.CurrentClassName = owner.FullName;
             ctx.EmittingTypeBuilder = type; ctx.IsStrictMode = true; ctx.IsInstanceMethod = !source.IsStatic;
+            ctx.IsStaticSuperContext = source.IsStatic;
             ctx.HasGuestReceiver = true; ctx.GuestThisVariableName = "__this";
             ApplyCapturedTopLevelVariableAccess(ctx);
             return ctx;

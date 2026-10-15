@@ -22,6 +22,7 @@ public class StateMachineVariableResolver : IVariableResolver
     private readonly FieldInfo? _thisField;
     private readonly IReadOnlyDictionary<string, LocalBuilder>? _cellBindingLocals;
     private readonly FieldInfo? _strongBoxValueField;
+    internal CompilationContext? ConstructorContext { get; set; }
 
     /// <summary>
     /// Creates a new resolver for state machine variable access.
@@ -137,6 +138,11 @@ public class StateMachineVariableResolver : IVariableResolver
     /// <inheritdoc />
     public void LoadThis()
     {
+        if (TryLoadThisBindingCell())
+        {
+            ConstructorReceiverEmitter.ReadCell(_il, ConstructorContext!);
+            return;
+        }
         if (_thisField != null)
         {
             _il.Emit(OpCodes.Ldarg_0);
@@ -147,5 +153,16 @@ public class StateMachineVariableResolver : IVariableResolver
             // No this field - push null
             _il.Emit(OpCodes.Ldnull);
         }
+    }
+
+    public bool TryLoadThisBindingCell()
+    {
+        if (ConstructorContext?.CapturesConstructorThisCell == true && _thisField != null)
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _thisField);
+            return true;
+        }
+        return false;
     }
 }

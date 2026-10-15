@@ -129,6 +129,8 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         RuntimeEnvironment environment = new(closure,
             strictMode: _declaration.IsPrivate || _declaration.IsStatic ? true : null)
             { PrivateClass = PrivateOwner, StaticSuper = _declaration.IsStatic };
+        environment.NewTarget = RuntimeValue.Undefined;
+        environment.ConstructionFrame = null;
         if (_declaration.IsPrivate || _declaration.IsStatic)
         {
             environment.Define("this", _receiverBound && _closure.TryGet("this", out var receiver)
@@ -296,6 +298,11 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
     public async Task<object?> CallAsync(Interpreter interpreter, List<object?> arguments)
     {
         RuntimeEnvironment environment = new(_closure);
+        if (HasOwnThis)
+        {
+            environment.NewTarget = RuntimeValue.Undefined;
+            environment.ConstructionFrame = null;
+        }
         // Named async function expression: bind self-reference alongside params.
         if (_declaration.Name != null)
         {

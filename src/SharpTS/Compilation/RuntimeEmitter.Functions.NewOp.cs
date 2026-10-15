@@ -15,7 +15,8 @@ public partial class RuntimeEmitter
         EmittedObjectReadRuntime ObjectRead,
         EmittedObjectStorageRuntime ObjectStorage,
         EmittedReflectedMethodRuntime ReflectedMethods,
-        FieldInfo UndefinedInstance
+        FieldInfo UndefinedInstance,
+        MethodInfo TypeOf
     );
 
     /// <summary>
@@ -42,7 +43,7 @@ public partial class RuntimeEmitter
         // runtime.FunctionValues.CurrentThisField below.
         var currentThisField = inputs.FunctionValues.CurrentThisField;
 
-        var method = dynamicConstruction.Function;
+        var method = dynamicConstruction.FunctionWithNewTarget;
 
         var il = method.GetILGenerator();
 
@@ -52,6 +53,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Brfalse, notClassDefinition);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, inputs.ClassDefinitions.Construct);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notClassDefinition);
@@ -64,9 +66,9 @@ public partial class RuntimeEmitter
 
         // [[Construct]] on a bound function prepends arguments and delegates to
         // the target's construction protocol. Its bound call receiver is ignored.
-        EmitBoundConstruction(il, dynamicConstruction.Value, inputs.FunctionBindings.BoundType,
+        EmitBoundConstruction(il, dynamicConstruction.ConstructWithNewTarget, inputs.FunctionBindings.BoundType,
             inputs.FunctionBindings.BoundTargetField, inputs.FunctionBindings.BoundArgumentsField);
-        EmitBoundConstruction(il, dynamicConstruction.Value, inputs.FunctionBindings.AnyType,
+        EmitBoundConstruction(il, dynamicConstruction.ConstructWithNewTarget, inputs.FunctionBindings.AnyType,
             inputs.FunctionBindings.AnyTargetField, inputs.FunctionBindings.AnyArgumentsField);
 
         // Proxy [[Construct]] exists only when the target is a constructor,
@@ -95,14 +97,14 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Stelem_Ref);
                 il.Emit(OpCodes.Dup);
                 il.Emit(OpCodes.Ldc_I4_1);
-                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldarg_2);
                 il.Emit(OpCodes.Stelem_Ref);
                 il.Emit(OpCodes.Dup);
                 il.Emit(OpCodes.Ldc_I4_2);
                 il.Emit(OpCodes.Ldnull);
-                il.Emit(OpCodes.Ldftn, dynamicConstruction.Value);
+                il.Emit(OpCodes.Ldftn, dynamicConstruction.ConstructWithNewTarget);
                 il.Emit(OpCodes.Newobj, _types.GetConstructor(
-                    typeof(Func<object, object?[], object?>),
+                    typeof(Func<object, object?[], object?, object?>),
                     _types.Object, _types.IntPtr)!);
                 il.Emit(OpCodes.Stelem_Ref);
                 il.Emit(OpCodes.Dup);
@@ -144,22 +146,32 @@ public partial class RuntimeEmitter
         // applies to $TSFunction callees; bound construction already delegated
         // to its target above.
         var skipProtoLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, inputs.FunctionValues.Type);
-        il.Emit(OpCodes.Brfalse, skipProtoLabel);
-
         // Read F.prototype via $Runtime.GetFunctionMethod(fn, "prototype") so
         // the lazy-init + cache from Stage 0b is reused (no fresh $Object per
         // construct, identity stable across invocations).
         var fnProtoLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldstr, "prototype");
-        il.Emit(OpCodes.Call, inputs.FunctionIntrospection.GetProperty);
+        il.Emit(OpCodes.Call, inputs.ObjectRead.Property);
         il.Emit(OpCodes.Stloc, fnProtoLocal);
 
         // PDSSetPrototype(newObj, fnProto) — only when fnProto is non-null.
         il.Emit(OpCodes.Ldloc, fnProtoLocal);
         il.Emit(OpCodes.Brfalse, skipProtoLabel);
+        var objectPrototype = il.DefineLabel();
+        var prototypeKind = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, fnProtoLocal);
+        il.Emit(OpCodes.Call, inputs.TypeOf);
+        il.Emit(OpCodes.Stloc, prototypeKind);
+        foreach (var kind in new[] { "object", "function" })
+        {
+            il.Emit(OpCodes.Ldloc, prototypeKind);
+            il.Emit(OpCodes.Ldstr, kind);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, objectPrototype);
+        }
+        il.Emit(OpCodes.Br, skipProtoLabel);
+        il.MarkLabel(objectPrototype);
         il.Emit(OpCodes.Ldloc, newObjLocal);
         il.Emit(OpCodes.Ldloc, fnProtoLocal);
         il.Emit(OpCodes.Call, inputs.DescriptorStorage.SetPrototype);
@@ -189,7 +201,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, inputs.FunctionValues.Type);
         il.Emit(OpCodes.Ldloc, newObjLocal);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, inputs.FunctionValues.InvokeWithThis);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, inputs.FunctionValues.InvokeConstructed);
         il.Emit(OpCodes.Stloc, resultLocal);
         il.Emit(OpCodes.Leave, afterTry);
 
@@ -315,6 +328,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, bound);
         il.Emit(OpCodes.Ldfld, targetField);
         il.Emit(OpCodes.Ldloc, combined);
+        var distinctNewTarget = il.DefineLabel(); var haveNewTarget = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Ldloc, bound);
+        il.Emit(OpCodes.Bne_Un, distinctNewTarget);
+        il.Emit(OpCodes.Ldloc, bound); il.Emit(OpCodes.Ldfld, targetField); il.Emit(OpCodes.Br, haveNewTarget);
+        il.MarkLabel(distinctNewTarget); il.Emit(OpCodes.Ldarg_2);
+        il.MarkLabel(haveNewTarget);
         il.Emit(OpCodes.Call, construct);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(otherConstructor);

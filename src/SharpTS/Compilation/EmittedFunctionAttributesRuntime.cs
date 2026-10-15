@@ -9,6 +9,25 @@ public sealed class EmittedFunctionAttributesRuntime
     internal EmittedFunctionAttributesRuntime() { }
     public bool IsComplete { get; private set; }
 
+    private TypeBuilder? _newTargetCoreType;
+    public TypeBuilder NewTargetCoreType
+    {
+        get => Require(_newTargetCoreType);
+        internal set => SetHandle(ref _newTargetCoreType, value);
+    }
+    private ConstructorBuilder? _newTargetCoreCtor;
+    public ConstructorBuilder NewTargetCoreCtor
+    {
+        get => Require(_newTargetCoreCtor);
+        internal set => SetHandle(ref _newTargetCoreCtor, value);
+    }
+    private FieldBuilder? _newTargetCoreName;
+    public FieldBuilder NewTargetCoreName
+    {
+        get => Require(_newTargetCoreName);
+        internal set => SetHandle(ref _newTargetCoreName, value);
+    }
+
     private TypeBuilder? _capturesArgumentsType;
     public TypeBuilder CapturesArgumentsType
     {
@@ -163,6 +182,9 @@ public sealed class EmittedFunctionAttributesRuntime
     internal void CompleteEmission()
     {
         EnsureMutable();
+        _ = NewTargetCoreType;
+        _ = NewTargetCoreCtor;
+        _ = NewTargetCoreName;
         _ = CapturesArgumentsType;
         _ = CapturesArgumentsCtor;
         _ = PadUndefinedType;

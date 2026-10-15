@@ -171,7 +171,7 @@ public partial class AsyncMoveNextEmitter : AsyncFunctionMoveNextEmitter, IEmitt
             ctx.Locals,
             _builder.ThisField,
             ctx.CellBindingLocals,
-            ctx.Types.StrongBoxOfObjectValueField);
+            ctx.Types.StrongBoxOfObjectValueField) { ConstructorContext = ctx };
 
         // Declare exception local for catch block
         _exceptionLocal = _il.DeclareLocal(_types.Exception);

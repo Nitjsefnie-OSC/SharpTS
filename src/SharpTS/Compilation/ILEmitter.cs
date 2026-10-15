@@ -192,6 +192,16 @@ public partial class ILEmitter : StatementEmitterBase, IEmitterContext
 
     protected override void EmitStatementCore(Stmt stmt)
     {
+        bool fieldFactBoundary = stmt switch
+        {
+            Stmt.Expression { Expr: Expr.Set } => false,
+            Stmt.Return { Value: not null } result => !NativeFieldFactsCover(result.Value),
+            _ => true
+        };
+        if (fieldFactBoundary)
+            _nativePrimitiveFieldFacts.Clear();
+        try
+        {
         switch (stmt)
         {
             case Stmt.Expression e:
@@ -344,6 +354,12 @@ public partial class ILEmitter : StatementEmitterBase, IEmitterContext
 
             default:
                 throw new CompileException($"Unhandled statement type in ILEmitter: {stmt.GetType().Name}");
+        }
+        }
+        finally
+        {
+            if (fieldFactBoundary)
+                _nativePrimitiveFieldFacts.Clear();
         }
     }
 

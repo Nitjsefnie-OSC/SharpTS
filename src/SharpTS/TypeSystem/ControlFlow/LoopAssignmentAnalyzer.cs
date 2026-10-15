@@ -201,6 +201,12 @@ public static class LoopAssignmentAnalyzer
                 CollectAssignedPathsFromExpr(compoundSet.Value, paths);
                 break;
 
+            case Expr.CompoundSetPrivate compoundSetPrivate:
+                // Private names carry lexical identity and are not public property paths.
+                CollectAssignedPathsFromExpr(compoundSetPrivate.Object, paths);
+                CollectAssignedPathsFromExpr(compoundSetPrivate.Value, paths);
+                break;
+
             case Expr.CompoundSetIndex compoundSetIndex:
                 CollectAssignedPathsFromExpr(compoundSetIndex.Object, paths);
                 CollectAssignedPathsFromExpr(compoundSetIndex.Index, paths);

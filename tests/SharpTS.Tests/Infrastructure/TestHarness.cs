@@ -109,6 +109,49 @@ public static class TestHarness
     }
 
     /// <summary>
+    /// Runs runtime JavaScript regressions without the TypeScript checker. Compiled
+    /// programs must pass complete saved-IL verification before they can execute.
+    /// </summary>
+    public static string RunUnchecked(string source, ExecutionMode mode, TimeSpan? timeout = null)
+    {
+        var deadline = timeout ?? DefaultTimeout;
+        return mode switch
+        {
+            ExecutionMode.Interpreted => RunInterpreterWithTimeout(deadline,
+                $"Interpreter execution exceeded {deadline.TotalSeconds}s timeout.", interpreter =>
+                {
+                    var statements = ParseOrThrow(source);
+                    interpreter.SetDecoratorMode(DecoratorMode.None);
+                    interpreter.EmitProcessLifecycleEvents = true;
+                    interpreter.Interpret(statements, new TypeMap());
+                    if (interpreter.LastUncaughtError is { } uncaught)
+                        throw uncaught;
+                }),
+            ExecutionMode.Compiled => RunCompiledWithTimeout(
+                () => Assembly.Load(CompileUncheckedAndVerify(source)), deadline),
+            _ => throw new ArgumentOutOfRangeException(nameof(mode))
+        };
+    }
+
+    internal static byte[] CompileUncheckedAndVerify(string source)
+    {
+        var statements = ParseOrThrow(source);
+        var typeMap = new TypeMap();
+        var deadCode = new DeadCodeAnalyzer(typeMap).Analyze(statements);
+        var compiler = new ILCompiler($"unchecked_{Guid.NewGuid():N}");
+        compiler.SetDecoratorMode(DecoratorMode.None);
+        compiler.Compile(statements, typeMap, deadCode);
+        var bytes = compiler.SaveToBytes();
+        using var verifier = new ILVerifier(extraProbeDirectories:
+            [AppContext.BaseDirectory, Path.GetDirectoryName(typeof(RuntimeTypes).Assembly.Location)!]);
+        using var stream = new MemoryStream(bytes);
+        var errors = verifier.Verify(stream);
+        if (errors.Count > 0)
+            throw new InvalidOperationException("IL verification failed:\n" + string.Join("\n", errors));
+        return bytes;
+    }
+
+    /// <summary>
     /// Runs TypeScript source using the specified execution mode with decorator support.
     /// </summary>
     /// <param name="source">TypeScript source code</param>
@@ -1217,8 +1260,33 @@ public static class TestHarness
         }
     }
 
+    internal static (List<string> errors, string output) VerifySavedAssemblyAndRun(string dllPath, Func<string> execute)
+    {
+        var savedPath = Path.GetFullPath(dllPath);
+        var probeDirectories = new List<string>
+        {
+            Path.GetDirectoryName(savedPath)!,
+            AppContext.BaseDirectory
+        };
+        var runtimeDirectory = Path.GetDirectoryName(typeof(RuntimeTypes).Assembly.Location);
+        if (!string.IsNullOrEmpty(runtimeDirectory))
+            probeDirectories.Add(runtimeDirectory);
+
+        List<string> errors;
+        using (var verifier = new ILVerifier(extraProbeDirectories: probeDirectories))
+        using (var stream = File.OpenRead(savedPath))
+        {
+            errors = verifier.Verify(stream);
+        }
+
+        if (errors.Count != 0)
+            return (errors, string.Empty);
+
+        return (errors, execute());
+    }
+
     /// <summary>
-    /// Compiles TypeScript source and verifies the generated IL.
+    /// Compiles TypeScript source and executes it only after the generated IL verifies.
     /// </summary>
     /// <param name="source">TypeScript source code</param>
     /// <param name="decoratorMode">Decorator mode</param>
@@ -1252,55 +1320,54 @@ public static class TestHarness
             compiler.Compile(statements, typeMap, deadCodeInfo);
             compiler.Save(dllPath);
 
-            // Verify IL - filter out expected "Failed to load assembly 'SharpTS'" errors
-            var allErrors = VerifyIL(dllPath);
-            var errors = allErrors.Where(e => !e.Contains("Failed to load assembly")).ToList();
-
-            // Copy SharpTS.dll and its dependencies for runtime dependency
-            var sharpTsDll = typeof(RuntimeTypes).Assembly.Location;
-            if (!string.IsNullOrEmpty(sharpTsDll) && File.Exists(sharpTsDll))
+            return VerifySavedAssemblyAndRun(dllPath, () =>
             {
-                File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
-
-                // Copy ZstdSharp.dll (required for zstd compression in compiled mode)
-                var zstdDll = Path.Combine(Path.GetDirectoryName(sharpTsDll)!, "ZstdSharp.dll");
-                if (File.Exists(zstdDll))
-                    File.Copy(zstdDll, Path.Combine(tempDir, "ZstdSharp.dll"), overwrite: true);
-            }
-
-            // Write runtimeconfig.json
-            var configPath = Path.Combine(tempDir, "test.runtimeconfig.json");
-            File.WriteAllText(configPath, """
+                // Copy SharpTS.dll and its dependencies for runtime dependency
+                var sharpTsDll = typeof(RuntimeTypes).Assembly.Location;
+                if (!string.IsNullOrEmpty(sharpTsDll) && File.Exists(sharpTsDll))
                 {
-                  "runtimeOptions": {
-                    "tfm": "net10.0",
-                    "framework": {
-                      "name": "Microsoft.NETCore.App",
-                      "version": "10.0.0"
-                    }
-                  }
+                    File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
+
+                    // Copy ZstdSharp.dll (required for zstd compression in compiled mode)
+                    var zstdDll = Path.Combine(Path.GetDirectoryName(sharpTsDll)!, "ZstdSharp.dll");
+                    if (File.Exists(zstdDll))
+                        File.Copy(zstdDll, Path.Combine(tempDir, "ZstdSharp.dll"), overwrite: true);
                 }
-                """);
 
-            // Execute and capture output
-            var psi = new ProcessStartInfo("dotnet", dllPath)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = tempDir
-            };
+                // Write runtimeconfig.json
+                var configPath = Path.Combine(tempDir, "test.runtimeconfig.json");
+                File.WriteAllText(configPath, """
+                    {
+                      "runtimeOptions": {
+                        "tfm": "net10.0",
+                        "framework": {
+                          "name": "Microsoft.NETCore.App",
+                          "version": "10.0.0"
+                        }
+                      }
+                    }
+                    """);
 
-            var process = TestProcess.Run(psi, DefaultTimeout);
-            var output = process.StandardOutput;
-            var error = process.StandardError;
+                // Execute and capture output
+                var psi = new ProcessStartInfo("dotnet", dllPath)
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    WorkingDirectory = tempDir
+                };
 
-            if (process.ExitCode != 0)
-            {
-                throw new Exception($"Compiled program exited with code {process.ExitCode}. Stderr: {error}");
-            }
+                var process = TestProcess.Run(psi, DefaultTimeout);
+                var output = process.StandardOutput;
+                var error = process.StandardError;
 
-            return (errors, output.Replace("\r\n", "\n"));
+                if (process.ExitCode != 0)
+                {
+                    throw new Exception($"Compiled program exited with code {process.ExitCode}. Stderr: {error}");
+                }
+
+                return output.Replace("\r\n", "\n");
+            });
         }
         finally
         {

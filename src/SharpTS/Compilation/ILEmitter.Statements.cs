@@ -3215,6 +3215,7 @@ public partial class ILEmitter
     {
         _ctx.Locals.EnterScope();
 
+        RegisterRuntimeClassBindingScopes(b.Statements);
         _ctx.PredeclareCapturedLexicalLocals?.Invoke(IL, _ctx, b.Statements);
         InitializeCapturedLexicalTdzBindings(b.Statements);
 
@@ -3251,10 +3252,25 @@ public partial class ILEmitter
             if (_ctx.BlockScopedClassBuilders?.ContainsKey(classStmt) != true)
                 continue;
 
-            var local = _ctx.Locals.DeclareLocal(
-                classStmt.Name.Lexeme, _ctx.Types.Object, classStmt);
+            var local = _ctx.Locals.GetCurrentScopeLocal(classStmt.Name.Lexeme)
+                ?? _ctx.Locals.DeclareLocal(classStmt.Name.Lexeme, _ctx.Types.Object, classStmt);
             IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.Sentinels.UndefinedInstance);
             IL.Emit(OpCodes.Stloc, local);
+        }
+    }
+
+    private void RegisterRuntimeClassBindingScopes(IEnumerable<Stmt> statements)
+    {
+        foreach (var declaration in statements.OfType<Stmt.Class>())
+        {
+            if (_ctx.RuntimeClassDeclarations?.ContainsKey(declaration) != true)
+                continue;
+            string name = declaration.Name.Lexeme;
+            if (_ctx.Locals.IsInNestedScope && _ctx.Locals.GetCurrentScopeLocal(name) == null
+                && (_ctx.Locals.GetLocal(name) != null || _ctx.TryGetParameter(name, out _)))
+                _ctx.RuntimeClassLexicalShadows.Add(declaration);
+            _ctx.RuntimeClassCaptureWriteBackStarts.TryAdd(declaration,
+                _ctx.LexicalCaptureWriteBacks.GetValueOrDefault(name)?.Count ?? 0);
         }
     }
 
@@ -3265,6 +3281,7 @@ public partial class ILEmitter
     /// </summary>
     internal void InitializeCapturedLexicalTdzBindings(IEnumerable<Stmt> statements)
     {
+        RegisterRuntimeClassBindingScopes(statements);
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (var statement in statements)
             CollectDirectLexicalNames(statement, names);
@@ -3296,7 +3313,7 @@ public partial class ILEmitter
             }
         }
 
-        static void CollectDirectLexicalNames(Stmt statement, HashSet<string> names)
+        void CollectDirectLexicalNames(Stmt statement, HashSet<string> names)
         {
             switch (statement)
             {
@@ -3305,6 +3322,10 @@ public partial class ILEmitter
                     break;
                 case Stmt.Var { IsVar: false } lexical:
                     names.Add(lexical.Name.Lexeme);
+                    break;
+                case Stmt.Class declaration when _ctx.RuntimeClassDeclarations?.ContainsKey(declaration) == true
+                    && !_ctx.RuntimeClassLexicalShadows.Contains(declaration):
+                    names.Add(declaration.Name.Lexeme);
                     break;
                 case Stmt.Sequence sequence:
                     foreach (var nested in sequence.Statements)
@@ -3325,6 +3346,7 @@ public partial class ILEmitter
                 ?? _ctx.Locals.DeclareLocal(classStmt.Name.Lexeme, _ctx.Types.Object);
             IL.Emit(OpCodes.Ldloc, definition);
             IL.Emit(OpCodes.Stloc, binding);
+            PublishRuntimeClassBinding(classStmt, classStmt.Name.Lexeme, definition);
             return;
         }
         var scopedClasses = _ctx.BlockScopedClassBuilders;
@@ -4095,6 +4117,7 @@ public partial class ILEmitter
     /// </summary>
     public void EmitStatements(List<Stmt> statements)
     {
+        RegisterRuntimeClassBindingScopes(statements);
         InitializeCapturedLexicalTdzBindings(statements);
 
         // Function/state-machine bodies are emitted as a raw statement list,
@@ -4253,6 +4276,11 @@ public partial class ILEmitter
         IL.Emit(_ctx.IsDerivedClassConstructor ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
         IL.Emit(OpCodes.Ldloc, _ctx.ClassConstructorReceiver!);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.DynamicConstruction.RecordClassReturn);
+        if (_ctx.IsRuntimeReceiverInitializer)
+        {
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Call, _ctx.Runtime.DynamicConstruction.ResolveClassReturn);
+        }
     }
 
     internal void EmitClassConstructorFallthrough()
@@ -4699,16 +4727,16 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, kind);
         builder.Emit_Brfalse(afterFinally);
 
-        if (_ctx.ReturnValueLocal != null)
+        if (_ctx.ReturnValueLocal != null || (_ctx.HasDeferredVoidReturn && _ctx.CapturesClassConstructorReturn))
         {
             var notReturn = builder.DefineLabel("js_finally_not_return");
             IL.Emit(OpCodes.Ldloc, kind);
             IL.Emit(OpCodes.Ldc_I4_1);
             builder.Emit_Bne_Un(notReturn);
-            IL.Emit(OpCodes.Ldloc, _ctx.ReturnValueLocal);
+            if (_ctx.ReturnValueLocal != null) IL.Emit(OpCodes.Ldloc, _ctx.ReturnValueLocal);
             if (_abruptCompletionScopes.TryPeek(out var outerCompletion))
             {
-                IL.Emit(OpCodes.Stloc, _ctx.ReturnValueLocal);
+                if (_ctx.ReturnValueLocal != null) IL.Emit(OpCodes.Stloc, _ctx.ReturnValueLocal);
                 IL.Emit(OpCodes.Ldc_I4_1);
                 IL.Emit(OpCodes.Stloc, outerCompletion.Kind);
                 builder.Emit_Leave(outerCompletion.RunFinally);
@@ -4719,6 +4747,7 @@ public partial class ILEmitter
             }
             else
             {
+                if (_ctx.CapturesClassConstructorReturn) PublishClassConstructorReturnCompletion();
                 IL.Emit(OpCodes.Ret);
             }
             builder.MarkLabel(notReturn);

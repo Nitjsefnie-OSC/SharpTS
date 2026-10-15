@@ -903,9 +903,9 @@ public partial class Interpreter
             return EnumerateWithIteratorProtocol(iteratorFn);
         }
 
-        // Arrays can replace their inherited @@iterator with an own method.
-        // Consult that override before falling back to indexed enumeration.
-        if (iterable is SharpTSArray array && array.HasSymbolProperty(SharpTSSymbol.Iterator))
+        // Subclass and explicit prototypes can replace the iterator without an
+        // own slot. Acquire it once before considering indexed enumeration.
+        if (iterable is SharpTSArray array && RequiresArrayIteratorProtocol(array))
         {
             var iteratorFn = GetSymbolPropertyValue(array, SharpTSSymbol.Iterator);
             if (iteratorFn is not ISharpTSCallable)
@@ -965,6 +965,11 @@ public partial class Interpreter
 
         return null;
     }
+
+    private static bool RequiresArrayIteratorProtocol(SharpTSArray array)
+        => array.HasSymbolProperty(SharpTSSymbol.Iterator)
+            || array.HasExplicitPrototype
+            || array is SharpTSArraySubclassInstance;
 
     /// <summary>
     /// Iterates using the JavaScript iterator protocol: calls next() until done is true.
@@ -1157,10 +1162,7 @@ public partial class Interpreter
 
         try
         {
-            if (returnMethod is SharpTSArrowFunction arrowFn)
-                returnMethod = arrowFn.Bind(iterator!);
-            else if (returnMethod is SharpTSFunction fn && iterator is SharpTSInstance inst)
-                returnMethod = fn.Bind(inst);
+            returnMethod = BindMemberCallReceiver(returnMethod, iterator);
 
             // SharpTSFunction also implements ISharpTSCallable, so this covers both.
             if (returnMethod is ISharpTSCallable callable)
@@ -1288,7 +1290,7 @@ public partial class Interpreter
     {
         switch (value)
         {
-            case SharpTSArray array when !array.HasSymbolProperty(SharpTSSymbol.Iterator):
+            case SharpTSArray array when !RequiresArrayIteratorProtocol(array):
                 return value;
             // Typed arrays / buffers expose index access but no [Symbol.iterator] in this runtime, so
             // GetIterableElements would throw; read their elements directly into a fresh Array (#781).
@@ -2131,7 +2133,7 @@ public partial class Interpreter
                     {
                         // Old behavior: evaluate immediately
                         object? fieldValue = field.Initializer != null
-                            ? Evaluate(field.Initializer)
+                            ? EvaluateEarlyStaticInitializer(field.Initializer)
                             : null;
                         staticPrivateFields[field.Name.Lexeme] = fieldValue;
                     }
@@ -2149,7 +2151,7 @@ public partial class Interpreter
                 {
                     // Old behavior: evaluate immediately
                     object? fieldValue = field.Initializer != null
-                        ? Evaluate(field.Initializer)
+                        ? EvaluateEarlyStaticInitializer(field.Initializer)
                         : null;
                     staticProperties[field.Name.Lexeme] = fieldValue;
                 }
@@ -2288,7 +2290,7 @@ public partial class Interpreter
                 {
                     // Evaluate static auto-accessor initializer now
                     object? initValue = autoAccessor.Initializer != null
-                        ? Evaluate(autoAccessor.Initializer)
+                        ? EvaluateEarlyStaticInitializer(autoAccessor.Initializer)
                         : null;
                     staticAutoAccessors[autoAccessor.Name.Lexeme] = initValue;
                 }
@@ -2410,6 +2412,8 @@ public partial class Interpreter
             // Also make the class name available so code like Foo.x works
             var staticEnv = new RuntimeEnvironment(_environment, strictMode: true)
                 { PrivateClass = klass, StaticSuper = true };
+            staticEnv.NewTarget = RuntimeValue.Undefined;
+            staticEnv.ConstructionFrame = null;
             staticEnv.Define("this", klass);
             staticEnv.Define(classStmt.Name.Lexeme, klass);
 

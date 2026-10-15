@@ -752,7 +752,7 @@ public partial class Interpreter
 
     private async Task<RuntimeValue> EvaluateTaggedTemplateLiteralAsync(Expr.TaggedTemplateLiteral tagged)
     {
-        object? tag = (await EvaluateAsync(tagged.Tag)).ToObject();
+        object? tag = await EvaluateMemberCallReference(_asyncContext, tagged.Tag);
 
         if (tag is not Runtime.Types.ISharpTSCallable callable)
             throw new InterpreterException("Tagged template tag must be a function.");

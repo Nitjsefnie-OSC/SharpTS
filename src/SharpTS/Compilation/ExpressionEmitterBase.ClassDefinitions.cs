@@ -6,19 +6,154 @@ namespace SharpTS.Compilation;
 
 public abstract partial class ExpressionEmitterBase
 {
+    protected bool IsRuntimeClassDeclarationReference(Expr expression)
+    {
+        if (expression is not Expr.Variable || Ctx.RuntimeClassDeclarations == null || Ctx.TypeMap == null)
+            return false;
+        static int DeclarationId(SharpTS.TypeSystem.TypeInfo? type) => type switch
+        {
+            SharpTS.TypeSystem.TypeInfo.Class cls => cls.Core.DeclarationId,
+            SharpTS.TypeSystem.TypeInfo.GenericClass cls => cls.Core.DeclarationId,
+            SharpTS.TypeSystem.TypeInfo.InstantiatedGeneric generic => DeclarationId(generic.GenericDefinition),
+            _ => 0
+        };
+        int declarationId = DeclarationId(Ctx.TypeMap.Get(expression));
+        return declarationId != 0 && Ctx.RuntimeClassDeclarations.Keys.Any(declaration =>
+            Ctx.TypeMap.GetClassType(declaration)?.Core.DeclarationId == declarationId);
+    }
+
+    protected void EmitDynamicConstruction(Expr.New expression)
+    {
+        var constructor = SpillBoxed(expression.Callee);
+        EmitArgsArrayWithSpread(expression.Arguments);
+        var arguments = IL.DeclareLocal(Types.ObjectArray);
+        IL.Emit(OpCodes.Stloc, arguments);
+        IL.Emit(OpCodes.Ldloc, constructor);
+        IL.Emit(OpCodes.Ldloc, arguments);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.Value);
+        SetStackUnknown();
+    }
+
+    protected void PublishRuntimeClassBinding(Stmt.Class declaration, string name, LocalBuilder definition)
+    {
+        bool shadowsOuter = Ctx.RuntimeClassLexicalShadows.Contains(declaration);
+        if (!shadowsOuter && Ctx.CellBindingLocals.TryGetValue(name, out var cell))
+        {
+            IL.Emit(OpCodes.Ldloc, cell);
+            IL.Emit(OpCodes.Ldloc, definition);
+            IL.Emit(OpCodes.Stfld, Types.StrongBoxOfObjectValueField);
+        }
+        else if (!shadowsOuter && Ctx.CapturedFunctionLocals?.Contains(name) == true
+            && Ctx.FunctionDisplayClassFields?.TryGetValue(name, out var functionField) == true)
+        {
+            if (Ctx.FunctionDisplayClassLocal != null)
+                IL.Emit(OpCodes.Ldloc, Ctx.FunctionDisplayClassLocal);
+            else if (GetFunctionDCField() is { } stateField)
+            {
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldfld, stateField);
+            }
+            else if (Ctx.CurrentArrowFunctionDCField != null)
+            {
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldfld, Ctx.CurrentArrowFunctionDCField);
+            }
+            else return;
+            IL.Emit(OpCodes.Ldloc, definition);
+            IL.Emit(OpCodes.Stfld, functionField);
+        }
+        else if (!shadowsOuter && Ctx.CapturedArrowLocals?.Contains(name) == true
+            && Ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var arrowField) == true
+            && Ctx.ArrowScopeDisplayClassLocal != null)
+        {
+            IL.Emit(OpCodes.Ldloc, Ctx.ArrowScopeDisplayClassLocal);
+            IL.Emit(OpCodes.Ldloc, definition);
+            IL.Emit(OpCodes.Stfld, arrowField);
+        }
+        else if (!shadowsOuter && Ctx.IsModuleTopLevel && Ctx.CapturedTopLevelVars?.Contains(name) == true
+            && Ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryField) == true)
+        {
+            if (Ctx.EntryPointDisplayClassLocal != null) IL.Emit(OpCodes.Ldloc, Ctx.EntryPointDisplayClassLocal);
+            else if (Ctx.EntryPointDisplayClassStaticField != null) IL.Emit(OpCodes.Ldsfld, Ctx.EntryPointDisplayClassStaticField);
+            else return;
+            IL.Emit(OpCodes.Ldloc, definition);
+            IL.Emit(OpCodes.Stfld, entryField);
+        }
+
+        if (Ctx.LexicalCaptureWriteBacks.TryGetValue(name, out var writeBacks))
+        {
+            int start = Ctx.RuntimeClassCaptureWriteBackStarts.GetValueOrDefault(declaration);
+            foreach (var (displayClass, field) in writeBacks.Skip(start))
+            {
+                IL.Emit(OpCodes.Ldloc, displayClass);
+                IL.Emit(OpCodes.Ldloc, definition);
+                IL.Emit(OpCodes.Stfld, field);
+            }
+        }
+    }
+
     protected bool TryEmitGuestSuperCall(Expr.Call call)
     {
-        if ((!Ctx.HasGuestReceiver && !Ctx.IsStaticSuperContext) || call.Callee is not Expr.Super { Method: not null } super
+        if (Ctx.CurrentClassBuilder == null || Ctx.Runtime == null
+            || UnwrapSuperCallReference(call.Callee) is not Expr.Super { Method: not null } super
             || (!Ctx.IsStaticSuperContext && super.Method.Lexeme == "constructor")) return false;
-        // Nominal declaration helpers use the existing lexical-class bridge,
-        // which keeps the actual receiver and bypasses virtual overrides.
-        if (Ctx.UseNominalSuperCallBridge && Ctx.CurrentClassExpr == null && Ctx.CurrentClassBuilder != null
-            && !Ctx.IsStaticSuperContext && TryEmitSuperMethodCall(super.Method.Lexeme, call.Arguments))
+
+        // An unchanged, fixed-signature parent can retain its proven direct
+        // dispatch. Every mutation-capable or variadic call resolves the live
+        // property first, including calls from arrows and state machines.
+        if (TryEmitSuperMethodCall(super.Method.Lexeme, call.Arguments))
             return true;
+
         var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
         EmitGuestSuperValue(super.Method.Lexeme, receiver);
+        if (call.Optional)
+        {
+            var callable = _helpers.SpillStoreObject();
+            var missing = IL.DefineLabel();
+            var end = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, callable);
+            IL.Emit(OpCodes.Brfalse, missing);
+            IL.Emit(OpCodes.Ldloc, callable);
+            IL.Emit(OpCodes.Isinst, Ctx.Runtime.Sentinels.UndefinedType);
+            IL.Emit(OpCodes.Brtrue, missing);
+            IL.Emit(OpCodes.Ldloc, callable);
+            EmitGuestMethodInvocation(receiver, call.Arguments);
+            IL.Emit(OpCodes.Br, end);
+            IL.MarkLabel(missing);
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime.Sentinels.UndefinedInstance);
+            IL.MarkLabel(end);
+            SetStackUnknown();
+            return true;
+        }
         EmitGuestMethodInvocation(receiver, call.Arguments);
         return true;
+    }
+
+    private static Expr UnwrapSuperCallReference(Expr expression) => expression switch
+    {
+        Expr.Grouping grouping => UnwrapSuperCallReference(grouping.Expression),
+        Expr.TypeAssertion assertion => UnwrapSuperCallReference(assertion.Expression),
+        Expr.Satisfies satisfies => UnwrapSuperCallReference(satisfies.Expression),
+        Expr.NonNullAssertion assertion => UnwrapSuperCallReference(assertion.Expression),
+        _ => expression
+    };
+
+    protected bool CanEmitNominalSuperMethodCall(string superclass, string name,
+        MethodBuilder method, IReadOnlyList<Expr> arguments)
+    {
+        if (Ctx.IsStaticSuperContext || Ctx.CurrentClassExpr != null
+            || Ctx.RuntimeFeatures is not
+                { UsesClassPrototypeMutation: false, UsesDynamicPropertyDescriptors: false, UsesObjectIntegrityMutation: false }
+            || arguments.Any(argument => argument is Expr.Spread) || AnyContainsSuspension(arguments)
+            || Ctx.MethodsCapturingArguments?.Contains(method) == true
+            || Ctx.ClassRegistry?.HasInstancePrototypeBarrier(superclass, name, method) != false)
+            return false;
+        var parameters = method.GetParameters();
+        // Defaults, rest markers and guest object slots require the function
+        // value ABI. Exact primitive slots need no packing or omission padding.
+        return arguments.Count == parameters.Length && parameters.All(parameter =>
+            parameter.ParameterType == Types.Double || parameter.ParameterType == Types.Boolean
+                || parameter.ParameterType == Types.String);
     }
 
     protected void EmitGuestSuperValue(string name, LocalBuilder receiver)
@@ -31,8 +166,64 @@ public abstract partial class ExpressionEmitterBase
         }
         IL.Emit(OpCodes.Ldloc, receiver);
         IL.Emit(OpCodes.Ldstr, name);
-        IL.Emit(Ctx.IsStaticSuperContext || !Ctx.IsInstanceMethod ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+        IL.Emit(Ctx.IsStaticSuperContext ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.ClassDefinitions.ReadSuper);
+        SetStackUnknown();
+        EmitUnchangedSuperMethodValue(name, receiver);
+    }
+
+    private void EmitUnchangedSuperMethodValue(string name, LocalBuilder receiver)
+    {
+        if (Ctx.IsStaticSuperContext
+            || Ctx.CurrentClassBuilder is not { } owner || Ctx.ClassRegistry is not { } registry) return;
+        string? superclass = Ctx.CurrentSuperclassName
+            ?? registry.GetSuperclass(owner.FullName ?? Ctx.CurrentClassName!)
+            ?? (Ctx.CurrentClassName is { } current ? registry.GetSuperclass(current) : null);
+        if (superclass == null || Ctx.ResolveInstanceMethod(Ctx.ResolveClassName(superclass), name) is not { } parent)
+            return;
+
+        // Legacy nominal prototype methods wrap a virtual CLR MethodInfo. Keep
+        // that unchanged method value nonvirtual, while live data, getters and
+        // replacements retain the value returned by the prototype lookup.
+        var value = _helpers.SpillStoreObject();
+        var function = IL.DeclareLocal(Ctx.Runtime!.FunctionValues.Type);
+        var unchanged = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, value);
+        IL.Emit(OpCodes.Isinst, Ctx.Runtime.FunctionValues.Type);
+        IL.Emit(OpCodes.Stloc, function);
+        IL.Emit(OpCodes.Ldloc, function);
+        IL.Emit(OpCodes.Brfalse, unchanged);
+        IL.Emit(OpCodes.Ldloc, function);
+        IL.Emit(OpCodes.Callvirt, Ctx.Runtime.FunctionValues.GetMethodInfo);
+        IL.Emit(OpCodes.Callvirt, Types.GetProperty(Types.MethodInfo, "Module")!.GetGetMethod()!);
+        IL.Emit(OpCodes.Ldtoken, owner);
+        IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Callvirt, Types.GetProperty(Types.Type, "Module")!.GetGetMethod()!);
+        IL.Emit(OpCodes.Call, Types.GetMethod(Types.Object, "Equals", Types.Object, Types.Object));
+        IL.Emit(OpCodes.Brfalse, unchanged);
+        IL.Emit(OpCodes.Ldloc, function);
+        IL.Emit(OpCodes.Callvirt, Ctx.Runtime.FunctionValues.GetMethodInfo);
+        IL.Emit(OpCodes.Callvirt, Types.GetProperty(Types.MethodInfo, "MetadataToken")!.GetGetMethod()!);
+        // Persisted assembly layout can remap MethodDef rows after emission.
+        // Resolve both tokens at runtime rather than embedding a provisional
+        // MethodBuilder token in the unchanged-value test.
+        Types.EmitLoadMethodInfo(IL, parent);
+        IL.Emit(OpCodes.Callvirt, Types.GetProperty(Types.MethodInfo, "MetadataToken")!.GetGetMethod()!);
+        IL.Emit(OpCodes.Bne_Un, unchanged);
+        var (_, bridge) = registry.GetOrCreateSuperCallBridge(owner, parent, Ctx.Runtime.FunctionAttributes);
+        IL.Emit(OpCodes.Ldloc, receiver);
+        Types.EmitLoadMethodInfo(IL, bridge);
+        IL.Emit(OpCodes.Ldstr, name);
+        IL.Emit(OpCodes.Ldloc, function);
+        IL.Emit(OpCodes.Callvirt, Ctx.Runtime.FunctionValues.LengthGetter);
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime.FunctionConstruction.CachedConstructor);
+        IL.Emit(OpCodes.Dup);
+        IL.Emit(OpCodes.Ldloc, function);
+        IL.Emit(OpCodes.Ldfld, Ctx.Runtime.FunctionValues.CapturesArgumentsField);
+        IL.Emit(OpCodes.Stfld, Ctx.Runtime.FunctionValues.CapturesArgumentsField);
+        IL.Emit(OpCodes.Stloc, value);
+        IL.MarkLabel(unchanged);
+        IL.Emit(OpCodes.Ldloc, value);
         SetStackUnknown();
     }
 
@@ -138,6 +329,12 @@ public abstract partial class ExpressionEmitterBase
 
     protected bool TryEmitGuestThis()
     {
+        if (Resolver.TryLoadThisBindingCell())
+        {
+            ConstructorReceiverEmitter.ReadCell(IL, Ctx);
+            SetStackUnknown();
+            return true;
+        }
         if (Ctx.GuestThisVariableName is not { } name) return false;
         EmitVariable(new Expr.Variable(new Token(TokenType.IDENTIFIER, name, null, 0)));
         EnsureBoxed();
@@ -256,7 +453,7 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
         IL.Emit(OpCodes.Ldnull);
         IL.Emit(OpCodes.Ldftn, factory.Method);
-        IL.Emit(OpCodes.Newobj, Types.GetConstructor(typeof(Func<object[], object, object>), Types.Object, Types.IntPtr));
+        IL.Emit(OpCodes.Newobj, Types.GetConstructor(typeof(Func<object[], object, object, object>), Types.Object, Types.IntPtr));
         IL.Emit(OpCodes.Ldstr, factory.Name);
         IL.Emit(OpCodes.Ldc_R8, (double)factory.Length);
         IL.Emit(OpCodes.Ldloc, parent);

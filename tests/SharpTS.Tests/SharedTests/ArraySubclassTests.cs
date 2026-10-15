@@ -99,8 +99,8 @@ public class ArraySubclassTests
         Assert.Equal("345 3\n", TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void ExtendsArray_DeclaredIteratorValuesPreserveOverridesAndGeneratorClose()
+    [Theory, ModeData]
+    public void ExtendsArray_DeclaredIteratorValuesPreserveOverridesAndGeneratorClose(ExecutionMode mode)
     {
         const string source = """
             class NativeReverse extends Array {
@@ -124,9 +124,7 @@ public class ArraySubclassTests
             console.log(result);
             for (const value of generator) { console.log(value); break; }
             """;
-        // Interpreted Array subclasses currently bypass declared iterator
-        // overrides; protect the compiled canonical method-value path here.
-        Assert.Equal("true true\n43\n6\nclosed\n", TestHarness.RunCompiled(source));
+        Assert.Equal("true true\n43\n6\nclosed\n", TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

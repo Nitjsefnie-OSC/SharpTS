@@ -59,7 +59,7 @@ public partial class RuntimeEmitter
         EmittedArrayOperationsRuntime ArrayOperations,
         EmittedMapRuntime? Map,
         EmittedSetRuntime? Set,
-        EmittedArrayStorageRuntime ArrayStorage,
+        MethodInfo PrepareApplyArguments,
         EmittedInvocationRuntime Invocation,
         EmittedTypedArrayRuntime TypedArrays,
         EmittedTextEncodingRuntime? TextEncoding,
@@ -1984,64 +1984,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, argsArrayLocal);
         il.MarkLabel(afterArgsArrayLabel);
 
-        // Convert argsArray to object[]
-        // if (argsArray == null) callArgs = empty
-        // else if (argsArray is List<object?>) callArgs = ToArray()
-        // else if (argsArray is object[]) callArgs = argsArray
-        // else callArgs = empty
-        var isListLabel = il.DefineLabel();
-        var isArrayLabel = il.DefineLabel();
-        var isTSArrayLabel = il.DefineLabel();
-        var afterConvertLabel = il.DefineLabel();
-        var nullArgsArrayLabel = il.DefineLabel();
-
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, targetField);
         il.Emit(OpCodes.Ldloc, argsArrayLocal);
-        il.Emit(OpCodes.Brfalse, nullArgsArrayLabel);  // if argsArray is null, use empty array
-
-        il.Emit(OpCodes.Ldloc, argsArrayLocal);
-        il.Emit(OpCodes.Isinst, _types.ListOfObjectNullable);
-        il.Emit(OpCodes.Brtrue, isListLabel);
-
-        il.Emit(OpCodes.Ldloc, argsArrayLocal);
-        il.Emit(OpCodes.Isinst, _types.ObjectArray);
-        il.Emit(OpCodes.Brtrue, isArrayLabel);
-
-        il.Emit(OpCodes.Ldloc, argsArrayLocal);
-        il.Emit(OpCodes.Isinst, inputs.ArrayStorage.Type);
-        il.Emit(OpCodes.Brtrue, isTSArrayLabel);
-
-        // Unknown type - empty array
-        il.Emit(OpCodes.Call, EmitGenerics.MakeGenericMethod(_types.GetMethod(typeof(Array), "Empty"), _types.Object));
+        il.Emit(OpCodes.Call, inputs.PrepareApplyArguments);
         il.Emit(OpCodes.Stloc, callArgsLocal);
-        il.Emit(OpCodes.Br, afterConvertLabel);
-
-        il.MarkLabel(isListLabel);
-        il.Emit(OpCodes.Ldloc, argsArrayLocal);
-        il.Emit(OpCodes.Castclass, _types.ListOfObjectNullable);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObjectNullable, "ToArray")!);
-        il.Emit(OpCodes.Stloc, callArgsLocal);
-        il.Emit(OpCodes.Br, afterConvertLabel);
-
-        il.MarkLabel(isArrayLabel);
-        il.Emit(OpCodes.Ldloc, argsArrayLocal);
-        il.Emit(OpCodes.Castclass, _types.ObjectArray);
-        il.Emit(OpCodes.Stloc, callArgsLocal);
-        il.Emit(OpCodes.Br, afterConvertLabel);
-
-        il.MarkLabel(isTSArrayLabel);
-        il.Emit(OpCodes.Ldloc, argsArrayLocal);
-        il.Emit(OpCodes.Castclass, inputs.ArrayStorage.Type);
-        il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.ElementsGetter);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObjectNullable, "ToArray")!);
-        il.Emit(OpCodes.Stloc, callArgsLocal);
-        il.Emit(OpCodes.Br, afterConvertLabel);
-
-        // null argsArray - use empty array
-        il.MarkLabel(nullArgsArrayLabel);
-        il.Emit(OpCodes.Call, EmitGenerics.MakeGenericMethod(_types.GetMethod(typeof(Array), "Empty"), _types.Object));
-        il.Emit(OpCodes.Stloc, callArgsLocal);
-
-        il.MarkLabel(afterConvertLabel);
 
         // Check target type and invoke. TSFunction/BoundTSFunction honor thisArg;
         // bound methods ignore it (receiver already captured).

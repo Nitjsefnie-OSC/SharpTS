@@ -112,7 +112,7 @@ public class SharpTSProxy : ISharpTSCallable
         object? value = _handler is SharpTSProxy proxy
             ? proxy.TrapGetCompiled(
                 trapName, proxy,
-                (target, key, _) => ordinaryGet(target, key),
+                (target, key, _) => ordinaryGet(target, (string)key),
                 ordinaryGet, ordinaryGet,
                 (_, _) => SharpTSUndefined.Instance)
             : ordinaryGet(_handler!, trapName);
@@ -163,9 +163,9 @@ public class SharpTSProxy : ISharpTSCallable
     /// BuiltInRegistry's interpreter-oriented fallback.
     /// </summary>
     public object? TrapGetCompiled(
-        string prop,
+        object prop,
         object? receiver,
-        Func<object, string, object, object?> ordinaryGet,
+        Func<object, object, object, object?> ordinaryGet,
         Func<object, string, object?> ordinaryHandlerGet,
         Func<object, string, object?> ordinaryFunctionGet,
         Func<object, object, object?> ordinaryGetOwnPropertyDescriptor)
@@ -178,9 +178,9 @@ public class SharpTSProxy : ISharpTSCallable
                     prop, receiver, ordinaryGet, ordinaryHandlerGet,
                     ordinaryFunctionGet,
                     ordinaryGetOwnPropertyDescriptor)
-                : prop is "call" or "apply" or "bind"
+                : prop is string functionProperty && (functionProperty is "call" or "apply" or "bind")
                     && IsCallable
-                    ? ordinaryFunctionGet(this, prop)
+                    ? ordinaryFunctionGet(this, functionProperty)
                     : ordinaryGet(_target, prop, receiver!);
         }
 
@@ -534,7 +534,7 @@ public class SharpTSProxy : ISharpTSCallable
     /// while preserving the original receiver through proxy forwarding.
     /// </summary>
     public bool TrapSetCompiled(
-        string prop,
+        object prop,
         object? value,
         object? receiver,
         Func<object, object, object, object, bool> ordinarySet,
@@ -1093,10 +1093,23 @@ public class SharpTSProxy : ISharpTSCallable
     /// </summary>
     public bool TrapDefineProperty(
         string prop, object descriptor, Interpreter interpreter)
+        => TrapDefinePropertyCore(prop, descriptor, interpreter, classField: false);
+
+    internal bool TrapDefineField(object prop, object descriptor, Interpreter interpreter)
+        => TrapDefinePropertyCore(prop, descriptor, interpreter, classField: true);
+
+    private bool TrapDefinePropertyCore(
+        object prop, object descriptor, Interpreter interpreter, bool classField)
     {
         var trap = GetTrapCallable("defineProperty", interpreter);
         if (trap == null)
         {
+            if (classField)
+            {
+                ObjectBuiltIns.CreateDataPropertyOrThrow(interpreter, _target, prop,
+                    SharpTSPropertyDescriptor.FromAnyObject(descriptor).Value);
+                return true;
+            }
             try
             {
                 return ObjectBuiltIns.DefinePropertyOnProxyTarget(
@@ -1118,9 +1131,7 @@ public class SharpTSProxy : ISharpTSCallable
             trap, interpreter, [_target, prop, descriptor]));
         if (!trapResult) return false;
 
-        object? targetDescriptor = _target is SharpTSProxy proxy
-            ? proxy.TrapGetOwnPropertyDescriptor(prop, interpreter)
-            : ObjectBuiltIns.RuntimeGetOwnPropertyDescriptor(_target, prop);
+        object? targetDescriptor = GetTargetOwnPropertyDescriptor(prop, interpreter);
         bool targetHasProperty = targetDescriptor is not (null or SharpTSUndefined);
         var requested = SharpTSPropertyDescriptor.FromAnyObject(descriptor);
         if (!targetHasProperty)
@@ -1187,7 +1198,7 @@ public class SharpTSProxy : ISharpTSCallable
     /// object representations.
     /// </summary>
     public bool TrapDefinePropertyCompiled(
-        string prop,
+        object prop,
         object descriptor,
         Func<object, object, object, object?> ordinaryDefine,
         Func<object, object, object?> ordinaryGetOwnPropertyDescriptor,
@@ -1649,7 +1660,7 @@ public class SharpTSProxy : ISharpTSCallable
                 return targetProxy.TrapConstruct(
                     args, interp, newTarget ?? this);
             if (interp is not null)
-                return interp.Construct(_target, args);
+                return interp.Construct(_target, args, newTarget ?? this);
             throw new Exception("Runtime Error: Proxy target is not constructable.");
         }
 
@@ -1665,7 +1676,7 @@ public class SharpTSProxy : ISharpTSCallable
     public object? TrapConstructCompiled(
         object?[] args,
         object? newTarget,
-        Func<object, object?[], object?> ordinaryConstruct,
+        Func<object, object?[], object?, object?> ordinaryConstruct,
         Func<object, string, object?> ordinaryGet)
     {
         object effectiveNewTarget = newTarget ?? this;
@@ -1675,7 +1686,7 @@ public class SharpTSProxy : ISharpTSCallable
             if (_target is SharpTSProxy targetProxy)
                 return targetProxy.TrapConstructCompiled(
                     args, effectiveNewTarget, ordinaryConstruct, ordinaryGet);
-            return ordinaryConstruct(_target, args);
+            return ordinaryConstruct(_target, args, effectiveNewTarget);
         }
 
         object? result = InvokeTrap(

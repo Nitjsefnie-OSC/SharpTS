@@ -122,6 +122,13 @@ public abstract record Expr
     /// <summary>Private method call: obj.#method(args)</summary>
     public record CallPrivate(Expr Object, Token Name, List<Expr> Arguments) : Expr;
     public record This(Token Keyword) : Expr;
+    /// <summary>The constructor value supplied to the enclosing function invocation.</summary>
+    public record NewTarget(Token Keyword) : Expr
+    {
+        // Preserve the written callable boundary when generator lowering moves
+        // a method body into a synthetic function declaration.
+        internal bool? SourceTypeScriptContextAllowed { get; set; }
+    }
     /// <summary>
     /// New expression: new Callee(args) or new Callee&lt;T&gt;(args).
     /// Callee can be a Variable (class name), Get (namespace path), or any expression.
@@ -182,6 +189,7 @@ public abstract record Expr
     // Compound assignment
     public record CompoundAssign(Token Name, Token Operator, Expr Value) : Expr;
     public record CompoundSet(Expr Object, Token Name, Token Operator, Expr Value) : Expr;
+    public record CompoundSetPrivate(Expr Object, Token Name, Token Operator, Expr Value) : Expr;
     public record CompoundSetIndex(Expr Object, Expr Index, Token Operator, Expr Value) : Expr;
     // Logical assignment (&&=, ||=, ??=) - has short-circuit semantics
     public record LogicalAssign(Token Name, Token Operator, Expr Value) : Expr;

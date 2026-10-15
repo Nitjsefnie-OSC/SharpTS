@@ -18,6 +18,11 @@ public partial class ILEmitter
 {
     protected override void EmitGet(Expr.Get g)
     {
+        object? factReceiver = PrimitiveFieldReceiverIdentity(g.Object);
+        if (factReceiver is null || !_nativePrimitiveFieldFacts.Any(fact =>
+                Equals(fact.Receiver, factReceiver) &&
+                fact.Getter.Name == "get_" + NamingConventions.ToPascalCase(g.Name.Lexeme)))
+            _nativePrimitiveFieldFacts.Clear();
         if (TryEmitGuestThisGet(g)) return;
         if (TryEmitEventEmitterFacadeGet(g)) return;
         if (TryEmitStableRecordDestructureGet(g))
@@ -220,7 +225,8 @@ public partial class ILEmitter
 
         // Handle static member access via 'this' in static context (static blocks, static methods)
         // In static blocks, 'this' refers to the class constructor, so this.property accesses static members
-        if (g.Object is Expr.This && !_ctx.IsInstanceMethod && _ctx.ClassDefinitionParameterIndex == null && _ctx.CurrentClassBuilder != null)
+        if (g.Object is Expr.This && !_ctx.IsInstanceMethod && !_ctx.HasGuestReceiver
+            && _ctx.GuestThisVariableName == null && _ctx.ClassDefinitionParameterIndex == null && _ctx.CurrentClassBuilder != null)
         {
             // Use cached CurrentClassName instead of linear search
             string? currentClassName = _ctx.CurrentClassName;
@@ -228,7 +234,7 @@ public partial class ILEmitter
             if (currentClassName != null)
             {
                 // Emit as static field access on the current class
-                if (EmitStaticMemberAccess(currentClassName, _ctx.CurrentClassBuilder, g.Name.Lexeme))
+                if (EmitStaticMemberAccess(currentClassName, _ctx.CurrentClassBuilder, g.Object, g.Name.Lexeme))
                 {
                     return;
                 }
@@ -244,6 +250,12 @@ public partial class ILEmitter
             string resolvedClassName = _ctx.ResolveClassName(_ctx.TypeMap?.Get(classVar), classVar.Name.Lexeme);
             if (_ctx.Classes.TryGetValue(resolvedClassName, out var classBuilder))
             {
+                if (_ctx.ClassRegistry!.IsSourceStaticGetter(resolvedClassName, g.Name.Lexeme))
+                {
+                    EmitSourceStaticGetterRead(g.Object, g.Name.Lexeme);
+                    return;
+                }
+
                 // Try static getter first (for auto-accessors and explicit static accessors)
                 if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(resolvedClassName, g.Name.Lexeme, classBuilder, out var staticGetter))
                 {
@@ -301,6 +313,12 @@ public partial class ILEmitter
             _ctx.ImportedClassAliases?.TryGetValue(importedClassVar.Name.Lexeme, out var importedQualifiedClassName) == true &&
             _ctx.Classes.TryGetValue(importedQualifiedClassName, out var importedClassBuilder))
         {
+            if (_ctx.ClassRegistry!.IsSourceStaticGetter(importedQualifiedClassName, g.Name.Lexeme))
+            {
+                EmitSourceStaticGetterRead(g.Object, g.Name.Lexeme);
+                return;
+            }
+
             // Try static getter first
             if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(importedQualifiedClassName, g.Name.Lexeme, importedClassBuilder, out var importedStaticGetter))
             {
@@ -1045,7 +1063,8 @@ public partial class ILEmitter
         }
 
         // Handle static property assignment via 'this' in static context (static blocks, static methods)
-        if (s.Object is Expr.This && !_ctx.IsInstanceMethod && _ctx.ClassDefinitionParameterIndex == null && _ctx.CurrentClassBuilder != null)
+        if (s.Object is Expr.This && !_ctx.IsInstanceMethod && !_ctx.HasGuestReceiver
+            && _ctx.GuestThisVariableName == null && _ctx.ClassDefinitionParameterIndex == null && _ctx.CurrentClassBuilder != null)
         {
             // First check for class expressions
             if (_ctx.CurrentClassExpr != null &&
@@ -1066,7 +1085,7 @@ public partial class ILEmitter
             if (currentClassName != null)
             {
                 // Emit as static field assignment on the current class
-                if (EmitStaticMemberSet(currentClassName, _ctx.CurrentClassBuilder, s.Name.Lexeme, s.Value))
+                if (EmitStaticMemberSet(currentClassName, _ctx.CurrentClassBuilder, s.Object, s.Name.Lexeme, s.Value))
                 {
                     return;
                 }
@@ -1081,7 +1100,7 @@ public partial class ILEmitter
             string resolvedClassName = _ctx.ResolveClassName(_ctx.TypeMap?.Get(classVar), classVar.Name.Lexeme);
             if (_ctx.Classes.TryGetValue(resolvedClassName, out var classBuilder))
             {
-                if (EmitStaticMemberSet(resolvedClassName, classBuilder, s.Name.Lexeme, s.Value))
+                if (EmitStaticMemberSet(resolvedClassName, classBuilder, s.Object, s.Name.Lexeme, s.Value))
                     return;
             }
         }
@@ -2504,6 +2523,26 @@ public partial class ILEmitter
         if (getterBuilder == null)
             return false;
 
+        if (_ctx.ClassRegistry!.TryGetPrimitiveGuestField(className, propertyName, out var guestField))
+        {
+            if (_ctx.RuntimeFeatures?.UsesDynamicPropertyDescriptors != false)
+                return false;
+            bool nativeRead = _ctx.NativePrimitiveFieldReads ||
+                ConsumeNativePrimitiveFieldFact(receiver, guestField.NativeGetter);
+            if (!nativeRead)
+                getterBuilder = guestField.GuestGetter;
+        }
+        else
+        {
+            _nativePrimitiveFieldFacts.Clear();
+        }
+
+        // CLR virtual dispatch inherits getter and setter methods independently.
+        // A runtime subclass can instead mask this entire accessor with only a
+        // setter, even when the receiver's static type names the base class.
+        if (_ctx.ClassRegistry?.IsSourceInstanceGetter(getterBuilder) == true)
+            return false;
+
         // Get the class type builder to cast the receiver
         if (!_ctx.Classes.TryGetValue(className, out var classType))
             return false;
@@ -2591,6 +2630,53 @@ public partial class ILEmitter
         var setterBuilder = _ctx.ResolveInstanceSetter(className, pascalPropertyName);
         if (setterBuilder == null)
             return false;
+
+        if (_ctx.ClassRegistry!.TryGetPrimitiveGuestField(className, propertyName, out var guestField))
+        {
+            if (_ctx.RuntimeFeatures?.UsesDynamicPropertyDescriptors != false ||
+                !_ctx.Classes.TryGetValue(className, out var guestClassType) ||
+                !EmitterTypeHelpers.TryResolveInstanceDispatch(guestClassType, guestField.NativeSetter,
+                    _ctx.EmittingTypeBuilder, out var nativeCast, out var nativeSetter) ||
+                !EmitterTypeHelpers.TryResolveInstanceDispatch(guestClassType, guestField.GuestSetter,
+                    _ctx.EmittingTypeBuilder, out var guestCast, out var guestSetter))
+                return false;
+
+            EmitExpression(receiver);
+            EnsureBoxed();
+            var savedReceiver = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, savedReceiver);
+            EmitExpression(value);
+            bool nativeValue = (_stackType == StackType.Double && _ctx.Types.IsDouble(guestField.NativeType)) ||
+                (_stackType == StackType.Boolean && _ctx.Types.IsBoolean(guestField.NativeType));
+            bool nativeStore = nativeValue && _ctx.ClassRegistry.CanUseNativePrimitiveField(guestField);
+            StackType valueStack = nativeValue ? _stackType : StackType.Unknown;
+            if (!nativeValue) EnsureBoxed();
+            var savedValue = IL.DeclareLocal(nativeValue ? guestField.NativeType : _ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, savedValue);
+
+            var done = IL.DefineLabel();
+            if (_ctx.RuntimeFeatures?.UsesObjectIntegrityMutation != false)
+            {
+                var frozen = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.ObjectState.FrozenObjects);
+                IL.Emit(OpCodes.Ldloc, savedReceiver);
+                IL.Emit(OpCodes.Ldloca, frozen);
+                IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.ConditionalWeakTable,
+                    "TryGetValue", _ctx.Types.Object, _ctx.Types.Object.MakeByRefType()));
+                IL.Emit(OpCodes.Brtrue, done);
+            }
+            IL.Emit(OpCodes.Ldloc, savedReceiver);
+            IL.Emit(OpCodes.Castclass, nativeStore ? nativeCast : guestCast);
+            IL.Emit(OpCodes.Ldloc, savedValue);
+            if (nativeValue && !nativeStore) IL.Emit(OpCodes.Box, guestField.NativeType);
+            IL.Emit(OpCodes.Callvirt, nativeStore ? nativeSetter : guestSetter);
+            IL.MarkLabel(done);
+            IL.Emit(OpCodes.Ldloc, savedValue);
+            SetStackType(valueStack);
+            if (nativeStore)
+                RecordNativePrimitiveFieldFact(receiver, value, guestField.NativeGetter);
+            return true;
+        }
 
         // Get the class type builder to cast the receiver
         if (!_ctx.Classes.TryGetValue(className, out var classType))

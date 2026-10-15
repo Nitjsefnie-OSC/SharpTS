@@ -263,6 +263,11 @@ public partial class ILCompiler
         {
             if (_classes.DeferredDefinitions.TryGet(typeBuilder, out _))
                 continue;
+            // Literal static keys are installed before user initialization by
+            // EmitKnownDeclaredAccessorDescriptors, with no key evaluation.
+            if (accessor.IsStatic && GetConstantComputedAccessorName(accessor.ComputedKey) != null
+                && GetNominalClassDeclaration(typeBuilder) != null)
+                continue;
             // property key: preserve Symbols; coerce every other value exactly as bracket
             // access does (notably null -> "null") before using it as a registry key.
             EmitComputedPropertyKey(emitter, il, accessor.ComputedKey!);
@@ -344,7 +349,8 @@ public partial class ILCompiler
         foreach (var field in fields.Where(field => field.ComputedKey != null && !field.IsDeclare))
             deferred.Add((field.ComputedKey!, null, field.IsStatic, null, field.Name.Start, field));
         // Field names are evaluated with the definition, even when no key suspends.
-        if (!deferred.Any(entry => entry.Field != null || ExpressionContainsSuspension(entry.Key)))
+        if (!deferred.Any(entry => entry.Field != null || ExpressionContainsSuspension(entry.Key)
+            || ExpressionContainsLexicalNewTarget(entry.Key)))
             return;
 
         deferred = deferred.OrderBy(entry => entry.Position).ToList();

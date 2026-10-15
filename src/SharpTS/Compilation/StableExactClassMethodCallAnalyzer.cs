@@ -25,8 +25,12 @@ internal static class StableExactClassMethodCallAnalyzer
             return;
 
         var visitor = new Visitor(typeMap);
+        var sources = new ClassSources();
         foreach (var statement in program)
+        {
             visitor.Visit(statement);
+            sources.Visit(statement);
+        }
 
         foreach (var (key, candidateClassName) in visitor.Candidates)
         {
@@ -39,12 +43,90 @@ internal static class StableExactClassMethodCallAnalyzer
             {
                 if (TryGetInstanceClassName(typeMap.Get(method.Object), out string? receiverClass)
                     && receiverClass == candidateClassName)
+                {
                     typeMap.MarkStableExactPrimitiveMethodCall(method);
+                    if (visitor.Constructions.TryGetValue(key, out var construction) &&
+                        ProvesNativeFieldLifetime(construction, calls, sources.Classes, typeMap))
+                        typeMap.MarkNativePrimitiveFieldMethodCall(method);
+                }
             }
         }
 
         foreach (var method in visitor.ImmediateCalls)
+        {
             typeMap.MarkStableExactPrimitiveMethodCall(method);
+            if (method.Object is Expr.New construction &&
+                ProvesNativeFieldLifetime(construction, [method], sources.Classes, typeMap))
+                typeMap.MarkNativePrimitiveFieldMethodCall(method);
+        }
+    }
+
+    private sealed class ClassSources : AstVisitorBase
+    {
+        internal Dictionary<string, Stmt.Class?> Classes { get; } = new(StringComparer.Ordinal);
+        protected override void VisitClass(Stmt.Class statement)
+        {
+            if (!Classes.TryAdd(statement.Name.Lexeme, statement)) Classes[statement.Name.Lexeme] = null;
+            base.VisitClass(statement);
+        }
+    }
+
+    private static bool ProvesNativeFieldLifetime(Expr.New construction, IReadOnlyList<Expr.Get> calls,
+        Dictionary<string, Stmt.Class?> classes, TypeMap map)
+    {
+        if (construction.Callee is not Expr.Variable name ||
+            !classes.TryGetValue(name.Name.Lexeme, out var source) || source is null ||
+            source.SuperclassExpr is not null || source.Decorators is { Count: > 0 } ||
+            source.TypeParams is { Count: > 0 } || source.AutoAccessors is { Count: > 0 } ||
+            source.Accessors is { Count: > 0 } || source.Fields.Any(field => field.ComputedKey is not null ||
+                (!field.IsStatic && field.Initializer is not null && field.Initializer is not Expr.Literal)))
+            return false;
+
+        var fieldTypes = map.GetClassType(source)?.FieldTypes;
+        if (fieldTypes is null) return false;
+        Dictionary<string, TokenType> primitiveFields = new(StringComparer.Ordinal);
+        foreach (var field in source.Fields.Where(field => !field.IsStatic && !field.IsPrivate))
+            if (fieldTypes.GetValueOrDefault(field.Name.Lexeme) is TypeInfo.Primitive
+                { Type: TokenType.TYPE_NUMBER or TokenType.TYPE_BOOLEAN } primitive)
+                primitiveFields[field.Name.Lexeme] = primitive.Type;
+
+        bool NativeLiteral(Expr? value, TokenType kind) => kind == TokenType.TYPE_NUMBER
+            ? value is Expr.Literal { Value: double }
+            : value is Expr.Literal { Value: bool };
+        HashSet<string> initialized = new(StringComparer.Ordinal);
+        foreach (var field in source.Fields)
+            if (primitiveFields.TryGetValue(field.Name.Lexeme, out var kind) && NativeLiteral(field.Initializer, kind))
+                initialized.Add(field.Name.Lexeme);
+
+        var constructor = source.Methods.FirstOrDefault(method => method.Name.Lexeme == "constructor");
+        if (constructor is not null)
+        {
+            // Parameter initializers can leak this before the apparently harmless
+            // body runs, invalidating the candidate's closed lifetime.
+            if (constructor.Body is null || constructor.Parameters.Any(parameter =>
+                    parameter.IsRest || parameter.IsOptional || parameter.DefaultValue is not null)) return false;
+            foreach (var statement in constructor.Body)
+            {
+                if (statement is not Stmt.Expression { Expr: Expr.Set { Object: Expr.This } set } ||
+                    !primitiveFields.TryGetValue(set.Name.Lexeme, out var kind)) return false;
+                Expr? supplied = set.Value;
+                if (supplied is Expr.Variable parameter)
+                {
+                    int index = constructor.Parameters.FindIndex(candidate => candidate.Name.Lexeme == parameter.Name.Lexeme);
+                    if (index < 0) return false;
+                    supplied = index < construction.Arguments.Count ? construction.Arguments[index] : constructor.Parameters[index].DefaultValue;
+                }
+                if (!NativeLiteral(supplied, kind)) return false;
+                initialized.Add(set.Name.Lexeme);
+            }
+        }
+        if (initialized.Count != primitiveFields.Count) return false;
+        foreach (var call in calls)
+        {
+            var methods = source.Methods.Where(candidate => candidate.Name.Lexeme == call.Name.Lexeme && !candidate.IsStatic).ToArray();
+            if (methods.Length != 1 || !PrimitiveFieldValueAnalysis.NativeMethodPreservesFields(methods[0], map)) return false;
+        }
+        return true;
     }
 
     private static bool TryGetInstanceClassName(TypeInfo? type, out string? className)
@@ -68,6 +150,7 @@ internal static class StableExactClassMethodCallAnalyzer
         private readonly Dictionary<int, int> _scopeParents = [];
 
         public Dictionary<(int Scope, string Name), string> Candidates { get; } = [];
+        public Dictionary<(int Scope, string Name), Expr.New> Constructions { get; } = [];
         public Dictionary<(int Scope, string Name), int> DeclarationCounts { get; } = [];
         public Dictionary<(int Scope, string Name), List<Expr.Get>> Calls { get; } = [];
         public HashSet<(int Scope, string Name)> DisqualifiedCandidates { get; } = [];
@@ -101,7 +184,10 @@ internal static class StableExactClassMethodCallAnalyzer
             if (TryGetDirectNewClass(statement.Initializer, out string? className)
                 && TryGetInstanceClassName(_typeMap.Get(statement.Initializer), out string? resolved)
                 && resolved == className)
+            {
                 Candidates[key] = className!;
+                Constructions[key] = (Expr.New)Unwrap(statement.Initializer);
+            }
             Visit(statement.Initializer);
         }
 

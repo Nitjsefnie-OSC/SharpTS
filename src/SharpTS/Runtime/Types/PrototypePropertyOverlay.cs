@@ -4,10 +4,14 @@ namespace SharpTS.Runtime.Types;
 // identity stay on that prototype; this object only shadows or suppresses its members.
 internal sealed class PrototypePropertyOverlay(
     Func<string, bool> isBuiltIn,
-    bool preserveBuiltInAssignmentAttributes = false)
+    bool preserveBuiltInAssignmentAttributes = false,
+    IEnumerable<string>? initialStringKeys = null)
 {
     private readonly SharpTSObject _extras = new([]);
     private readonly HashSet<string> _deletedBuiltIns = [];
+    // Opt-in order for prototypes whose original members are virtual. Values
+    // and presence remain authoritative in the existing overlay/tombstones.
+    private readonly List<string>? _stringKeyOrder = initialStringKeys?.Distinct(StringComparer.Ordinal).ToList();
 
     public bool HasExtra(string name) => _extras.HasProperty(name) || _extras.HasSetter(name);
     public object? GetProperty(string name) => _extras.GetProperty(name);
@@ -43,21 +47,26 @@ internal sealed class PrototypePropertyOverlay(
                 Configurable = true,
                 HasConfigurable = true,
             });
+            TrackOwnStringKey(name);
             return;
         }
         _extras.SetProperty(name, value);
+        TrackOwnStringKey(name);
     }
 
     public bool DefineProperty(string name, SharpTSPropertyDescriptor descriptor)
     {
         _deletedBuiltIns.Remove(name);
-        return _extras.DefineProperty(name, descriptor);
+        bool defined = _extras.DefineProperty(name, descriptor);
+        if (defined) TrackOwnStringKey(name);
+        return defined;
     }
 
     public bool DeleteProperty(string name)
     {
         if (HasExtra(name) && !_extras.DeleteProperty(name)) return false;
         if (isBuiltIn(name)) _deletedBuiltIns.Add(name);
+        _stringKeyOrder?.Remove(name);
         return true;
     }
 
@@ -69,6 +78,18 @@ internal sealed class PrototypePropertyOverlay(
     public ISharpTSCallable? GetGetter(string name) => _extras.GetGetter(name);
     public ISharpTSCallable? GetSetter(string name) => _extras.GetSetter(name);
     public IEnumerable<string> OwnEnumerableKeys() => _extras.OwnEnumerableKeys();
+    public IEnumerable<string> OwnVisibleStringKeys()
+        => _stringKeyOrder == null
+            ? _extras.OwnVisibleStringKeys()
+            : _extras.OwnVisibleStringKeys().Where(key => PropertySemantics.TryGetArrayIndex(key, out _))
+                .Concat(_stringKeyOrder.Where(key => HasOwnProperty(key)
+                    && !PropertySemantics.TryGetArrayIndex(key, out _)));
+
+    private void TrackOwnStringKey(string name)
+    {
+        if (_stringKeyOrder != null && _extras.HasOwnStringProperty(name) && !_stringKeyOrder.Contains(name))
+            _stringKeyOrder.Add(name);
+    }
     public bool HasIndexedOwnProperty(long exclusiveLength) => _extras.HasIndexedOwnProperty(exclusiveLength);
 
     // Symbol intrinsics are materialized in the descriptor store, so deleting them

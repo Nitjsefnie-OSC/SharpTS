@@ -947,7 +947,12 @@ public partial class RuntimeEmitter
             "ReflectGet",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Object,
-            [_types.Object, _types.String, _types.Object]);
+            [_types.Object, _types.Object, _types.Object]);
+        runtime.Reflect.ToPropertyKey = typeBuilder.DefineMethod(
+            "ToPropertyKey",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
         // Constructor aliases need the conversion token before invocation is
         // emitted, after the strict conversion and prototype population tokens.
         if (runtime.BigInt.Implementation is { } bigIntImplementation)
@@ -1361,6 +1366,7 @@ public partial class RuntimeEmitter
                 runtime.Modules.CommonJs,
                 runtime.DescriptorStorage,
                 runtime.Errors,
+                runtime.FunctionPrototypes,
                 runtime.GlobalObject.SetProperty,
                 runtime.GlobalObject.SingletonField,
                 runtime.ObjectFields.Interface,
@@ -1368,12 +1374,16 @@ public partial class RuntimeEmitter
                 runtime.Invocation.Method,
                 runtime.Namespaces,
                 runtime.ObjectDescriptors,
+                runtime.ObjectPrototypes,
                 runtime.ObjectRead,
                 runtime.ObjectState,
                 runtime.ObjectStorage,
                 _features.UsesProxy,
                 runtime.Reflect.Assignment,
-                runtime.FunctionValues.Type
+                runtime.ReflectedMethods.FindMethod,
+                runtime.SymbolAccessors,
+                runtime.FunctionValues.Type,
+                runtime.Sentinels.UndefinedType
             )
         );
         EmitDeleteProperty(
@@ -1502,6 +1512,17 @@ public partial class RuntimeEmitter
                 runtime.BigInt
             )
         );
+        // Apply wrappers were finalized earlier against the forward declaration;
+        // ordinary indexed Get now exists, so fill their shared list reader body.
+        EmitPrepareApplyArguments(runtime.FunctionPrototypes,
+            new PrepareApplyArgumentsInputs(runtime.Operators.TypeOf, runtime.ObjectRead.Property,
+                runtime.ObjectRead.Index, runtime.NumericCoercion.ToNumber,
+                runtime.Sentinels.UndefinedType, runtime.ReflectedMethods.CallableType,
+                runtime.TypedArrays.Implementation?.BoundMethodType,
+                runtime.TextEncoding?.DecodeMethodType,
+                runtime.NodeStreams?.TransformDoneCallbackType,
+                runtime.NodeStreams?.WriteCallbackWrapperType, runtime.Errors.CreateException,
+                runtime.Errors.TypeErrorConstructor));
         // InstanceOf needs ordinary Symbol lookup, receiver-aware invocation,
         // and function prototype lookup; all their tokens now exist.
         EmitInstanceOf(
@@ -1539,6 +1560,7 @@ public partial class RuntimeEmitter
                 runtime.ArrayStorage,
                 runtime.Buffer,
                 runtime.DescriptorStorage,
+                runtime.Errors,
                 runtime.GlobalObject.SetProperty,
                 runtime.GlobalObject.SingletonField,
                 runtime.ReflectedMethods.InvokeUnwrapped,
@@ -2015,6 +2037,7 @@ public partial class RuntimeEmitter
                 runtime.ArrayOperations,
                 runtime.Booleans,
                 runtime.FunctionBindings.BoundType,
+                runtime.FunctionBindings.AnyType,
                 runtime.Dates,
                 runtime.DescriptorStorage,
                 runtime.Errors,
@@ -2096,6 +2119,11 @@ public partial class RuntimeEmitter
         // ReflectGet is also the receiver-preserving ordinary [[Get]] helper
         // used by prototype recursion in GetProperty, so its reserved method
         // must always receive a body even when guest code never names Reflect.
+        EmitReflectToPropertyKey(runtime.Reflect,
+            new ReflectToPropertyKeyInputs(runtime.Symbols.Type, runtime.Symbols.ToPrimitive,
+                runtime.Sentinels.UndefinedType, runtime.StringCoercion.ToJsString,
+                runtime.ObjectRead.Property, runtime.Invocation.Method, runtime.Operators.TypeOf,
+                runtime.Errors.CreateException, runtime.Errors.TypeErrorConstructor));
         EmitReflectGet(
             typeBuilder,
             runtime.Reflect,
@@ -2108,7 +2136,10 @@ public partial class RuntimeEmitter
                 runtime.Sentinels.UndefinedInstance,
                 runtime.Sentinels.UndefinedType,
                 runtime.ObjectRead.Property,
-                runtime.ObjectPrototypes.GetPrototypeOf
+                runtime.ObjectPrototypes.GetPrototypeOf,
+                runtime.ObjectRead.Index,
+                runtime.Symbols.IsSymbol,
+                runtime.SymbolAccessors.FindOwnMethod
             )
         );
         if (runtime.Reflect.Assignment is not null)
@@ -2126,13 +2157,14 @@ public partial class RuntimeEmitter
                     runtime.ObjectDescriptors.GetOwnPropertyDescriptor,
                     runtime.DescriptorStorage.IsFrozen,
                     runtime.ObjectOwnProperties.HasOwnProperty,
-                    runtime.StringCoercion.ToJsString,
+                    runtime.Reflect.ToPropertyKey,
                     runtime.ObjectPrototypes.GetPrototypeOf,
                     runtime.Booleans.IsTruthy,
                     runtime.Invocation.Method,
                     runtime.Sentinels.UndefinedType,
                     runtime.ObjectRead.Property,
-                    runtime.ObjectWrite.Property
+                    runtime.ObjectWrite.Property,
+                    runtime.Symbols.IsSymbol
                 )
             );
             EmitReflectDefineProperty(
@@ -2142,7 +2174,7 @@ public partial class RuntimeEmitter
                     runtime.ReflectedMethods.InvokeUnwrapped,
                     runtime.ObjectDescriptors.GetOwnPropertyDescriptor,
                     runtime.ObjectOwnProperties.HasOwnProperty,
-                    runtime.StringCoercion.ToJsString,
+                    runtime.Reflect.ToPropertyKey,
                     runtime.ObjectDescriptors.DefineProperty,
                     runtime.ObjectState.IsExtensible,
                     runtime.ObjectRead.Property
@@ -2228,7 +2260,7 @@ public partial class RuntimeEmitter
                     runtime.Errors.CreateErrorFromTypeOrNull,
                     runtime.NumericCoercion.ToNumber,
                     runtime.FunctionIntrospection.IsConstructor,
-                    runtime.DynamicConstruction.Value,
+                    runtime.DynamicConstruction.ConstructWithNewTarget,
                     runtime.Sentinels.UndefinedType,
                     runtime.ObjectRead.Property,
                     runtime.DataView,
@@ -2243,7 +2275,6 @@ public partial class RuntimeEmitter
                     runtime.Reflect.RequireAssignment().Set,
                     runtime.Reflect.RequireAssignment().DefineProperty,
                     runtime.ObjectDescriptors.GetOwnPropertyDescriptor,
-                    runtime.StringCoercion.ToJsString,
                     runtime.ObjectPrototypes.GetPrototypeOf,
                     runtime.ObjectState.IsExtensible,
                     runtime.Operators.HasIn
@@ -2863,7 +2894,9 @@ public partial class RuntimeEmitter
                 runtime.Sentinels.UndefinedType,
                 runtime.Operators,
                 runtime.FunctionBindings,
-                runtime.Errors
+                runtime.Errors,
+                runtime.Symbols,
+                runtime.FunctionAttributes
             )
         );
         runtime.FunctionPrototypes.CompleteEmission();

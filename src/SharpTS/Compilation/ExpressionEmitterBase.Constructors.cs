@@ -364,24 +364,15 @@ public abstract partial class ExpressionEmitterBase
                 return true;
 
             case "Number":
-                IL.Emit(OpCodes.Ldstr, "Number");
-                if (arguments.Count == 0)
-                {
-                    IL.Emit(OpCodes.Ldc_R8, 0.0);
-                    IL.Emit(OpCodes.Box, Ctx.Types.Double);
-                }
-                else
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                    // Number is the one explicit numeric conversion that accepts
-                    // BigInt. Use the constructor-specific coercion helper rather
-                    // than abstract ToNumber, which must reject BigInt in unary
-                    // plus and other implicit-number contexts.
-                    IL.Emit(OpCodes.Call, Ctx.Runtime!.NumericCoercion.ConvertToNumber);
-                    IL.Emit(OpCodes.Box, Ctx.Types.Double);
-                }
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.BoxedPrimitives.New);
+                // Complete argument evaluation (including spreads and surplus
+                // effects) before the constructor converts its first value.
+                EmitArgsArrayWithSpread(arguments);
+                var numberArguments = _helpers.SpillStoreObject();
+                IL.Emit(OpCodes.Ldtoken, Ctx.Types.Double);
+                IL.Emit(OpCodes.Call, Ctx.Types.TypeGetTypeFromHandle);
+                IL.Emit(OpCodes.Ldloc, numberArguments);
+                IL.Emit(OpCodes.Castclass, Ctx.Types.ObjectArray);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.Value);
                 SetStackUnknown();
                 return true;
 

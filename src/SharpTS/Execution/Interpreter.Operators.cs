@@ -79,6 +79,52 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// Resolves and reads one private reference before the RHS, retaining its
+    /// lexical owner and receiver even when the RHS suspends or mutates them.
+    /// </summary>
+    private async ValueTask<RuntimeValue> EvaluateCompoundSetPrivateCore(IEvaluationContext ctx, Expr.CompoundSetPrivate compound)
+    {
+        object? receiver = (await ctx.EvaluateExprAsync(compound.Object)).ToObject();
+        string name = compound.Name.Lexeme;
+        var owner = ctx.Environment.FindPrivateClass(name);
+        if (owner is null)
+            throw new ThrowException(new SharpTSTypeError($"Private member {name} is not declared in this scope"));
+
+        bool isStatic = owner.HasStaticPrivateField(name);
+        bool isMethod = owner.GetPrivateMethod(name) is not null || owner.GetStaticPrivateMethod(name) is not null;
+        RuntimeValue current;
+        if (isMethod)
+        {
+            current = GetPrivateCore(receiver, name);
+        }
+        else if (isStatic)
+        {
+            if (!ReferenceEquals(receiver, owner) || !owner.HasInstalledStaticPrivateField(name))
+                throw new ThrowException(new SharpTSTypeError($"Cannot access private member {name} from an object whose class did not declare it or before initialization"));
+            current = owner.GetStaticPrivateFieldRV(name);
+        }
+        else
+        {
+            if (receiver is null || !owner.HasInstalledPrivateField(receiver, name))
+                throw new ThrowException(new SharpTSTypeError($"Cannot access private member {name} from an object whose class did not declare it or before initialization"));
+            current = owner.GetPrivateFieldRV(receiver, name);
+        }
+
+        RuntimeValue right = await ctx.EvaluateExprAsync(compound.Value);
+        TokenType binaryType = DotNet.DotNetOperatorResolver.GetBinaryTokenForCompound(compound.Operator.Type)
+            ?? throw new InterpreterException($"Unknown compound operator: {compound.Operator.Type}");
+        var binaryOperator = new Token(binaryType, compound.Operator.Lexeme[..^1], null, compound.Operator.Line, compound.Operator.Start);
+        RuntimeValue result = EvaluateBinaryOperationRV(binaryOperator, current, right);
+        if (isMethod)
+            throw new ThrowException(new SharpTSTypeError($"Private method {name} is not writable"));
+        if (isStatic)
+            owner.SetStaticPrivateField(name, result.ToObject());
+        else
+            owner.SetPrivateField(receiver!, name, result.ToObject());
+        return result;
+    }
+
+    /// <summary>
     /// Evaluates a compound assignment expression on an array element (e.g., <c>arr[i] += 1</c>).
     /// </summary>
     /// <param name="compound">The compound index assignment expression AST node.</param>
@@ -1127,6 +1173,8 @@ public partial class Interpreter
                 SharpTSJSON json => json.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSBigIntPrototype bigIntPrototype
                     => bigIntPrototype.DeleteBySymbolStrict(symbol, strictMode),
+                SharpTSFunctionPrototype functionPrototype
+                    => functionPrototype.DeleteBySymbolStrict(symbol, strictMode),
                 _ => true
             };
         }

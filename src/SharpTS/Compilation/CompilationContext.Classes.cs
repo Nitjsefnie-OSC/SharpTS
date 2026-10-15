@@ -35,6 +35,8 @@ public partial class CompilationContext
     public Dictionary<string, Dictionary<string, MethodBuilder>>?
         TypedPrimitiveInstanceMethodCores { get; set; }
 
+    internal IReadOnlySet<MethodBuilder>? RawObservingPrimitiveMethodCores { get; set; }
+
     /// <summary>
     /// True when the current method body is an inner <c>function</c> declaration
     /// emitted onto a display class. In that case <see cref="IsInstanceMethod"/> is

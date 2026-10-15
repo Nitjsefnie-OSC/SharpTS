@@ -35,7 +35,7 @@ public sealed class EmittedOperatorRuntimeTests
         var first = new EmittedRuntime(); var second = new EmittedRuntime();
         Assert.NotSame(first.Operators, second.Operators);
         Assert.False(first.Operators.IsComplete); Assert.False(second.Operators.IsComplete);
-        Assert.Equal(11, Handles(typeof(EmittedOperatorRuntime)).Length);
+        Assert.Equal(12, Handles(typeof(EmittedOperatorRuntime)).Length);
         Assert.Null(typeof(EmittedRuntime).GetProperty(nameof(EmittedRuntime.Operators))!.SetMethod);
     }
 
@@ -76,7 +76,7 @@ public sealed class EmittedOperatorRuntimeTests
             Assert.DoesNotContain(references, name => name!.StartsWith("operators_runtime_", StringComparison.Ordinal));
             var rt=loaded.GetType("$Runtime")!;
             object? Call(string methodName,params object?[] args)=>rt.GetMethod(methodName,BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,args);
-            var names=new[]{"JsLessThan","JsLessOrEqual","UpdateNumeric","TypeOf","Add","Equals","StrictEquals","InstanceOf","HasIn","ProxyOrdinaryHas","WarnSloppyDeleteVariable"};
+            var names=new[]{"JsLessThan","JsLessOrEqual","UpdateNumeric","TypeOf","Add","Equals","StrictEquals","InstanceOf","OrdinaryHasInstance","HasIn","ProxyOrdinaryHas","WarnSloppyDeleteVariable"};
             var tokens=names.Select(n=>rt.GetMethod(n, BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)!.MetadataToken).ToArray();
             Assert.True(tokens.SequenceEqual(tokens.Order()),"Operator declaration order changed");
             Assert.True(Equals(Call("UpdateNumeric","4",true),5d)&&Equals(Call("UpdateNumeric",new System.Numerics.BigInteger(4),false),new System.Numerics.BigInteger(3)),"Numeric update changed");
@@ -129,15 +129,19 @@ public sealed class EmittedOperatorRuntimeTests
         }
         probe.CreateType(); var loaded = SaveVerifyLoad(builder); var saved = loaded.GetType(probe.FullName!)!;
         var typeOf = saved.GetMethod("TypeOf")!; var instanceOf = saved.GetMethod("InstanceOf")!;
+        var ordinaryHasInstance = saved.GetMethod("OrdinaryHasInstance")!;
         foreach (var type in new[] { runtime.Promise!.ResolveCallbackType, runtime.Promise.RejectCallbackType })
         {
             Assert.Equal(supplied, ReadOperands(typeOf).Any(p => p.OpCode == OpCodes.Isinst && p.Member.Name == type.Name));
             var callback = RuntimeHelpers.GetUninitializedObject(loaded.GetType(type.FullName!)!);
             Assert.Equal(supplied ? "function" : "object", typeOf.Invoke(null, [callback]));
         }
-        Assert.Equal(supplied, ReadOperands(instanceOf).Any(p => p.OpCode == OpCodes.Isinst && p.Member.Name == runtime.Promise.Type.Name));
+        Assert.Equal(supplied, ReadOperands(ordinaryHasInstance).Any(p => p.OpCode == OpCodes.Isinst && p.Member.Name == runtime.Promise.Type.Name));
         var promise = RuntimeHelpers.GetUninitializedObject(loaded.GetType(runtime.Promise.Type.FullName!)!);
-        Assert.Equal(supplied, instanceOf.Invoke(null, [promise, typeof(Task<object>)]));
+        // The full operator may call the shared Function.prototype intrinsic,
+        // whose ordinary core belongs to the original runtime above. Inspect
+        // this probe's own core to verify its separately supplied Promise metadata.
+        Assert.Equal(supplied, ordinaryHasInstance.Invoke(null, [promise, typeof(Task<object>)]));
         Assert.Equal("number", typeOf.Invoke(null, [1d]));
         Assert.Equal(true, instanceOf.Invoke(null, [new Dictionary<string, object?>(), typeof(object)]));
     }

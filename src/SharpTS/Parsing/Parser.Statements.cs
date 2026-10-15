@@ -192,6 +192,8 @@ public partial class Parser
         {
             Token varName = Advance(); // identifier
             bool isOfLoop = Match(TokenType.OF);
+            if (isAsync && !isOfLoop)
+                throw new Exception("'for await' can only be used with 'for...of' loops.");
             if (!isOfLoop) Consume(TokenType.IN, "Expect 'in' or 'of' after for-loop binding.");
             Expr rhs = Expression();
             Consume(TokenType.RIGHT_PAREN, "Expect ')' after for-loop expression.");
@@ -209,10 +211,75 @@ public partial class Parser
         }
         else
         {
-            init = ExpressionStatement(allowASI: false);
+            int line = Peek().Line;
+            Expr initializer = CommaExpression();
+            if (IsDestructuringAssignmentTarget(initializer) && Match(TokenType.OF))
+                return ParseDestructuringAssignmentForOf(initializer, isAsync, line);
+
+            Consume(TokenType.SEMICOLON, "Expect ';' after expression.");
+            init = new Stmt.Expression(initializer);
         }
 
+        if (isAsync)
+            throw new Exception("'for await' can only be used with 'for...of' loops.");
+
         return FinishTraditionalFor(init);
+    }
+
+    private Stmt ParseDestructuringAssignmentForOf(Expr pattern, bool isAsync, int line)
+    {
+        ValidateForOfAssignmentRest(pattern);
+        Expr iterable = Expression();
+        Consume(TokenType.RIGHT_PAREN, "Expect ')' after for...of expression.");
+        Stmt originalBody = Statement();
+
+        Token tempVar = GenerateTempVar(line);
+        Expr assignment = BuildDestructuringAssignment(pattern, new Expr.Variable(tempVar), line);
+        // The head assigns outer targets before entering the user's body scope.
+        // Retain a block body as a nested block so its declarations cannot shadow them.
+        Stmt body = new Stmt.Block([new Stmt.Expression(assignment), originalBody]);
+        return new Stmt.ForOf(tempVar, null, iterable, body, isAsync);
+    }
+
+    private void ValidateForOfAssignmentRest(Expr pattern)
+    {
+        if (pattern is Expr.Grouping && (Unwrap(pattern) is Expr.ArrayLiteral or Expr.ObjectLiteral))
+            throw new Exception("Destructuring assignment patterns cannot be parenthesized in a for...of head.");
+
+        switch (Unwrap(pattern))
+        {
+            case Expr.ArrayLiteral array:
+                for (int i = 0; i < array.Elements.Count; i++)
+                {
+                    if (array.IsHole(i)) continue;
+                    Expr element = array.Elements[i];
+                    if (element is Expr.Spread rest)
+                    {
+                        if (i != array.Elements.Count - 1 || _literalsWithTrailingComma.Contains(array))
+                            throw new Exception("Rest element must be last in a destructuring assignment.");
+                        element = rest.Expression;
+                    }
+                    ValidateForOfAssignmentRest(element);
+                }
+                break;
+            case Expr.ObjectLiteral obj:
+                for (int i = 0; i < obj.Properties.Count; i++)
+                {
+                    var property = obj.Properties[i];
+                    if (property.IsSpread)
+                    {
+                        if (i != obj.Properties.Count - 1 || _literalsWithTrailingComma.Contains(obj))
+                            throw new Exception("Rest property must be last in a destructuring assignment.");
+                        if (Unwrap(property.Value) is Expr.ArrayLiteral or Expr.ObjectLiteral)
+                            throw new Exception("Object rest must have an assignment target, not a destructuring pattern.");
+                    }
+                    ValidateForOfAssignmentRest(property.Value);
+                }
+                break;
+            case Expr.DestructuringAssign { RawTarget: { } target }:
+                ValidateForOfAssignmentRest(target);
+                break;
+        }
     }
 
     private Stmt FinishTraditionalFor(Stmt? initializer)

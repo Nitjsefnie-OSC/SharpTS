@@ -1172,10 +1172,21 @@ public partial class Interpreter
             || right is SharpTSProxy { IsCallable: false })
             throw new ThrowException(new SharpTSTypeError("Right-hand side of instanceof is not callable"));
 
+        return OrdinaryHasInstance(left, right);
+    }
+
+    // Separate from the handler-aware operator: the inherited intrinsic must
+    // not look up that same intrinsic again on its own receiver.
+    internal bool OrdinaryHasInstance(object? left, object? right)
+    {
+        if (right is not (ISharpTSCallable or SharpTSBufferConstructor)
+            || right is SharpTSProxy { IsCallable: false })
+            return false;
+
         // Bound functions delegate to their target, including through repeated
         // bindings. Their own prototype property does not participate.
         if (right is BoundFunction bound)
-            return EvaluateInstanceof(left, bound.Target);
+            return IsTruthy(EvaluateInstanceof(left, bound.Target));
 
         if (!IsJsObject(left)) return false;
 

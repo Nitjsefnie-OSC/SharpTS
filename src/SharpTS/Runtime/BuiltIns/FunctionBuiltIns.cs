@@ -14,6 +14,14 @@ public static class FunctionBuiltIns
     private static readonly BuiltInMethod _call = BuiltInMethod.CreateV2("call", 0, int.MaxValue, Call).WithSpecLength(1).AsNonConstructor();
     private static readonly BuiltInMethod _apply = BuiltInMethod.CreateV2("apply", 0, 2, Apply).WithSpecLength(2).AsNonConstructor();
 
+    internal static BuiltInMethod CreateHasInstanceMethod()
+        => BuiltInMethod.CreateV2("[Symbol.hasInstance]", 0, int.MaxValue,
+            static (interpreter, receiver, args) => RuntimeValue.FromBoolean(
+                interpreter.OrdinaryHasInstance(
+                    args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance,
+                    receiver.ToObject())))
+            .WithSpecLength(1).AsNonConstructor();
+
     /// <summary>
     /// Returns the unbound singleton callable for a Function.prototype method
     /// (call/apply/bind), or null. Lets <c>Function.prototype.call</c> and

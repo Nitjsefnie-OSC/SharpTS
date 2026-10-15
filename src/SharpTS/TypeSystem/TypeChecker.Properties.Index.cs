@@ -481,12 +481,17 @@ public partial class TypeChecker
         // Handle symbol index (Symbol and UniqueSymbol both qualify)
         if (indexType is TypeInfo.Symbol or TypeInfo.UniqueSymbol)
         {
+            string? wellKnownName = TryGetWellKnownSymbolMemberName(getIndex.Index);
+            if (wellKnownName == "@@hasInstance" &&
+                GetFunctionHasInstanceReadType(objType, getIndex.Index) is { } inheritedFunctionMember)
+                return inheritedFunctionMember;
+
             // A well-known symbol (`Symbol.iterator`, ...) that the object type models as a distinct
             // named member (canonical "@@name" — see CheckObject/TryGetWellKnownSymbolMemberName)
             // resolves to THAT member's own type, not the merged symbol index signature — which
             // would lose per-symbol precision when an object defines several distinct well-known
             // symbol members (#99 Cluster B).
-            if (TryGetWellKnownSymbolMemberName(getIndex.Index) is { } wellKnownName &&
+            if (wellKnownName is not null &&
                 GetMemberType(objType, wellKnownName) is { } wellKnownType)
                 return wellKnownType;
 
@@ -496,6 +501,11 @@ public partial class TypeChecker
                 return WithUncheckedUndefined(rec4.SymbolIndexType);
             if (GetClassIndexType(objType, TokenType.TYPE_SYMBOL) is { } clsSym)
                 return WithUncheckedUndefined(clsSym);
+
+            // A class instance does not inherit the Function prototype's intrinsic.
+            // Actual instance members and explicit Symbol index signatures still win.
+            if (wellKnownName == "@@hasInstance" && objType is TypeInfo.Instance)
+                throw new TypeCheckException($" Index type '{indexType}' is not valid for indexing '{objType}'.", tsCode: "TS7053");
 
             // Well-known symbols (Symbol.iterator/species/toStringTag/match/...) are
             // present on essentially every object type. SharpTS models them loosely,
@@ -1234,6 +1244,11 @@ public partial class TypeChecker
 
         if (indexType is TypeInfo.Any)
             return TypeInfo.Any.Shared;
+
+        if ((indexType is TypeInfo.Symbol or TypeInfo.UniqueSymbol) &&
+            TryGetWellKnownSymbolMemberName(getIndex.Index) == "@@hasInstance")
+            return GetFunctionHasInstanceReadType(objType, getIndex.Index)
+                ?? GetMemberType(objType, "@@hasInstance");
 
         if (IsStringOrNumberIndexDomain(indexType) && StringIndexOf(objType) is { } domainIndex)
             return WithUncheckedUndefined(domainIndex);

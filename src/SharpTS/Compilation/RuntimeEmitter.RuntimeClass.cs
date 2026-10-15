@@ -1544,6 +1544,7 @@ public partial class RuntimeEmitter
                 runtime.ArrayStorage,
                 runtime.Buffer,
                 runtime.DescriptorStorage,
+                runtime.Errors,
                 runtime.GlobalObject.SetProperty,
                 runtime.GlobalObject.SingletonField,
                 runtime.ReflectedMethods.InvokeUnwrapped,
@@ -2020,6 +2021,7 @@ public partial class RuntimeEmitter
                 runtime.ArrayOperations,
                 runtime.Booleans,
                 runtime.FunctionBindings.BoundType,
+                runtime.FunctionBindings.AnyType,
                 runtime.Dates,
                 runtime.DescriptorStorage,
                 runtime.Errors,
@@ -2876,7 +2878,9 @@ public partial class RuntimeEmitter
                 runtime.Sentinels.UndefinedType,
                 runtime.Operators,
                 runtime.FunctionBindings,
-                runtime.Errors
+                runtime.Errors,
+                runtime.Symbols,
+                runtime.FunctionAttributes
             )
         );
         runtime.FunctionPrototypes.CompleteEmission();

@@ -864,7 +864,7 @@ controller use remains standalone, and selecting any records its soft runtime
 dependency at the original point before the helper declaration. Opposite-input,
 repeated-emitter, hosted and isolated console-input checks cover these contracts.
 
-Operators use required `Operators` ownership for eleven declarations, including
+Operators use required `Operators` ownership for twelve declarations, including
 numeric updates, comparison, classification, membership, addition and equality.
 Equality keeps its early declaration and validated late body. Completion checks
 every declaration and rejects later metadata writes. Thirteen existing helpers
@@ -874,15 +874,23 @@ while its existing scoped implementation is preserved. Comparison helpers retain
 the absent-runtime fallback and require declared operators when a runtime is
 supplied. Declaration order, guest semantics and deployment remain unchanged.
 
+The `instanceof` operator resolves custom Symbol handlers before calling the
+ordinary instance-check core. `Function.prototype[Symbol.hasInstance]` calls that
+core directly, avoiding recursive handler lookup on its receiver. Bound receivers
+delegate through the full operator on their target. The intrinsic has a canonical
+callable value stored under the actual Symbol key, with all three descriptor
+attributes false.
+
 Named, computed, field and strict writes use required `ObjectWrite` ownership
-for six declarations. Property keeps its early declaration and validated late
+for seven declarations. Property keeps its early declaration and validated late
 body; completion checks every handle and rejects subsequent metadata writes.
 Twelve helpers receive scoped owners and exact dependencies. Optional receiver
 branches follow supplied metadata, while Proxy selection is explicit. The
 redundant whole-holder Proxy adapter is removed; its declaration reads remain
 inside selected branches and its existing exact call record is preserved.
-Strict/sloppy behavior, setter receivers, descriptor and Symbol rules, declaration
-order, mutable guest state and deployment remain unchanged.
+Strict and sloppy Symbol writes share `SetSymbolIndex`, which accepts an explicit
+strictness flag and performs one inherited descriptor walk. Inherited non-writable
+data descriptors reject assignment; setters and Proxy traps run once.
 
 Property, index, field, list, length and element reads use required `ObjectRead`
 ownership for six declarations. Property keeps its early declaration and late

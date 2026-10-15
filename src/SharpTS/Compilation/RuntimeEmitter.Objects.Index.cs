@@ -11,6 +11,7 @@ public partial class RuntimeEmitter
         EmittedArrayStorageRuntime ArrayStorage,
         EmittedBufferRuntime? Buffer,
         EmittedDescriptorStorageRuntime DescriptorStorage,
+        EmittedErrorRuntime Errors,
         MethodBuilder GlobalThisSetProperty,
         FieldBuilder GlobalThisSingletonField,
         MethodBuilder InvokeMethodUnwrapped,
@@ -311,6 +312,29 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brtrue, symbolMethodFound);
             il.MarkLabel(next);
         }
+        // Generic constructor identities share their source-owned descriptors.
+        // Resolve that own slot before entering the inherited Function prototype.
+        var ownConstructor = il.DeclareLocal(_types.Type);
+        var noCanonicalOwnDescriptor = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Stloc, ownConstructor);
+        il.Emit(OpCodes.Ldloc, ownConstructor);
+        il.Emit(OpCodes.Brfalse, noCanonicalOwnDescriptor);
+        il.Emit(OpCodes.Ldloc, ownConstructor);
+        il.Emit(OpCodes.Call, inputs.SymbolAccessors.RegistryKey);
+        il.Emit(OpCodes.Stloc, ownConstructor);
+        il.Emit(OpCodes.Ldloc, ownConstructor);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Beq, noCanonicalOwnDescriptor);
+        il.Emit(OpCodes.Ldloc, ownConstructor);
+        il.Emit(OpCodes.Call, inputs.Symbols.GetStorage);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, symbolValueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+        il.Emit(OpCodes.Brtrue, symbolFoundLabel);
+        il.MarkLabel(noCanonicalOwnDescriptor);
+
         // Own declared static methods are properties of the constructor and
         // must win over an ancestor's Symbol accessor or data descriptor.
         EmitOwnConstructorMethodProbe(() => il.Emit(OpCodes.Ldarg_0));
@@ -1294,6 +1318,10 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object, _types.Object]
         );
         objectWrite.Index = method;
+        objectWrite.SymbolIndex = typeBuilder.DefineMethod("SetSymbolIndex",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Void,
+            [_types.Object, _types.Object, _types.Object, _types.Boolean]);
+        EmitSetSymbolIndexBody(objectWrite.SymbolIndex, inputs);
 
         var il = method.GetILGenerator();
         var dictLabel = il.DefineLabel();
@@ -1515,175 +1543,12 @@ public partial class RuntimeEmitter
         // isn't already present in the symbol dict, silently no-op (non-
         // strict).
         il.MarkLabel(symbolKeyLabel);
-        {
-            EmitInheritedSymbolSetter(il, inputs.ObjectPrototypes, inputs.Symbols, inputs.DescriptorStorage, inputs.InvokeMethodValue);
-            // #266: symbol-keyed class accessor setter (`set [Symbol.x](v) {...}`).
-            // A registered setter takes the write (accessor semantics) instead of
-            // storing a data property. Found setter is a MethodInfo invoked with the
-            // receiver + value — instance setters bind `this`, static ignore it.
-            var noSymSetterLabel = il.DefineLabel();
-            var symSetterLocal = il.DeclareLocal(_types.Object);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindSetter);
-            il.Emit(OpCodes.Stloc, symSetterLocal);
-            il.Emit(OpCodes.Ldloc, symSetterLocal);
-            il.Emit(OpCodes.Brfalse, noSymSetterLabel);
-            // ((MethodBase)setter).Invoke(obj, new object[] { value }); return;
-            il.Emit(OpCodes.Ldloc, symSetterLocal);
-            il.Emit(OpCodes.Castclass, _types.MethodBase);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldc_I4_1);
-            il.Emit(OpCodes.Newarr, _types.Object);
-            il.Emit(OpCodes.Dup);
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Stelem_Ref);
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
-            il.Emit(OpCodes.Pop);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(noSymSetterLabel);
-
-            var symDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
-            var symExistingValueLocal = il.DeclareLocal(_types.Object);
-            var symExistingDescriptorLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Call, inputs.Symbols.GetStorage);
-            il.Emit(OpCodes.Stloc, symDictLocal);
-
-            // Frozen objects reject writes to existing symbol properties too.
-            // (Sealed/non-extensible objects may still update an existing
-            // writable property, so only the frozen table is checked here.)
-            var symFrozenStateLocal = il.DeclareLocal(_types.Object);
-            var symReceiverNotFrozenLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloca, symFrozenStateLocal);
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(
-                _types.ConditionalWeakTable, "TryGetValue",
-                _types.Object, _types.Object.MakeByRefType()));
-            il.Emit(OpCodes.Brfalse, symReceiverNotFrozenLabel);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(symReceiverNotFrozenLabel);
-
-            // Existing descriptor entries apply ordinary setter/writable
-            // semantics while preserving their attributes.
-            var symRawSetLabel = il.DefineLabel();
-            var symCreateLabel = il.DefineLabel();
-            var symCheckExtensibilityLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldloc, symDictLocal);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Ldloca, symExistingValueLocal);
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
-            il.Emit(OpCodes.Brfalse, symCheckExtensibilityLabel);
-            il.Emit(OpCodes.Ldloc, symExistingValueLocal);
-            il.Emit(OpCodes.Isinst, inputs.DescriptorStorage.DescriptorType);
-            il.Emit(OpCodes.Stloc, symExistingDescriptorLocal);
-            il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
-            il.Emit(OpCodes.Brfalse, symRawSetLabel);
-
-            var symNoSetterLabel = il.DefineLabel();
-            var symSetterValueLocal = il.DeclareLocal(_types.Object);
-            il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
-            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
-            il.Emit(OpCodes.Stloc, symSetterValueLocal);
-            il.Emit(OpCodes.Ldloc, symSetterValueLocal);
-            il.Emit(OpCodes.Brfalse, symNoSetterLabel);
-            il.Emit(OpCodes.Ldloc, symSetterValueLocal);
-            il.Emit(OpCodes.Isinst, inputs.UndefinedType);
-            il.Emit(OpCodes.Brtrue, symNoSetterLabel);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloc, symSetterValueLocal);
-            il.Emit(OpCodes.Ldc_I4_1);
-            il.Emit(OpCodes.Newarr, _types.Object);
-            il.Emit(OpCodes.Dup);
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Stelem_Ref);
-            il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
-            il.Emit(OpCodes.Pop);
-            il.Emit(OpCodes.Ret);
-
-            il.MarkLabel(symNoSetterLabel);
-            // Any accessor descriptor without a callable setter ignores a
-            // non-strict write.
-            var symDataDescriptorLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
-            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
-            il.Emit(OpCodes.Brfalse, symDataDescriptorLabel);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(symDataDescriptorLabel);
-            var symReturnWithoutSetLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
-            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
-            il.Emit(OpCodes.Brtrue, symReturnWithoutSetLabel);
-            il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
-            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorWritable.GetGetMethod()!);
-            il.Emit(OpCodes.Brfalse, symReturnWithoutSetLabel);
-            il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetSetMethod()!);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(symReturnWithoutSetLabel);
-            il.Emit(OpCodes.Ret);
-
-            // Check extensibility (frozen/sealed/preventExt). On hit, no-op.
-            il.MarkLabel(symCheckExtensibilityLabel);
-            var symExtTmp = il.DeclareLocal(_types.Object);
-            var symNotNonExtLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldsfld, inputs.ObjectState.NonExtensibleObjects);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloca, symExtTmp);
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
-            il.Emit(OpCodes.Brfalse, symNotNonExtLabel);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(symNotNonExtLabel);
-
-            var symNotFrozenLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloca, symExtTmp);
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
-            il.Emit(OpCodes.Brfalse, symNotFrozenLabel);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(symNotFrozenLabel);
-
-            var symNotSealedLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldsfld, inputs.ObjectState.SealedObjects);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloca, symExtTmp);
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
-            il.Emit(OpCodes.Brfalse, symNotSealedLabel);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(symNotSealedLabel);
-
-            // A newly-created symbol property is an ordinary data descriptor,
-            // not an attribute-less raw side-table value. The descriptor ctor
-            // supplies writable/enumerable/configurable = true.
-            il.Emit(OpCodes.Br, symCreateLabel);
-            il.MarkLabel(symRawSetLabel);
-            il.Emit(OpCodes.Ldloc, symDictLocal);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item"));
-            il.Emit(OpCodes.Ret);
-
-            il.MarkLabel(symCreateLabel);
-            var newSymbolDescriptorLocal = il.DeclareLocal(
-                inputs.DescriptorStorage.DescriptorType);
-            il.Emit(OpCodes.Newobj, inputs.DescriptorStorage.DescriptorConstructor);
-            il.Emit(OpCodes.Stloc, newSymbolDescriptorLocal);
-            il.Emit(OpCodes.Ldloc, newSymbolDescriptorLocal);
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Callvirt,
-                inputs.DescriptorStorage.DescriptorValue.GetSetMethod()!);
-            il.Emit(OpCodes.Ldloc, symDictLocal);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Ldloc, newSymbolDescriptorLocal);
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(
-                _types.DictionaryObjectObject, "set_Item"));
-            il.Emit(OpCodes.Ret);
-        }
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, objectWrite.SymbolIndex);
+        il.Emit(OpCodes.Ret);
 
         // TypedArray handler — skipped when typed arrays aren't emitted.
         if (inputs.TypedArrays.Implementation is not null)
@@ -2045,8 +1910,194 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    private void EmitSetSymbolIndexBody(MethodBuilder method, SetIndexInputs inputs)
+    {
+        var il = method.GetILGenerator();
+        // The strict and sloppy adapters share one prototype walk and setter
+        // invocation. Inherited non-writable data properties reject creation.
+        if (inputs.ProxySelected)
+        {
+            var notProxy = il.DefineLabel();
+            EmitProxySetIndexCheck(il,
+                new ProxySetIndexCheckInputs(inputs.InvokeMethodUnwrapped, inputs.ObjectDescriptors,
+                    inputs.ObjectRead, inputs.ReflectAssignment, inputs.StringCoercion),
+                () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1),
+                () => il.Emit(OpCodes.Ldarg_2), notProxy);
+            il.MarkLabel(notProxy);
+        }
+        EmitInheritedSymbolSetter(il, inputs.ObjectPrototypes, inputs.Symbols, inputs.DescriptorStorage,
+            inputs.InvokeMethodValue, inputs.SymbolAccessors, inputs.Errors, inputs.UndefinedType);
+        // #266: symbol-keyed class accessor setter (`set [Symbol.x](v) {...}`).
+        // A registered setter takes the write (accessor semantics) instead of
+        // storing a data property. Found setter is a MethodInfo invoked with the
+        // receiver + value — instance setters bind `this`, static ignore it.
+        var noSymSetterLabel = il.DefineLabel();
+        var symSetterLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindSetter);
+        il.Emit(OpCodes.Stloc, symSetterLocal);
+        il.Emit(OpCodes.Ldloc, symSetterLocal);
+        il.Emit(OpCodes.Brfalse, noSymSetterLabel);
+        // ((MethodBase)setter).Invoke(obj, new object[] { value }); return;
+        il.Emit(OpCodes.Ldloc, symSetterLocal);
+        il.Emit(OpCodes.Castclass, _types.MethodBase);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(noSymSetterLabel);
+
+        var symDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        var symExistingValueLocal = il.DeclareLocal(_types.Object);
+        var symExistingDescriptorLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.Symbols.GetStorage);
+        il.Emit(OpCodes.Stloc, symDictLocal);
+
+        // Frozen objects reject writes to existing symbol properties too.
+        // (Sealed/non-extensible objects may still update an existing
+        // writable property, so only the frozen table is checked here.)
+        var symFrozenStateLocal = il.DeclareLocal(_types.Object);
+        var symReceiverNotFrozenLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symFrozenStateLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(
+            _types.ConditionalWeakTable, "TryGetValue",
+            _types.Object, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, symReceiverNotFrozenLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symReceiverNotFrozenLabel);
+
+        // Existing descriptor entries apply ordinary setter/writable
+        // semantics while preserving their attributes.
+        var symRawSetLabel = il.DefineLabel();
+        var symCreateLabel = il.DefineLabel();
+        var symCheckExtensibilityLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, symDictLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, symExistingValueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+        il.Emit(OpCodes.Brfalse, symCheckExtensibilityLabel);
+        il.Emit(OpCodes.Ldloc, symExistingValueLocal);
+        il.Emit(OpCodes.Isinst, inputs.DescriptorStorage.DescriptorType);
+        il.Emit(OpCodes.Stloc, symExistingDescriptorLocal);
+        il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
+        il.Emit(OpCodes.Brfalse, symRawSetLabel);
+
+        var symNoSetterLabel = il.DefineLabel();
+        var symSetterValueLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
+        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, symSetterValueLocal);
+        il.Emit(OpCodes.Ldloc, symSetterValueLocal);
+        il.Emit(OpCodes.Brfalse, symNoSetterLabel);
+        il.Emit(OpCodes.Ldloc, symSetterValueLocal);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, symNoSetterLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, symSetterValueLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(symNoSetterLabel);
+        // Any accessor descriptor without a callable setter ignores a
+        // non-strict write.
+        var symDataDescriptorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
+        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, symDataDescriptorLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symDataDescriptorLabel);
+        var symReturnWithoutSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
+        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, symReturnWithoutSetLabel);
+        il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
+        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorWritable.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, symReturnWithoutSetLabel);
+        il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetSetMethod()!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symReturnWithoutSetLabel);
+        il.Emit(OpCodes.Ret);
+
+        // Check extensibility (frozen/sealed/preventExt). On hit, no-op.
+        il.MarkLabel(symCheckExtensibilityLabel);
+        var symExtTmp = il.DeclareLocal(_types.Object);
+        var symNotNonExtLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, inputs.ObjectState.NonExtensibleObjects);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symExtTmp);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, symNotNonExtLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symNotNonExtLabel);
+
+        var symNotFrozenLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symExtTmp);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, symNotFrozenLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symNotFrozenLabel);
+
+        var symNotSealedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, inputs.ObjectState.SealedObjects);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symExtTmp);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, symNotSealedLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symNotSealedLabel);
+
+        // A newly-created symbol property is an ordinary data descriptor,
+        // not an attribute-less raw side-table value. The descriptor ctor
+        // supplies writable/enumerable/configurable = true.
+        il.Emit(OpCodes.Br, symCreateLabel);
+        il.MarkLabel(symRawSetLabel);
+        il.Emit(OpCodes.Ldloc, symDictLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item"));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(symCreateLabel);
+        var newSymbolDescriptorLocal = il.DeclareLocal(
+            inputs.DescriptorStorage.DescriptorType);
+        il.Emit(OpCodes.Newobj, inputs.DescriptorStorage.DescriptorConstructor);
+        il.Emit(OpCodes.Stloc, newSymbolDescriptorLocal);
+        il.Emit(OpCodes.Ldloc, newSymbolDescriptorLocal);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt,
+            inputs.DescriptorStorage.DescriptorValue.GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, symDictLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, newSymbolDescriptorLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(
+            _types.DictionaryObjectObject, "set_Item"));
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitInheritedSymbolSetter(ILGenerator il, EmittedObjectPrototypeRuntime prototypes,
-        EmittedSymbolRuntime symbols, EmittedDescriptorStorageRuntime storage, MethodBuilder invoke)
+        EmittedSymbolRuntime symbols, EmittedDescriptorStorageRuntime storage, MethodBuilder invoke,
+        EmittedSymbolAccessorRuntime accessors, EmittedErrorRuntime errors, Type undefinedType)
     {
         var done = il.DefineLabel();
         var prototype = il.DeclareLocal(_types.Object);
@@ -2058,6 +2109,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, value);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
         il.Emit(OpCodes.Brtrue, done);
+        // A declared static method is an existing own writable property even
+        // while its value remains backed by the method registry.
+        var notConstructor = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brfalse, notConstructor);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, accessors.FindOwnMethod);
+        il.Emit(OpCodes.Brtrue, done);
+        il.MarkLabel(notConstructor);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, prototypes.GetPrototypeOf);
         il.Emit(OpCodes.Stloc, prototype);
@@ -2071,16 +2133,44 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloca, value);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+        var propertyFound = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, propertyFound);
+        // Match the read path: a closed generic base shares the descriptors
+        // installed on its source constructor, after its exact own storage.
+        var prototypeType = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Stloc, prototypeType);
+        il.Emit(OpCodes.Ldloc, prototypeType);
         il.Emit(OpCodes.Brfalse, next);
+        il.Emit(OpCodes.Ldloc, prototypeType);
+        il.Emit(OpCodes.Call, accessors.RegistryKey);
+        il.Emit(OpCodes.Stloc, prototypeType);
+        il.Emit(OpCodes.Ldloc, prototypeType);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Beq, next);
+        il.Emit(OpCodes.Ldloc, prototypeType);
+        il.Emit(OpCodes.Call, symbols.GetStorage);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, value);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+        il.Emit(OpCodes.Brfalse, next);
+        il.MarkLabel(propertyFound);
         il.Emit(OpCodes.Ldloc, value);
         il.Emit(OpCodes.Isinst, storage.DescriptorType);
         il.Emit(OpCodes.Stloc, descriptor);
         il.Emit(OpCodes.Ldloc, descriptor);
         il.Emit(OpCodes.Brfalse, done);
         var noSetter = il.DefineLabel();
+        var setter = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldloc, descriptor);
         il.Emit(OpCodes.Callvirt, storage.DescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, setter);
+        il.Emit(OpCodes.Ldloc, setter);
         il.Emit(OpCodes.Brfalse, noSetter);
+        il.Emit(OpCodes.Ldloc, setter);
+        il.Emit(OpCodes.Isinst, undefinedType);
+        il.Emit(OpCodes.Brtrue, noSetter);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, descriptor);
         il.Emit(OpCodes.Callvirt, storage.DescriptorSetter.GetGetMethod()!);
@@ -2094,8 +2184,35 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(noSetter);
-        il.Emit(OpCodes.Br, done);
+        var reject = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, storage.DescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, reject);
+        il.Emit(OpCodes.Ldloc, setter);
+        il.Emit(OpCodes.Brtrue, reject);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, storage.DescriptorWritable.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, done);
+        il.MarkLabel(reject);
+        var ignored = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Brfalse, ignored);
+        GuestErrorEmitter.ThrowError(il, errors.CreateException, errors.TypeErrorConstructor,
+            "Cannot assign to an inherited read-only Symbol property");
+        il.MarkLabel(ignored);
+        il.Emit(OpCodes.Ret);
         il.MarkLabel(next);
+        // A registry-backed static method is a writable data property at
+        // this level and shadows a more distant non-writable descriptor.
+        var notPrototypeConstructor = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brfalse, notPrototypeConstructor);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, accessors.FindOwnMethod);
+        il.Emit(OpCodes.Brtrue, done);
+        il.MarkLabel(notPrototypeConstructor);
         il.Emit(OpCodes.Ldloc, prototype);
         il.Emit(OpCodes.Call, prototypes.GetPrototypeOf);
         il.Emit(OpCodes.Stloc, prototype);

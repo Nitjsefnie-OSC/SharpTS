@@ -1220,6 +1220,11 @@ public partial class Interpreter
             return RuntimeValue.Undefined;
         }
 
+        // Bound functions and native callable values inherit the same Symbol
+        // protocol surface, while classes first consult their static descriptors.
+        if (obj is ISharpTSCallable callable && index is SharpTSSymbol callableSymbol)
+            return RuntimeValue.FromBoxed(GetSymbolPropertyValue(callable, callableSymbol));
+
         // Symbol-valued array properties are ordinary own properties and must
         // preserve null (rather than confusing it with a missing property).
         // An own value/accessor also shadows Array.prototype's @@iterator.
@@ -1493,7 +1498,7 @@ public partial class Interpreter
     private object? GetClassSymbolValue(SharpTSClass klass, SharpTSSymbol symbol)
     {
         return TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), klass, out var value)
-            ? value : SharpTSUndefined.Instance;
+            ? value : GetSymbolPropertyValue(GetFunctionPrototype(), symbol, klass);
     }
 
     /// <summary>
@@ -1689,6 +1694,10 @@ public partial class Interpreter
         }
         if (obj is SharpTSJSON or SharpTSDate or BoundFunction)
         {
+            if (obj is BoundFunction && index is SharpTSSymbol inheritedSymbol
+                && TryAssignThroughDescriptor(FindInheritedSymbolDescriptor(obj, inheritedSymbol),
+                    obj, inheritedSymbol.ToString(), value, strictMode))
+                return RuntimeValue.FromBoxed(value);
             string propertyName = PropertyKeyConverter.ToPropertyKeyString(index);
             var name = new Token(TokenType.IDENTIFIER, propertyName, null, 0);
             var set = new Expr.Set(null!, name, null!);
@@ -1968,7 +1977,8 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.ClassSymbol t:
-                if (TryAssignThroughDescriptor(t.Target.FindStaticSymbolAccessorDescriptor(t.Key),
+                if (TryAssignThroughDescriptor(t.Target.FindStaticSymbolAccessorDescriptor(t.Key)
+                        ?? FindInheritedSymbolDescriptor(t.Target, t.Key),
                         t.Target, t.Key.ToString(), value, strictMode)) break;
                 if (t.Target.FindStaticSymbolSetter(t.Key) is { } staticSymSetter)
                 {

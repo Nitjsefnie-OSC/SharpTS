@@ -65,6 +65,9 @@ public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSS
             "", writable: false, enumerable: false, configurable: true));
         _overlay.DefineProperty("length", new SharpTSPropertyDescriptor(
             0d, writable: false, enumerable: false, configurable: true));
+        _overlay.DefineProperty(SharpTSSymbol.HasInstance, new SharpTSPropertyDescriptor(
+            BuiltIns.FunctionBuiltIns.CreateHasInstanceMethod(),
+            writable: false, enumerable: false, configurable: false));
     }
 
     public bool HasExtra(string name) => _overlay.HasExtra(name);

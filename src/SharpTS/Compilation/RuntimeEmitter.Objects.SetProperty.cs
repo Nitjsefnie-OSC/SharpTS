@@ -2719,7 +2719,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, objectWrite.Index);
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Call, objectWrite.SymbolIndex);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(symThrowLabel);

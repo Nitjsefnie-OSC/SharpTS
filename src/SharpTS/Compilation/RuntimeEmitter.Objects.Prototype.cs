@@ -32,6 +32,7 @@ public partial class RuntimeEmitter
         EmittedArrayOperationsRuntime ArrayOperations,
         EmittedBooleanRuntime Booleans,
         TypeBuilder BoundTSFunctionType,
+        TypeBuilder BoundAnyFunctionType,
         EmittedDateRuntime Dates,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
@@ -865,6 +866,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
         il.Emit(OpCodes.Brfalse, notTSFnForProtoLabel);
+        il.Emit(OpCodes.Call, inputs.FunctionPrototypePopulateMethod);
         il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypeField);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notTSFnForProtoLabel);
@@ -876,12 +878,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypeField);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notBoundTSFnForProtoLabel);
+        var notBoundAnyForProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.BoundAnyFunctionType);
+        il.Emit(OpCodes.Brfalse, notBoundAnyForProtoLabel);
+        il.Emit(OpCodes.Call, inputs.FunctionPrototypePopulateMethod);
+        il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBoundAnyForProtoLabel);
         if (inputs.Promise is not null)
         {
             var notResolveCallbackForProtoLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Isinst, inputs.Promise!.ResolveCallbackType);
             il.Emit(OpCodes.Brfalse, notResolveCallbackForProtoLabel);
+            il.Emit(OpCodes.Call, inputs.FunctionPrototypePopulateMethod);
             il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypeField);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notResolveCallbackForProtoLabel);
@@ -889,6 +900,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Isinst, inputs.Promise!.RejectCallbackType);
             il.Emit(OpCodes.Brfalse, notRejectCallbackForProtoLabel);
+            il.Emit(OpCodes.Call, inputs.FunctionPrototypePopulateMethod);
             il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypeField);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notRejectCallbackForProtoLabel);
@@ -897,6 +909,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.Delegate);
         il.Emit(OpCodes.Brfalse, notDelegateForProtoLabel);
+        il.Emit(OpCodes.Call, inputs.FunctionPrototypePopulateMethod);
         il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypeField);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notDelegateForProtoLabel);
@@ -960,6 +973,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Brfalse, notTypeForProtoLabel);
+        il.Emit(OpCodes.Call, inputs.FunctionPrototypePopulateMethod);
         il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypeField);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notTypeForProtoLabel);

@@ -46,6 +46,13 @@ public sealed class EmittedOperatorRuntime
         internal set => SetHandle(ref _instanceOf, value);
     }
 
+    private MethodBuilder? _ordinaryHasInstance;
+    public MethodBuilder OrdinaryHasInstance
+    {
+        get => Require(_ordinaryHasInstance);
+        internal set => SetHandle(ref _ordinaryHasInstance, value);
+    }
+
     private MethodBuilder? _hasIn;
     public MethodBuilder HasIn
     {
@@ -101,6 +108,7 @@ public sealed class EmittedOperatorRuntime
     {
         EnsureMutable();
         _ = InstanceOf;
+        _ = OrdinaryHasInstance;
         if (_instanceOfBodyEmitted)
             throw new InvalidOperationException("Operator InstanceOf body emission is already complete.");
         _instanceOfBodyEmitted = true;
@@ -132,6 +140,7 @@ public sealed class EmittedOperatorRuntime
         _ = LessThanOrEqual;
         _ = TypeOf;
         _ = InstanceOf;
+        _ = OrdinaryHasInstance;
         _ = HasIn;
         _ = ProxyOrdinaryHas;
         _ = Add;

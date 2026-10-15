@@ -15,7 +15,9 @@ public partial class RuntimeEmitter
         Type UndefinedType,
         EmittedOperatorRuntime Operators,
         EmittedFunctionBindingRuntime FunctionBindings,
-        EmittedErrorRuntime Errors
+        EmittedErrorRuntime Errors,
+        EmittedSymbolRuntime Symbols,
+        EmittedFunctionAttributesRuntime FunctionAttributes
     );
 
     private readonly record struct FunctionProtoCallHelperInputs(FieldInfo UndefinedInstance, MethodBuilder InvokeMethodValue);
@@ -75,6 +77,7 @@ public partial class RuntimeEmitter
             )
         );
         var toStringHelper = EmitFunctionProtoToStringHelper(typeBuilder);
+        var hasInstanceHelper = EmitFunctionProtoHasInstanceHelper(typeBuilder, inputs);
         _ = callHelper;
         _ = applyHelper;
         _ = bindHelper;
@@ -114,6 +117,30 @@ public partial class RuntimeEmitter
         Wire("bind", bindHelper, 1);
         Wire("toString", toStringHelper, 0);
 
+        var intrinsic = il.DeclareLocal(_types.Object);
+        _types.EmitLoadMethodInfo(il, hasInstanceHelper);
+        il.Emit(OpCodes.Ldstr, "[Symbol.hasInstance]");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Call, inputs.FunctionConstruction.GetOrCreate);
+        il.Emit(OpCodes.Stloc, intrinsic);
+        il.Emit(OpCodes.Newobj, inputs.DescriptorStorage.DescriptorConstructor);
+        il.Emit(OpCodes.Stloc, fnDescLocal);
+        il.Emit(OpCodes.Ldloc, fnDescLocal);
+        il.Emit(OpCodes.Ldloc, intrinsic);
+        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetSetMethod()!);
+        foreach (var flag in new[] { inputs.DescriptorStorage.DescriptorWritable,
+                     inputs.DescriptorStorage.DescriptorEnumerable, inputs.DescriptorStorage.DescriptorConfigurable })
+        {
+            il.Emit(OpCodes.Ldloc, fnDescLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, flag.GetSetMethod()!);
+        }
+        il.Emit(OpCodes.Ldsfld, functionPrototypes.Prototype);
+        il.Emit(OpCodes.Call, inputs.Symbols.GetStorage);
+        il.Emit(OpCodes.Ldsfld, inputs.Symbols.HasInstance);
+        il.Emit(OpCodes.Ldloc, fnDescLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item", _types.Object, _types.Object));
+
         // constructor: non-enumerable per ECMA-262 §17.
         EmitInstallNonEnumerableDescriptor(il, new PrototypeDescriptorInputs(inputs.DescriptorStorage.DescriptorConstructor, inputs.DescriptorStorage.DescriptorValue.GetSetMethod()!, inputs.DescriptorStorage.DescriptorEnumerable.GetSetMethod()!, inputs.DescriptorStorage.DefineProperty), functionPrototypes.Prototype, fnDescLocal, "constructor", () =>
         {
@@ -129,6 +156,38 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ret);
         functionPrototypes.MarkPopulateBodyEmitted();
+    }
+
+    private MethodBuilder EmitFunctionProtoHasInstanceHelper(TypeBuilder owner, FunctionPrototypePopulateInputs inputs)
+    {
+        var method = owner.DefineMethod("FunctionProtoHasInstance",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object, _types.ObjectArray]);
+        method.DefineParameter(1, ParameterAttributes.None, "__this");
+        method.DefineParameter(2, ParameterAttributes.None, "args");
+        method.SetCustomAttribute(inputs.FunctionAttributes.NonConstructibleCtor,
+            CustomAttributeEncoder.Encode(inputs.FunctionAttributes.NonConstructibleCtor));
+        method.SetCustomAttribute(inputs.FunctionAttributes.ExpectsThisCtor,
+            CustomAttributeEncoder.Encode(inputs.FunctionAttributes.ExpectsThisCtor));
+        var il = method.GetILGenerator();
+        var missing = il.DefineLabel();
+        var haveCandidate = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, missing);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Brfalse, missing);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Br, haveCandidate);
+        il.MarkLabel(missing);
+        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
+        il.MarkLabel(haveCandidate);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.Operators.OrdinaryHasInstance);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+        return method;
     }
 
     /// <summary>

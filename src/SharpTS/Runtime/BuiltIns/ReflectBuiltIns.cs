@@ -253,6 +253,8 @@ public static class ReflectBuiltIns
                             && !legacy.TryGetSymbolAccessor(inheritedSymbol, out _, out _),
                         SharpTSArrowFunction legacy => !legacy.TryGetSymbolProperty(inheritedSymbol, out _)
                             && !legacy.TryGetSymbolAccessor(inheritedSymbol, out _, out _),
+                        SharpTSClass klass => klass.GetOwnStaticSymbolPropertyDescriptor(inheritedSymbol) is null,
+                        BoundFunction => true,
                         _ => false
                     };
                     if (ownMiss && interpreter.FindInheritedSymbolDescriptor(target, inheritedSymbol) is { } inherited

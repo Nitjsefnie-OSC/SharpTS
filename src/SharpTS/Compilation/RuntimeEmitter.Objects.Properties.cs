@@ -37,6 +37,40 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.TSFunctionGetOrCreate);
     }
 
+    // A present descriptor owns the read even when its accessor has no getter.
+    // Empty entry stack; every path returns one JavaScript value from the caller.
+    private void EmitDescriptorReadAndReturn(ILGenerator il, EmittedDescriptorStorageRuntime storage,
+        LocalBuilder descriptor, Action emitReceiver, MethodInfo invoke, FieldInfo undefined, Type undefinedType)
+    {
+        var getter = il.DeclareLocal(_types.Object);
+        var noGetter = il.DefineLabel();
+        var getterless = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, storage.DescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, getter);
+        il.Emit(OpCodes.Ldloc, getter);
+        il.Emit(OpCodes.Brfalse, noGetter);
+        il.Emit(OpCodes.Ldloc, getter);
+        il.Emit(OpCodes.Isinst, undefinedType);
+        il.Emit(OpCodes.Brtrue, getterless);
+        emitReceiver();
+        il.Emit(OpCodes.Ldloc, getter);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, invoke);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(noGetter);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, storage.DescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, getterless);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, storage.DescriptorValue.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(getterless);
+        il.Emit(OpCodes.Ldsfld, undefined);
+        il.Emit(OpCodes.Ret);
+    }
+
     private LocalBuilder EmitStaticMemberLookupOwner(ILGenerator il, LocalBuilder owner, Type userClassInterface)
     {
         var methodOwnerLocal = il.DeclareLocal(_types.Type);
@@ -538,53 +572,18 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(afterHashSetSizeLabel);
 
-        // Check $PropertyDescriptorStore for dynamically defined properties (via Object.defineProperty)
-        // This allows defineProperty to work on class instances
+        // An own dynamic descriptor shadows receiver-specific and inherited
+        // properties, including when its accessor has no callable getter.
         var afterPDSCheckLabel = il.DefineLabel();
-        var pdsGetterLocal = il.DeclareLocal(_types.Object);
         var pdsDescriptorLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
-
-        // Try to get getter: PDSTryGetGetter(obj, name, out getter)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloca, pdsGetterLocal);
-        il.Emit(OpCodes.Call, inputs.DescriptorStorage.TryGetGetter);
-        var noGetterInPDSLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, noGetterInPDSLabel);
-
-        // Getter was found - invoke it: InvokeMethodValue(obj, getter, emptyArgs)
-        il.Emit(OpCodes.Ldarg_0);  // receiver (obj)
-        il.Emit(OpCodes.Ldloc, pdsGetterLocal);  // function (getter)
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);  // empty args array
-        il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(noGetterInPDSLabel);
-
-        // Try to get descriptor: PDSGetPropertyDescriptor(obj, name)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
         il.Emit(OpCodes.Stloc, pdsDescriptorLocal);
-
-        // If descriptor is null, continue to next checks
         il.Emit(OpCodes.Ldloc, pdsDescriptorLocal);
         il.Emit(OpCodes.Brfalse, afterPDSCheckLabel);
-
-        // A descriptor with no getter but a setter is a setter-only accessor;
-        // ordinary [[Get]] returns undefined and it shadows any inherited
-        // getter. Otherwise this is a data descriptor and returns Value.
-        var pdsDataDescriptorLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, pdsDescriptorLocal);
-        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, pdsDataDescriptorLabel);
-        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(pdsDataDescriptorLabel);
-        il.Emit(OpCodes.Ldloc, pdsDescriptorLocal);
-        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetGetMethod()!);
-        il.Emit(OpCodes.Ret);
+        EmitDescriptorReadAndReturn(il, inputs.DescriptorStorage, pdsDescriptorLocal,
+            () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
 
         il.MarkLabel(afterPDSCheckLabel);
 
@@ -2315,7 +2314,6 @@ public partial class RuntimeEmitter
             il.MarkLabel(notProtoNameLabel);
 
             var typePdsDescLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
-            var typePdsGetterLocal = il.DeclareLocal(_types.Object);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
@@ -2323,23 +2321,8 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, typePdsDescLocal);
             var noTypePdsLabel = il.DefineLabel();
             il.Emit(OpCodes.Brfalse, noTypePdsLabel);
-            var typePdsDataLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldloc, typePdsDescLocal);
-            il.Emit(OpCodes.Callvirt,
-                inputs.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
-            il.Emit(OpCodes.Stloc, typePdsGetterLocal);
-            il.Emit(OpCodes.Ldloc, typePdsGetterLocal);
-            il.Emit(OpCodes.Brfalse, typePdsDataLabel);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloc, typePdsGetterLocal);
-            il.Emit(OpCodes.Call, EmitGenerics.MakeGenericMethod(
-                _types.GetMethod(typeof(System.Array), "Empty"), _types.Object));
-            il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(typePdsDataLabel);
-            il.Emit(OpCodes.Ldloc, typePdsDescLocal);
-            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetGetMethod()!);
-            il.Emit(OpCodes.Ret);
+            EmitDescriptorReadAndReturn(il, inputs.DescriptorStorage, typePdsDescLocal,
+                () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
             il.MarkLabel(noTypePdsLabel);
 
             // Computed static accessors also use synthetic CLR names. Resolve
@@ -2611,7 +2594,6 @@ public partial class RuntimeEmitter
                 BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly;
             var walkTypeLocal = il.DeclareLocal(_types.Type);
             var baseDescLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
-            var baseDescGetterLocal = il.DeclareLocal(_types.Object);
             var baseBuiltInLocal = il.DeclareLocal(_types.Object);
             var baseStaticMethodLocal = il.DeclareLocal(_types.MethodInfo);
             var baseStaticFieldLocal = il.DeclareLocal(typeof(FieldInfo));
@@ -2658,23 +2640,8 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brfalse, baseProbeDeclaredLabel);
 
             il.MarkLabel(baseDescriptorReady);
-            var baseDescDataLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldloc, baseDescLocal);
-            il.Emit(OpCodes.Callvirt,
-                inputs.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
-            il.Emit(OpCodes.Stloc, baseDescGetterLocal);
-            il.Emit(OpCodes.Ldloc, baseDescGetterLocal);
-            il.Emit(OpCodes.Brfalse, baseDescDataLabel);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloc, baseDescGetterLocal);
-            il.Emit(OpCodes.Call, EmitGenerics.MakeGenericMethod(
-                _types.GetMethod(typeof(System.Array), "Empty"), _types.Object));
-            il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(baseDescDataLabel);
-            il.Emit(OpCodes.Ldloc, baseDescLocal);
-            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetGetMethod()!);
-            il.Emit(OpCodes.Ret);
+            EmitDescriptorReadAndReturn(il, inputs.DescriptorStorage, baseDescLocal,
+                () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
 
             // Runtime intrinsic constructors (notably $Promise) do not implement
             // $IHasFields, but their JS static table still participates in the

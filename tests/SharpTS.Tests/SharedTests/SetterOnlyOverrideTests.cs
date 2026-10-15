@@ -71,10 +71,10 @@ public sealed class SetterOnlyOverrideTests
             class Derived extends Base { static set value(next: number) {} }
             class Inherited extends Base {}
             const alias: any = Derived;
-            // #2087 separately tracks null versus undefined on getterless constructors.
-            console.log(!!Derived.value, !!alias.value, !!alias["value"], !!Reflect.get(alias, "value"), Derived.slot, reads);
+            console.log(Derived.value === undefined, alias.value === undefined,
+                alias["value"] === undefined, Reflect.get(alias, "value") === undefined, Derived.slot, reads);
             console.log(Inherited.value, reads);
-            """, "false false false false 1 0\n1 1\n"];
+            """, "true true true true 1 0\n1 1\n"];
         yield return ["computed-pair", """
             const key: any = "value";
             class C { set value(next: any) {} get [key]() { return 3; } }
@@ -93,7 +93,8 @@ public sealed class SetterOnlyOverrideTests
 
     public static IEnumerable<object[]> ParityCases()
         => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            // Evaluated class getterless descriptor reads still have the #2216 null-value limitation.
+            // #2172 still blocks this parent in the hosted single-script path;
+            // the verified standalone expression case is covered separately.
             .Where(mode => (string)row[0] != "expressions" || mode == ExecutionMode.Interpreted)
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 

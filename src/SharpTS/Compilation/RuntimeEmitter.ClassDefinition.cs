@@ -273,21 +273,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, ownDescriptor);
         il.Emit(OpCodes.Ldloc, ownDescriptor);
         il.Emit(OpCodes.Brfalse, inheritedProperty);
-        var dataProperty = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, ownDescriptor);
-        il.Emit(OpCodes.Callvirt, storage.DescriptorGetter.GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, dataProperty);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, ownDescriptor);
-        il.Emit(OpCodes.Callvirt, storage.DescriptorGetter.GetGetMethod()!);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Call, runtime.Invocation.Method);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(dataProperty);
-        il.Emit(OpCodes.Ldloc, ownDescriptor);
-        il.Emit(OpCodes.Callvirt, storage.DescriptorValue.GetGetMethod()!);
-        il.Emit(OpCodes.Ret);
+        EmitDescriptorReadAndReturn(il, storage, ownDescriptor,
+            () => il.Emit(OpCodes.Ldarg_0), runtime.Invocation.Method,
+            runtime.Sentinels.UndefinedInstance, runtime.Sentinels.UndefinedType);
         il.MarkLabel(inheritedProperty);
         var noParentProperty = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);

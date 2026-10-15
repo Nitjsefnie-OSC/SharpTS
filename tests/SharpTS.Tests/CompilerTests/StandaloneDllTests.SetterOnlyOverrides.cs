@@ -8,6 +8,7 @@ public partial class StandaloneDllTests
     [Theory]
     [InlineData("issue")]
     [InlineData("dispatch")]
+    [InlineData("expressions")]
     [InlineData("statics")]
     [InlineData("computed-pair")]
     [InlineData("computed-method-mask")]

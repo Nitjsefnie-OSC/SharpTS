@@ -18,9 +18,9 @@ public sealed class EditorExpressionTests
             typeof(Expr.Ternary), typeof(Expr.Grouping), typeof(Expr.Literal), typeof(Expr.Unary),
             typeof(Expr.Delete), typeof(Expr.Variable), typeof(Expr.Assign), typeof(Expr.Call),
             typeof(Expr.Get), typeof(Expr.Set), typeof(Expr.GetPrivate), typeof(Expr.PrivateIn),
-            typeof(Expr.SetPrivate), typeof(Expr.CallPrivate), typeof(Expr.This), typeof(Expr.New),
+            typeof(Expr.SetPrivate), typeof(Expr.CallPrivate), typeof(Expr.This), typeof(Expr.New), typeof(Expr.NewTarget),
             typeof(Expr.ArrayLiteral), typeof(Expr.ObjectLiteral), typeof(Expr.GetIndex), typeof(Expr.SetIndex),
-            typeof(Expr.Super), typeof(Expr.CompoundAssign), typeof(Expr.CompoundSet), typeof(Expr.CompoundSetIndex),
+            typeof(Expr.Super), typeof(Expr.CompoundAssign), typeof(Expr.CompoundSet), typeof(Expr.CompoundSetPrivate), typeof(Expr.CompoundSetIndex),
             typeof(Expr.LogicalAssign), typeof(Expr.LogicalSet), typeof(Expr.LogicalSetIndex),
             typeof(Expr.PrefixIncrement), typeof(Expr.PostfixIncrement), typeof(Expr.ArrowFunction),
             typeof(Expr.TemplateLiteral), typeof(Expr.TaggedTemplateLiteral), typeof(Expr.Spread),
@@ -119,12 +119,29 @@ public sealed class EditorExpressionTests
     [Fact]
     public void PrivateAccessAndBrandCheckKeepWrittenNames()
     {
-        var parsed = Parse("class C { #field = 1; m(other: C) { other.#field = 2; return #field in other; } }");
+        var parsed = Parse("class C { #field = 1; m(other: C) { other.#field = 2; other.#field += 3; return #field in other; } }");
         Assert.True(parsed.ParseResult.IsSuccess);
         Assert.Contains(parsed.Syntax.Members, member => member.IsPrivate && member.Owner is Expr.SetPrivate &&
             member.Name.Lexeme == "#field");
+        var compound = Assert.Single(parsed.Syntax.Members, member => member.Owner is Expr.CompoundSetPrivate);
+        Assert.True(compound.IsPrivate);
+        Assert.Equal("#field", compound.Name.Lexeme);
+        Assert.Equal("other", Text(parsed, compound.Receiver));
+        Assert.Equal("other.#field += 3", Text(parsed, compound.Owner));
         Assert.Contains(parsed.Syntax.Records, record => record.Node is Expr.PrivateIn &&
             record.Role == EditorSyntaxRole.PrivateName && record.Token!.Lexeme == "#field");
+    }
+
+    [Fact]
+    public void NewTargetKeepsItsWrittenExtentAndAuthoritativeExpressionView()
+    {
+        var parsed = Parse("function inspect() { return new.target; }");
+        Assert.True(parsed.ParseResult.IsSuccess);
+        var function = Assert.IsType<Stmt.Function>(Assert.Single(parsed.ParseResult.Statements));
+        var target = Assert.IsType<Expr.NewTarget>(Assert.IsType<Stmt.Return>(Assert.Single(function.Body!)).Value);
+        Assert.Equal("new.target", Text(parsed, target));
+        Assert.Contains(parsed.Syntax.GetRecords(target), record =>
+            record.Kind == EditorSyntaxKind.Expression && record.IsAuthoritative);
     }
 
     [Fact]

@@ -240,6 +240,7 @@ public partial class ILCompiler
             var ctx = CreateModuleMemberContext(method.GetILGenerator(), method);
             ctx.CurrentClassBuilder = owner; ctx.CurrentClassName = owner.FullName;
             ctx.EmittingTypeBuilder = type; ctx.IsStrictMode = true; ctx.IsInstanceMethod = !source.IsStatic;
+            ctx.IsStaticSuperContext = source.IsStatic;
             ctx.HasGuestReceiver = true; ctx.GuestThisVariableName = "__this";
             ApplyCapturedTopLevelVariableAccess(ctx);
             return ctx;

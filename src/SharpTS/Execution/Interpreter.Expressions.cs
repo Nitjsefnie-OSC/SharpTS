@@ -399,13 +399,14 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Evaluates a super method access, binding the superclass method to the current instance.
+    /// Evaluates a lexical super property access with the current receiver.
     /// </summary>
     /// <param name="expr">The super expression AST node.</param>
-    /// <returns>The bound method from the superclass.</returns>
+    /// <returns>The property value, or a constructor callable for super().</returns>
     /// <remarks>
-    /// Retrieves the superclass from the environment and looks up the method,
-    /// then binds it to the current instance for proper <c>this</c> context.
+    /// Retrieves the superclass from the lexical environment and reads its live
+    /// prototype chain. Accessors use the actual <c>this</c> receiver; unchanged
+    /// declared methods retain their existing bound-method convention.
     /// For constructor calls (super()), if no explicit constructor exists, returns a
     /// no-op callable to match TypeScript's implicit default constructor behavior.
     /// </remarks>
@@ -417,30 +418,33 @@ public partial class Interpreter
         // (Array subclass instances) are SharpTSArrays — bind generically.
         object? thisReceiver = _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject();
 
-        if (expr.Method != null && _environment.StaticSuper)
-            return RuntimeValue.FromBoxed(EvaluateGetOnClass(superclass, expr.Method.Lexeme, thisReceiver));
+        if (expr.Method is { } property)
+        {
+            if (_environment.StaticSuper)
+                return RuntimeValue.FromBoxed(EvaluateGetOnClass(
+                    superclass, property.Lexeme, thisReceiver));
+
+            // The lexical method owner remains fixed when a method is inherited
+            // or borrowed, while the home prototype's parent is read live.
+            object? superPrototype = _environment.PrivateClass is { } owner
+                ? ObjectBuiltIns.PrototypeOf(this, owner.Prototype)
+                : superclass.Prototype;
+            return RuntimeValue.FromBoxed(GetPropertyValueFromChain(
+                superPrototype, property.Lexeme, thisReceiver, bindClassMethods: true));
+        }
 
         // super() with null Method means constructor call
-        string methodName = expr.Method?.Lexeme ?? "constructor";
-        ISharpTSCallable? method = superclass.FindMethod(methodName);
+        ISharpTSCallable? method = superclass.FindMethod("constructor");
 
         // If no constructor exists, return a no-op callable for super() calls
         // This matches TypeScript's implicit default constructor behavior
-        if (method == null && methodName == "constructor")
+        if (method == null)
         {
             return RuntimeValue.FromObject(new NoOpCallable());
         }
 
-        if (method == null)
-        {
-            throw new InterpreterException($"Undefined property '{methodName}'.");
-        }
-
-        if (expr.Method is null)
-            return RuntimeValue.FromObject(new SuperConstructorCallable(
-                method, thisReceiver!, _environment.NewTarget.ToObject()));
-
-        return RuntimeValue.FromObject(SharpTSClass.BindMethodToReceiver(method, thisReceiver!));
+        return RuntimeValue.FromObject(new SuperConstructorCallable(
+            method, thisReceiver!, _environment.NewTarget.ToObject()));
     }
 
     private sealed class SuperConstructorCallable(

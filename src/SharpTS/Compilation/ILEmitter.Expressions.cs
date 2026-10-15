@@ -873,20 +873,6 @@ public partial class ILEmitter
         SetStackUnknown();
     }
 
-    protected override void EmitSuper(Expr.Super s)
-    {
-        if (_ctx.IsStaticSuperContext)
-        {
-            var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
-            EmitGuestSuperValue(s.Method?.Lexeme ?? "constructor", receiver);
-            return;
-        }
-        // Super method values use the lexical receiver, including arrow captures.
-        // Note: super() constructor calls are handled in EmitCall, not here
-        EmitThis();
-        IL.Emit(OpCodes.Ldstr, s.Method?.Lexeme ?? "constructor");
-        EmitCallUnknown(_ctx.Runtime!.ReflectedMethods.SuperMethod);
-    }
 
     protected override void EmitTernary(Expr.Ternary t)
     {

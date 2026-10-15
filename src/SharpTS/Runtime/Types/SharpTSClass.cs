@@ -268,6 +268,9 @@ public partial class SharpTSClass(
         }
     }
 
+    internal ISharpTSCallable? FindOwnMethod(string name)
+        => _methods.GetValueOrDefault(name);
+
     public ISharpTSCallable? FindMethod(string name)
     {
         // Check cache first

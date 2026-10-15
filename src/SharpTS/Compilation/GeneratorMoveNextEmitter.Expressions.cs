@@ -9,7 +9,7 @@ public partial class GeneratorMoveNextEmitter
     // `super.x`, or `import()` inside a generator body silently evaluated to
     // `null` at runtime (#1105). The shared base now carries working
     // implementations for all three — regex builds a $RegExp, super loads the
-    // hoisted `this` and resolves through GetSuperMethod, and dynamic import goes
+    // hoisted `this` and resolves through the lexical super home, and dynamic import goes
     // through the module registry — so the generator emitter inherits them
     // unchanged. EmitterSyncTests enforces that no silent override creeps back.
 }

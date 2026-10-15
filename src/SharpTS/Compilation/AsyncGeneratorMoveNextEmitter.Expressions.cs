@@ -353,7 +353,7 @@ public partial class AsyncGeneratorMoveNextEmitter
     #endregion
 
     // EmitSuper is inherited from ExpressionEmitterBase (#1105): the base loads the
-    // hoisted `this` and resolves through GetSuperMethod, which works in the async
+    // hoisted `this` and resolves through the lexical super home, which works in the async
     // generator state machine. The old override here pushed `null`, silently
     // miscompiling `super.x` inside an async generator body.
 }

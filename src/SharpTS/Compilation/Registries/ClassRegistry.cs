@@ -25,6 +25,7 @@ public sealed class ClassRegistry
     // Instance members
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _instanceMethods;
     private readonly Dictionary<(TypeBuilder Owner, MethodBuilder Parent), (Type Receiver, MethodInfo Target)> _superCallBridges = [];
+    private readonly HashSet<MethodBuilder> _sourceGeneratorMethods = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _instanceGetters;
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _instanceSetters;
     private readonly Dictionary<MethodBuilder, string?> _sourceInstanceGetters = new(ReferenceEqualityComparer.Instance);
@@ -212,13 +213,17 @@ public sealed class ClassRegistry
 
     #region Instance Method Resolution (with inheritance walking)
 
+    internal void RegisterSourceGeneratorMethod(MethodBuilder method)
+        => _sourceGeneratorMethods.Add(method);
+
     /// <summary>
     /// State-machine methods cannot make a nonvirtual call to a virtual parent method:
     /// the CLR requires that call's receiver to be the enclosing class's own this.
     /// Keep that call in a compiler-only method on the lexical class.
     /// The bridge is absent from the published JavaScript method registry.
     /// </summary>
-    internal (Type Receiver, MethodInfo Target) GetOrCreateSuperCallBridge(TypeBuilder owner, MethodBuilder parent)
+    internal (Type Receiver, MethodInfo Target) GetOrCreateSuperCallBridge(
+        TypeBuilder owner, MethodBuilder parent, EmittedFunctionAttributesRuntime attributes)
     {
         var key = (owner, parent);
         if (_superCallBridges.TryGetValue(key, out var cached))
@@ -228,7 +233,7 @@ public sealed class ClassRegistry
             throw new InvalidOperationException($"Cannot resolve super method {parent.Name} on {owner.Name}.");
 
         var parameters = parent.GetParameters();
-        var attributes = MethodAttributes.Assembly | MethodAttributes.HideBySig;
+        var methodAttributes = MethodAttributes.Assembly | MethodAttributes.HideBySig;
         Type receiver = owner;
         MethodBuilder? contractMethod = null;
         var parameterTypes = parameters.Select(parameter => parameter.ParameterType).ToArray();
@@ -243,14 +248,16 @@ public sealed class ClassRegistry
             contractMethod = contract.DefineMethod("Invoke",
                 MethodAttributes.Public | MethodAttributes.Abstract | MethodAttributes.Virtual,
                 parent.ReturnType, parameterTypes);
+            MarkSuperBridgeCallable(contractMethod, attributes, _sourceGeneratorMethods.Contains(parent));
             contract.CreateType();
             EmitTypeDefinitions.AddInterfaceImplementation(owner, contract);
             receiver = contract;
-            attributes |= MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot;
+            methodAttributes |= MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot;
         }
 
-        var bridge = owner.DefineMethod($"<>super${_superCallBridges.Count}", attributes,
+        var bridge = owner.DefineMethod($"<>super${_superCallBridges.Count}", methodAttributes,
             parent.ReturnType, parameterTypes);
+        MarkSuperBridgeCallable(bridge, attributes, _sourceGeneratorMethods.Contains(parent));
         if (contractMethod != null)
             owner.DefineMethodOverride(bridge, contractMethod);
         var il = bridge.GetILGenerator();
@@ -262,6 +269,22 @@ public sealed class ClassRegistry
         var result = (receiver, (MethodInfo?)contractMethod ?? bridge);
         _superCallBridges.Add(key, result);
         return result;
+    }
+
+    private static void MarkSuperBridgeCallable(MethodBuilder method, EmittedFunctionAttributesRuntime attributes,
+        bool isGenerator)
+    {
+        // These markers do not affect direct calls. They preserve source argument
+        // padding and non-constructibility if the bridge becomes a method value.
+        method.SetCustomAttribute(attributes.PadUndefinedCtor,
+            CustomAttributeEncoder.Encode(attributes.PadUndefinedCtor));
+        method.SetCustomAttribute(attributes.SourceParametersCtor,
+            CustomAttributeEncoder.Encode(attributes.SourceParametersCtor));
+        // Generator method values retain their own prototype, matching the
+        // original source method's marker policy.
+        if (!isGenerator)
+            method.SetCustomAttribute(attributes.NonConstructibleCtor,
+                CustomAttributeEncoder.Encode(attributes.NonConstructibleCtor));
     }
 
     /// <summary>

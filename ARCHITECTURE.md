@@ -811,6 +811,14 @@ behavior. Tests preserve overload selection, stable cached wrappers, cache
 isolation, exception identity, inherited lookup, generator and async super values, Invoke/Call
 fallback behavior and standalone crypto/event dispatch.
 
+Instance `super` property values use `ClassDefinitions.ReadSuper` with the lexical
+class home and actual receiver, including captured arrows and state machines.
+The prototype reader respects live own descriptors and dynamic data before
+advancing to the parent; getterless accessors return undefined. Unchanged nominal
+method values use the lexical nonvirtual bridge while retaining source argument
+padding, rest packing and non-constructor metadata. Direct superclass calls have
+their own dispatch path.
+
 Required `FunctionIntrospection` owns function-property lookup and constructor
 capability declarations. Both bodies are emitted at their original separate
 locations; completion follows constructor-capability emission. The two helpers

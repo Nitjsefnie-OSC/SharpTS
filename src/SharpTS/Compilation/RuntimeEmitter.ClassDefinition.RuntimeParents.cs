@@ -73,7 +73,9 @@ public partial class RuntimeEmitter
         il.EndExceptionBlock(); il.MarkLabel(nothing); il.Emit(OpCodes.Ret);
 
         il = definitions.ReadPrototypeProperty.GetILGenerator();
-        var prototype = il.DeclareLocal(_types.Object); var descriptor = il.DeclareLocal(runtime.DescriptorStorage.DescriptorType);
+        var prototype = il.DeclareLocal(_types.Object);
+        var descriptor = il.DeclareLocal(runtime.DescriptorStorage.DescriptorType);
+        var getter = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Stloc, prototype);
         var loop = il.DefineLabel(); var next = il.DefineLabel(); var absent = il.DefineLabel(); var data = il.DefineLabel();
         il.MarkLabel(loop); il.Emit(OpCodes.Ldloc, prototype); il.Emit(OpCodes.Brfalse, absent);
@@ -81,13 +83,47 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.DescriptorStorage.GetPropertyDescriptor); il.Emit(OpCodes.Stloc, descriptor);
         il.Emit(OpCodes.Ldloc, descriptor); il.Emit(OpCodes.Brfalse, next);
         il.Emit(OpCodes.Ldloc, descriptor); il.Emit(OpCodes.Callvirt, runtime.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, data);
-        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, descriptor);
-        il.Emit(OpCodes.Callvirt, runtime.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, getter);
+        il.Emit(OpCodes.Ldloc, getter); il.Emit(OpCodes.Brfalse, data);
+        il.Emit(OpCodes.Ldloc, getter); il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType); il.Emit(OpCodes.Brtrue, absent);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, getter);
         il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Newarr, _types.Object); il.Emit(OpCodes.Call, runtime.Invocation.Method); il.Emit(OpCodes.Ret);
-        il.MarkLabel(data); il.Emit(OpCodes.Ldloc, descriptor);
+        il.MarkLabel(data);
+        il.Emit(OpCodes.Ldloc, descriptor); il.Emit(OpCodes.Callvirt, runtime.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, absent);
+        il.Emit(OpCodes.Ldloc, descriptor);
         il.Emit(OpCodes.Callvirt, runtime.DescriptorStorage.DescriptorValue.GetGetMethod()!); il.Emit(OpCodes.Ret);
-        il.MarkLabel(next); il.Emit(OpCodes.Ldloc, prototype); il.Emit(OpCodes.Call, runtime.ObjectPrototypes.GetPrototypeOf);
+        il.MarkLabel(next);
+
+        // Generated class prototypes keep assigned data in their dynamic store.
+        // The public Fields compatibility view also synthesizes instance fields,
+        // which do not belong to the prototype. Use its existing storage accessor.
+        var dynamicStore = il.DeclareLocal(_types.MethodInfo);
+        var fields = il.DeclareLocal(_types.DictionaryStringObject);
+        var value = il.DeclareLocal(_types.Object);
+        var ordinaryPrototype = il.DefineLabel();
+        var nextPrototype = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, prototype); il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "$EnsureFields");
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, dynamicStore);
+        il.Emit(OpCodes.Ldloc, dynamicStore); il.Emit(OpCodes.Brfalse, ordinaryPrototype);
+        il.Emit(OpCodes.Ldloc, dynamicStore); il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject); il.Emit(OpCodes.Stloc, fields);
+        il.Emit(OpCodes.Ldloc, fields); il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Ldloca, value);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
+        il.Emit(OpCodes.Brfalse, nextPrototype);
+        il.Emit(OpCodes.Ldloc, value); il.Emit(OpCodes.Ret);
+        il.MarkLabel(ordinaryPrototype);
+        // Ordinary dictionary/object/proxy prototypes already implement their
+        // receiver-aware descriptor lookup through Reflect.get.
+        il.Emit(OpCodes.Ldloc, prototype); il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.Reflect.Get); il.Emit(OpCodes.Ret);
+        il.MarkLabel(nextPrototype);
+        il.Emit(OpCodes.Ldloc, prototype); il.Emit(OpCodes.Call, runtime.ObjectPrototypes.GetPrototypeOf);
         il.Emit(OpCodes.Stloc, prototype); il.Emit(OpCodes.Br, loop);
         il.MarkLabel(absent); il.Emit(OpCodes.Ldsfld, runtime.Sentinels.UndefinedInstance); il.Emit(OpCodes.Ret);
 
@@ -97,8 +133,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, definitions.GetParent); il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Call, runtime.Reflect.Get); il.Emit(OpCodes.Ret);
         il.MarkLabel(instanceSuper);
-        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, definitions.GetParent);
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "prototype"); il.Emit(OpCodes.Call, runtime.ObjectRead.Property);
+        il.Emit(OpCodes.Call, runtime.ObjectPrototypes.GetPrototypeOf);
         il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Call, definitions.ReadPrototypeProperty); il.Emit(OpCodes.Ret);
     }
 }

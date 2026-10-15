@@ -254,6 +254,9 @@ public partial class ILCompiler
                 classCores[method.Name.Lexeme] = coreBuilder;
             }
 
+            if (method.IsGenerator)
+                GetClassRegistry().RegisterSourceGeneratorMethod(methodBuilder);
+
             // Track instance method for direct dispatch
             if (!_classes.InstanceMethods.TryGetValue(qualifiedClassName, out var classMethods))
             {
@@ -1047,6 +1050,9 @@ public partial class ILCompiler
             }
             classMethods[method.Name.Lexeme] = methodBuilder;
         }
+
+        if (method.IsGenerator)
+            GetClassRegistry().RegisterSourceGeneratorMethod(methodBuilder);
 
         // #703: a user class method invoked as a value (extracted, `.bind()`-ed, or passed
         // as a callback → `$TSFunction.Invoke`) must pad omitted trailing optional args with

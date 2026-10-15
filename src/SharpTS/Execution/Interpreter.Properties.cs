@@ -405,7 +405,7 @@ public partial class Interpreter
         => GetPropertyValueFromChain(obj, name, receiver);
 
     private object? GetPropertyValueFromChain(
-        object? current, string name, object? receiver)
+        object? current, string name, object? receiver, bool bindClassMethods = false)
     {
         for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
         {
@@ -488,6 +488,20 @@ public partial class Interpreter
                 if (record.HasSetter(name)) return SharpTSUndefined.Instance;
                 if (record.Fields.TryGetValue(name, out var value)) return value;
                 current = GetRecordPrototype(record);
+                continue;
+            }
+
+            if (current is SharpTSClassPrototype classPrototype)
+            {
+                if (TryReadDescriptor(classPrototype.GetOwnPropertyDescriptor(name),
+                        receiver, out var prototypeValue))
+                    return prototypeValue;
+                if (classPrototype.TryGetOwnMember(name, out var member))
+                    return bindClassMethods && member is ISharpTSCallable method
+                        && member is not SharpTSClass
+                        ? SharpTSClass.BindMethodToReceiver(method, receiver!)
+                        : member;
+                current = ObjectBuiltIns.PrototypeOf(this, classPrototype);
                 continue;
             }
 

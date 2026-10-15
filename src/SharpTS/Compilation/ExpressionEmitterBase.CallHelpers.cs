@@ -2274,7 +2274,7 @@ public abstract partial class ExpressionEmitterBase
         if (Ctx.CurrentClassBuilder is not { } owner || Ctx.ClassRegistry is not { } registry)
             return false;
 
-        var (receiverType, callTarget) = registry.GetOrCreateSuperCallBridge(owner, methodBuilder);
+        var (receiverType, callTarget) = registry.GetOrCreateSuperCallBridge(owner, methodBuilder, Ctx.Runtime!.FunctionAttributes);
 
         var methodParams = methodBuilder.GetParameters();
 

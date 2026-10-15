@@ -109,6 +109,49 @@ public static class TestHarness
     }
 
     /// <summary>
+    /// Runs runtime JavaScript regressions without the TypeScript checker. Compiled
+    /// programs must pass complete saved-IL verification before they can execute.
+    /// </summary>
+    public static string RunUnchecked(string source, ExecutionMode mode, TimeSpan? timeout = null)
+    {
+        var deadline = timeout ?? DefaultTimeout;
+        return mode switch
+        {
+            ExecutionMode.Interpreted => RunInterpreterWithTimeout(deadline,
+                $"Interpreter execution exceeded {deadline.TotalSeconds}s timeout.", interpreter =>
+                {
+                    var statements = ParseOrThrow(source);
+                    interpreter.SetDecoratorMode(DecoratorMode.None);
+                    interpreter.EmitProcessLifecycleEvents = true;
+                    interpreter.Interpret(statements, new TypeMap());
+                    if (interpreter.LastUncaughtError is { } uncaught)
+                        throw uncaught;
+                }),
+            ExecutionMode.Compiled => RunCompiledWithTimeout(
+                () => Assembly.Load(CompileUncheckedAndVerify(source)), deadline),
+            _ => throw new ArgumentOutOfRangeException(nameof(mode))
+        };
+    }
+
+    internal static byte[] CompileUncheckedAndVerify(string source)
+    {
+        var statements = ParseOrThrow(source);
+        var typeMap = new TypeMap();
+        var deadCode = new DeadCodeAnalyzer(typeMap).Analyze(statements);
+        var compiler = new ILCompiler($"unchecked_{Guid.NewGuid():N}");
+        compiler.SetDecoratorMode(DecoratorMode.None);
+        compiler.Compile(statements, typeMap, deadCode);
+        var bytes = compiler.SaveToBytes();
+        using var verifier = new ILVerifier(extraProbeDirectories:
+            [AppContext.BaseDirectory, Path.GetDirectoryName(typeof(RuntimeTypes).Assembly.Location)!]);
+        using var stream = new MemoryStream(bytes);
+        var errors = verifier.Verify(stream);
+        if (errors.Count > 0)
+            throw new InvalidOperationException("IL verification failed:\n" + string.Join("\n", errors));
+        return bytes;
+    }
+
+    /// <summary>
     /// Runs TypeScript source using the specified execution mode with decorator support.
     /// </summary>
     /// <param name="source">TypeScript source code</param>

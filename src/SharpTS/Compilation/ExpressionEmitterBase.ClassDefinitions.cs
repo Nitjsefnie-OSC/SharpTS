@@ -31,8 +31,60 @@ public abstract partial class ExpressionEmitterBase
         }
         IL.Emit(OpCodes.Ldloc, receiver);
         IL.Emit(OpCodes.Ldstr, name);
-        IL.Emit(Ctx.IsStaticSuperContext || !Ctx.IsInstanceMethod ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+        IL.Emit(Ctx.IsStaticSuperContext ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.ClassDefinitions.ReadSuper);
+        SetStackUnknown();
+        EmitUnchangedSuperMethodValue(name, receiver);
+    }
+
+    private void EmitUnchangedSuperMethodValue(string name, LocalBuilder receiver)
+    {
+        if (Ctx.IsStaticSuperContext || Ctx.CurrentClassExpr != null
+            || Ctx.CurrentClassBuilder is not { } owner || Ctx.ClassRegistry is not { } registry) return;
+        string? superclass = Ctx.CurrentSuperclassName
+            ?? registry.GetSuperclass(owner.FullName ?? Ctx.CurrentClassName!)
+            ?? (Ctx.CurrentClassName is { } current ? registry.GetSuperclass(current) : null);
+        if (superclass == null || Ctx.ResolveInstanceMethod(Ctx.ResolveClassName(superclass), name) is not { } parent)
+            return;
+
+        // Legacy nominal prototype methods wrap a virtual CLR MethodInfo. Keep
+        // that unchanged method value nonvirtual, while live data, getters and
+        // replacements retain the value returned by the prototype lookup.
+        var value = _helpers.SpillStoreObject();
+        var function = IL.DeclareLocal(Ctx.Runtime!.FunctionValues.Type);
+        var unchanged = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, value);
+        IL.Emit(OpCodes.Isinst, Ctx.Runtime.FunctionValues.Type);
+        IL.Emit(OpCodes.Stloc, function);
+        IL.Emit(OpCodes.Ldloc, function);
+        IL.Emit(OpCodes.Brfalse, unchanged);
+        IL.Emit(OpCodes.Ldloc, function);
+        IL.Emit(OpCodes.Callvirt, Ctx.Runtime.FunctionValues.GetMethodInfo);
+        IL.Emit(OpCodes.Callvirt, Types.GetProperty(Types.MethodInfo, "Module")!.GetGetMethod()!);
+        IL.Emit(OpCodes.Ldtoken, owner);
+        IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Callvirt, Types.GetProperty(Types.Type, "Module")!.GetGetMethod()!);
+        IL.Emit(OpCodes.Call, Types.GetMethod(Types.Object, "Equals", Types.Object, Types.Object));
+        IL.Emit(OpCodes.Brfalse, unchanged);
+        IL.Emit(OpCodes.Ldloc, function);
+        IL.Emit(OpCodes.Callvirt, Ctx.Runtime.FunctionValues.GetMethodInfo);
+        IL.Emit(OpCodes.Callvirt, Types.GetProperty(Types.MethodInfo, "MetadataToken")!.GetGetMethod()!);
+        IL.Emit(OpCodes.Ldc_I4, parent.MetadataToken);
+        IL.Emit(OpCodes.Bne_Un, unchanged);
+        var (_, bridge) = registry.GetOrCreateSuperCallBridge(owner, parent, Ctx.Runtime.FunctionAttributes);
+        IL.Emit(OpCodes.Ldloc, receiver);
+        Types.EmitLoadMethodInfo(IL, bridge);
+        IL.Emit(OpCodes.Ldstr, name);
+        IL.Emit(OpCodes.Ldloc, function);
+        IL.Emit(OpCodes.Callvirt, Ctx.Runtime.FunctionValues.LengthGetter);
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime.FunctionConstruction.CachedConstructor);
+        IL.Emit(OpCodes.Dup);
+        IL.Emit(OpCodes.Ldloc, function);
+        IL.Emit(OpCodes.Ldfld, Ctx.Runtime.FunctionValues.CapturesArgumentsField);
+        IL.Emit(OpCodes.Stfld, Ctx.Runtime.FunctionValues.CapturesArgumentsField);
+        IL.Emit(OpCodes.Stloc, value);
+        IL.MarkLabel(unchanged);
+        IL.Emit(OpCodes.Ldloc, value);
         SetStackUnknown();
     }
 

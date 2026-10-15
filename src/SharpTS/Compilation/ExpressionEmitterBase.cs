@@ -812,31 +812,13 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         Resolver.TryLoadVariable(CompilationContext.NewTargetCaptureName) != null;
 
     /// <summary>
-    /// Emits a super method access. Default loads 'this' via EmitThis(), then calls GetSuperMethod.
-    /// ILEmitter and AsyncArrowMoveNextEmitter override with their own this-loading logic.
+    /// Reads a super property from the lexical class home with the actual receiver.
+    /// EmitThis supplies captured receivers for arrows and state machines.
     /// </summary>
     protected virtual void EmitSuper(Expr.Super s)
     {
-        if (Ctx.IsStaticSuperContext)
-        {
-            var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
-            EmitGuestSuperValue(s.Method?.Lexeme ?? "constructor", receiver);
-            return;
-        }
-        var thisField = GetThisField();
-        if (thisField != null)
-        {
-            IL.Emit(OpCodes.Ldarg_0);
-            IL.Emit(OpCodes.Ldfld, thisField);
-        }
-        else
-        {
-            IL.Emit(OpCodes.Ldnull);
-        }
-
-        IL.Emit(OpCodes.Ldstr, s.Method?.Lexeme ?? "constructor");
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.ReflectedMethods.SuperMethod);
-        SetStackUnknown();
+        var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
+        EmitGuestSuperValue(s.Method?.Lexeme ?? "constructor", receiver);
     }
 
     /// <summary>

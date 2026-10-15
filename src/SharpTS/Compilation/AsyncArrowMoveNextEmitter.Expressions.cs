@@ -69,19 +69,4 @@ public partial class AsyncArrowMoveNextEmitter
         _il.Emit(OpCodes.Ldnull);
         SetStackType(StackType.Null);
     }
-
-    protected override void EmitSuper(Expr.Super s)
-    {
-        if (_ctx!.IsStaticSuperContext)
-        {
-            base.EmitSuper(s);
-            return;
-        }
-        // Use the same lexical receiver loader as this/direct super calls,
-        // including standalone capture fields and outer async state machines.
-        EmitThis();
-        _il.Emit(OpCodes.Ldstr, s.Method?.Lexeme ?? "constructor");
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.ReflectedMethods.SuperMethod);
-        SetStackUnknown();
-    }
 }

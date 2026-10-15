@@ -830,10 +830,12 @@ Tests cover early property availability, fresh wrappers and prototype caches,
 name/length overrides, missing properties, bound constructor capabilities,
 reused emitters and isolated deployment.
 
-Required `FunctionPrototypes` owns the Function prototype singleton field and
-its early population declaration. The original later body marks population as
-emitted before completion; declaring both handles alone cannot complete the
-owner. Six helpers receive their owner and exact dependencies, using the shared
+Required `FunctionPrototypes` owns the Function prototype singleton field,
+its early population declaration, and the forward-declared apply argument-list
+preparer. Both method bodies must be marked emitted before completion; declaring
+the three handles alone cannot complete the owner. Apply shares ordinary indexed
+Get and strict length coercion across intrinsic and per-target wrappers. Helpers
+receive their owner and exact dependencies, using the shared
 scoped descriptor installers and explicit error metadata. Original declaration,
 static initialization and wrapper construction order remain unchanged. Tests
 cover forward declarations, fresh dictionaries/wrappers, idempotent population,

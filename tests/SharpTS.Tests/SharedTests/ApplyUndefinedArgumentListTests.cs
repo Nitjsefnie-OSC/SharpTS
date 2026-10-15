@@ -42,20 +42,21 @@ public sealed class ApplyUndefinedArgumentListTests
         Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void InterpretedApplyStillRejectsInvalidPrimitiveListsWithoutCallingTarget()
+    [Theory]
+    [ModeData]
+    public void ApplyRejectsInvalidPrimitiveListsWithoutCallingTarget(ExecutionMode mode)
     {
         const string source = """
             let calls = 0;
             const f: any = () => { calls++; };
             for (const list of [7, false, "bad"]) {
                 try { f.apply(null, list); console.log(false); }
-                catch (error) { console.log(true); }
+                catch (error) { console.log(error instanceof TypeError); }
             }
             try { Reflect.apply(Function.prototype.apply, f, [null, 7]); console.log(false); }
-            catch (error) { console.log(true); }
+            catch (error) { console.log(error instanceof TypeError); }
             console.log(calls);
             """;
-        Assert.Equal("true\ntrue\ntrue\ntrue\n0\n", TestHarness.RunInterpreted(source));
+        Assert.Equal("true\ntrue\ntrue\ntrue\n0\n", TestHarness.Run(source, mode));
     }
 }

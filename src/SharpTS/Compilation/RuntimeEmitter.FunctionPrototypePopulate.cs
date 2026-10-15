@@ -23,7 +23,7 @@ public partial class RuntimeEmitter
     private readonly record struct FunctionProtoCallHelperInputs(FieldInfo UndefinedInstance, MethodBuilder InvokeMethodValue);
 
     private readonly record struct FunctionProtoApplyHelperInputs(
-        FieldInfo UndefinedInstance, Type UndefinedType, MethodBuilder InvokeMethodValue);
+        FieldInfo UndefinedInstance, MethodBuilder PrepareApplyArguments, MethodBuilder InvokeMethodValue);
 
     private readonly record struct FunctionProtoBindHelperInputs(
         FieldInfo UndefinedInstance,
@@ -64,7 +64,7 @@ public partial class RuntimeEmitter
         );
         var applyHelper = EmitFunctionProtoApplyHelper(
             typeBuilder,
-            new FunctionProtoApplyHelperInputs(inputs.UndefinedInstance, inputs.UndefinedType, inputs.InvokeMethodValue)
+            new FunctionProtoApplyHelperInputs(inputs.UndefinedInstance, functionPrototypes.PrepareApplyArguments, inputs.InvokeMethodValue)
         );
         var bindHelper = EmitFunctionProtoBindHelper(
             typeBuilder,
@@ -315,9 +315,8 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// ECMA-262 §20.2.3.1 Function.prototype.apply(thisArg, argsArray).
-    /// Like call, but the second argument is an array (or null/undefined) that
-    /// gets spread as the call arguments. Accepts <see cref="List{Object}"/>
-    /// or <c>object[]</c> array shapes.
+    /// The shared preparer validates the target and reads an ordinary array-like
+    /// argument list before the existing receiver-aware call dispatch.
     /// </summary>
     private MethodBuilder EmitFunctionProtoApplyHelper(TypeBuilder typeBuilder, FunctionProtoApplyHelperInputs inputs)
     {
@@ -380,55 +379,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, argsArrayLocal);
         il.MarkLabel(afterArrayLabel);
 
-        // Convert argsArray to object[]:
-        //   null/undefined → empty
-        //   object[]       → cast directly
-        //   List<object>   → ToArray()
-        //   else           → empty (lenient)
-        var nullOrUndefLabel = il.DefineLabel();
-        var notArrayLabel = il.DefineLabel();
-        var notListLabel = il.DefineLabel();
-        var doneLabel = il.DefineLabel();
-
-        // null check
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, argsArrayLocal);
-        il.Emit(OpCodes.Brfalse, nullOrUndefLabel);
-        // $Undefined check
-        il.Emit(OpCodes.Ldloc, argsArrayLocal);
-        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
-        il.Emit(OpCodes.Brtrue, nullOrUndefLabel);
-
-        // object[] direct cast
-        il.Emit(OpCodes.Ldloc, argsArrayLocal);
-        il.Emit(OpCodes.Isinst, _types.ObjectArray);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Brfalse, notArrayLabel);
+        il.Emit(OpCodes.Call, inputs.PrepareApplyArguments);
         il.Emit(OpCodes.Stloc, callArgsLocal);
-        il.Emit(OpCodes.Br, doneLabel);
-        il.MarkLabel(notArrayLabel);
-        il.Emit(OpCodes.Pop);
-
-        // List<object> → ToArray
-        var listType = _types.ListOfObject;
-        il.Emit(OpCodes.Ldloc, argsArrayLocal);
-        il.Emit(OpCodes.Isinst, listType);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Brfalse, notListLabel);
-        il.Emit(OpCodes.Castclass, listType);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(listType, "ToArray", Type.EmptyTypes)!);
-        il.Emit(OpCodes.Stloc, callArgsLocal);
-        il.Emit(OpCodes.Br, doneLabel);
-        il.MarkLabel(notListLabel);
-        il.Emit(OpCodes.Pop);
-
-        // Fallback: empty array (matches lenient behavior; spec would throw
-        // TypeError on non-array argsArray, but the harness pattern always
-        // passes a real array so this is rarely reached).
-        il.MarkLabel(nullOrUndefLabel);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Stloc, callArgsLocal);
-        il.MarkLabel(doneLabel);
 
         // return InvokeMethodValue(thisArg, __this, callArgs);
         il.Emit(OpCodes.Ldloc, thisArgLocal);

@@ -1512,6 +1512,17 @@ public partial class RuntimeEmitter
                 runtime.BigInt
             )
         );
+        // Apply wrappers were finalized earlier against the forward declaration;
+        // ordinary indexed Get now exists, so fill their shared list reader body.
+        EmitPrepareApplyArguments(runtime.FunctionPrototypes,
+            new PrepareApplyArgumentsInputs(runtime.Operators.TypeOf, runtime.ObjectRead.Property,
+                runtime.ObjectRead.Index, runtime.NumericCoercion.ToNumber,
+                runtime.Sentinels.UndefinedType, runtime.ReflectedMethods.CallableType,
+                runtime.TypedArrays.Implementation?.BoundMethodType,
+                runtime.TextEncoding?.DecodeMethodType,
+                runtime.NodeStreams?.TransformDoneCallbackType,
+                runtime.NodeStreams?.WriteCallbackWrapperType, runtime.Errors.CreateException,
+                runtime.Errors.TypeErrorConstructor));
         // InstanceOf needs ordinary Symbol lookup, receiver-aware invocation,
         // and function prototype lookup; all their tokens now exist.
         EmitInstanceOf(

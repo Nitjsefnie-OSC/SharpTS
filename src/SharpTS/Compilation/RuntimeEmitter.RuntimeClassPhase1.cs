@@ -59,6 +59,10 @@ public partial class RuntimeEmitter
             _types.Object,
             [_types.Object, _types.Object, _types.ObjectArray]);
 
+        // Both apply wrappers are emitted before ordinary object reads and numeric
+        // coercion bodies. Reserve their shared CreateListFromArrayLike helper now.
+        DefinePrepareApplyArguments(typeBuilder, runtime.FunctionPrototypes);
+
         // Preserve the leading runtime declarations while reserving the event-loop guard.
         DefineCancellationCheck(typeBuilder, runtime.Cancellation);
 

@@ -158,33 +158,36 @@ public static class FunctionBuiltIns
 
     /// <summary>
     /// Function.prototype.apply(thisArg, argsArray)
-    /// Calls the function with the specified 'this' value and arguments as an array.
+    /// Calls the function with the specified 'this' value and an array-like argument list.
     /// </summary>
     private static RuntimeValue Apply(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var callable = receiver.ToObject() as ISharpTSCallable
             ?? throw new ThrowException(new SharpTSTypeError(
                 "Function.prototype.apply called on incompatible receiver"));
+        if (callable is SharpTSProxy { IsCallable: false })
+            throw new ThrowException(new SharpTSTypeError(
+                "Function.prototype.apply called on incompatible receiver"));
 
         var thisArg = args.Length > 0 ? args[0].ToObject() : DefaultThisArgument(callable);
         var argsArray = args.Length > 1 ? args[1].ToObject() : null;
 
-        List<object?> callArgs;
-        if (argsArray is null or SharpTSUndefined)
+        var callArgs = new List<object?>();
+        if (argsArray is not (null or SharpTSUndefined))
         {
-            callArgs = new List<object?>();
-        }
-        else if (argsArray is SharpTSArray tsArray)
-        {
-            callArgs = new List<object?>(tsArray);
-        }
-        else if (argsArray is List<object?> list)
-        {
-            callArgs = new List<object?>(list);
-        }
-        else
-        {
-            throw new Exception("Runtime Error: apply second argument must be an array or null.");
+            if (!args[1].IsObject)
+                throw new ThrowException(new SharpTSTypeError(
+                    "Function.prototype.apply argument list must be an object"));
+
+            long length = ArrayBuiltIns.ToLength(
+                interp.GetPropertyValue(argsArray, "length"), interp);
+            for (long index = 0; index < length; index++)
+            {
+                // Get every index, including holes and inherited/non-enumerable
+                // properties. The length is captured before any indexed getter.
+                callArgs.Add(interp.GetPropertyValue(argsArray,
+                    index.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            }
         }
 
         return RuntimeValue.FromBoxed(InvokeWithThis(interp, callable, thisArg, callArgs));

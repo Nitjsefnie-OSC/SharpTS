@@ -604,7 +604,7 @@ public partial class RuntimeEmitter
                 runtime.ArrayOperations,
                 runtime.Map,
                 runtime.Set,
-                runtime.ArrayStorage,
+                runtime.FunctionPrototypes.PrepareApplyArguments,
                 runtime.Invocation,
                 runtime.TypedArrays,
                 runtime.TextEncoding,

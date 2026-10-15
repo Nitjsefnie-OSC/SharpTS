@@ -9,6 +9,7 @@ public sealed class EmittedFunctionPrototypeRuntime
     internal EmittedFunctionPrototypeRuntime() { }
     public bool IsComplete { get; private set; }
     private bool _populateBodyEmitted;
+    private bool _prepareApplyArgumentsBodyEmitted;
 
     private FieldBuilder? _prototype;
     /// <summary>Function.prototype singleton dict, populated lazily with $TSFunction wrappers for call/apply/bind/toString/constructor (ECMA-262 §20.2.3).</summary>
@@ -26,6 +27,14 @@ public sealed class EmittedFunctionPrototypeRuntime
         internal set => SetHandle(ref _populate, value);
     }
 
+    private MethodBuilder? _prepareApplyArguments;
+    /// <summary>Validates an apply target and copies its array-like argument list through ordinary property reads.</summary>
+    public MethodBuilder PrepareApplyArguments
+    {
+        get => Require(_prepareApplyArguments);
+        internal set => SetHandle(ref _prepareApplyArguments, value);
+    }
+
     internal void MarkPopulateBodyEmitted()
     {
         EnsureMutable();
@@ -33,6 +42,15 @@ public sealed class EmittedFunctionPrototypeRuntime
         if (_populateBodyEmitted)
             throw new InvalidOperationException("Function prototype populate body is already emitted.");
         _populateBodyEmitted = true;
+    }
+
+    internal void MarkPrepareApplyArgumentsBodyEmitted()
+    {
+        EnsureMutable();
+        _ = PrepareApplyArguments;
+        if (_prepareApplyArgumentsBodyEmitted)
+            throw new InvalidOperationException("Function apply argument preparation body is already emitted.");
+        _prepareApplyArgumentsBodyEmitted = true;
     }
 
     private static T Require<T>(T? handle, [CallerMemberName] string name = "") where T : class =>
@@ -58,8 +76,11 @@ public sealed class EmittedFunctionPrototypeRuntime
         EnsureMutable();
         _ = Prototype;
         _ = Populate;
+        _ = PrepareApplyArguments;
         if (!_populateBodyEmitted)
             throw new InvalidOperationException("Function prototype populate body has not been emitted.");
+        if (!_prepareApplyArgumentsBodyEmitted)
+            throw new InvalidOperationException("Function apply argument preparation body has not been emitted.");
         IsComplete = true;
     }
 }

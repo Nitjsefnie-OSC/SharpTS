@@ -14,6 +14,7 @@ public sealed class EmittedFunctionPrototypeRuntimeTests
     [Theory]
     [InlineData("Prototype")]
     [InlineData("Populate")]
+    [InlineData("PrepareApplyArguments")]
     public void MetadataRequiresDeclarationAndFreezesAfterBodyCompletion(string name)
     {
         var owner = new EmittedFunctionPrototypeRuntime(); var property = typeof(EmittedFunctionPrototypeRuntime).GetProperty(name)!;
@@ -23,15 +24,23 @@ public sealed class EmittedFunctionPrototypeRuntimeTests
         var field = type.DefineField("Prototype", typeof(object), FieldAttributes.Public | FieldAttributes.Static);
         var method = type.DefineMethod("Populate", MethodAttributes.Public | MethodAttributes.Static, typeof(void), Type.EmptyTypes);
         method.GetILGenerator().Emit(OpCodes.Ret);
-        if (name == "Prototype") owner.Populate = method; else owner.Prototype = field;
+        var prepare = type.DefineMethod("PrepareApplyArguments", MethodAttributes.Public | MethodAttributes.Static,
+            typeof(object[]), [typeof(object), typeof(object)]);
+        prepare.GetILGenerator().Emit(OpCodes.Ldnull); prepare.GetILGenerator().Emit(OpCodes.Ret);
+        if (name != "Prototype") owner.Prototype = field;
+        if (name != "Populate") owner.Populate = method;
+        if (name != "PrepareApplyArguments") owner.PrepareApplyArguments = prepare;
         Assert.Throws<InvalidOperationException>(owner.CompleteEmission); Assert.False(owner.IsComplete);
-        object value = name == "Prototype" ? field : method;
+        object value = name switch { "Prototype" => field, "Populate" => method, _ => prepare };
         property.SetValue(owner, value); Assert.Same(value, property.GetValue(owner));
         Expect<InvalidOperationException>(() => property.SetValue(owner, value));
         Assert.Throws<InvalidOperationException>(owner.CompleteEmission);
-        owner.MarkPopulateBodyEmitted(); owner.CompleteEmission(); Assert.True(owner.IsComplete);
+        owner.MarkPopulateBodyEmitted();
+        Assert.Throws<InvalidOperationException>(owner.CompleteEmission);
+        owner.MarkPrepareApplyArgumentsBodyEmitted(); owner.CompleteEmission(); Assert.True(owner.IsComplete);
         Assert.Throws<InvalidOperationException>(owner.CompleteEmission);
         Assert.Throws<InvalidOperationException>(owner.MarkPopulateBodyEmitted);
+        Assert.Throws<InvalidOperationException>(owner.MarkPrepareApplyArgumentsBodyEmitted);
         Expect<InvalidOperationException>(() => property.SetValue(owner, value));
     }
 
@@ -41,13 +50,20 @@ public sealed class EmittedFunctionPrototypeRuntimeTests
         var builder = NewAssembly(); var type = builder.DefineDynamicModule("main").DefineType("PrototypeShell", TypeAttributes.Public);
         var owner = new EmittedFunctionPrototypeRuntime();
         Assert.Throws<InvalidOperationException>(owner.MarkPopulateBodyEmitted);
+        Assert.Throws<InvalidOperationException>(owner.MarkPrepareApplyArgumentsBodyEmitted);
         owner.Prototype = type.DefineField("Prototype", typeof(object), FieldAttributes.Public | FieldAttributes.Static);
         var emitter = new RuntimeEmitter(TypeProvider.Runtime);
         typeof(RuntimeEmitter).GetMethod("DefineFunctionPrototypePopulateShell", Members)!.Invoke(emitter, [type, owner]);
+        typeof(RuntimeEmitter).GetMethod("DefinePrepareApplyArguments", Members)!.Invoke(emitter, [type, owner]);
         var shell = owner.Populate; Assert.False(owner.IsComplete);
+        var prepare = owner.PrepareApplyArguments;
         Assert.Throws<InvalidOperationException>(owner.CompleteEmission);
         shell.GetILGenerator().Emit(OpCodes.Ret); owner.MarkPopulateBodyEmitted();
         Assert.Throws<InvalidOperationException>(owner.MarkPopulateBodyEmitted);
+        Assert.Throws<InvalidOperationException>(owner.CompleteEmission);
+        prepare.GetILGenerator().Emit(OpCodes.Ldnull); prepare.GetILGenerator().Emit(OpCodes.Ret);
+        owner.MarkPrepareApplyArgumentsBodyEmitted();
+        Assert.Throws<InvalidOperationException>(owner.MarkPrepareApplyArgumentsBodyEmitted);
         owner.CompleteEmission(); Assert.Same(shell, owner.Populate);
         type.CreateType(); var loaded = SaveVerifyLoad(builder);
         loaded.GetType("PrototypeShell")!.GetMethod(shell.Name)!.Invoke(null, null);
@@ -65,6 +81,7 @@ public sealed class EmittedFunctionPrototypeRuntimeTests
             var builder = NewAssembly(); var runtime = emitter.EmitAll(builder.DefineDynamicModule("main"), Detect(code));
             var owner = runtime.FunctionPrototypes; Assert.True(owners.Add(owner)); Assert.True(owner.IsComplete);
             Assert.Same(builder, owner.Prototype.Module.Assembly); Assert.Same(builder, owner.Populate.Module.Assembly);
+            Assert.Same(builder, owner.PrepareApplyArguments.Module.Assembly);
             var loaded = SaveVerifyLoad(builder); var type = loaded.GetType("$Runtime")!;
             var prototype = Assert.IsAssignableFrom<IDictionary>(type.GetField(owner.Prototype.Name)!.GetValue(null));
             Assert.True(dictionaries.Add(prototype)); Assert.Equal(7, prototype.Count);
@@ -88,8 +105,12 @@ public sealed class EmittedFunctionPrototypeRuntimeTests
         var first = new EmittedRuntime(); var second = new EmittedRuntime();
         Assert.NotSame(first.FunctionPrototypes, second.FunctionPrototypes);
         Assert.Null(typeof(EmittedRuntime).GetProperty("FunctionPrototypes")!.SetMethod);
+        Assert.Equal(new[] { "Populate", "PrepareApplyArguments", "Prototype" },
+            typeof(EmittedFunctionPrototypeRuntime).GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(p => typeof(MemberInfo).IsAssignableFrom(p.PropertyType))
+                .Select(p => p.Name).OrderBy(name => name, StringComparer.Ordinal));
         foreach (string old in new[] { "FunctionPrototypeField", "FunctionPrototypePopulateMethod" }) Assert.Null(typeof(EmittedRuntime).GetProperty(old));
-        foreach (string name in new[] { "DefineFunctionPrototypePopulateShell", "EmitFunctionPrototypePopulate", "EmitFunctionProtoCallHelper", "EmitFunctionProtoApplyHelper", "EmitFunctionProtoBindHelper", "EmitFunctionProtoToStringHelper" })
+        foreach (string name in new[] { "DefineFunctionPrototypePopulateShell", "DefinePrepareApplyArguments", "EmitPrepareApplyArguments", "EmitFunctionPrototypePopulate", "EmitFunctionProtoCallHelper", "EmitFunctionProtoApplyHelper", "EmitFunctionProtoBindHelper", "EmitFunctionProtoToStringHelper" })
         {
             var method = typeof(RuntimeEmitter).GetMethod(name, Members)!;
             Assert.DoesNotContain(method.GetParameters(), p => p.ParameterType == typeof(EmittedRuntime) || p.ParameterType == typeof(RuntimeFeatureSet));

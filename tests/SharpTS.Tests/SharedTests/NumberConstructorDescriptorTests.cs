@@ -91,6 +91,26 @@ public sealed class NumberConstructorDescriptorTests
         console.log(user.name);
         """;
 
+    public const string ParseIntSource = """
+        const constructor: any = Number, parse: any = constructor.parseInt;
+        console.log(typeof parse, constructor.parseInt("12"), constructor["parseInt"]("ff", 16));
+        console.log(parse === parseInt, parse === Number.parseInt,
+            parse === constructor["parseInt"], parse === Reflect.get(constructor, "parseInt"));
+        const descriptor = Object.getOwnPropertyDescriptor(constructor, "parseInt")!;
+        console.log(Object.hasOwn(constructor, "parseInt"), descriptor.writable,
+            descriptor.enumerable, descriptor.configurable, descriptor.value === parse);
+        console.log(parse.call({}, "16"), parse.apply(null, ["11", 2]), parse.bind(null, "7")(),
+            parse({ toString() { return "21tail"; } }), Number.isNaN(parse("invalid")));
+        Object.defineProperty(constructor, "parseInt", { enumerable: true });
+        const updated = Object.getOwnPropertyDescriptor(constructor, "parseInt")!;
+        console.log(updated.value === parse, updated.enumerable);
+        Object.defineProperty(constructor, "parseInt", { value: (value: any) => 99 });
+        console.log(constructor.parseInt("12"), parseInt("12"));
+        console.log(delete constructor.parseInt, Object.hasOwn(constructor, "parseInt"));
+        Object.defineProperty(constructor, "parseInt", { value: parse, configurable: true });
+        console.log(constructor.parseInt === parseInt, constructor.parseInt("12"));
+        """;
+
     public const string InvariantSource = """
         const constructor: any = Number;
         Object.defineProperty(constructor, "fixed", { value: 7 });
@@ -183,6 +203,7 @@ public sealed class NumberConstructorDescriptorTests
         yield return ["accessors", AccessorSource, "true true true true false false 0 0\n4 1\n9 1\n12 12\ntrue 13 9 3 2\ntrue true false 3 2\n"];
         yield return ["setter-issue", SetterSource, "1 true\n2 true\n4 true true\n"];
         yield return ["name", NameSource, "Number Number Number Number\nNumber false false true\nNumeric Numeric Numeric Numeric\nUser\n"];
+        yield return ["parse-int", ParseIntSource, "function 12 255\ntrue true true true\ntrue true false true true\n16 3 7 21 true\ntrue true\n99 12\ntrue false\ntrue 12\n"];
         yield return ["invariants", InvariantSource, "7 false\ntrue\ntrue false false false\ntrue\n1 2 true 3 true\ntrue true false false\n"];
         yield return ["intrinsics", IntrinsicSource, "8 true\ntrue false false true\ntrue true\ntrue true true true 12\ntrue false\n99 true 12\nNumber false false true 1 false false true\nNumeric 2 true true\n"];
         yield return ["symbols", SymbolSource, "4 4 true true\ntrue true 0 0\n7\n9 true 10 8 2 2\ntrue true true\nfalse false true\n"];
@@ -191,7 +212,7 @@ public sealed class NumberConstructorDescriptorTests
     public static IEnumerable<object[]> ParityCases()
         // Compiled native constructors retain separate getterless accessor (#2087),
         // Symbol and metadata limitations; #2024 repairs Number's interpreted descriptors.
-        => Cases().SelectMany(row => ((string)row[0] is "issue" or "data" or "invariants" or "setter-issue" or "name"
+        => Cases().SelectMany(row => ((string)row[0] is "issue" or "data" or "invariants" or "setter-issue" or "name" or "parse-int"
                 ? new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
                 : new[] { ExecutionMode.Interpreted })
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
@@ -202,6 +223,16 @@ public sealed class NumberConstructorDescriptorTests
     {
         Assert.NotEmpty(name);
         Assert.Equal(expected, TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void CompiledNumberParseIntValueRetainsNameAndArity()
+    {
+        // Interpreter parse function arity is tracked separately in #2165.
+        Assert.Equal("parseInt 2\n", TestHarness.RunCompiled("""
+            const constructor: any = Number, parse: any = constructor.parseInt;
+            console.log(parse.name, parse.length);
+            """));
     }
 
     [Fact]

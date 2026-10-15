@@ -383,8 +383,8 @@ public class PromiseSubclassTests
         Assert.Equal("true true 2\n", TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void CompiledSpecies_SetterOnlyDescriptorFallsBackToPromise()
+    [Theory, ModeData]
+    public void Species_SetterOnlyDescriptorFallsBackToPromise(ExecutionMode mode)
     {
         var source = """
             class MyP extends Promise<number> {}
@@ -396,9 +396,40 @@ public class PromiseSubclassTests
             main();
             """;
 
-        // The original interpreter ignores setter-only species shadowing;
-        // this control covers the compiled descriptor read repaired here.
-        Assert.Equal("false true 2\n", TestHarness.Run(source, ExecutionMode.Compiled));
+        Assert.Equal("false true 2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void Species_OwnMissingGetterShadowsInheritedGetterForAllReactions(ExecutionMode mode)
+    {
+        var source = """
+            let reads = 0;
+            class Base extends Promise<number> {
+                static get [Symbol.species]() { reads++; return this as any; }
+            }
+            class Derived extends Base {}
+            Object.defineProperty(Derived, Symbol.species, {
+                set: function(value: any) {}, configurable: true
+            });
+            async function main() {
+                const p = Derived.resolve(1);
+                const then = p.then(v => v + 1);
+                const caught = Derived.reject(3).catch(v => v + 1);
+                const final = p.finally(() => {});
+                console.log(then instanceof Derived, caught instanceof Derived, final instanceof Derived, reads);
+                console.log(await then, await caught, await final);
+                Object.defineProperty(Derived, Symbol.species, { get: undefined });
+                const absent = p.then(v => v);
+                console.log(absent instanceof Derived, await absent, reads);
+                delete (Derived as any)[Symbol.species];
+                const inherited = p.then(v => v);
+                console.log(inherited instanceof Derived, reads);
+                console.log(await inherited);
+            }
+            main();
+            """;
+
+        Assert.Equal("false false false 0\n2 4 1\nfalse 1 0\ntrue 1\n1\n", TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

@@ -545,9 +545,9 @@ public static class PromiseBuiltIns
     /// Promise subclass receiver, returning the constructor to build the result
     /// through (a guest Promise subclass, or a general non-Promise class), or
     /// <c>null</c> to mean <c>%Promise%</c> (the plain built-in). Reads
-    /// <c>C[@@species]</c> where <c>C</c> is the receiver's class: a declared
-    /// <c>static get [Symbol.species]()</c> or an expando
-    /// <c>(C as any)[Symbol.species]</c> (#262) override wins; absent either,
+    /// <c>C[@@species]</c> through ordinary Symbol property access where <c>C</c>
+    /// is the receiver's class. The nearest data or accessor descriptor wins,
+    /// including an accessor whose getter is absent. Without an override,
     /// the inherited <c>Promise[@@species]</c> (which returns <c>this</c>) makes
     /// the species the receiver's own class. An override that yields
     /// <c>undefined</c>/<c>null</c> or <c>Promise</c> itself resolves to
@@ -562,14 +562,13 @@ public static class PromiseBuiltIns
     /// </remarks>
     private static object? ResolveSpeciesConstructor(SharpTSPromiseClass klass, Interpreter interp)
     {
-        object? species;
-        if (klass.FindStaticSymbolGetter(SharpTSSymbol.Species) is { } getter)
-            species = getter.BindStatic(klass).Call(interp, []);
-        else if (klass.TryGetStaticBySymbol(SharpTSSymbol.Species, out var expando))
-            species = expando;
-        else
-            // No own @@species: inherited Promise[@@species] returns `this`.
+        // PromiseBase's intrinsic species getter is implicit in this runtime.
+        // Only an absent descriptor uses that default; a present getterless
+        // accessor reads undefined and must shadow any inherited override.
+        if (klass.FindStaticSymbolAccessorDescriptor(SharpTSSymbol.Species) is null)
             return klass;
+
+        object? species = interp.GetSymbolPropertyValue(klass, SharpTSSymbol.Species);
 
         return species switch
         {

@@ -208,6 +208,27 @@ public sealed class StaticPrivateMethodCallBrandTests
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, ModeData]
+    public void StaticPrivateMethodCalledThroughOwnInstanceThrowsTypeError(ExecutionMode mode)
+    {
+        const string source = """
+            class C {
+                static #m() { return 1; }
+                static Reader = class {
+                    static read(object: typeof C) { return object.#m(); }
+                };
+            }
+            const reader: any = C.Reader;
+            console.log(reader.read(C));
+            try { reader.read(new C()); }
+            catch (error) {
+                const caught: any = error;
+                console.log(caught.name, caught instanceof TypeError);
+            }
+            """;
+        Assert.Equal("1\nTypeError true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
     public void PrivateCallsRejectBeforeAnAwaitedArgument(ExecutionMode mode)
     {
         const string source = """

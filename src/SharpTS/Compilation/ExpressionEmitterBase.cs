@@ -1655,6 +1655,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitNew(Expr.New n)
     {
+        if (IsRuntimeClassDeclarationReference(n.Callee))
+        {
+            EmitRuntimeClassConstruction(n);
+            return;
+        }
         var (namespaceParts, className) = ExtractQualifiedNameFromCallee(n.Callee);
 
         if (namespaceParts.Count == 0 && n.Callee is Expr.Variable && TryEmitBuiltInConstructor(className, n.Arguments))

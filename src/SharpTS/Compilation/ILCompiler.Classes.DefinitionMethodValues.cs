@@ -38,7 +38,8 @@ public partial class ILCompiler
             var accessor = _classes.ComputedMembers.GetAccessors(_classExprs.Builders[expression])
                 .FirstOrDefault(entry => ReferenceEquals(entry.Method, original)).Accessor;
             accessor ??= (expression.Accessors ?? []).First(accessor =>
-                original.Name == $"{(accessor.Kind.Type == TokenType.GET ? "get" : "set")}_{NamingConventions.ToPascalCase(accessor.Name.Lexeme)}");
+                accessor.ComputedKey == null && accessor.IsStatic == original.IsStatic
+                && original.Name == $"{(accessor.Kind.Type == TokenType.GET ? "get" : "set")}_{NamingConventions.ToPascalCase(accessor.Name.Lexeme)}");
             source = new Stmt.Function(accessor.Name, null, null, parameters.ToList(), accessor.Body, null, IsStatic: accessor.IsStatic);
         }
         if (!source.IsGenerator)

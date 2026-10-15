@@ -1895,6 +1895,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
                 var definitionLocal = Ctx.Locals.GetLocal(name) ?? Ctx.Locals.DeclareLocal(name, Types.Object, classStmt);
                 IL.Emit(OpCodes.Ldloc, definition); IL.Emit(OpCodes.Stloc, definitionLocal);
             }
+            PublishRuntimeClassBinding(classStmt, name, definition);
             return;
         }
         TypeBuilder? builder = null;

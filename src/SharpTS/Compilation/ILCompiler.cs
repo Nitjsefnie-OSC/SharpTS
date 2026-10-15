@@ -661,6 +661,7 @@ public partial class ILCompiler
 
     private void AnalyzeClosuresAndPromotions(List<Stmt> statements, IReadOnlyList<ParsedModule>? modules = null)
     {
+        PrepareRepeatingClassDeclarations(statements);
         Phase2_AnalyzeClosures(statements);
         _closures.ConstArrowBindings = ConstArrowBindingAnalyzer.Collect(statements);
         StableMapIterationAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
@@ -751,7 +752,7 @@ public partial class ILCompiler
     /// </summary>
     private void Phase2_AnalyzeClosures(List<Stmt> statements)
     {
-        _closures.Analyzer = new ClosureAnalyzer();
+        _closures.Analyzer = new ClosureAnalyzer(_runtimeClassDeclarations);
         _closures.Analyzer.Analyze(statements);
     }
 
@@ -1470,7 +1471,9 @@ public partial class ILCompiler
     {
         private readonly HashSet<Stmt.Class> _seen = new(ReferenceEqualityComparer.Instance);
         private object? _lexicalOwner;
+        private int _repeatingDepth;
         public List<Stmt.Class> Declarations { get; } = [];
+        public HashSet<Stmt.Class> RepeatingDeclarations { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<Stmt.Class, object> LexicalOwners { get; } = new(ReferenceEqualityComparer.Instance);
 
         protected override void VisitClass(Stmt.Class stmt)
@@ -1479,6 +1482,7 @@ public partial class ILCompiler
                 return;
 
             Declarations.Add(stmt);
+            if (_repeatingDepth > 0) RepeatingDeclarations.Add(stmt);
             if (_lexicalOwner != null) LexicalOwners[stmt] = _lexicalOwner;
 
             foreach (var expression in ClassDefinitionExpressions.Enumerate(stmt))
@@ -1511,6 +1515,33 @@ public partial class ILCompiler
                 Visit(statement);
             _lexicalOwner = previousOwner;
         }
+
+        protected override void VisitFunction(Stmt.Function statement)
+        {
+            _repeatingDepth++;
+            base.VisitFunction(statement);
+            _repeatingDepth--;
+        }
+
+        protected override void VisitArrowFunction(Expr.ArrowFunction expression)
+        {
+            _repeatingDepth++;
+            base.VisitArrowFunction(expression);
+            _repeatingDepth--;
+        }
+
+        protected override void VisitAccessor(Stmt.Accessor statement)
+        {
+            _repeatingDepth++;
+            foreach (var child in statement.Body) Visit(child);
+            _repeatingDepth--;
+        }
+
+        protected override void VisitWhile(Stmt.While statement) { _repeatingDepth++; base.VisitWhile(statement); _repeatingDepth--; }
+        protected override void VisitDoWhile(Stmt.DoWhile statement) { _repeatingDepth++; base.VisitDoWhile(statement); _repeatingDepth--; }
+        protected override void VisitFor(Stmt.For statement) { _repeatingDepth++; base.VisitFor(statement); _repeatingDepth--; }
+        protected override void VisitForOf(Stmt.ForOf statement) { _repeatingDepth++; base.VisitForOf(statement); _repeatingDepth--; }
+        protected override void VisitForIn(Stmt.ForIn statement) { _repeatingDepth++; base.VisitForIn(statement); _repeatingDepth--; }
     }
 
     /// <summary>

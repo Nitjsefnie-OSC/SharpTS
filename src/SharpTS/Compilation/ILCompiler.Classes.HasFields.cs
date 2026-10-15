@@ -811,8 +811,7 @@ public partial class ILCompiler
         {
             foreach (var (propName, backingField) in backingFields)
             {
-                // Convert PascalCase property name to camelCase for JS-style access
-                var camelName = NamingConventions.ToCamelCase(propName);
+                var camelName = GetClassExpressionFieldGuestName(classExpr, propName);
                 var nextLabel = il.DefineLabel();
 
                 // if (name == "camelName") return this.backingField;
@@ -853,6 +852,7 @@ public partial class ILCompiler
         // become dead branches here — matching the class-declaration registry's behavior.
         il.MarkLabel(tryMethodsLabel);
 
+        EmitInheritedClassExpressionFieldReads(il, classExpr);
         EmitClassPrototypeFieldFallback(il);
 
         if (_classExprs.Getters.TryGetValue(classExpr, out var instanceGetters))
@@ -984,6 +984,50 @@ public partial class ILCompiler
         il.MarkLabel(returnNullLabel);
         EmitGetPropertyBaseFallthrough(il, _classExprs.Builders[classExpr].BaseType);
     }
+
+    private void EmitInheritedClassExpressionFieldReads(ILGenerator il, Expr.ClassExpr expression)
+    {
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+        Type? parent = _classExprs.Builders[expression].BaseType;
+        while (parent != null)
+        {
+            var definition = parent.IsConstructedGenericType ? parent.GetGenericTypeDefinition() : parent;
+            var parentExpression = _classExprs.Builders.FirstOrDefault(entry => ReferenceEquals(entry.Value, definition)).Key;
+            var declaration = _classes.Declarations.FirstOrDefault(source =>
+                !_runtimeClassDeclarations.ContainsKey(source)
+                && _classes.DeclarationNames.TryGetValue(source, out var name)
+                && _classes.Builders.TryGetValue(name, out var builder) && ReferenceEquals(builder, definition));
+            var fields = parentExpression?.Fields ?? declaration?.Fields;
+            var backingFields = parentExpression != null
+                ? _classExprs.BackingFields.GetValueOrDefault(parentExpression)
+                : declaration != null
+                    ? _typedInterop.PropertyBackingFields.GetValueOrDefault(_classes.DeclarationNames[declaration])
+                    : null;
+            foreach (var field in fields ?? [])
+            {
+                if (field.IsStatic || field.IsPrivate || field.IsDeclare || field.ComputedKey != null
+                    || backingFields?.ContainsKey(NamingConventions.ToPascalCase(field.Name.Lexeme)) != true
+                    || !seenNames.Add(field.Name.Lexeme)) continue;
+                var next = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldstr, field.Name.Lexeme);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+                il.Emit(OpCodes.Brfalse, next);
+                // A field inherited through the CLR chain remains own data on this
+                // instance. Read its declaring body's field branch before any
+                // prototype compatibility view can expose an uninitialized field.
+                EmitGetPropertyBaseFallthrough(il, parent);
+                il.MarkLabel(next);
+            }
+            parent = definition.BaseType is { } nextParent
+                ? ResolveInheritedConstructorSlot(nextParent, parent) : null;
+        }
+    }
+
+    private static string GetClassExpressionFieldGuestName(Expr.ClassExpr expression, string propertyName) =>
+        expression.Fields.FirstOrDefault(field => !field.IsStatic && !field.IsPrivate && !field.IsDeclare
+            && field.ComputedKey == null && NamingConventions.ToPascalCase(field.Name.Lexeme) == propertyName)
+            ?.Name.Lexeme ?? NamingConventions.ToCamelCase(propertyName);
 
     private void EmitComputedMethodOwnerCheck(ILGenerator il, LocalBuilder method, TypeBuilder owner, Label notOwn)
     {
@@ -1122,8 +1166,7 @@ public partial class ILCompiler
         {
             foreach (var (propName, backingField) in backingFields)
             {
-                // Convert PascalCase property name to camelCase for JS-style access
-                var camelName = NamingConventions.ToCamelCase(propName);
+                var camelName = GetClassExpressionFieldGuestName(classExpr, propName);
                 var nextLabel = il.DefineLabel();
 
                 // if (name == "camelName") { this.backingField = value; return; }

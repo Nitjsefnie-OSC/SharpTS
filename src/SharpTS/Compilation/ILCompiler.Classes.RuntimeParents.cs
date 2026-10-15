@@ -8,8 +8,38 @@ namespace SharpTS.Compilation;
 public partial class ILCompiler
 {
     private readonly Dictionary<Stmt.Class, Expr.ClassExpr> _runtimeClassDeclarations = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Stmt.Class> _repeatingClassDeclarations = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<TypeBuilder, MethodBuilder> _receiverInitializers = new(ReferenceEqualityComparer.Instance);
     private bool _usesRuntimeParents;
+
+    private void PrepareRepeatingClassDeclarations(IEnumerable<Stmt> statements)
+    {
+        var collector = new ClassDeclarationCollector();
+        foreach (var statement in statements) collector.Visit(statement);
+        foreach (var (declaration, owner) in collector.LexicalOwners)
+            _classes.DeclarationLexicalOwners[declaration] = owner;
+        foreach (var declaration in collector.RepeatingDeclarations)
+        {
+            var leaf = Expr.GetSuperclassLeafName(declaration.SuperclassExpr);
+            if (declaration.IsDeclare || declaration.Decorators is { Count: > 0 }
+                || declaration.AutoAccessors is { Count: > 0 }
+                || declaration.Methods.Any(method => method.Decorators is { Count: > 0 }
+                    || method.Parameters.Any(parameter => parameter.Decorators is { Count: > 0 }))
+                || declaration.Fields.Any(field => field.Decorators is { Count: > 0 })
+                || (declaration.Accessors?.Any(accessor => accessor.Decorators is { Count: > 0 }) ?? false)
+                || Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(leaf ?? "")
+                || leaf is "Array" or "Promise" or "Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer")
+                continue;
+            _repeatingClassDeclarations.Add(declaration);
+            _runtimeClassDeclarations.TryAdd(declaration, CreateRuntimeClassExpression(declaration));
+        }
+    }
+
+    private static Expr.ClassExpr CreateRuntimeClassExpression(Stmt.Class declaration) =>
+        new(declaration.Name, declaration.TypeParams,
+            declaration.SuperclassExpr, declaration.SuperclassTypeArgs, declaration.Methods,
+            declaration.Fields, declaration.Accessors, declaration.AutoAccessors, declaration.Interfaces,
+            declaration.InterfaceTypeArgs, declaration.IsAbstract, declaration.StaticInitializers);
 
     private bool HasLexicalClassExpressionOwner(Stmt.Class declaration)
     {
@@ -21,6 +51,7 @@ public partial class ILCompiler
 
     private bool TryDefineRuntimeClassDeclaration(Stmt.Class declaration)
     {
+        bool repeating = _repeatingClassDeclarations.Contains(declaration);
         var leaf = Expr.GetSuperclassLeafName(declaration.SuperclassExpr);
         bool expressionOwnedParent = ResolveClassExpressionParent(
             _typeMap.GetClassType(declaration)?.Superclass, declaration.SuperclassExpr) != null;
@@ -31,18 +62,14 @@ public partial class ILCompiler
         bool captureLexicalOwner = HasLexicalClassExpressionOwner(declaration)
             && declaration.Decorators is not { Count: > 0 }
             && leaf is not ("Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer");
-        if ((declaration.SuperclassExpr == null && !captureLexicalOwner) || declaration.IsDeclare) return false;
-        if (!captureLexicalOwner && leaf != null && ((_typeMap.Get(declaration.SuperclassExpr!) is not TypeSystem.TypeInfo.Any
+        if ((declaration.SuperclassExpr == null && !captureLexicalOwner && !repeating) || declaration.IsDeclare) return false;
+        if (!captureLexicalOwner && !repeating && leaf != null && ((_typeMap.Get(declaration.SuperclassExpr!) is not TypeSystem.TypeInfo.Any
             && _classes.Builders.ContainsKey(GetDefinitionContext().ResolveClassName(leaf)) && !expressionOwnedParent)
             || Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(leaf)
             || leaf is "Array" or "Promise" or "Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer")) return false;
-        if (!captureLexicalOwner && declaration.SuperclassExpr is Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 }) return false;
-        var expression = new Expr.ClassExpr(declaration.Name, declaration.TypeParams,
-            declaration.SuperclassExpr, declaration.SuperclassTypeArgs, declaration.Methods,
-            declaration.Fields, declaration.Accessors, declaration.AutoAccessors, declaration.Interfaces,
-            declaration.InterfaceTypeArgs, declaration.IsAbstract, declaration.StaticInitializers);
-        _runtimeClassDeclarations.Add(declaration, expression);
-        _usesRuntimeParents |= declaration.SuperclassExpr != null;
+        if (!captureLexicalOwner && !repeating && declaration.SuperclassExpr is Expr.ClassExpr { Methods.Count: 0, Fields.Count: 0 }) return false;
+        if (!_runtimeClassDeclarations.TryGetValue(declaration, out var expression))
+            _runtimeClassDeclarations.Add(declaration, expression = CreateRuntimeClassExpression(declaration));
         if (_typeMap.GetClassType(declaration) is { } checkedType) _typeMap.SetClassExprType(expression, checkedType);
         CollectClassExpression(expression);
         _classExprs.Names[expression] = GetDefinitionContext().GetQualifiedClassName(_classExprs.Names[expression]);
@@ -59,9 +86,15 @@ public partial class ILCompiler
             _classes.LexicalEnclosingClasses[_classExprs.Names[expression]] = ownerName;
         }
         DefineClassExpression(expression);
+        _usesRuntimeParents |= declaration.SuperclassExpr != null && (!repeating || HasRuntimeParent(expression));
         _classes.BlockScopedBuilders[declaration] = _classExprs.Builders[expression];
         _classes.DeclarationNames[declaration] = _classExprs.Names[expression];
         _classes.DeclarationNamespaces[declaration] = _currentNamespacePath;
+        if (_typeMap.GetClassType(declaration) is { } declaredType)
+        {
+            _typeMapper.RegisterCheckedClassName(declaredType.Core.DeclarationId, _classExprs.Names[expression]);
+            _typeMap.SetClassType(_classExprs.Names[expression], declaredType);
+        }
         return true;
     }
 

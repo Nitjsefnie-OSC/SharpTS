@@ -527,4 +527,7 @@ public partial class CompilationContext
 
     /// <summary>Snapshot capture fields that must receive the lexical declaration's initialized value.</summary>
     public Dictionary<string, List<(LocalBuilder DisplayClass, FieldBuilder Field)>> LexicalCaptureWriteBacks { get; } = [];
+
+    internal HashSet<Stmt.Class> RuntimeClassLexicalShadows { get; } = new(ReferenceEqualityComparer.Instance);
+    internal Dictionary<Stmt.Class, int> RuntimeClassCaptureWriteBackStarts { get; } = new(ReferenceEqualityComparer.Instance);
 }

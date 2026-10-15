@@ -6,6 +6,92 @@ namespace SharpTS.Compilation;
 
 public abstract partial class ExpressionEmitterBase
 {
+    protected bool IsRuntimeClassDeclarationReference(Expr expression)
+    {
+        if (expression is not Expr.Variable || Ctx.RuntimeClassDeclarations == null || Ctx.TypeMap == null)
+            return false;
+        static int DeclarationId(SharpTS.TypeSystem.TypeInfo? type) => type switch
+        {
+            SharpTS.TypeSystem.TypeInfo.Class cls => cls.Core.DeclarationId,
+            SharpTS.TypeSystem.TypeInfo.GenericClass cls => cls.Core.DeclarationId,
+            SharpTS.TypeSystem.TypeInfo.InstantiatedGeneric generic => DeclarationId(generic.GenericDefinition),
+            _ => 0
+        };
+        int declarationId = DeclarationId(Ctx.TypeMap.Get(expression));
+        return declarationId != 0 && Ctx.RuntimeClassDeclarations.Keys.Any(declaration =>
+            Ctx.TypeMap.GetClassType(declaration)?.Core.DeclarationId == declarationId);
+    }
+
+    protected void EmitRuntimeClassConstruction(Expr.New expression)
+    {
+        var constructor = SpillBoxed(expression.Callee);
+        EmitArgsArrayWithSpread(expression.Arguments);
+        var arguments = IL.DeclareLocal(Types.ObjectArray);
+        IL.Emit(OpCodes.Stloc, arguments);
+        IL.Emit(OpCodes.Ldloc, constructor);
+        IL.Emit(OpCodes.Ldloc, arguments);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.Value);
+        SetStackUnknown();
+    }
+
+    protected void PublishRuntimeClassBinding(Stmt.Class declaration, string name, LocalBuilder definition)
+    {
+        bool shadowsOuter = Ctx.RuntimeClassLexicalShadows.Contains(declaration);
+        if (!shadowsOuter && Ctx.CellBindingLocals.TryGetValue(name, out var cell))
+        {
+            IL.Emit(OpCodes.Ldloc, cell);
+            IL.Emit(OpCodes.Ldloc, definition);
+            IL.Emit(OpCodes.Stfld, Types.StrongBoxOfObjectValueField);
+        }
+        else if (!shadowsOuter && Ctx.CapturedFunctionLocals?.Contains(name) == true
+            && Ctx.FunctionDisplayClassFields?.TryGetValue(name, out var functionField) == true)
+        {
+            if (Ctx.FunctionDisplayClassLocal != null)
+                IL.Emit(OpCodes.Ldloc, Ctx.FunctionDisplayClassLocal);
+            else if (GetFunctionDCField() is { } stateField)
+            {
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldfld, stateField);
+            }
+            else if (Ctx.CurrentArrowFunctionDCField != null)
+            {
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldfld, Ctx.CurrentArrowFunctionDCField);
+            }
+            else return;
+            IL.Emit(OpCodes.Ldloc, definition);
+            IL.Emit(OpCodes.Stfld, functionField);
+        }
+        else if (!shadowsOuter && Ctx.CapturedArrowLocals?.Contains(name) == true
+            && Ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var arrowField) == true
+            && Ctx.ArrowScopeDisplayClassLocal != null)
+        {
+            IL.Emit(OpCodes.Ldloc, Ctx.ArrowScopeDisplayClassLocal);
+            IL.Emit(OpCodes.Ldloc, definition);
+            IL.Emit(OpCodes.Stfld, arrowField);
+        }
+        else if (!shadowsOuter && Ctx.IsModuleTopLevel && Ctx.CapturedTopLevelVars?.Contains(name) == true
+            && Ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryField) == true)
+        {
+            if (Ctx.EntryPointDisplayClassLocal != null) IL.Emit(OpCodes.Ldloc, Ctx.EntryPointDisplayClassLocal);
+            else if (Ctx.EntryPointDisplayClassStaticField != null) IL.Emit(OpCodes.Ldsfld, Ctx.EntryPointDisplayClassStaticField);
+            else return;
+            IL.Emit(OpCodes.Ldloc, definition);
+            IL.Emit(OpCodes.Stfld, entryField);
+        }
+
+        if (Ctx.LexicalCaptureWriteBacks.TryGetValue(name, out var writeBacks))
+        {
+            int start = Ctx.RuntimeClassCaptureWriteBackStarts.GetValueOrDefault(declaration);
+            foreach (var (displayClass, field) in writeBacks.Skip(start))
+            {
+                IL.Emit(OpCodes.Ldloc, displayClass);
+                IL.Emit(OpCodes.Ldloc, definition);
+                IL.Emit(OpCodes.Stfld, field);
+            }
+        }
+    }
+
     protected bool TryEmitGuestSuperCall(Expr.Call call)
     {
         if ((!Ctx.HasGuestReceiver && !Ctx.IsStaticSuperContext) || call.Callee is not Expr.Super { Method: not null } super

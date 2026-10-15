@@ -14,6 +14,12 @@ public partial class ILEmitter
 {
     protected override void EmitNew(Expr.New n)
     {
+        if (n.Callee is Expr.This && !_ctx.IsInstanceMethod && _ctx.CurrentClassExpr != null
+            && _ctx.RuntimeClassDeclarations?.Values.Any(expression => ReferenceEquals(expression, _ctx.CurrentClassExpr)) == true)
+        {
+            EmitRuntimeClassConstruction(n);
+            return;
+        }
         // `new this(...)` inside a static method/accessor constructs the enclosing class.
         // The callee is Expr.This, which doesn't resolve to a class name via the normal
         // Variable/Get chain extraction — rewrite as Expr.Variable(CurrentClassName).
@@ -24,6 +30,12 @@ public partial class ILEmitter
         }
 
         var (namespaceParts, className) = ExtractQualifiedNameFromCallee(n.Callee);
+
+        if (IsRuntimeClassDeclarationReference(n.Callee))
+        {
+            EmitRuntimeClassConstruction(n);
+            return;
+        }
 
         if (n.Callee is Expr.Variable expressionVariable
             && _ctx.VarToClassExpr?.ContainsKey(expressionVariable.Name.Lexeme) == true

@@ -356,7 +356,7 @@ public partial class ILEmitter
             // so declaration emission can refresh the snapshot with the
             // initialized value, preserving the binding after the TDZ ends.
             if (_ctx.Locals.TryGetTag(capturedVar, out var lexicalTag)
-                && lexicalTag is Token)
+                && lexicalTag is Token or Stmt.Class)
             {
                 var lexicalDcInstance = IL.DeclareLocal(displayClass);
                 IL.Emit(OpCodes.Dup);

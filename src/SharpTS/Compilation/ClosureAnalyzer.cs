@@ -17,6 +17,13 @@ namespace SharpTS.Compilation;
 /// <seealso cref="CompilationContext"/>
 public class ClosureAnalyzer : AstVisitorBase
 {
+    private readonly IReadOnlyDictionary<Stmt.Class, Expr.ClassExpr>? _runtimeClassDeclarations;
+
+    public ClosureAnalyzer(IReadOnlyDictionary<Stmt.Class, Expr.ClassExpr>? runtimeClassDeclarations = null)
+    {
+        _runtimeClassDeclarations = runtimeClassDeclarations;
+    }
+
     // Maps each function AST node to the set of variable names it captures
     private readonly Dictionary<object, HashSet<string>> _captures = [];
 
@@ -313,6 +320,8 @@ public class ClosureAnalyzer : AstVisitorBase
                 DeclareVariable(lt.Name.Lexeme, isPerIterationBinding: true);
             else if (stmt is Stmt.Const ct)
                 DeclareVariable(ct.Name.Lexeme, isPerIterationBinding: true);
+            else if (stmt is Stmt.Class cl)
+                DeclareVariable(cl.Name.Lexeme, isPerIterationBinding: true);
         }
     }
 
@@ -676,7 +685,12 @@ public class ClosureAnalyzer : AstVisitorBase
 
     protected override void VisitClass(Stmt.Class stmt)
     {
-        DeclareVariable(stmt.Name.Lexeme);
+        DeclareVariable(stmt.Name.Lexeme, isPerIterationBinding: true);
+        if (_runtimeClassDeclarations?.TryGetValue(stmt, out var runtimeExpression) == true)
+        {
+            VisitClassExpr(runtimeExpression);
+            return;
+        }
         foreach (var expression in ClassDefinitionExpressions.Enumerate(stmt))
             Visit(expression);
         foreach (var method in stmt.Methods)

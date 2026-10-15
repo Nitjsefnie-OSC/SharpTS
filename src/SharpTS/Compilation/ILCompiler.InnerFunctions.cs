@@ -726,7 +726,7 @@ public partial class ILCompiler
 
     private void PredeclareCapturedLexicalLocals(ILGenerator il, CompilationContext ctx, List<Stmt> statements)
     {
-        var lexicalTokens = new Dictionary<string, Token>(StringComparer.Ordinal);
+        var lexicalTokens = new Dictionary<string, object>(StringComparer.Ordinal);
         foreach (var statement in statements)
         {
             switch (statement)
@@ -737,6 +737,9 @@ public partial class ILCompiler
                 case Stmt.Var { IsVar: false } lexical:
                     lexicalTokens[lexical.Name.Lexeme] = lexical.Name;
                     break;
+                case Stmt.Class declaration when _runtimeClassDeclarations.ContainsKey(declaration):
+                    lexicalTokens[declaration.Name.Lexeme] = declaration;
+                    break;
                 case Stmt.Sequence sequence:
                     foreach (var nested in sequence.Statements)
                     {
@@ -744,6 +747,8 @@ public partial class ILCompiler
                             lexicalTokens[nestedConst.Name.Lexeme] = nestedConst.Name;
                         else if (nested is Stmt.Var { IsVar: false } nestedLexical)
                             lexicalTokens[nestedLexical.Name.Lexeme] = nestedLexical.Name;
+                        else if (nested is Stmt.Class nestedClass && _runtimeClassDeclarations.ContainsKey(nestedClass))
+                            lexicalTokens[nestedClass.Name.Lexeme] = nestedClass;
                     }
                     break;
             }
@@ -1082,7 +1087,7 @@ public partial class ILCompiler
                     if (existingLocal.LocalType.IsValueType)
                         il.Emit(OpCodes.Box, existingLocal.LocalType);
 
-                    if (ctx.Locals.TryGetTag(capturedVar, out var lexicalTag) && lexicalTag is Token)
+                    if (ctx.Locals.TryGetTag(capturedVar, out var lexicalTag) && lexicalTag is Token or Stmt.Class)
                     {
                         if (!ctx.LexicalCaptureWriteBacks.TryGetValue(capturedVar, out var writeBacks))
                             ctx.LexicalCaptureWriteBacks[capturedVar] = writeBacks = [];

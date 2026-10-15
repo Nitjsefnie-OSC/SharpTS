@@ -61,11 +61,14 @@ public partial class ILEmitter
         // Block-scoped class locals start as undefined and are initialized at
         // the declaration statement. Observe the class TDZ before ordinary
         // local resolution.
-        if (_ctx.Locals.TryGetTag(name, out var classTag) && classTag is Stmt.Class)
+        if (_ctx.Locals.TryGetTag(name, out var classTag) && classTag is Stmt.Class classDeclaration)
         {
             var local = _ctx.Locals.GetLocal(name)!;
             var initializedLabel = IL.DefineLabel();
-            IL.Emit(OpCodes.Ldloc, local);
+            if (_ctx.RuntimeClassDeclarations?.ContainsKey(classDeclaration) != true
+                || !_resolver.TryLoadVariable(name).HasValue)
+                IL.Emit(OpCodes.Ldloc, local);
+            _ctx.EmitLexicalTdzValueCheck(IL, name);
             IL.Emit(OpCodes.Dup);
             IL.Emit(OpCodes.Isinst, _ctx.Runtime!.Sentinels.UndefinedType);
             IL.Emit(OpCodes.Brfalse, initializedLabel);

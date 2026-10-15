@@ -76,6 +76,21 @@ public sealed class NumberConstructorDescriptorTests
             Object.getOwnPropertyDescriptor(constructor, "custom")!.set === set);
         """;
 
+    public const string NameSource = """
+        const constructor: any = Number;
+        function choose(flag: boolean) { return flag ? Number : Number; }
+        const dynamic: any = choose(true);
+        console.log(constructor.name, constructor["name"], dynamic.name, Reflect.get(constructor, "name"));
+        const descriptor = Object.getOwnPropertyDescriptor(constructor, "name")!;
+        console.log(descriptor.value, descriptor.writable, descriptor.enumerable, descriptor.configurable);
+        Object.defineProperty(constructor, "name", { value: "Numeric", configurable: true });
+        console.log(constructor.name, constructor["name"], Reflect.get(constructor, "name"),
+            Object.getOwnPropertyDescriptor(constructor, "name")!.value);
+        class User {}
+        const user: any = User;
+        console.log(user.name);
+        """;
+
     public const string InvariantSource = """
         const constructor: any = Number;
         Object.defineProperty(constructor, "fixed", { value: 7 });
@@ -167,6 +182,7 @@ public sealed class NumberConstructorDescriptorTests
         yield return ["data", DataSource, "3 3 true\n5 true true true\ntrue true true\ntrue true true\ntrue true true\ntrue false true\n"];
         yield return ["accessors", AccessorSource, "true true true true false false 0 0\n4 1\n9 1\n12 12\ntrue 13 9 3 2\ntrue true false 3 2\n"];
         yield return ["setter-issue", SetterSource, "1 true\n2 true\n4 true true\n"];
+        yield return ["name", NameSource, "Number Number Number Number\nNumber false false true\nNumeric Numeric Numeric Numeric\nUser\n"];
         yield return ["invariants", InvariantSource, "7 false\ntrue\ntrue false false false\ntrue\n1 2 true 3 true\ntrue true false false\n"];
         yield return ["intrinsics", IntrinsicSource, "8 true\ntrue false false true\ntrue true\ntrue true true true 12\ntrue false\n99 true 12\nNumber false false true 1 false false true\nNumeric 2 true true\n"];
         yield return ["symbols", SymbolSource, "4 4 true true\ntrue true 0 0\n7\n9 true 10 8 2 2\ntrue true true\nfalse false true\n"];
@@ -175,7 +191,7 @@ public sealed class NumberConstructorDescriptorTests
     public static IEnumerable<object[]> ParityCases()
         // Compiled native constructors retain separate getterless accessor (#2087),
         // Symbol and metadata limitations; #2024 repairs Number's interpreted descriptors.
-        => Cases().SelectMany(row => ((string)row[0] is "issue" or "data" or "invariants" or "setter-issue"
+        => Cases().SelectMany(row => ((string)row[0] is "issue" or "data" or "invariants" or "setter-issue" or "name"
                 ? new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
                 : new[] { ExecutionMode.Interpreted })
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));

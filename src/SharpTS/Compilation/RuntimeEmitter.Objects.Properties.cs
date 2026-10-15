@@ -2535,6 +2535,14 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldstr, "name");
             il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
             il.Emit(OpCodes.Brfalse, notClassNameLabel);
+            var notNumberNameLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Ldtoken, _types.Double);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Bne_Un, notNumberNameLabel);
+            il.Emit(OpCodes.Ldstr, "Number");
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notNumberNameLabel);
             var genericTypeNameLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldloc, typeLocal);
             il.Emit(OpCodes.Ldtoken, _types.BigInteger);

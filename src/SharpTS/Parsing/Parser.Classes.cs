@@ -2,6 +2,10 @@ namespace SharpTS.Parsing;
 
 public partial class Parser
 {
+    private bool IsConstructorPropertyName()
+        => Check(TokenType.CONSTRUCTOR)
+            || Check(TokenType.STRING) && Peek().Literal is "constructor";
+
     private Token ParseQualifiedImplementedTypeName()
     {
         Token first = ConsumeIdentifierName("Expect interface name.");
@@ -451,22 +455,30 @@ public partial class Parser
                     throw new Exception("Parse Error: 'declare' modifier is only valid on fields, not methods.");
                 }
 
+                bool isConstructor = IsConstructorPropertyName();
+
                 // Abstract methods cannot be constructors
-                if (isMemberAbstract && Check(TokenType.CONSTRUCTOR))
+                if (isMemberAbstract && isConstructor)
                 {
                     throw new Exception("Parse Error: A constructor cannot be abstract.");
                 }
 
                 // Override cannot be used on constructors
-                if (isOverride && Check(TokenType.CONSTRUCTOR))
+                if (isOverride && isConstructor)
                 {
                     throw new Exception("Parse Error: A constructor cannot use the 'override' modifier.");
+                }
+
+                if (isMemberAsync && isConstructor && !isStatic)
+                {
+                    throw new Exception("Parse Error: A constructor cannot be async.");
                 }
 
                 if (isMemberAbstract)
                 {
                     // Parse abstract method: signature only, no body
-                    Token methodName = Consume(TokenType.IDENTIFIER, "Expect method name.");
+                    int methodStart = CurrentSourceStart();
+                    Token methodName = ConsumePropertyNameOrLiteral("Expect method name.");
                     List<TypeParam>? typeParams2 = ParseTypeParameters();
                     Token parametersOpen = Consume(TokenType.LEFT_PAREN, "Expect '(' after method name.");
 
@@ -501,19 +513,18 @@ public partial class Parser
                     var func = new Stmt.Function(methodName, typeParams2, thisType, parameters, null, returnType, isStatic, access, IsAbstract: true, IsOverride: isOverride, IsAsync: isMemberAsync, IsGenerator: isMemberGenerator, Decorators: memberDecorators);
                     AttachEditorSyntax(func, thisTypeNode);
                     AttachEditorSyntax(func, returnTypeNode);
-                    RecordFunctionSyntax(func, methodName.Start, parametersOpen, parametersClose, ConsumedSourceEnd, null);
+                    RecordFunctionSyntax(func, methodStart, parametersOpen, parametersClose, ConsumedSourceEnd, null);
                     methods.Add(func);
                 }
                 else
                 {
                     // Validate: generator cannot be used with constructor
-                    if (isMemberGenerator && Check(TokenType.CONSTRUCTOR))
+                    if (isMemberGenerator && isConstructor)
                     {
                         throw new Exception("Parse Error: A constructor cannot be a generator.");
                     }
 
-                    string kind = "method";
-                    if (Check(TokenType.CONSTRUCTOR)) kind = "constructor";
+                    string kind = isConstructor ? "constructor" : "method";
                     var func = (Stmt.Function)FunctionDeclaration(
                         kind, isMemberAsync, isMemberGenerator, isDeclare: isDeclare);
                     var originalFunction = func;
@@ -1051,14 +1062,20 @@ public partial class Parser
                     throw new Exception("Parse Error: 'declare' modifier is only valid on fields, not methods.");
                 }
 
+                bool isConstructor = IsConstructorPropertyName();
+
                 // Validate: generator cannot be used with constructor
-                if (isMemberGenerator && Check(TokenType.CONSTRUCTOR))
+                if (isMemberGenerator && isConstructor)
                 {
                     throw new Exception("Parse Error: A constructor cannot be a generator.");
                 }
 
-                string kind = "method";
-                if (Check(TokenType.CONSTRUCTOR)) kind = "constructor";
+                if (isMemberAsync && isConstructor && !isStatic)
+                {
+                    throw new Exception("Parse Error: A constructor cannot be async.");
+                }
+
+                string kind = isConstructor ? "constructor" : "method";
                 var func = (Stmt.Function)FunctionDeclaration(kind, isMemberAsync, isMemberGenerator);
                 var originalFunction = func;
                 func = func with { IsStatic = isStatic, Access = access };

@@ -19,17 +19,15 @@ public partial class Parser
             name = cm.Name;
             computedKey = cm.ComputedKey;
         }
-        else if (kind == "constructor" && Match(TokenType.CONSTRUCTOR))
+        else if (kind == "constructor")
         {
-            name = Previous();
+            name = Match(TokenType.CONSTRUCTOR)
+                ? Previous()
+                : ConsumePropertyNameOrLiteral("Expect constructor name.");
         }
         else if (kind == "method")
         {
-            // ES2015+ class MethodDefinition accepts any PropertyName —
-            // including reserved words like `delete`, `class`, `if`, etc.
-            // (e.g. Map has a `delete` method). ConsumePropertyName handles
-            // the identifier-from-keyword conversion for AST consistency.
-            name = ConsumePropertyName($"Expect {kind} name.");
+            name = ConsumePropertyNameOrLiteral($"Expect {kind} name.");
         }
         else
         {

@@ -92,6 +92,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(invoke);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInvoker, "Invoke", _types.Object, _types.Object));
+        EmitNormalizeClrNumericReturn(il);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(fallback);
         il.Emit(OpCodes.Ldarg_0);

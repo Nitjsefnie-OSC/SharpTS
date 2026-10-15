@@ -907,6 +907,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, propertyInfoLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object));
+        EmitNormalizeClrNumericReturn(il);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(noPropertyLabel);
@@ -987,6 +988,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1); // name
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        EmitNormalizeClrNumericReturn(il);
         il.Emit(OpCodes.Stloc, getMemberResultLocal);
 
         // If result is null, fall through to undefined
@@ -2342,6 +2344,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldc_I4_0);
             il.Emit(OpCodes.Newarr, _types.Object);
             il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+            EmitNormalizeClrNumericReturn(il);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noComputedStaticGetterLabel);
 
@@ -2505,6 +2508,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, staticFieldLocal);
             il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(FieldInfo), "GetValue", _types.Object));
+            EmitNormalizeClrNumericReturn(il);
             il.Emit(OpCodes.Ret);
 
             il.MarkLabel(noStaticFieldLabel);
@@ -2699,6 +2703,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, baseStaticFieldLocal);
             il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(FieldInfo), "GetValue", _types.Object));
+            EmitNormalizeClrNumericReturn(il);
             il.Emit(OpCodes.Ret);
         }
 
@@ -3175,6 +3180,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1); // args (object[])
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        EmitNormalizeClrNumericReturn(il);
         il.Emit(OpCodes.Ret);
 
         // Try "Call" method (BuiltInMethod.Call(Interpreter, List<object?>))
@@ -3206,6 +3212,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, [typeof(IEnumerable<object>)])!);
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        EmitNormalizeClrNumericReturn(il);
         il.Emit(OpCodes.Ret);
 
         // No callable method found - return null

@@ -746,6 +746,7 @@ public partial class RuntimeEmitter
         invokeIL.Emit(OpCodes.Ldloc, adjustedArgsLocal);
         invokeIL.Emit(OpCodes.Newobj, spanCtorFromArray);
         invokeIL.Emit(OpCodes.Callvirt, invokerInvokeSpan);
+        EmitNormalizeClrNumericReturn(invokeIL);
         invokeIL.Emit(OpCodes.Ret);
 
         // InvokeWithThis method: public object InvokeWithThis(object thisArg, object[] args)
@@ -957,6 +958,7 @@ public partial class RuntimeEmitter
         iwt.Emit(OpCodes.Ldloc, iwtAdjustedArgsLocal);
         iwt.Emit(OpCodes.Newobj, iwtSpanCtor);
         iwt.Emit(OpCodes.Callvirt, iwtInvokerInvokeSpan);
+        EmitNormalizeClrNumericReturn(iwt);
         iwt.Emit(OpCodes.Ret);
 
         EmitTSFunctionInvokeConstructed(typeBuilder, functionValues, inputs.FunctionAttributes,

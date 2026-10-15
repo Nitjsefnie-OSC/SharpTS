@@ -249,6 +249,7 @@ public partial class TypeChecker
     // Compound assignment operators (TypeChecker.Operators.cs)
     internal TypeInfo VisitCompoundAssign(Expr.CompoundAssign expr) => CheckCompoundAssign(expr);
     internal TypeInfo VisitCompoundSet(Expr.CompoundSet expr) => CheckCompoundSet(expr);
+    internal TypeInfo VisitCompoundSetPrivate(Expr.CompoundSetPrivate expr) => CheckCompoundSetPrivate(expr);
     internal TypeInfo VisitCompoundSetIndex(Expr.CompoundSetIndex expr) => CheckCompoundSetIndex(expr);
     internal TypeInfo VisitLogicalAssign(Expr.LogicalAssign expr) => CheckLogicalAssign(expr);
     internal TypeInfo VisitLogicalSet(Expr.LogicalSet expr) => CheckLogicalSet(expr);

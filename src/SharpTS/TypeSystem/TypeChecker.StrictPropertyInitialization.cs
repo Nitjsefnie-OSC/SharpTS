@@ -195,6 +195,12 @@ public partial class TypeChecker
                 assigned = AnalyzeInitializationExpression(compoundValue, assigned);
                 assigned.Add(compoundName.Lexeme);
                 break;
+            case Expr.CompoundSetPrivate compound:
+                // The initial private read requires an installed field; this write
+                // cannot establish definite initialization of its own target.
+                assigned = AnalyzeInitializationExpression(compound.Object, assigned);
+                assigned = AnalyzeInitializationExpression(compound.Value, assigned);
+                break;
             case Expr.LogicalSet { Object: Expr.This, Name: var logicalName, Value: var logicalValue }:
                 assigned = AnalyzeInitializationExpression(logicalValue, assigned);
                 assigned.Add(logicalName.Lexeme);

@@ -1265,6 +1265,7 @@ public abstract partial class ExpressionEmitterBase
         Expr.Assign a => ExprContainsSuspension(a.Value),
         Expr.CompoundAssign ca => ExprContainsSuspension(ca.Value),
         Expr.CompoundSet cs => ExprContainsSuspension(cs.Object) || ExprContainsSuspension(cs.Value),
+        Expr.CompoundSetPrivate privateCompound => ExprContainsSuspension(privateCompound.Object) || ExprContainsSuspension(privateCompound.Value),
         Expr.CompoundSetIndex csi => ExprContainsSuspension(csi.Object) || ExprContainsSuspension(csi.Index) || ExprContainsSuspension(csi.Value),
         Expr.LogicalAssign la => ExprContainsSuspension(la.Value),
         Expr.LogicalSet lst => ExprContainsSuspension(lst.Object) || ExprContainsSuspension(lst.Value),

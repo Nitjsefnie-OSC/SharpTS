@@ -3138,6 +3138,7 @@ public partial class TypeChecker
         Expr.Unary u => u.Operator.Line,
         Expr.CompoundAssign ca => ca.Name.Line,
         Expr.CompoundSet cs => cs.Name.Line,
+        Expr.CompoundSetPrivate cs => cs.Operator.Line,
         Expr.Call c => TryGetExprLine(c.Callee),
         Expr.New n => TryGetExprLine(n.Callee),
         // Index forms carry no token of their own — attribute to their object's line so a write

@@ -196,7 +196,6 @@ public sealed class PrivateRenameDomainTests
     }
 
     [Theory]
-    [InlineData("this.#value += 1;")]
     [InlineData("this.#value ||= 1;")]
     [InlineData("this.#value &&= 1;")]
     [InlineData("this.#value ??= 1;")]
@@ -204,11 +203,26 @@ public sealed class PrivateRenameDomainTests
     [InlineData("++this.#value;")]
     [InlineData("this.#value--;")]
     [InlineData("--this.#value;")]
-    public void ExistingUnsupportedPrivateCompoundAndUpdateSyntaxRefusesTheWholeDomain(string use)
+    public void UnsupportedPrivateLogicalAndUpdateSyntaxRefusesTheWholeDomain(string use)
     {
         var value = Check("class Box { /*selected*/#value: number = 1; inspect(): void { " + use + " } }");
         Assert.False(value.Parse.IsSuccess);
         Assert.Equal(PrivateRenameDomainStatus.IncompleteSyntax, Query(value, "selected").Status);
+    }
+
+    [Fact]
+    public void PrivateCompoundWriteJoinsItsCheckedRenameDomain()
+    {
+        var value = Check("class Box { /*selected*/#value: number = 1; inspect(): void { this./*write*/#value += 1; } }");
+        Clean(value);
+        var domain = Domain(value, "selected");
+        Assert.Equal(new[] { Offset(value.Document.Text, "selected"), Offset(value.Document.Text, "write") },
+            domain.Tokens.Select(token => token.Start));
+        Assert.Same(domain.Symbol, Domain(value, "write").Symbol);
+        var occurrence = Assert.Single(value.Members.Occurrences,
+            occurrence => occurrence.Name.Start == Offset(value.Document.Text, "write"));
+        Assert.Equal(MemberOperation.Read | MemberOperation.Write, occurrence.Operations);
+        Clean(Check(Apply(value.Document.Text, domain, "#renamed")));
     }
 
     [Theory]

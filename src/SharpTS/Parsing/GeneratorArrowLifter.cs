@@ -648,6 +648,11 @@ internal sealed class GeneratorArrowLifter
                 var o = RewriteExpr(cs.Object); var v = RewriteExpr(cs.Value);
                 return ReferenceEquals(o, cs.Object) && ReferenceEquals(v, cs.Value) ? cs : new Expr.CompoundSet(o, cs.Name, cs.Operator, v);
             }
+            case Expr.CompoundSetPrivate cs:
+            {
+                var o = RewriteExpr(cs.Object); var v = RewriteExpr(cs.Value);
+                return ReferenceEquals(o, cs.Object) && ReferenceEquals(v, cs.Value) ? cs : new Expr.CompoundSetPrivate(o, cs.Name, cs.Operator, v);
+            }
             case Expr.CompoundSetIndex csi:
             {
                 var o = RewriteExpr(csi.Object); var idx = RewriteExpr(csi.Index); var v = RewriteExpr(csi.Value);

@@ -12,6 +12,7 @@ public partial class TypeChecker
     private void IndexNewTargetContexts(IEnumerable<Stmt> statements)
     {
         _newTargetContexts = NewTargetContextIndex.Collect(statements);
+        _privateCompoundConstructors = PrivateCompoundConstructorIndex.Collect(statements);
         _newTargetSourceTypes.Clear();
     }
 

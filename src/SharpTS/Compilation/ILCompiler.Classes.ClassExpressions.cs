@@ -1072,6 +1072,7 @@ public partial class ILCompiler
             Expr.Call call => call.Callee is Expr.Super,
             Expr.Binary bin => ContainsSuperCallInExpr(bin.Left) || ContainsSuperCallInExpr(bin.Right),
             Expr.PrivateIn presence => ContainsSuperCallInExpr(presence.Object),
+            Expr.CompoundSetPrivate privateCompound => ContainsSuperCallInExpr(privateCompound.Object) || ContainsSuperCallInExpr(privateCompound.Value),
             Expr.Logical log => ContainsSuperCallInExpr(log.Left) || ContainsSuperCallInExpr(log.Right),
             Expr.Grouping grp => ContainsSuperCallInExpr(grp.Expression),
             _ => false

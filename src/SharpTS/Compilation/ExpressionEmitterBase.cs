@@ -308,6 +308,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case Expr.CompoundSet cs:
                 EmitCompoundSet(cs);
                 break;
+            case Expr.CompoundSetPrivate privateCompound:
+                EmitCompoundSetPrivate(privateCompound);
+                break;
             case Expr.CompoundSetIndex csi:
                 EmitCompoundSetIndex(csi);
                 break;

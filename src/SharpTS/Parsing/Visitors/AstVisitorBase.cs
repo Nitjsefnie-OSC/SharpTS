@@ -54,6 +54,7 @@ public abstract class AstVisitorBase
             case Expr.Super e: VisitSuper(e); break;
             case Expr.CompoundAssign e: VisitCompoundAssign(e); break;
             case Expr.CompoundSet e: VisitCompoundSet(e); break;
+            case Expr.CompoundSetPrivate e: VisitCompoundSetPrivate(e); break;
             case Expr.CompoundSetIndex e: VisitCompoundSetIndex(e); break;
             case Expr.LogicalAssign e: VisitLogicalAssign(e); break;
             case Expr.LogicalSet e: VisitLogicalSet(e); break;
@@ -303,6 +304,12 @@ public abstract class AstVisitorBase
     }
 
     protected virtual void VisitCompoundSet(Expr.CompoundSet expr)
+    {
+        Visit(expr.Object);
+        Visit(expr.Value);
+    }
+
+    protected virtual void VisitCompoundSetPrivate(Expr.CompoundSetPrivate expr)
     {
         Visit(expr.Object);
         Visit(expr.Value);

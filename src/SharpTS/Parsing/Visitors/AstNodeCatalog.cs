@@ -54,6 +54,7 @@ public static class AstNodeCatalog
         typeof(Expr.Super),
         typeof(Expr.CompoundAssign),
         typeof(Expr.CompoundSet),
+        typeof(Expr.CompoundSetPrivate),
         typeof(Expr.CompoundSetIndex),
         typeof(Expr.LogicalAssign),
         typeof(Expr.LogicalSet),

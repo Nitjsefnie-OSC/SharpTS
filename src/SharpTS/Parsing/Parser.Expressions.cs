@@ -132,7 +132,8 @@ public partial class Parser
             return DispatchAssignmentTarget(expr, value, "Invalid compound assignment target.",
                 onVariable: (name, val) => new Expr.CompoundAssign(name, op, val),
                 onGet: (get, val) => new Expr.CompoundSet(get.Object, get.Name, op, val),
-                onGetIndex: (gi, val) => new Expr.CompoundSetIndex(gi.Object, gi.Index, op, val));
+                onGetIndex: (gi, val) => new Expr.CompoundSetIndex(gi.Object, gi.Index, op, val),
+                onGetPrivate: (gp, val) => new Expr.CompoundSetPrivate(gp.Object, gp.Name, op, val));
         }
 
         // Logical assignment operators (&&=, ||=, ??=) - have short-circuit semantics

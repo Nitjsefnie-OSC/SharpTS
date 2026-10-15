@@ -189,6 +189,7 @@ public abstract record Expr
     // Compound assignment
     public record CompoundAssign(Token Name, Token Operator, Expr Value) : Expr;
     public record CompoundSet(Expr Object, Token Name, Token Operator, Expr Value) : Expr;
+    public record CompoundSetPrivate(Expr Object, Token Name, Token Operator, Expr Value) : Expr;
     public record CompoundSetIndex(Expr Object, Expr Index, Token Operator, Expr Value) : Expr;
     // Logical assignment (&&=, ||=, ??=) - has short-circuit semantics
     public record LogicalAssign(Token Name, Token Operator, Expr Value) : Expr;

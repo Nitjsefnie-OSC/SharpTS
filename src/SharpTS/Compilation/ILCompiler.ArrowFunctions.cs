@@ -1046,6 +1046,10 @@ public partial class ILCompiler
                 CollectArrowsFromExpr(cs.Object);
                 CollectArrowsFromExpr(cs.Value);
                 break;
+            case Expr.CompoundSetPrivate privateCompound:
+                CollectArrowsFromExpr(privateCompound.Object);
+                CollectArrowsFromExpr(privateCompound.Value);
+                break;
             case Expr.CompoundSetIndex csi:
                 CollectArrowsFromExpr(csi.Object);
                 CollectArrowsFromExpr(csi.Index);
@@ -1202,7 +1206,7 @@ public partial class ILCompiler
 
         protected override void BeforeVisit(Expr expression)
         {
-            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CallPrivate or Expr.PrivateIn)
+            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CompoundSetPrivate or Expr.CallPrivate or Expr.PrivateIn)
             {
                 UsesDefinition = true;
                 StopTraversal();

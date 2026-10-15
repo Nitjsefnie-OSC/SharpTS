@@ -159,8 +159,10 @@ public partial class Parser
             // Check for generator method: * before method name
             bool isMemberGenerator = Match(TokenType.STAR);
 
-            // Check for auto-accessor: accessor name: type = value
-            if (Check(TokenType.ACCESSOR))
+            // `accessor` is a member name before a method/field continuation,
+            // including a final bare field; otherwise it starts an auto-accessor.
+            if (Check(TokenType.ACCESSOR) && !IsMethodOrFieldOpener(PeekNext().Type)
+                && PeekNext().Type != TokenType.RIGHT_BRACE)
             {
                 // Validate: generator cannot be used with auto-accessor
                 if (isMemberGenerator)
@@ -819,8 +821,10 @@ public partial class Parser
             // Check for generator method: * before method name
             bool isMemberGenerator = Match(TokenType.STAR);
 
-            // Check for auto-accessor: accessor name: type = value
-            if (Check(TokenType.ACCESSOR))
+            // `accessor` is a member name before a method/field continuation,
+            // including a final bare field; otherwise it starts an auto-accessor.
+            if (Check(TokenType.ACCESSOR) && !IsMethodOrFieldOpener(PeekNext().Type)
+                && PeekNext().Type != TokenType.RIGHT_BRACE)
             {
                 // Validate: generator cannot be used with auto-accessor
                 if (isMemberGenerator)

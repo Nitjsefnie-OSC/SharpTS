@@ -64,6 +64,8 @@ public partial class Parser
         List<Stmt.IndexSignature> indexSignatures = [];
         while (!Check(TokenType.RIGHT_BRACKET) && !Check(TokenType.RIGHT_BRACE) && !IsAtEnd())
         {
+            if (Match(TokenType.SEMICOLON)) continue;
+
             try
             {
             // Parse member decorators before modifiers
@@ -770,6 +772,8 @@ public partial class Parser
         List<Stmt> staticInitializers = [];
         while (!Check(TokenType.RIGHT_BRACKET) && !Check(TokenType.RIGHT_BRACE) && !IsAtEnd())
         {
+            if (Match(TokenType.SEMICOLON)) continue;
+
             try
             {
             // Parse modifiers (no decorators on class expression members per TypeScript spec)

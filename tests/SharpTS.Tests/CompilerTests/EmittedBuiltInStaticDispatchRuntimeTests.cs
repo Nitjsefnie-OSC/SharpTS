@@ -123,8 +123,9 @@ public sealed class EmittedBuiltInStaticDispatchRuntimeTests
             var days = Read(typeof(DateTime), "DaysInMonth")!;
             Assert.Equal("DaysInMonth", days.GetType().GetProperty("Name")!.GetValue(days));
             Assert.Same(days, Read(typeof(DateTime), "DaysInMonth"));
-            Assert.Equal(31, days.GetType().GetMethod("Invoke", [typeof(object[])])!
-                .Invoke(days, [new object[] { 2026, 1 }]));
+            // The CLR Int32 result crosses the function wrapper as a guest Number.
+            Assert.Equal(31d, Assert.IsType<double>(days.GetType().GetMethod("Invoke", [typeof(object[])])!
+                .Invoke(days, [new object[] { 2026, 1 }])));
             Assert.Equal(DateTime.MinValue, Assert.IsType<DateTime>(Read(typeof(DateTime), "MinValue")));
             Check(typeof(string), "fromCharCode", runtime.Strings.FromCharCode, 1);
             Check(typeof(string), "fromCodePoint", runtime.Strings.FromCodePoint, 1);

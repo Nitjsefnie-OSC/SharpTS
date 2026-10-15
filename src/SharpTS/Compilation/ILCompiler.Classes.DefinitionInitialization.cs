@@ -216,7 +216,17 @@ public partial class ILCompiler
             il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.Constructor);
             var function = il.DeclareLocal(_runtime.FunctionValues.Type);
             il.Emit(OpCodes.Stloc, function);
-            if (!getter.HasValue)
+            if (getter.HasValue)
+            {
+                il.Emit(OpCodes.Ldloc, target);
+                il.Emit(OpCodes.Ldloc, methodInfo);
+                EmitAccessorFunctionName(il, key, getter.Value);
+                il.Emit(OpCodes.Ldloc, function);
+                il.Emit(OpCodes.Callvirt, _runtime.FunctionValues.LengthGetter);
+                il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.CachedConstructor);
+                il.Emit(OpCodes.Stloc, function);
+            }
+            else
             {
                 var ordinaryKey = il.DefineLabel();
                 il.Emit(OpCodes.Ldloc, key);

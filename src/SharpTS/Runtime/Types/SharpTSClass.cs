@@ -452,6 +452,10 @@ public partial class SharpTSClass(
     public void AddSymbolAccessor(SharpTSSymbol symbol, SharpTSFunction func, bool isStatic, bool isGetter)
     {
         BindPrivateMemberOwner(func);
+        // Name only the new declaration. Rebuilding a paired descriptor or
+        // materializing the prototype must not restore a mutated accessor name.
+        string symbolName = symbol.Description is { } description ? $"[{description}]" : "";
+        NameAccessor(func, (isGetter ? "get " : "set ") + symbolName);
         switch (isStatic, isGetter)
         {
             case (true, true): (_staticSymbolGetters ??= [])[symbol] = func; break;

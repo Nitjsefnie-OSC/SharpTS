@@ -1840,6 +1840,8 @@ public partial class Interpreter
                 }
                 break;
             }
+            if (current is SharpTSFunctionPrototype functionPrototype)
+                return RuntimeValue.FromBoxed(GetPropertyValue(functionPrototype, memberName, simpleObj));
             // `function Foo(){}; Foo.prototype = new Array(1,2,3)` — an array standing in as a
             // prototype. Instances must inherit both its own indexed/named data and the
             // Array.prototype methods, the latter applied to the *original* receiver so
@@ -2188,9 +2190,7 @@ public partial class Interpreter
         }
         if (obj is SharpTSFunctionPrototype fnProto)
         {
-            return fnProto.GetMember(memberName)
-                ?? InheritedObjectPrototypeMember(fnProto, memberName)
-                ?? SharpTSUndefined.Instance;
+            return GetPropertyValue(fnProto, memberName);
         }
         if (obj is SharpTSFunctionProtoToString fnToStr)
         {

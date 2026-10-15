@@ -57,7 +57,8 @@ public sealed class SharpTSFunctionGlobal : ISharpTSCallable
 /// </summary>
 public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSSymbolPropertyBag
 {
-    private readonly PrototypePropertyOverlay _overlay = new(IsBuiltIn);
+    private readonly PrototypePropertyOverlay _overlay = new(IsBuiltIn,
+        initialStringKeys: ["length", "name", "constructor", "apply", "bind", "call", "toString"]);
 
     public SharpTSFunctionPrototype()
     {
@@ -108,6 +109,8 @@ public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSS
     public bool DeleteProperty(string name) => _overlay.DeleteProperty(name);
 
     public IEnumerable<string> OwnEnumerableKeys() => _overlay.OwnEnumerableKeys();
+
+    internal IEnumerable<string> OwnStringKeys() => _overlay.OwnVisibleStringKeys();
 
     public object? GetMember(string name)
     {

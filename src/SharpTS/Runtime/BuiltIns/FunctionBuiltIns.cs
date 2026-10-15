@@ -117,7 +117,8 @@ public static class FunctionBuiltIns
     private static RuntimeValue Bind(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var callable = receiver.ToObject() as ISharpTSCallable
-            ?? throw new Exception("Runtime Error: bind called on non-function.");
+            ?? throw new ThrowException(new SharpTSTypeError(
+                "Function.prototype.bind called on incompatible receiver"));
         if (callable is SharpTSProxy { IsCallable: false })
             throw new ThrowException(new SharpTSTypeError(
                 "Function.prototype.bind called on incompatible receiver"));
@@ -144,7 +145,8 @@ public static class FunctionBuiltIns
     private static RuntimeValue Call(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var callable = receiver.ToObject() as ISharpTSCallable
-            ?? throw new Exception("Runtime Error: call invoked on non-function.");
+            ?? throw new ThrowException(new SharpTSTypeError(
+                "Function.prototype.call called on incompatible receiver"));
 
         var thisArg = args.Length > 0 ? args[0].ToObject() : DefaultThisArgument(callable);
         var callArgs = new List<object?>(Math.Max(0, args.Length - 1));
@@ -161,7 +163,8 @@ public static class FunctionBuiltIns
     private static RuntimeValue Apply(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var callable = receiver.ToObject() as ISharpTSCallable
-            ?? throw new Exception("Runtime Error: apply invoked on non-function.");
+            ?? throw new ThrowException(new SharpTSTypeError(
+                "Function.prototype.apply called on incompatible receiver"));
 
         var thisArg = args.Length > 0 ? args[0].ToObject() : DefaultThisArgument(callable);
         var argsArray = args.Length > 1 ? args[1].ToObject() : null;

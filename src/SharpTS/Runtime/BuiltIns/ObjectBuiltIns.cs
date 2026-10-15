@@ -157,6 +157,11 @@ public static partial class ObjectBuiltIns
                     yield return new(key,
                         includeValues ? interpreter.GetPropertyValue(primitiveConstructor, key) : null);
                 yield break;
+            case SharpTSFunctionPrototype functionPrototype:
+                foreach (var key in functionPrototype.OwnEnumerableKeys().ToList())
+                    yield return new(key,
+                        includeValues ? interpreter.GetPropertyValue(functionPrototype, key) : null);
+                yield break;
             case ISharpTSFunctionObject function:
                 foreach (var key in FunctionObjectProperties.GetProperties(function, interpreter).OwnEnumerableKeys().ToList())
                     yield return new(key, includeValues ? interpreter.GetPropertyValue(function, key) : null);
@@ -1428,6 +1433,7 @@ public static partial class ObjectBuiltIns
                     .Concat(StaticMemberNames.Cast<object?>()).ToList(),
             SharpTSObject obj => GetOwnPropertyNamesFromObject(obj),
             ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.OwnStringKeys().Cast<object?>().ToList(),
+            SharpTSFunctionPrototype functionPrototype => functionPrototype.OwnStringKeys().Cast<object?>().ToList(),
             SharpTSProxy proxy => proxy.TrapOwnPropertyKeys(interpreter)
                 .OfType<string>().Cast<object?>().ToList(),
             SharpTSInstance inst => inst.GetFieldNames().Select(k => (object?)k).ToList(),

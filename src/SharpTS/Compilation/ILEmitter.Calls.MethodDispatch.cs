@@ -780,7 +780,9 @@ public partial class ILEmitter
         bool useTypedCore = _ctx.TypeMap?.IsStableExactPrimitiveMethodCall(methodGet) == true
             && _ctx.TypedPrimitiveInstanceMethodCores?.TryGetValue(
                 declaringClassName, out var classCores) == true
-            && classCores.TryGetValue(methodName, out typedCore);
+            && classCores.TryGetValue(methodName, out typedCore)
+            && (_ctx.RawObservingPrimitiveMethodCores?.Contains(typedCore) != true ||
+                _ctx.TypeMap.IsNativePrimitiveFieldMethodCall(methodGet));
         if (useTypedCore)
             dispatchBuilder = typedCore!;
 
@@ -1012,7 +1014,8 @@ public partial class ILEmitter
             && !_ctx.RuntimeFeatures.UsesClassPrototypeMutation
             && _ctx.TypedPrimitiveInstanceMethodCores?.TryGetValue(
                 declaringClassName, out var classCores) == true
-            && classCores.TryGetValue(methodName, out typedCore);
+            && classCores.TryGetValue(methodName, out typedCore)
+            && _ctx.RawObservingPrimitiveMethodCores?.Contains(typedCore) != true;
         if (useTypedCore)
             dispatchBuilder = typedCore!;
 

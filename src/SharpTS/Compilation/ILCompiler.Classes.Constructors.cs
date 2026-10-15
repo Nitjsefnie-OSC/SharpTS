@@ -438,9 +438,17 @@ public partial class ILCompiler
 
                         // Convert to proper type if needed
                         Type targetType = _typedInterop.PropertyTypes[className][pascalName];
-                        EmitTypeConversion(il, initEmitter, field.Initializer!, targetType);
-
-                        il.Emit(OpCodes.Stfld, backingField);
+                        if (GetClassRegistry().TryGetOwnGuestDataField((TypeBuilder)backingField.DeclaringType!, fieldName, out var guestField)
+                            && guestField.IsPrimitive)
+                        {
+                            initEmitter.EmitBoxIfNeeded(field.Initializer!);
+                            il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(guestField.GuestSetter));
+                        }
+                        else
+                        {
+                            EmitTypeConversion(il, initEmitter, field.Initializer!, targetType);
+                            il.Emit(OpCodes.Stfld, backingField);
+                        }
                     }
                     else
                     {

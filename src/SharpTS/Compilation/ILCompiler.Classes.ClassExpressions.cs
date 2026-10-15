@@ -212,7 +212,10 @@ public partial class ILCompiler
                 field.TypeAnnotation != null &&
                 classGenericParams.Any(p => p.Name == field.TypeAnnotation);
             if (isGenericField)
+            {
+                DefineGuestDataField(typeBuilder, field, _types.Object);
                 continue;
+            }
             DefineClassExpressionProperty(typeBuilder, classExpr, field, classGenericParams);
         }
 
@@ -301,7 +304,10 @@ public partial class ILCompiler
         setterIL.Emit(OpCodes.Ldarg_0);
         setterIL.Emit(OpCodes.Ldarg_1);
         setterIL.Emit(OpCodes.Stfld, backingField);
+        if (propertyType == _types.Double || propertyType == _types.Boolean)
+            EmitClearGuestFieldOverride(setterIL, _classes.InstanceFieldsField[_classExprs.Names[classExpr]], fieldName);
         setterIL.Emit(OpCodes.Ret);
+        DefineGuestDataField(typeBuilder, field, propertyType, backingField, getter, setter);
 
         // Only link setter to property for non-readonly
         if (!field.IsReadonly)
@@ -978,9 +984,17 @@ public partial class ILCompiler
                     emitter.EmitExpression(field.Initializer!);
 
                     Type targetType = _classExprs.PropertyTypes[classExpr][pascalName];
-                    EmitTypeConversion(il, emitter, field.Initializer!, targetType);
-
-                    il.Emit(OpCodes.Stfld, backingField);
+                    if (GetClassRegistry().TryGetOwnGuestDataField((TypeBuilder)backingField.DeclaringType!, fieldName, out var guestField)
+                        && guestField.IsPrimitive)
+                    {
+                        emitter.EmitBoxIfNeeded(field.Initializer!);
+                        il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(guestField.GuestSetter));
+                    }
+                    else
+                    {
+                        EmitTypeConversion(il, emitter, field.Initializer!, targetType);
+                        il.Emit(OpCodes.Stfld, backingField);
+                    }
                 }
                 else
                 {

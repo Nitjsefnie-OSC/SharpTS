@@ -159,7 +159,8 @@ public partial class ILCompiler
         // Resolve typed return type (optimization: avoid boxing for : number returns).
         // Widen a number/boolean slot to object if the checker flagged an undefined-reachable
         // return (e.g. `return undefined as any`) — the unboxed slot would coerce it (#344).
-        bool returnMayBeUndefined = ReturnSlotAnalysis.BlockReturnsMayBeUndefined(funcStmt.Body, _typeMap);
+        bool returnMayBeUndefined = ReturnSlotAnalysis.BlockReturnsMayBeUndefined(funcStmt.Body, _typeMap)
+            && !ProvesNativeStoredFieldReturn(funcStmt, paramTypes);
         Type returnType = ParameterTypeResolver.ResolveReturnType(
             funcType?.ReturnType, isAsync: false, _typeMapper, returnMayBeUndefined);
         if (_runtime is not null &&

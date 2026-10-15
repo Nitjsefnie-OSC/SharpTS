@@ -47,8 +47,14 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Bne_Un, external);
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Ldloc, value);
-                EmitBoxedFieldConversion(il, propertyTypes![property]);
-                il.Emit(OpCodes.Stfld, backing);
+                if (GetClassRegistry().TryGetOwnGuestDataField((TypeBuilder)backing.DeclaringType!, field.Name.Lexeme, out var guestField)
+                    && guestField.IsPrimitive)
+                    il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(guestField.GuestSetter));
+                else
+                {
+                    EmitBoxedFieldConversion(il, propertyTypes![property]);
+                    il.Emit(OpCodes.Stfld, backing);
+                }
                 il.Emit(OpCodes.Br, done);
                 il.MarkLabel(external);
             }

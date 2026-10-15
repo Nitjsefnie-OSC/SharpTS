@@ -20,6 +20,15 @@ public partial class ILEmitter
 {
     protected override void EmitBinary(Expr.Binary b)
     {
+        // A source number annotation does not prove the guest field currently
+        // contains a Number. In the boxed body, '+' must retain default-hint
+        // conversion and string concatenation rather than coercing on field read.
+        if (b.Operator.Type == TokenType.PLUS && !_ctx.NativePrimitiveFieldReads &&
+            PrimitiveFieldValueAnalysis.Reads(b, _ctx.TypeMap).Count > 0 && !NativeFieldFactsCover(b))
+        {
+            base.EmitBinary(b);
+            return;
+        }
         // Try constant folding first
         if (TryEmitConstantFolded(b))
             return;

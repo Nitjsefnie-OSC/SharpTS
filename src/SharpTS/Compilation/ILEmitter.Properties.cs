@@ -18,6 +18,11 @@ public partial class ILEmitter
 {
     protected override void EmitGet(Expr.Get g)
     {
+        object? factReceiver = PrimitiveFieldReceiverIdentity(g.Object);
+        if (factReceiver is null || !_nativePrimitiveFieldFacts.Any(fact =>
+                Equals(fact.Receiver, factReceiver) &&
+                fact.Getter.Name == "get_" + NamingConventions.ToPascalCase(g.Name.Lexeme)))
+            _nativePrimitiveFieldFacts.Clear();
         if (TryEmitGuestThisGet(g)) return;
         if (TryEmitEventEmitterFacadeGet(g)) return;
         if (TryEmitStableRecordDestructureGet(g))
@@ -2518,6 +2523,20 @@ public partial class ILEmitter
         if (getterBuilder == null)
             return false;
 
+        if (_ctx.ClassRegistry!.TryGetPrimitiveGuestField(className, propertyName, out var guestField))
+        {
+            if (_ctx.RuntimeFeatures?.UsesDynamicPropertyDescriptors != false)
+                return false;
+            bool nativeRead = _ctx.NativePrimitiveFieldReads ||
+                ConsumeNativePrimitiveFieldFact(receiver, guestField.NativeGetter);
+            if (!nativeRead)
+                getterBuilder = guestField.GuestGetter;
+        }
+        else
+        {
+            _nativePrimitiveFieldFacts.Clear();
+        }
+
         // CLR virtual dispatch inherits getter and setter methods independently.
         // A runtime subclass can instead mask this entire accessor with only a
         // setter, even when the receiver's static type names the base class.
@@ -2611,6 +2630,53 @@ public partial class ILEmitter
         var setterBuilder = _ctx.ResolveInstanceSetter(className, pascalPropertyName);
         if (setterBuilder == null)
             return false;
+
+        if (_ctx.ClassRegistry!.TryGetPrimitiveGuestField(className, propertyName, out var guestField))
+        {
+            if (_ctx.RuntimeFeatures?.UsesDynamicPropertyDescriptors != false ||
+                !_ctx.Classes.TryGetValue(className, out var guestClassType) ||
+                !EmitterTypeHelpers.TryResolveInstanceDispatch(guestClassType, guestField.NativeSetter,
+                    _ctx.EmittingTypeBuilder, out var nativeCast, out var nativeSetter) ||
+                !EmitterTypeHelpers.TryResolveInstanceDispatch(guestClassType, guestField.GuestSetter,
+                    _ctx.EmittingTypeBuilder, out var guestCast, out var guestSetter))
+                return false;
+
+            EmitExpression(receiver);
+            EnsureBoxed();
+            var savedReceiver = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, savedReceiver);
+            EmitExpression(value);
+            bool nativeValue = (_stackType == StackType.Double && _ctx.Types.IsDouble(guestField.NativeType)) ||
+                (_stackType == StackType.Boolean && _ctx.Types.IsBoolean(guestField.NativeType));
+            bool nativeStore = nativeValue && _ctx.ClassRegistry.CanUseNativePrimitiveField(guestField);
+            StackType valueStack = nativeValue ? _stackType : StackType.Unknown;
+            if (!nativeValue) EnsureBoxed();
+            var savedValue = IL.DeclareLocal(nativeValue ? guestField.NativeType : _ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, savedValue);
+
+            var done = IL.DefineLabel();
+            if (_ctx.RuntimeFeatures?.UsesObjectIntegrityMutation != false)
+            {
+                var frozen = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.ObjectState.FrozenObjects);
+                IL.Emit(OpCodes.Ldloc, savedReceiver);
+                IL.Emit(OpCodes.Ldloca, frozen);
+                IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.ConditionalWeakTable,
+                    "TryGetValue", _ctx.Types.Object, _ctx.Types.Object.MakeByRefType()));
+                IL.Emit(OpCodes.Brtrue, done);
+            }
+            IL.Emit(OpCodes.Ldloc, savedReceiver);
+            IL.Emit(OpCodes.Castclass, nativeStore ? nativeCast : guestCast);
+            IL.Emit(OpCodes.Ldloc, savedValue);
+            if (nativeValue && !nativeStore) IL.Emit(OpCodes.Box, guestField.NativeType);
+            IL.Emit(OpCodes.Callvirt, nativeStore ? nativeSetter : guestSetter);
+            IL.MarkLabel(done);
+            IL.Emit(OpCodes.Ldloc, savedValue);
+            SetStackType(valueStack);
+            if (nativeStore)
+                RecordNativePrimitiveFieldFact(receiver, value, guestField.NativeGetter);
+            return true;
+        }
 
         // Get the class type builder to cast the receiver
         if (!_ctx.Classes.TryGetValue(className, out var classType))

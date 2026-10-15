@@ -392,6 +392,8 @@ public partial class ILCompiler
                 {
                     DefineInstanceProperty(typeBuilder, className, field, classGenericParams);
                 }
+                else if (field.ComputedKey == null)
+                    DefineGuestDataField(typeBuilder, field, _types.Object);
             }
         }
 

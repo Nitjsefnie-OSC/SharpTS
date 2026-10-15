@@ -12,7 +12,7 @@ namespace SharpTS.Compilation.Registries;
 /// with repeated null checks. It walks inheritance chains for instance member resolution
 /// and handles module-qualified name resolution.
 /// </remarks>
-public sealed class ClassRegistry
+public sealed partial class ClassRegistry
 {
     public PrivateMethodValue? GetPrivateMethodValue(string owner, string name) =>
         _privateElements.TryGet(owner, out var declaration) && declaration.MethodValues.TryGetValue(name, out var value) ? value : null;

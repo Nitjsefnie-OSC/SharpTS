@@ -64,6 +64,7 @@ public partial class ILCompiler
                 _classes.TypedPrimitiveInstanceMethodCores.Count > 0
                     ? _classes.TypedPrimitiveInstanceMethodCores
                     : null,
+            RawObservingPrimitiveMethodCores = _rawObservingPrimitiveMethodCores,
             FunctionGenericParameters = _functions.GenericParameters,
             SuspensionFreePrimitiveAsyncCores =
                 _async.StableSuspensionFreePrimitiveCores.Count > 0

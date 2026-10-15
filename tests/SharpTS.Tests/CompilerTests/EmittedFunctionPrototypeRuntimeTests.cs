@@ -67,7 +67,7 @@ public sealed class EmittedFunctionPrototypeRuntimeTests
             Assert.Same(builder, owner.Prototype.Module.Assembly); Assert.Same(builder, owner.Populate.Module.Assembly);
             var loaded = SaveVerifyLoad(builder); var type = loaded.GetType("$Runtime")!;
             var prototype = Assert.IsAssignableFrom<IDictionary>(type.GetField(owner.Prototype.Name)!.GetValue(null));
-            Assert.True(dictionaries.Add(prototype)); Assert.Equal(5, prototype.Count);
+            Assert.True(dictionaries.Add(prototype)); Assert.Equal(7, prototype.Count);
             Assert.Same(loaded.GetType("$TSFunction"), prototype["constructor"]);
             foreach (var (name, length) in new[] { ("call", 1), ("apply", 2), ("bind", 1), ("toString", 0) })
             {
@@ -75,7 +75,7 @@ public sealed class EmittedFunctionPrototypeRuntimeTests
                 Assert.Equal(name, wrapper.GetType().GetProperty("Name")!.GetValue(wrapper));
                 Assert.Equal(length, wrapper.GetType().GetProperty("Length")!.GetValue(wrapper));
                 type.GetMethod(owner.Populate.Name)!.Invoke(null, null);
-                Assert.Same(wrapper, prototype[name]); Assert.Equal(5, prototype.Count);
+                Assert.Same(wrapper, prototype[name]); Assert.Equal(7, prototype.Count);
             }
             Assert.DoesNotContain(loaded.GetReferencedAssemblies(), a => a.Name == "SharpTS");
             Assert.Equal(hosted, loaded.GetReferencedAssemblies().Any(a => a.Name == "SharpTS.Hosting.Abstractions"));

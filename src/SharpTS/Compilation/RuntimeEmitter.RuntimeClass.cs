@@ -1366,6 +1366,7 @@ public partial class RuntimeEmitter
                 runtime.Modules.CommonJs,
                 runtime.DescriptorStorage,
                 runtime.Errors,
+                runtime.FunctionPrototypes,
                 runtime.GlobalObject.SetProperty,
                 runtime.GlobalObject.SingletonField,
                 runtime.ObjectFields.Interface,
@@ -1373,12 +1374,16 @@ public partial class RuntimeEmitter
                 runtime.Invocation.Method,
                 runtime.Namespaces,
                 runtime.ObjectDescriptors,
+                runtime.ObjectPrototypes,
                 runtime.ObjectRead,
                 runtime.ObjectState,
                 runtime.ObjectStorage,
                 _features.UsesProxy,
                 runtime.Reflect.Assignment,
-                runtime.FunctionValues.Type
+                runtime.ReflectedMethods.FindMethod,
+                runtime.SymbolAccessors,
+                runtime.FunctionValues.Type,
+                runtime.Sentinels.UndefinedType
             )
         );
         EmitDeleteProperty(

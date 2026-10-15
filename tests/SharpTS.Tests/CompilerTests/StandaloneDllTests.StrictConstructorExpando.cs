@@ -1,0 +1,28 @@
+using SharpTS.Tests.SharedTests;
+using Xunit;
+
+namespace SharpTS.Tests.CompilerTests;
+
+public partial class StandaloneDllTests
+{
+    [Theory]
+    [MemberData(nameof(StrictConstructorExpandoTests.Cases), MemberType = typeof(StrictConstructorExpandoTests))]
+    public void Saved_Issue2088StrictExpando_VerifyBeforeExecution(string name, string source, string expected)
+    {
+        using var directory = IntegrationTests.CliTestHelper.CreateTempDirectory();
+        var path = directory.CreateFile("main.ts", source);
+        var output = directory.GetPath(name + ".dll");
+        // Proxy deployment requires the existing soft runtime dependency (#2178).
+        bool standalone = name != "proxy-tail";
+        var deployment = standalone ? "--standalone" : "";
+        var compile = IntegrationTests.CliTestHelper.RunCli(
+            $"--no-tsconfig --compile \"{path}\" -o \"{output}\" {deployment} --verify",
+            directory.Path, TimeSpan.FromSeconds(60));
+        Assert.True(compile.ExitCode == 0, compile.StandardOutput + compile.StandardError);
+        Assert.Contains("IL verification passed.", compile.StandardOutput);
+        Assert.DoesNotContain("SharpTS", GetAssemblyReferences(output));
+        Assert.Equal(!standalone, File.Exists(directory.GetPath("SharpTS.dll")));
+        Assert.Equal(expected, ExecuteCompiledDllIsolated(output, timeoutMs: 30000,
+            verifyStandardError: error => Assert.Empty(error), standardInput: ""));
+    }
+}

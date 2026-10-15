@@ -117,6 +117,40 @@ public partial class RuntimeEmitter
         Wire("bind", bindHelper, 1);
         Wire("toString", toStringHelper, 0);
 
+        // These configurable own slots also govern assignment after a
+        // constructor's own name/length has been deleted: its inherited
+        // Function.prototype property is still non-writable.
+        void WireReadonlyMetadata(string name, Action emitValue)
+        {
+            il.Emit(OpCodes.Newobj, inputs.DescriptorStorage.DescriptorConstructor);
+            il.Emit(OpCodes.Stloc, fnDescLocal);
+            il.Emit(OpCodes.Ldloc, fnDescLocal);
+            emitValue();
+            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldloc, fnDescLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorWritable.GetSetMethod()!);
+            il.Emit(OpCodes.Ldloc, fnDescLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorEnumerable.GetSetMethod()!);
+            il.Emit(OpCodes.Ldsfld, functionPrototypes.Prototype);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Ldloc, fnDescLocal);
+            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetGetMethod()!);
+            il.Emit(OpCodes.Callvirt, setItem);
+            il.Emit(OpCodes.Ldsfld, functionPrototypes.Prototype);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Ldloc, fnDescLocal);
+            il.Emit(OpCodes.Call, inputs.DescriptorStorage.DefineProperty);
+            il.Emit(OpCodes.Pop);
+        }
+        WireReadonlyMetadata("name", () => il.Emit(OpCodes.Ldstr, ""));
+        WireReadonlyMetadata("length", () =>
+        {
+            il.Emit(OpCodes.Ldc_R8, 0.0);
+            il.Emit(OpCodes.Box, _types.Double);
+        });
+
         var intrinsic = il.DeclareLocal(_types.Object);
         _types.EmitLoadMethodInfo(il, hasInstanceHelper);
         il.Emit(OpCodes.Ldstr, "[Symbol.hasInstance]");

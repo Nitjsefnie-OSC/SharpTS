@@ -2158,14 +2158,61 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, walk);
         il.Emit(OpCodes.Brtrue, loop);
 
-        // The CLR base chain ends before the guest Function.prototype and
-        // Object.prototype chain. Its nearest property has the same authority
-        // as a class descriptor, including writable data masking farther hooks.
+        // CLR inheritance ends before the guest prototype chain.
         il.Emit(OpCodes.Call, inputs.FunctionPrototypes.Populate);
+        EmitConstructorPrototypeSetGuard(il, inputs,
+            () => il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypes.Prototype), create, reject);
+
+        il.MarkLabel(create);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.CanAddProperty);
+        il.Emit(OpCodes.Brfalse, rejectAdd);
+        EmitDefineDataDescriptorFromValue(il, inputs.DescriptorStorage);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(overwriteMethod);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.IsFrozen);
+        il.Emit(OpCodes.Brtrue, reject);
+        var methodDescriptor = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
+        il.Emit(OpCodes.Newobj, inputs.DescriptorStorage.DescriptorConstructor);
+        il.Emit(OpCodes.Stloc, methodDescriptor);
+        il.Emit(OpCodes.Ldloc, methodDescriptor);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, methodDescriptor);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorEnumerable.GetSetMethod()!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, methodDescriptor);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.DefineProperty);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(rejectAdd);
+        var silent = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Brfalse, silent);
+        EmitThrowTypeErrorWithName(il, inputs.Errors, "Cannot add property '", "' to a non-extensible class");
+        il.MarkLabel(reject);
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Brfalse, silent);
+        EmitThrowTypeErrorWithName(il, inputs.Errors, "Cannot assign to read only property '", "' of class");
+        il.MarkLabel(silent);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notUserConstructor);
+    }
+
+    private void EmitConstructorPrototypeSetGuard(
+        ILGenerator il, SetPropertyStrictInputs inputs, Action emitPrototype, Label create, Label reject)
+    {
+        var setter = il.DeclareLocal(_types.Object);
         var prototype = il.DeclareLocal(_types.Object);
         var guestDescriptor = il.DeclareLocal(_types.Object);
         var writable = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypes.Prototype);
+        emitPrototype();
         il.Emit(OpCodes.Stloc, prototype);
         var prototypeLoop = il.DefineLabel();
         var nextPrototype = il.DefineLabel();
@@ -2241,46 +2288,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, prototype);
         il.Emit(OpCodes.Br, prototypeLoop);
 
-        il.MarkLabel(create);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, inputs.DescriptorStorage.CanAddProperty);
-        il.Emit(OpCodes.Brfalse, rejectAdd);
-        EmitDefineDataDescriptorFromValue(il, inputs.DescriptorStorage);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(overwriteMethod);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, inputs.DescriptorStorage.IsFrozen);
-        il.Emit(OpCodes.Brtrue, reject);
-        var methodDescriptor = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
-        il.Emit(OpCodes.Newobj, inputs.DescriptorStorage.DescriptorConstructor);
-        il.Emit(OpCodes.Stloc, methodDescriptor);
-        il.Emit(OpCodes.Ldloc, methodDescriptor);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetSetMethod()!);
-        il.Emit(OpCodes.Ldloc, methodDescriptor);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorEnumerable.GetSetMethod()!);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloc, methodDescriptor);
-        il.Emit(OpCodes.Call, inputs.DescriptorStorage.DefineProperty);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(rejectAdd);
-        var silent = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_3);
-        il.Emit(OpCodes.Brfalse, silent);
-        EmitThrowTypeErrorWithName(il, inputs.Errors, "Cannot add property '", "' to a non-extensible class");
-        il.MarkLabel(reject);
-        il.Emit(OpCodes.Ldarg_3);
-        il.Emit(OpCodes.Brfalse, silent);
-        EmitThrowTypeErrorWithName(il, inputs.Errors, "Cannot assign to read only property '", "' of class");
-        il.MarkLabel(silent);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notUserConstructor);
     }
 
     /// <summary>
@@ -2677,6 +2684,20 @@ public partial class RuntimeEmitter
             EmitThrowTypeErrorWithName(il, inputs.Errors, "Cannot assign to read only property '", "' of function");
 
             il.MarkLabel(tsFnStrictNewPropertyLabel);
+            var tsFnStrictCheckCanAddLabel = il.DefineLabel();
+            var tsFnStrictSyntheticMetadataLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, inputs.ClassDefinitions.Type);
+            il.Emit(OpCodes.Brfalse, tsFnStrictSyntheticMetadataLabel);
+            // Evaluated class definitions materialize their metadata in PDS.
+            // Once an own slot is deleted, its actual prototype chain decides
+            // whether ordinary assignment may create that slot again.
+            EmitConstructorPrototypeSetGuard(il, inputs, () =>
+            {
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+            }, tsFnStrictCheckCanAddLabel, tsFnStrictRejectLabel);
+            il.MarkLabel(tsFnStrictSyntheticMetadataLabel);
             // The synthesized intrinsic function `name` and `length` properties are
             // non-writable even though it has no backing PDS entry. A strict
             // Set must reject it instead of defining a writable shadow.
@@ -2698,6 +2719,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brfalse, nullLabel);
             EmitThrowTypeErrorWithName(il, inputs.Errors, "Cannot assign to read only property '", "' of function");
             il.MarkLabel(tsFnStrictNotIntrinsicNameLabel);
+            il.MarkLabel(tsFnStrictCheckCanAddLabel);
             var tsFnStrictCanAddLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);

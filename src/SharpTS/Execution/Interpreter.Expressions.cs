@@ -324,7 +324,7 @@ public partial class Interpreter
 
         try
         {
-            SharpTSClass.BindMethodToReceiver(thenFn, thenable).Call(this, [resolve, reject]);
+            FunctionBuiltIns.CallWithThis(this, thenFn, thenable, [resolve, reject]);
         }
         catch (ThrowException tex)
         {
@@ -380,7 +380,7 @@ public partial class Interpreter
     /// <returns>The result of calling the tag function.</returns>
     private RuntimeValue EvaluateTaggedTemplateLiteral(Expr.TaggedTemplateLiteral tagged)
     {
-        object? tag = Evaluate(tagged.Tag);
+        object? tag = EvaluateMemberCallReference(_syncContext, tagged.Tag).GetAwaiter().GetResult();
 
         if (tag is not ISharpTSCallable callable)
             throw new InterpreterException("Tagged template tag must be a function.");

@@ -1776,18 +1776,10 @@ public partial class Interpreter
     {
         // Parsed records and ordinary object literals have no accessor overlay.
         // Read their data property once instead of probing getter storage,
-        // ContainsKey, and then the dictionary indexer. Callable values still
-        // retain member-access binding semantics.
+        // ContainsKey, and then the dictionary indexer. A data read returns
+        // its stored value; an actual member call supplies the receiver.
         if (simpleObj.TryGetOrdinaryDataProperty(memberName, out var ownValue))
         {
-            if (ownValue is not ISharpTSCallable)
-                return RuntimeValue.FromBoxed(ownValue);
-
-            if (!simpleObj.ShouldPreserveCallableValueIdentity(memberName)
-                && TryBindReceiverForMethodAccess(ownValue, simpleObj) is { } boundMethod)
-            {
-                return RuntimeValue.FromObject(boundMethod);
-            }
             return RuntimeValue.FromBoxed(ownValue);
         }
 
@@ -1801,11 +1793,7 @@ public partial class Interpreter
 
         if (simpleObj.HasProperty(memberName))
         {
-            var value = simpleObj.GetProperty(memberName);
-            if (!simpleObj.ShouldPreserveCallableValueIdentity(memberName)
-                && TryBindReceiverForMethodAccess(value, simpleObj) is { } boundMethod)
-                return RuntimeValue.FromObject(boundMethod);
-            return RuntimeValue.FromBoxed(value);
+            return RuntimeValue.FromBoxed(simpleObj.GetProperty(memberName));
         }
 
         // Prototype-chain fallback. Walks via __proto__ (which SharpTSObject
@@ -1829,10 +1817,7 @@ public partial class Interpreter
                 }
                 if (proto.HasProperty(memberName))
                 {
-                    var value = proto.GetProperty(memberName);
-                    if (TryBindReceiverForMethodAccess(value, simpleObj) is { } boundMethod)
-                        return RuntimeValue.FromObject(boundMethod);
-                    return RuntimeValue.FromBoxed(value);
+                    return RuntimeValue.FromBoxed(proto.GetProperty(memberName));
                 }
                 object? next = proto.HasProperty("__proto__") ? proto.GetProperty("__proto__") : null;
                 if (ReferenceEquals(next, proto)) break;

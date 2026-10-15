@@ -1157,10 +1157,7 @@ public partial class Interpreter
 
         try
         {
-            if (returnMethod is SharpTSArrowFunction arrowFn)
-                returnMethod = arrowFn.Bind(iterator!);
-            else if (returnMethod is SharpTSFunction fn && iterator is SharpTSInstance inst)
-                returnMethod = fn.Bind(inst);
+            returnMethod = BindMemberCallReceiver(returnMethod, iterator);
 
             // SharpTSFunction also implements ISharpTSCallable, so this covers both.
             if (returnMethod is ISharpTSCallable callable)

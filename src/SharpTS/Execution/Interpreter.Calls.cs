@@ -109,6 +109,55 @@ public partial class Interpreter
         }
     }
 
+    private static Expr UnwrapMemberReference(Expr expression)
+    {
+        while (true)
+        {
+            expression = expression switch
+            {
+                Expr.Grouping grouping => grouping.Expression,
+                Expr.TypeAssertion assertion => assertion.Expression,
+                Expr.Satisfies satisfies => satisfies.Expression,
+                Expr.NonNullAssertion assertion => assertion.Expression,
+                _ => expression,
+            };
+            if (expression is not (Expr.Grouping or Expr.TypeAssertion or Expr.Satisfies or Expr.NonNullAssertion))
+                return expression;
+        }
+    }
+
+    // Transparent syntax preserves a property Reference's receiver. Value
+    // expressions (including comma, conditional and logical operators) do not.
+    // Optional-chain propagation remains a decision of the original call AST.
+    private async ValueTask<object?> EvaluateMemberCallReference(IEvaluationContext ctx, Expr expression)
+    {
+        Expr reference = UnwrapMemberReference(expression);
+        object? callee;
+        if (reference is Expr.Get memberGet)
+        {
+            object? receiver = (await ctx.EvaluateExprAsync(memberGet.Object)).ToObject();
+            callee = _currentModule is { DotNetExtensionTypes.Count: > 0 }
+                && TryBindDotNetExtension(receiver, memberGet.Name.Lexeme, out var extension)
+                    ? extension
+                    : EvaluateGetOnObject(memberGet, receiver).ToObject();
+            return BindMemberCallReceiver(callee, receiver);
+        }
+        if (reference is Expr.GetIndex memberIndex)
+        {
+            object? receiver = (await ctx.EvaluateExprAsync(memberIndex.Object)).ToObject();
+            if (memberIndex.Optional && receiver is (null or SharpTSUndefined))
+                return SharpTSUndefined.Instance;
+            object? key = (await ctx.EvaluateExprAsync(memberIndex.Index)).ToObject();
+            callee = PerformIndexGet(memberIndex.Object, receiver, key).ToObject();
+            return BindMemberCallReceiver(callee, receiver);
+        }
+        callee = (await ctx.EvaluateExprAsync(expression)).ToObject();
+        if (reference is Expr.Super { Method: not null } && _environment.StaticSuper)
+            callee = BindMemberCallReceiver(callee,
+                _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject());
+        return callee;
+    }
+
     /// <summary>
     /// Core implementation for evaluating function/method calls, shared between sync and async paths.
     /// Handles all special cases: console.log, built-in methods, Symbol, BigInt, Date, Error, timers, etc.
@@ -186,47 +235,7 @@ public partial class Interpreter
             }
         }
 
-        object? callee;
-        if (call.Callee is Expr.Get extensionGet &&
-            _currentModule is { DotNetExtensionTypes.Count: > 0 })
-        {
-            object? receiver = (await ctx.EvaluateExprAsync(extensionGet.Object)).ToObject();
-            callee = TryBindDotNetExtension(receiver, extensionGet.Name.Lexeme, out var extension)
-                ? extension
-                : EvaluateGetOnObject(extensionGet, receiver).ToObject();
-            callee = BindMemberCallReceiver(callee, receiver);
-        }
-        else if (call.Callee is Expr.Get memberGet)
-        {
-            object? receiver = (await ctx.EvaluateExprAsync(memberGet.Object)).ToObject();
-            callee = EvaluateGetOnObject(memberGet, receiver).ToObject();
-            // Descriptor-defined callable data properties are returned raw so
-            // reference identity holds. Bind their dynamic receiver only for
-            // an actual member call (`obj.method()`), where JavaScript creates
-            // the Reference Record that supplies `this`.
-            callee = BindMemberCallReceiver(callee, receiver);
-        }
-        else if (call.Callee is Expr.GetIndex memberIndex)
-        {
-            object? receiver = (await ctx.EvaluateExprAsync(memberIndex.Object)).ToObject();
-            if (memberIndex.Optional && receiver is (null or SharpTSUndefined))
-            {
-                callee = SharpTSUndefined.Instance;
-            }
-            else
-            {
-                object? key = (await ctx.EvaluateExprAsync(memberIndex.Index)).ToObject();
-                callee = PerformIndexGet(memberIndex.Object, receiver, key).ToObject();
-                callee = BindMemberCallReceiver(callee, receiver);
-            }
-        }
-        else
-        {
-            callee = (await ctx.EvaluateExprAsync(call.Callee)).ToObject();
-            if (call.Callee is Expr.Super { Method: not null } && _environment.StaticSuper)
-                callee = BindMemberCallReceiver(callee,
-                    _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject());
-        }
+        object? callee = await EvaluateMemberCallReference(ctx, call.Callee);
 
         // Optional call: return undefined if callee is nullish.
         // Per ECMA-262 §13.3.9, the short-circuit extends to the entire chain.
@@ -485,43 +494,7 @@ public partial class Interpreter
             }
         }
 
-        object? callee;
-        if (call.Callee is Expr.Get extensionGet &&
-            _currentModule is { DotNetExtensionTypes.Count: > 0 })
-        {
-            object? receiver = Evaluate(extensionGet.Object);
-            callee = TryBindDotNetExtension(receiver, extensionGet.Name.Lexeme, out var extension)
-                ? extension
-                : EvaluateGetOnObject(extensionGet, receiver).ToObject();
-            callee = BindMemberCallReceiver(callee, receiver);
-        }
-        else if (call.Callee is Expr.Get memberGet)
-        {
-            object? receiver = Evaluate(memberGet.Object);
-            callee = EvaluateGetOnObject(memberGet, receiver).ToObject();
-            callee = BindMemberCallReceiver(callee, receiver);
-        }
-        else if (call.Callee is Expr.GetIndex memberIndex)
-        {
-            object? receiver = Evaluate(memberIndex.Object);
-            if (memberIndex.Optional && receiver is (null or SharpTSUndefined))
-            {
-                callee = SharpTSUndefined.Instance;
-            }
-            else
-            {
-                object? key = Evaluate(memberIndex.Index);
-                callee = PerformIndexGet(memberIndex.Object, receiver, key).ToObject();
-                callee = BindMemberCallReceiver(callee, receiver);
-            }
-        }
-        else
-        {
-            callee = Evaluate(call.Callee);
-            if (call.Callee is Expr.Super { Method: not null } && _environment.StaticSuper)
-                callee = BindMemberCallReceiver(callee,
-                    _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject());
-        }
+        object? callee = EvaluateMemberCallReference(_syncContext, call.Callee).GetAwaiter().GetResult();
 
         // Optional call: return undefined if callee is nullish.
         // Per ECMA-262 §13.3.9, the short-circuit extends to the entire chain:

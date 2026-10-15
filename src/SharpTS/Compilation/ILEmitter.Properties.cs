@@ -2504,6 +2504,12 @@ public partial class ILEmitter
         if (getterBuilder == null)
             return false;
 
+        // CLR virtual dispatch inherits getter and setter methods independently.
+        // A runtime subclass can instead mask this entire accessor with only a
+        // setter, even when the receiver's static type names the base class.
+        if (_ctx.ClassRegistry?.IsSourceInstanceGetter(getterBuilder) == true)
+            return false;
+
         // Get the class type builder to cast the receiver
         if (!_ctx.Classes.TryGetValue(className, out var classType))
             return false;

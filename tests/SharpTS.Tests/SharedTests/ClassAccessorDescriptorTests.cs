@@ -421,8 +421,8 @@ public sealed class ClassAccessorDescriptorTests
             TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void SetterOnlyOverrideShadowsInheritedGetterInInterpretation()
+    [Theory, ModeData]
+    public void SetterOnlyOverrideShadowsInheritedGetter(ExecutionMode mode)
     {
         const string source = """
             let reads = 0;
@@ -440,7 +440,7 @@ public sealed class ClassAccessorDescriptorTests
             const descriptor: any = Object.getOwnPropertyDescriptor(Derived.prototype, "value");
             console.log(descriptor.get === undefined, typeof descriptor.set);
             """;
-        Assert.Equal("undefined 20 0\ntrue function\n", TestHarness.Run(source, ExecutionMode.Interpreted));
+        Assert.Equal("undefined 20 0\ntrue function\n", TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

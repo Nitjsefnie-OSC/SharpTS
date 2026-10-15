@@ -27,6 +27,7 @@ public sealed class ClassRegistry
     private readonly Dictionary<(TypeBuilder Owner, MethodBuilder Parent), (Type Receiver, MethodInfo Target)> _superCallBridges = [];
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _instanceGetters;
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _instanceSetters;
+    private readonly Dictionary<MethodBuilder, string?> _sourceInstanceGetters = new(ReferenceEqualityComparer.Instance);
 
     // Static members
     private readonly Dictionary<string, Dictionary<string, FieldBuilder>> _staticFields;
@@ -311,10 +312,19 @@ public sealed class ClassRegistry
             if (_instanceGetters.TryGetValue(current, out var getters) &&
                 getters.TryGetValue(propertyName, out var getter))
                 return getter;
+            if (_instanceSetters.TryGetValue(current, out var setters) && setters.ContainsKey(propertyName))
+                return null;
             current = _superclass.GetValueOrDefault(current);
         }
         return null;
     }
+
+    internal void RegisterSourceInstanceGetter(MethodBuilder getter, string? propertyName)
+        => _sourceInstanceGetters[getter] = propertyName;
+
+    internal bool IsSourceInstanceGetter(MethodBuilder getter) => _sourceInstanceGetters.ContainsKey(getter);
+
+    internal string? GetSourceInstanceGetterName(MethodBuilder getter) => _sourceInstanceGetters.GetValueOrDefault(getter);
 
     /// <summary>
     /// Resolves an instance setter by walking up the inheritance chain.
@@ -432,13 +442,33 @@ public sealed class ClassRegistry
     /// </summary>
     public bool TryGetStaticGetter(string qualifiedClassName, string propertyName, out MethodBuilder? getter)
     {
-        if (TryResolveStaticMember(_staticGetters, qualifiedClassName, propertyName, out _, out var g))
+        if (TryResolveStaticGetter(qualifiedClassName, propertyName, out _, out var g))
         {
             getter = g;
             return true;
         }
 
         getter = null;
+        return false;
+    }
+
+    private bool TryResolveStaticGetter(string className, string propertyName, out string declaringClass, out MethodBuilder getter)
+    {
+        string? current = className;
+        for (int depth = 0; current != null && depth < 64; depth++)
+        {
+            if (_staticGetters.TryGetValue(current, out var getters) && getters.TryGetValue(propertyName, out var ownGetter))
+            {
+                declaringClass = current;
+                getter = ownGetter;
+                return true;
+            }
+            if (_staticSetters.TryGetValue(current, out var setters) && setters.ContainsKey(propertyName))
+                break;
+            current = _superclass.GetValueOrDefault(current);
+        }
+        declaringClass = null!;
+        getter = null!;
         return false;
     }
 
@@ -585,7 +615,7 @@ public sealed class ClassRegistry
     /// </summary>
     public bool TryGetCallableStaticGetter(string qualifiedClassName, string propertyName, TypeBuilder classBuilder, out System.Reflection.MethodInfo? getter)
     {
-        if (!TryResolveStaticMember(_staticGetters, qualifiedClassName, propertyName, out var declaringClass, out var getterBuilder))
+        if (!TryResolveStaticGetter(qualifiedClassName, propertyName, out var declaringClass, out var getterBuilder))
         {
             getter = null;
             return false;

@@ -120,6 +120,7 @@ public partial class ILCompiler
         }
         else
         {
+            GetClassRegistry().RegisterSourceInstanceGetter(getter, propName);
             if (!_classes.InstanceGetters.TryGetValue(className, out var classGetters))
             {
                 classGetters = [];

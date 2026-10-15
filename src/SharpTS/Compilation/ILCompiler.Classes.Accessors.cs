@@ -52,6 +52,8 @@ public partial class ILCompiler
             Expr.Literal { Value: int i } => i.ToString(System.Globalization.CultureInfo.InvariantCulture),
             _ => null,
         };
+        if (!accessor.IsStatic && isGetter)
+            GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, constantKey);
         if (constantKey != null)
         {
             var registry = isGetter
@@ -190,6 +192,8 @@ public partial class ILCompiler
             }
         }
 
+        if (!accessor.IsStatic && accessor.Kind.Type == TokenType.GET)
+            GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, accessor.Name.Lexeme);
         EmitAccessorBody(typeBuilder, accessor, methodBuilder, fieldsField);
     }
 

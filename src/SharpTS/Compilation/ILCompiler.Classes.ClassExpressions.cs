@@ -506,7 +506,10 @@ public partial class ILCompiler
                 );
 
                 if (accessor.Kind.Type == TokenType.GET)
+                {
+                    GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, accessorName);
                     _classExprs.Getters[classExpr][pascalName] = methodBuilder;
+                }
                 else
                     _classExprs.Setters[classExpr][pascalName] = methodBuilder;
             }

@@ -423,8 +423,8 @@ public partial class ILCompiler
 
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Ldfld, backingField);
-                // Box value types
-                if (backingField.FieldType.IsValueType)
+                // GetProperty returns object even when the backing slot is T.
+                if (backingField.FieldType.IsValueType || backingField.FieldType.IsGenericParameter)
                     il.Emit(OpCodes.Box, backingField.FieldType);
                 il.Emit(OpCodes.Ret);
 
@@ -443,19 +443,8 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Ret);
 
-        // 2b. If this class extends Error, fall back to Error base class properties
         il.MarkLabel(tryMethodsLabel);
         EmitClassPrototypeFieldFallback(il);
-        if (IsErrorSubclass(className))
-        {
-            EmitErrorPropertyFallback(il, "name", _runtime.Errors.GetName);
-            EmitErrorPropertyFallback(il, "message", _runtime.Errors.GetMessage);
-            EmitErrorPropertyFallback(il, "stack", _runtime.Errors.GetStack);
-        }
-
-        // 2d. `instance.constructor` → the class (a System.Type value). See
-        // EmitConstructorPropertyBranch; after own fields so they can shadow it.
-        EmitConstructorPropertyBranch(il, _classes.Builders[className]);
 
         // 2c. Check instance getters (accessors with `get` keyword). JS semantics: reading
         // `obj.foo` where `foo` is a getter must INVOKE the getter and return its result.
@@ -466,14 +455,12 @@ public partial class ILCompiler
         {
             foreach (var (getterPascalName, getterMethod) in instanceGetters)
             {
-                // Getters are registered by PascalCase method-name convention (no "get_" prefix
-                // in InstanceGetters dict — the dict value keys match PascalCase property names).
-                // JS access is camelCase; accept both forms to match InstanceGetters' key style.
-                var camelName = NamingConventions.ToCamelCase(getterPascalName);
+                var guestName = GetClassRegistry().GetSourceInstanceGetterName(getterMethod)
+                    ?? NamingConventions.ToCamelCase(getterPascalName);
                 var nextLabel = il.DefineLabel();
 
                 il.Emit(OpCodes.Ldarg_1);
-                il.Emit(OpCodes.Ldstr, camelName);
+                il.Emit(OpCodes.Ldstr, guestName);
                 il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
                 il.Emit(OpCodes.Brfalse, nextLabel);
 
@@ -493,6 +480,16 @@ public partial class ILCompiler
                 il.MarkLabel(nextLabel);
             }
         }
+
+        if (IsErrorSubclass(className))
+        {
+            EmitErrorPropertyFallback(il, "name", _runtime.Errors.GetName);
+            EmitErrorPropertyFallback(il, "message", _runtime.Errors.GetMessage);
+            EmitErrorPropertyFallback(il, "stack", _runtime.Errors.GetStack);
+        }
+
+        // Declared accessors also take precedence over the implicit constructor.
+        EmitConstructorPropertyBranch(il, _classes.Builders[className]);
 
         // 3. Check instance methods (compile-time dispatch)
         // (redefine label after error property fallback — previous tryMethodsLabel was already marked)
@@ -561,8 +558,8 @@ public partial class ILCompiler
         // (RegisterSymbolMethod), but named/string-index access (obj.dyn, obj["dyn"]) funnels here
         // rather than through the symbol-key branch, so consult the registry as a fallback. Gated on
         // this class declaring a computed method to keep the common no-computed-method path untouched.
-        // FindSymbolMethod walks the receiver's base chain, so an inherited key still resolves once
-        // base-fallthrough reaches the declaring class's GetProperty.
+        // Only this body's declaring owner may claim the result. Inherited methods
+        // must wait until a nearer setter-only accessor can stop base fallthrough.
         if (classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
         {
             var noStrMethodLabel = il.DefineLabel();
@@ -573,6 +570,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Stloc, strMethodLocal);
             il.Emit(OpCodes.Ldloc, strMethodLocal);
             il.Emit(OpCodes.Brfalse, noStrMethodLabel);
+            EmitComputedMethodOwnerCheck(il, strMethodLocal, _classes.Builders[className], noStrMethodLabel);
             // return new $TSFunction(this, (MethodInfo)mi)  — receiver-bound, mirroring the symbol path.
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldloc, strMethodLocal);
@@ -581,6 +579,10 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noStrMethodLabel);
         }
+
+        // Evaluated computed members may supply the other accessor half or a
+        // later data method. Only claim a missing getter after those own reads.
+        EmitSetterOnlyUndefinedBranches(il, classStmt.Accessors, backingFields);
 
         // 4. Not found on this class — delegate to the base class's GetProperty
         // so inherited members resolve under dynamic dispatch (else fall back to
@@ -729,6 +731,36 @@ public partial class ILCompiler
         }
     }
 
+    private void EmitSetterOnlyUndefinedBranches(
+        ILGenerator il,
+        IReadOnlyList<Stmt.Accessor>? accessors,
+        Dictionary<string, FieldBuilder>? backingFields)
+    {
+        var namedAccessors = (accessors ?? []).Where(accessor => !accessor.IsStatic)
+            .Select(accessor => (Accessor: accessor, Name: accessor.ComputedKey switch
+            {
+                null => accessor.Name.Lexeme,
+                Expr.Literal { Value: string name } => name,
+                _ => null,
+            })).Where(entry => entry.Name != null).ToArray();
+        var getterNames = namedAccessors.Where(entry => entry.Accessor.Kind.Type == TokenType.GET)
+            .Select(entry => entry.Name!).ToHashSet(StringComparer.Ordinal);
+        foreach (var name in namedAccessors.Where(entry => entry.Accessor.Kind.Type == TokenType.SET)
+                     .Select(entry => entry.Name!).Distinct(StringComparer.Ordinal))
+        {
+            if (getterNames.Contains(name) || backingFields?.ContainsKey(NamingConventions.ToPascalCase(name)) == true)
+                continue;
+            var next = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, next);
+            il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(next);
+        }
+    }
+
     /// <summary>
     /// Emits the $IHasFields interface method bodies for a class expression.
     /// This overload uses _classExprs dictionaries instead of _classes dictionaries.
@@ -791,8 +823,8 @@ public partial class ILCompiler
 
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Ldfld, backingField);
-                // Box value types
-                if (backingField.FieldType.IsValueType)
+                // GetProperty returns object even when the backing slot is T.
+                if (backingField.FieldType.IsValueType || backingField.FieldType.IsGenericParameter)
                     il.Emit(OpCodes.Box, backingField.FieldType);
                 il.Emit(OpCodes.Ret);
 
@@ -823,26 +855,16 @@ public partial class ILCompiler
 
         EmitClassPrototypeFieldFallback(il);
 
-        if (_classes.ErrorSubclasses.Contains(className))
-        {
-            EmitErrorPropertyFallback(il, "name", _runtime.Errors.GetName);
-            EmitErrorPropertyFallback(il, "message", _runtime.Errors.GetMessage);
-            EmitErrorPropertyFallback(il, "stack", _runtime.Errors.GetStack);
-        }
-
-        // 2d. `instance.constructor` → the class (a System.Type value). See
-        // EmitConstructorPropertyBranch; after own fields so they can shadow it.
-        EmitConstructorPropertyBranch(il, _classExprs.Builders[classExpr]);
-
         if (_classExprs.Getters.TryGetValue(classExpr, out var instanceGetters))
         {
             foreach (var (getterPascalName, getterMethod) in instanceGetters)
             {
-                var camelName = NamingConventions.ToCamelCase(getterPascalName);
+                var guestName = GetClassRegistry().GetSourceInstanceGetterName(getterMethod)
+                    ?? NamingConventions.ToCamelCase(getterPascalName);
                 var nextLabel = il.DefineLabel();
 
                 il.Emit(OpCodes.Ldarg_1);
-                il.Emit(OpCodes.Ldstr, camelName);
+                il.Emit(OpCodes.Ldstr, guestName);
                 il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
                 il.Emit(OpCodes.Brfalse, nextLabel);
 
@@ -859,6 +881,15 @@ public partial class ILCompiler
                 il.MarkLabel(nextLabel);
             }
         }
+
+        if (_classes.ErrorSubclasses.Contains(className))
+        {
+            EmitErrorPropertyFallback(il, "name", _runtime.Errors.GetName);
+            EmitErrorPropertyFallback(il, "message", _runtime.Errors.GetMessage);
+            EmitErrorPropertyFallback(il, "stack", _runtime.Errors.GetStack);
+        }
+
+        EmitConstructorPropertyBranch(il, _classExprs.Builders[classExpr]);
 
         // 3. Check instance methods (compile-time dispatch)
         if (_classExprs.InstanceMethods.TryGetValue(classExpr, out var instanceMethods))
@@ -935,6 +966,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Stloc, computedMethodLocal);
             il.Emit(OpCodes.Ldloc, computedMethodLocal);
             il.Emit(OpCodes.Brfalse, noComputedMethodLabel);
+            EmitComputedMethodOwnerCheck(il, computedMethodLocal, _classExprs.Builders[classExpr], noComputedMethodLabel);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldloc, computedMethodLocal);
             il.Emit(OpCodes.Castclass, _types.MethodInfo);
@@ -943,11 +975,28 @@ public partial class ILCompiler
             il.MarkLabel(noComputedMethodLabel);
         }
 
+        _classExprs.BackingFields.TryGetValue(classExpr, out var classExprBackingFields);
+        EmitSetterOnlyUndefinedBranches(il, classExpr.Accessors, classExprBackingFields);
+
         // 4. Not found on this class — delegate to the base class's GetProperty
         // so inherited members resolve under dynamic dispatch (else fall back to
         // returning $Undefined).
         il.MarkLabel(returnNullLabel);
         EmitGetPropertyBaseFallthrough(il, _classExprs.Builders[classExpr].BaseType);
+    }
+
+    private void EmitComputedMethodOwnerCheck(ILGenerator il, LocalBuilder method, TypeBuilder owner, Label notOwn)
+    {
+        // Base GetProperty bodies still receive the original derived instance.
+        // Normalize the closed method owner rather than using receiver.GetType().
+        il.Emit(OpCodes.Ldloc, method);
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(MemberInfo), "DeclaringType").GetGetMethod()!);
+        il.Emit(OpCodes.Call, _runtime.SymbolAccessors.RegistryKey);
+        il.Emit(OpCodes.Ldtoken, owner);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Call, _runtime.SymbolAccessors.RegistryKey);
+        il.Emit(OpCodes.Bne_Un, notOwn);
     }
 
     /// <summary>

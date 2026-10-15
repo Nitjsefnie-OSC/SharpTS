@@ -2413,6 +2413,13 @@ public partial class Interpreter
                 }
             }
 
+            // Initialize the captured lexical self before static initializers
+            // can invoke methods and accessors that close over it.
+            if (classExpr.Name != null)
+            {
+                classEnv.Assign(classExpr.Name, klass);
+            }
+
             // Execute static initializers in declaration order (if present)
             if (hasStaticInitializers)
             {
@@ -2465,12 +2472,6 @@ public partial class Interpreter
                         }
                     }
                 }
-            }
-
-            // Update self-reference if named
-            if (classExpr.Name != null)
-            {
-                classEnv.Assign(classExpr.Name, klass);
             }
 
             return RuntimeValue.FromObject(klass);

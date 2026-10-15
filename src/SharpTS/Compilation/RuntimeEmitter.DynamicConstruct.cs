@@ -9,6 +9,7 @@ public partial class RuntimeEmitter
         EmittedClassDefinitionRuntime ClassDefinitions,
         EmittedDynamicConstructionRuntime DynamicConstruction,
         EmittedBoxedPrimitiveRuntime BoxedPrimitives,
+        EmittedBooleanRuntime Booleans,
         EmittedErrorRuntime Errors,
         EmittedFunctionConstructionRuntime FunctionConstruction,
         EmittedFunctionValueRuntime FunctionValues,
@@ -188,6 +189,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.BoxedPrimitives.New);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notNumberTypeLabel);
+
+        // Boolean construction uses truthiness without invoking primitive
+        // conversion hooks, and omission initializes the wrapper to false.
+        var notBooleanTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Boolean);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Bne_Un, notBooleanTypeLabel);
+        il.Emit(OpCodes.Ldstr, "Boolean");
+        var booleanArgPresentLabel = il.DefineLabel();
+        var booleanValueReadyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brtrue, booleanArgPresentLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Br, booleanValueReadyLabel);
+        il.MarkLabel(booleanArgPresentLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Call, inputs.Booleans.IsTruthy);
+        il.MarkLabel(booleanValueReadyLabel);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Call, inputs.BoxedPrimitives.New);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBooleanTypeLabel);
 
         var notFunctionType = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);

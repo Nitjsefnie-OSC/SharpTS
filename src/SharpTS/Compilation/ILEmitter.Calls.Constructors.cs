@@ -563,6 +563,19 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Br, builtInDone);
         IL.MarkLabel(notNumberType);
 
+        // Boolean values likewise carry a primitive CLR Type token. Use the
+        // guest wrapper factory, with ordinary argument/spread evaluation.
+        var notBooleanType = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, typeLocal);
+        IL.Emit(OpCodes.Ldtoken, _ctx.Types.Boolean);
+        IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Bne_Un, notBooleanType);
+        IL.Emit(OpCodes.Ldloc, typeLocal);
+        EmitArgsArrayWithSpread(n.Arguments);
+        IL.Emit(OpCodes.Call, _ctx.Runtime.DynamicConstruction.Value);
+        IL.Emit(OpCodes.Br, builtInDone);
+        IL.MarkLabel(notBooleanType);
+
         List<LocalBuilder> argTemps = [];
         foreach (var arg in n.Arguments)
         {

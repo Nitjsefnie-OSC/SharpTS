@@ -746,6 +746,7 @@ public partial class RuntimeEmitter
                 runtime.ClassDefinitions,
                 runtime.DynamicConstruction,
                 runtime.BoxedPrimitives,
+                runtime.Booleans,
                 runtime.Errors,
                 runtime.FunctionConstruction,
                 runtime.FunctionValues,

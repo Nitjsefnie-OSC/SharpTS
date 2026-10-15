@@ -903,9 +903,9 @@ public partial class Interpreter
             return EnumerateWithIteratorProtocol(iteratorFn);
         }
 
-        // Arrays can replace their inherited @@iterator with an own method.
-        // Consult that override before falling back to indexed enumeration.
-        if (iterable is SharpTSArray array && array.HasSymbolProperty(SharpTSSymbol.Iterator))
+        // Subclass and explicit prototypes can replace the iterator without an
+        // own slot. Acquire it once before considering indexed enumeration.
+        if (iterable is SharpTSArray array && RequiresArrayIteratorProtocol(array))
         {
             var iteratorFn = GetSymbolPropertyValue(array, SharpTSSymbol.Iterator);
             if (iteratorFn is not ISharpTSCallable)
@@ -965,6 +965,11 @@ public partial class Interpreter
 
         return null;
     }
+
+    private static bool RequiresArrayIteratorProtocol(SharpTSArray array)
+        => array.HasSymbolProperty(SharpTSSymbol.Iterator)
+            || array.HasExplicitPrototype
+            || array is SharpTSArraySubclassInstance;
 
     /// <summary>
     /// Iterates using the JavaScript iterator protocol: calls next() until done is true.
@@ -1285,7 +1290,7 @@ public partial class Interpreter
     {
         switch (value)
         {
-            case SharpTSArray array when !array.HasSymbolProperty(SharpTSSymbol.Iterator):
+            case SharpTSArray array when !RequiresArrayIteratorProtocol(array):
                 return value;
             // Typed arrays / buffers expose index access but no [Symbol.iterator] in this runtime, so
             // GetIterableElements would throw; read their elements directly into a fresh Array (#781).

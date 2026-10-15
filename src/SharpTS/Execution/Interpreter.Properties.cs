@@ -641,7 +641,28 @@ public partial class Interpreter
             {
                 if (TryReadDescriptor(prototype.GetOwnPropertyDescriptor(symbol), receiver, out var value))
                     return value;
-                current = prototype.Class.Superclass?.Prototype ?? (object)GetObjectPrototype();
+                current = prototype.Class.Superclass?.Prototype
+                    ?? (ReferenceEquals(prototype.Class, SharpTSArrayClass.ArrayBase)
+                        ? (object)GetArrayPrototype() : GetObjectPrototype());
+                continue;
+            }
+            if (current is SharpTSArrayPrototype arrayPrototype)
+            {
+                var symbols = (ISharpTSSymbolPropertyBag)arrayPrototype;
+                if (symbols.TryGetSymbolAccessor(symbol, out var getter, out _))
+                    return getter is null
+                        ? SharpTSUndefined.Instance
+                        : BindAccessorToObject(getter, receiver).CallBoxed(this, []);
+                if (symbols.HasSymbolProperty(symbol))
+                    return symbols.GetBySymbol(symbol);
+                if (ReferenceEquals(symbol, SharpTSSymbol.Iterator))
+                {
+                    var iterator = arrayPrototype.GetMember("values");
+                    return iterator is ArrayPrototypeMethodWrapper wrapper && receiver is SharpTSArray
+                        ? wrapper.Bind(receiver)
+                        : iterator ?? SharpTSUndefined.Instance;
+                }
+                current = GetObjectPrototype();
                 continue;
             }
             if (current is SharpTSObject record)
@@ -697,11 +718,16 @@ public partial class Interpreter
                         : BindAccessorToObject(getter, receiver).CallBoxed(this, []);
                 if (array.HasSymbolProperty(symbol))
                     return array.GetBySymbol(symbol);
-                if (ReferenceEquals(symbol, SharpTSSymbol.Iterator))
-                    return PerformIndexGet(null!, array, symbol).ToObject();
-                current = array.HasExplicitPrototype
-                    ? array.ExplicitPrototype
-                    : GetArrayPrototype();
+                if (array.HasExplicitPrototype)
+                {
+                    current = array.ExplicitPrototype;
+                    continue;
+                }
+                if (array is SharpTSArraySubclassInstance subclass
+                    && TryReadDescriptor(subclass.Klass.FindInstanceSymbolPropertyDescriptor(symbol),
+                        receiver, out var inheritedValue))
+                    return inheritedValue;
+                current = GetArrayPrototype();
                 continue;
             }
 

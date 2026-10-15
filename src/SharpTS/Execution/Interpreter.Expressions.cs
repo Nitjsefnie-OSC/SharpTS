@@ -1231,34 +1231,11 @@ public partial class Interpreter
         if (obj is ISharpTSCallable callable && index is SharpTSSymbol callableSymbol)
             return RuntimeValue.FromBoxed(GetSymbolPropertyValue(callable, callableSymbol));
 
-        // Symbol-valued array properties are ordinary own properties and must
-        // preserve null (rather than confusing it with a missing property).
-        // An own value/accessor also shadows Array.prototype's @@iterator.
+        // Array Symbol reads share the presence-aware protocol lookup, including
+        // subclass descriptors and an explicitly replaced prototype chain.
         if (obj is SharpTSArray array && index is SharpTSSymbol arraySymbol)
-        {
-            if (array.TryGetSymbolAccessor(arraySymbol, out var getter, out _))
-            {
-                return getter is null
-                    ? RuntimeValue.Undefined
-                    : RuntimeValue.FromBoxed(
-                        BindAccessorToObject(getter, array).Call(this, []));
-            }
-            if (array.HasSymbolProperty(arraySymbol))
-                return RuntimeValue.FromBoxed(array.GetBySymbol(arraySymbol));
-
-            // Arrays inherit @@iterator from Array.prototype. Return the
-            // realm's values method bound to this instance.
-            if (ReferenceEquals(arraySymbol, SharpTSSymbol.Iterator))
-            {
-                var iteratorMethod = GetArrayPrototype().GetMember("values");
-                return RuntimeValue.FromBoxed(
-                    iteratorMethod is ArrayPrototypeMethodWrapper wrapper
-                        ? wrapper.Bind(array)
-                        : iteratorMethod ?? SharpTSUndefined.Instance);
-            }
             return RuntimeValue.FromBoxed(
                 GetSymbolPropertyValue(array, arraySymbol));
-        }
 
         if (obj is SharpTSObject symbolObject && index is SharpTSSymbol objectSymbol)
         {
@@ -1333,11 +1310,8 @@ public partial class Interpreter
         }
         if (obj is SharpTSArrayPrototype arrayProto)
         {
-            if (ReferenceEquals(index, SharpTSSymbol.Iterator))
-            {
-                return RuntimeValue.FromBoxed(
-                    arrayProto.GetMember("values") ?? SharpTSUndefined.Instance);
-            }
+            if (index is SharpTSSymbol prototypeSymbol)
+                return RuntimeValue.FromBoxed(GetSymbolPropertyValue(arrayProto, prototypeSymbol));
             var key = PropertyKeyConverter.ToPropertyKeyString(index);
             if (arrayProto.GetExtraGetter(key) is { } getter)
                 return BindAccessorToObject(getter, arrayProto).CallV2(

@@ -236,10 +236,12 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     public object? Call(Interpreter interpreter, List<object?> arguments)
         => CallCore(interpreter, arguments, RuntimeValue.Undefined);
 
-    internal object? CallConstructed(Interpreter interpreter, List<object?> arguments, object? newTarget)
-        => CallCore(interpreter, arguments, RuntimeValue.FromBoxed(newTarget));
+    internal object? CallConstructed(Interpreter interpreter, List<object?> arguments, object? newTarget,
+        ClassConstructionFrame? constructionFrame = null)
+        => CallCore(interpreter, arguments, RuntimeValue.FromBoxed(newTarget), constructionFrame);
 
-    private object? CallCore(Interpreter interpreter, List<object?> arguments, RuntimeValue newTarget)
+    private object? CallCore(Interpreter interpreter, List<object?> arguments, RuntimeValue newTarget,
+        ClassConstructionFrame? constructionFrame = null)
     {
         if (_declaration.Body == null)
         {
@@ -258,6 +260,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         environment.PrivateClass = PrivateOwner;
         environment.StaticSuper = _declaration.IsStatic;
         environment.NewTarget = newTarget;
+        environment.ConstructionFrame = constructionFrame;
 
         // JS calling convention: if `this` isn't bound by a receiver
         // (bare call `foo()`), it defaults to the global object in
@@ -273,6 +276,9 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
+        // Bind(instance) owns the existing receiver closure; BindThis owns the
+        // activation slot. Keep those resolver scope distances unchanged.
+        constructionFrame?.AttachThisBinding(_hasBoundThis ? environment : _closure);
 
         // Bind the JS-spec `arguments` array-like to the current call's args.
         // Arrow functions do NOT bind `arguments` — they inherit from the
@@ -380,6 +386,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         environment.PrivateClass = PrivateOwner;
         environment.StaticSuper = _declaration.IsStatic;
         environment.NewTarget = RuntimeValue.Undefined;
+        environment.ConstructionFrame = null;
 
         // See Call() for rationale on bound-this and default-this.
         if (_hasBoundThis)
@@ -729,7 +736,11 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
         RuntimeEnvironment environment = functionStrict
             ? new RuntimeEnvironment(_closure, strictMode: true)
             : new RuntimeEnvironment(_closure);
-        if (HasOwnThis) environment.NewTarget = newTarget;
+        if (HasOwnThis)
+        {
+            environment.NewTarget = newTarget;
+            environment.ConstructionFrame = null;
+        }
 
         // Named function expression: bind the self-reference in the same scope
         // as parameters so recursion works (`function f(n) { return f(n-1); }`)
@@ -810,7 +821,11 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
         RuntimeEnvironment environment = functionStrict
             ? new RuntimeEnvironment(_closure, strictMode: true)
             : new RuntimeEnvironment(_closure);
-        if (HasOwnThis) environment.NewTarget = RuntimeValue.Undefined;
+        if (HasOwnThis)
+        {
+            environment.NewTarget = RuntimeValue.Undefined;
+            environment.ConstructionFrame = null;
+        }
 
         // Named function expression: bind the self-reference in the same scope as
         // parameters so recursion works (`function f(n) { return f(n-1); }`) while

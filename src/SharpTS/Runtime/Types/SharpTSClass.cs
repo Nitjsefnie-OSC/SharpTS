@@ -117,33 +117,59 @@ public partial class SharpTSClass(
     internal virtual object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
     {
         SharpTSInstance instance = new(this);
+        return ExecuteConstructorLevel(interpreter, instance, arguments, newTarget);
+    }
 
-        // Initialize instance fields with their initializers (before constructor runs)
-        // Superclass fields are initialized first via inheritance chain
-        InitializeOrderedFields(interpreter, instance);
+    internal object? ExecuteConstructorLevel(
+        Interpreter interpreter, object allocation, List<object?> arguments, object? newTarget,
+        bool retryingFailedSuper = false)
+    {
+        if (TryExecuteNativeConstructor(interpreter, allocation, arguments)) return allocation;
 
-        // Initialize auto-accessor backing storage (before constructor runs)
-        InitializeAutoAccessors(interpreter, instance);
-
-        // FindMethod includes ancestor constructors, which must initialize this
-        // receiver rather than a separately allocated superclass instance.
-        ISharpTSCallable? constructor = FindMethod("constructor");
-        if (constructor != null)
+        var frame = new ClassConstructionFrame(this, allocation, newTarget, retryingFailedSuper);
+        var constructor = FindOwnMethod("constructor");
+        if (Superclass is null)
         {
-            var result = InvokeConstructorBody(interpreter, constructor, instance, arguments, newTarget);
-            return ResolveConstructorReturn(result, instance);
+            frame.InitializeOwnElements(interpreter);
+            return constructor is null ? allocation
+                : ResolveOwnConstructorReturn(
+                    InvokeConstructorBody(interpreter, constructor, allocation, arguments, newTarget, frame), allocation);
         }
 
-        return instance;
+        if (constructor is null)
+        {
+            // An implicit derived constructor is still a class level: forward
+            // first, then install only this owner's elements, preserving the
+            // ancestor completion selected by existing constructor-return rules.
+            var parentResult = Superclass.ExecuteConstructorLevel(
+                interpreter, allocation, arguments, newTarget, retryingFailedSuper);
+            return frame.CompleteSuper(interpreter, parentResult);
+        }
+
+        return ResolveOwnConstructorReturn(
+            InvokeConstructorBody(interpreter, constructor, allocation, arguments, newTarget, frame), frame.Receiver);
+    }
+
+    // Built-in-backed bridge roots initialize the existing native allocation;
+    // user subclasses continue through the ordinary per-owner executor above.
+    protected virtual bool TryExecuteNativeConstructor(
+        Interpreter interpreter, object allocation, List<object?> arguments) => false;
+
+    private object? ResolveOwnConstructorReturn(object? result, object receiver)
+    {
+        if (Interpreter.IsConstructorReturnObject(result)) return result;
+        if (Superclass is not null && result is not SharpTSUndefined)
+            throw new ThrowException(new SharpTSTypeError("Derived constructors may only return object or undefined"));
+        return receiver;
     }
 
     internal static object? InvokeConstructorBody(
         Interpreter interpreter, ISharpTSCallable constructor, object receiver,
-        List<object?> arguments, object? newTarget)
+        List<object?> arguments, object? newTarget, ClassConstructionFrame? constructionFrame = null)
     {
         var bound = BindMethodToReceiver(constructor, receiver);
         return bound is SharpTSFunction function
-            ? function.CallConstructed(interpreter, arguments, newTarget)
+            ? function.CallConstructed(interpreter, arguments, newTarget, constructionFrame)
             : bound.Call(interpreter, arguments);
     }
 
@@ -247,10 +273,34 @@ public partial class SharpTSClass(
         }
     }
 
-    private void InitializeOrderedFields(Interpreter interpreter, SharpTSInstance instance)
+    internal void InitializeOwnInstanceElements(
+        Interpreter interpreter, object receiver, bool retryingFailedSuper = false)
     {
-        Superclass?.InitializeOrderedFields(interpreter, instance);
+        // Array/Promise-backed classes retain their supported public-field storage.
+        // Private and auto-accessor access on those native receivers is separate.
+        if (receiver is not SharpTSInstance instance)
+        {
+            foreach (var field in _instanceFields)
+            {
+                object? value = field.Initializer is { } initializer
+                    ? interpreter.EvaluateClassInitializer(this, receiver, initializer) : null;
+                object? key = field.ComputedKey is { } computedKey
+                    ? interpreter.EvaluateClassInitializer(this, receiver, computedKey) : field.Name.Lexeme;
+                if (receiver is SharpTSArray array)
+                {
+                    if (key is SharpTSSymbol symbol) array.SetBySymbol(symbol, value);
+                    else array.SetNamedProperty(key?.ToString() ?? "undefined", value);
+                }
+                else if (receiver is SharpTSPromise promise)
+                    promise.SetOwnProperty(key?.ToString() ?? "undefined", value);
+                else
+                    throw new InvalidOperationException("Unsupported class instance field storage.");
+            }
+            return;
+        }
+
         var privateFields = new Dictionary<string, object?>();
+        if (retryingFailedSuper) _privateFieldStorage.Remove(instance);
         _privateFieldStorage.Add(instance, privateFields);
         foreach (var field in OrderedInstanceFields ?? _instanceFields.Concat(_instancePrivateFields).ToList())
         {
@@ -266,6 +316,7 @@ public partial class SharpTSClass(
             }
             else instance.SetRawField(field.Name.Lexeme, value);
         }
+        InitializeOwnAutoAccessors(interpreter, instance, retryingFailedSuper);
     }
 
     internal ISharpTSCallable? FindOwnMethod(string name)
@@ -767,6 +818,12 @@ public partial class SharpTSClass(
         // First initialize superclass auto-accessors
         Superclass?.InitializeAutoAccessors(interpreter, instance);
 
+        InitializeOwnAutoAccessors(interpreter, instance);
+    }
+
+    private void InitializeOwnAutoAccessors(
+        Interpreter interpreter, object instance, bool retryingFailedSuper = false)
+    {
         // Then initialize this class's auto-accessors
         if (_instanceAutoAccessors.Count == 0)
             return;
@@ -781,6 +838,7 @@ public partial class SharpTSClass(
         }
 
         // Add to ConditionalWeakTable - GC-friendly storage
+        if (retryingFailedSuper) _autoAccessorStorage.Remove(instance);
         _autoAccessorStorage.Add(instance, storage);
     }
 

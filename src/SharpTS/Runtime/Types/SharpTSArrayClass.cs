@@ -126,46 +126,15 @@ public class SharpTSArrayClass : SharpTSClass
     internal override object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
     {
         var instance = new SharpTSArraySubclassInstance(this);
-
-        InitializeFieldsAsNamedProperties(interpreter, instance);
-
-        ISharpTSCallable? constructor = FindMethod("constructor");
-        bool hasUserConstructor = constructor is not ArrayConstructorCallable;
-
-        if (hasUserConstructor && constructor != null)
-        {
-            var result = InvokeConstructorBody(interpreter, constructor, instance, arguments, newTarget);
-            return ResolveConstructorReturn(result, instance);
-        }
-        else
-        {
-            InitializeFromArrayArguments(instance, arguments);
-        }
-
-        return instance;
+        return ExecuteConstructorLevel(interpreter, instance, arguments, newTarget);
     }
 
-    /// <summary>
-    /// Initialises declared public instance fields (walking the superclass
-    /// chain root-first) as named properties on the array instance — arrays
-    /// store expando properties via the named-property table rather than
-    /// SharpTSInstance fields.
-    /// </summary>
-    private void InitializeFieldsAsNamedProperties(Interpreter interpreter, SharpTSArraySubclassInstance instance)
+    protected override bool TryExecuteNativeConstructor(
+        Interpreter interpreter, object allocation, List<object?> arguments)
     {
-        if (Superclass is SharpTSArrayClass parent)
-            parent.InitializeFieldsAsNamedProperties(interpreter, instance);
-
-        foreach (var field in InstanceFields)
-        {
-            object? value = field.Initializer != null
-                ? interpreter.Evaluate(field.Initializer)
-                : null;
-            string key = field.ComputedKey != null
-                ? interpreter.Evaluate(field.ComputedKey)?.ToString() ?? "undefined"
-                : field.Name.Lexeme;
-            instance.SetNamedProperty(key, value);
-        }
+        if (!ReferenceEquals(this, ArrayBase)) return false;
+        InitializeFromArrayArguments((SharpTSArray)allocation, arguments);
+        return true;
     }
 
     /// <summary>

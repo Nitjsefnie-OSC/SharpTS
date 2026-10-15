@@ -11,7 +11,7 @@ public partial class Interpreter
         // Static auto-accessors and legacy field ASTs initialize before the
         // class value is available, but still have their own initializer context.
         var environment = new RuntimeEnvironment(_environment, strictMode: true)
-            { NewTarget = RuntimeValue.Undefined };
+            { NewTarget = RuntimeValue.Undefined, ConstructionFrame = null };
         using (PushScope(environment)) return Evaluate(expression);
     }
 
@@ -23,6 +23,7 @@ public partial class Interpreter
             StaticSuper = receiver is SharpTSClass
         };
         environment.NewTarget = RuntimeValue.Undefined;
+        environment.ConstructionFrame = null;
         environment.Define("this", receiver);
         if (owner.Superclass is { } parent) environment.Define("super", parent);
         using (PushScope(environment)) return Evaluate(expression);

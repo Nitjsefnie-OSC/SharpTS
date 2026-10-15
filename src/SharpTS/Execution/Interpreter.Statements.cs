@@ -2413,6 +2413,7 @@ public partial class Interpreter
             var staticEnv = new RuntimeEnvironment(_environment, strictMode: true)
                 { PrivateClass = klass, StaticSuper = true };
             staticEnv.NewTarget = RuntimeValue.Undefined;
+            staticEnv.ConstructionFrame = null;
             staticEnv.Define("this", klass);
             staticEnv.Define(classStmt.Name.Lexeme, klass);
 

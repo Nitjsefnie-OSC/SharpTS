@@ -132,23 +132,15 @@ public class SharpTSPromiseClass : SharpTSClass
     {
         var capability = new TaskCompletionSource<object?>();
         var instance = new SharpTSPromiseSubclassInstance(this, capability);
+        return ExecuteConstructorLevel(interpreter, instance, arguments, newTarget);
+    }
 
-        InitializeFieldsAsOwnProperties(interpreter, instance);
-
-        ISharpTSCallable? constructor = FindMethod("constructor");
-        bool hasUserConstructor = constructor is not PromiseConstructorCallable;
-
-        if (hasUserConstructor && constructor != null)
-        {
-            var result = InvokeConstructorBody(interpreter, constructor, instance, arguments, newTarget);
-            return ResolveConstructorReturn(result, instance);
-        }
-        else
-        {
-            RunExecutor(interpreter, RequireExecutor(arguments), capability);
-        }
-
-        return instance;
+    protected override bool TryExecuteNativeConstructor(
+        Interpreter interpreter, object allocation, List<object?> arguments)
+    {
+        if (!ReferenceEquals(this, PromiseBase)) return false;
+        RunExecutor(interpreter, RequireExecutor(arguments), ((SharpTSPromiseSubclassInstance)allocation).Capability);
+        return true;
     }
 
     /// <summary>
@@ -242,27 +234,6 @@ public class SharpTSPromiseClass : SharpTSClass
         if (arguments.Count < 1 || arguments[0] is not ISharpTSCallable executor)
             throw new InterpreterException("Promise executor must be callable.");
         return executor;
-    }
-
-    /// <summary>
-    /// Initialises declared public instance fields (walking the superclass
-    /// chain root-first) as own properties on the promise instance.
-    /// </summary>
-    private void InitializeFieldsAsOwnProperties(Interpreter interpreter, SharpTSPromiseSubclassInstance instance)
-    {
-        if (Superclass is SharpTSPromiseClass parent)
-            parent.InitializeFieldsAsOwnProperties(interpreter, instance);
-
-        foreach (var field in InstanceFields)
-        {
-            object? value = field.Initializer != null
-                ? interpreter.Evaluate(field.Initializer)
-                : null;
-            string key = field.ComputedKey != null
-                ? interpreter.Evaluate(field.ComputedKey)?.ToString() ?? "undefined"
-                : field.Name.Lexeme;
-            instance.SetOwnProperty(key, value);
-        }
     }
 
     /// <summary>

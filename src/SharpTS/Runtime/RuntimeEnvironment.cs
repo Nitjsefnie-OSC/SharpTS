@@ -25,6 +25,16 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     private bool? _staticSuper;
     private bool _ownsNewTarget;
     private RuntimeValue _newTarget;
+    private bool _ownsConstructionFrame;
+    private ClassConstructionFrame? _constructionFrame;
+
+    // Ordinary invocations and class initializers explicitly own a null slot;
+    // true arrows and blocks inherit their lexical constructor invocation.
+    internal ClassConstructionFrame? ConstructionFrame
+    {
+        get => _ownsConstructionFrame ? _constructionFrame : Enclosing?.ConstructionFrame;
+        set { _ownsConstructionFrame = true; _constructionFrame = value; }
+    }
 
     // Ordinary invocations own a slot, including undefined. True arrows and
     // ordinary block scopes inherit the nearest invocation's lexical slot.

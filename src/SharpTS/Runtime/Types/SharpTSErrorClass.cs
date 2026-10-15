@@ -210,27 +210,15 @@ public class SharpTSErrorClass : SharpTSClass
     internal override object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
     {
         SharpTSInstance instance = new(this);
+        return ExecuteConstructorLevel(interpreter, instance, arguments, newTarget);
+    }
 
-        InitializeInstanceFields(interpreter, instance);
-        InitializePrivateFields(interpreter, instance);
-        InitializeAutoAccessors(interpreter, instance);
-
-        ISharpTSCallable? constructor = FindMethod("constructor");
-        bool hasUserConstructor = constructor is not ErrorConstructorCallable;
-
-        if (hasUserConstructor && constructor != null)
-        {
-            // User-defined constructor — super() in body will call ErrorConstructorCallable
-            var result = InvokeConstructorBody(interpreter, constructor, instance, arguments, newTarget);
-            return ResolveConstructorReturn(result, instance);
-        }
-        else
-        {
-            // No user constructor (or built-in Error class) — initialise error fields directly
-            InitializeErrorFields(interpreter, instance, _errorTypeName, arguments);
-        }
-
-        return instance;
+    protected override bool TryExecuteNativeConstructor(
+        Interpreter interpreter, object allocation, List<object?> arguments)
+    {
+        if (!_isBuiltIn) return false;
+        InitializeErrorFields(interpreter, (SharpTSInstance)allocation, _errorTypeName, arguments);
+        return true;
     }
 
     /// <summary>

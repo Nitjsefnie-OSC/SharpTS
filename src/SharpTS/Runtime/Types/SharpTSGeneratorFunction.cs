@@ -81,6 +81,7 @@ public class SharpTSGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceive
             strictMode: ownsStrictThis ? true : null)
             { PrivateClass = PrivateOwner, StaticSuper = _declaration.IsStatic };
         environment.NewTarget = RuntimeValue.Undefined;
+        environment.ConstructionFrame = null;
         // #775: a generator expression / object generator method binds its own dynamic `this`. The bound
         // receiver (or globalThis for a plain call) is defined in the generator's OWN body environment —
         // NOT a new parent scope inserted above the closure — so a captured enclosing-function local keeps
@@ -187,7 +188,11 @@ public class SharpTSArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
         RuntimeEnvironment environment = new(_closure);
-        if (HasOwnThis) environment.NewTarget = RuntimeValue.Undefined;
+        if (HasOwnThis)
+        {
+            environment.NewTarget = RuntimeValue.Undefined;
+            environment.ConstructionFrame = null;
+        }
         // Named generator function expression: bind self-reference alongside params.
         if (_declaration.Name != null)
         {

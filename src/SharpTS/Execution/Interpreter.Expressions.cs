@@ -409,13 +409,21 @@ public partial class Interpreter
     /// Retrieves the superclass from the lexical environment and reads its live
     /// prototype chain. Accessors use the actual <c>this</c> receiver; unchanged
     /// declared methods retain their existing bound-method convention.
-    /// For constructor calls (super()), if no explicit constructor exists, returns a
-    /// no-op callable to match TypeScript's implicit default constructor behavior.
+    /// Constructor calls capture their lexical invocation and execute every parent
+    /// class level before installing this owner's instance elements.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/classes.html#super-calls">TypeScript super Calls</seealso>
     private RuntimeValue EvaluateSuper(Expr.Super expr)
     {
         SharpTSClass superclass = _environment.Get(expr.Keyword).AsObject<SharpTSClass>()!;
+        if (expr.Method is null)
+        {
+            // Capture the lexical invocation before arguments run. Nested new or
+            // callbacks must not replace this pending constructor boundary.
+            var frame = _environment.ConstructionFrame
+                ?? throw new ThrowException(new SharpTSReferenceError("super() is not available outside a constructor"));
+            return RuntimeValue.FromObject(new SuperConstructorCallable(superclass, frame));
+        }
         // `this` is usually a SharpTSInstance, but built-in-backed instances
         // (Array subclass instances) are SharpTSArrays — bind generically.
         object? thisReceiver = _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject();
@@ -435,35 +443,23 @@ public partial class Interpreter
                 superPrototype, property.Lexeme, thisReceiver, bindClassMethods: true));
         }
 
-        // super() with null Method means constructor call
-        ISharpTSCallable? method = superclass.FindMethod("constructor");
-
-        // If no constructor exists, return a no-op callable for super() calls
-        // This matches TypeScript's implicit default constructor behavior
-        if (method == null)
-        {
-            return RuntimeValue.FromObject(new NoOpCallable());
-        }
-
-        return RuntimeValue.FromObject(new SuperConstructorCallable(
-            method, thisReceiver!, _environment.NewTarget.ToObject()));
+        throw new InvalidOperationException("Expected a super property.");
     }
 
     private sealed class SuperConstructorCallable(
-        ISharpTSCallable constructor, object receiver, object? newTarget) : ISharpTSNonConstructorCallable
+        SharpTSClass superclass, ClassConstructionFrame frame) : ISharpTSNonConstructorCallable
     {
-        public int Arity() => constructor.Arity();
+        public int Arity() => superclass.Arity();
         public object? Call(Interpreter interpreter, List<object?> arguments)
-            => SharpTSClass.InvokeConstructorBody(interpreter, constructor, receiver, arguments, newTarget);
-    }
-
-    /// <summary>
-    /// A no-op callable used for super() calls when the parent class has no explicit constructor.
-    /// </summary>
-    private class NoOpCallable : ISharpTSCallable
-    {
-        public int Arity() => 0;
-        public object? Call(Interpreter interpreter, List<object?> arguments) => null;
+        {
+            // Full second-allocation/effect ordering for duplicate super is a
+            // separate boundary (#2283); reject with a guest error before reusing
+            // this allocation's private brands or retrying partial elements.
+            bool retryingFailedSuper = frame.BeginSuperAttempt();
+            var parentResult = superclass.ExecuteConstructorLevel(
+                interpreter, frame.Allocation, arguments, frame.NewTarget, retryingFailedSuper);
+            return frame.CompleteSuper(interpreter, parentResult);
+        }
     }
 
     /// <summary>
@@ -2404,6 +2400,7 @@ public partial class Interpreter
                 var staticEnv = new RuntimeEnvironment(_environment, strictMode: true)
                     { PrivateClass = klass, StaticSuper = true };
                 staticEnv.NewTarget = RuntimeValue.Undefined;
+                staticEnv.ConstructionFrame = null;
                 staticEnv.Define("this", klass);
                 if (classExpr.Name != null)
                 {

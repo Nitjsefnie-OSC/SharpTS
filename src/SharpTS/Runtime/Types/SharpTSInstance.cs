@@ -487,6 +487,9 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         }
 
         _fields[name] = value;
+        // A base constructor can read this name before a derived field exists.
+        // Re-resolve after the successful write, preserving own accessor precedence.
+        _lookupCache.Remove(name);
     }
 
     /// <summary>
@@ -526,6 +529,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         }
 
         _fields[name] = value;
+        _lookupCache.Remove(name);
     }
 
     /// <summary>

@@ -816,8 +816,11 @@ class home and actual receiver, including captured arrows and state machines.
 The prototype reader respects live own descriptors and dynamic data before
 advancing to the parent; getterless accessors return undefined. Unchanged nominal
 method values use the lexical nonvirtual bridge while retaining source argument
-padding, rest packing and non-constructor metadata. Direct superclass calls have
-their own dispatch path.
+padding, rest packing and non-constructor metadata. Superclass calls resolve that
+live property before arguments and invoke it with the saved receiver, including
+optional calls and transparent reference wrappers. Unchanged fixed-signature
+calls retain nominal dispatch only when the runtime feature proofs exclude
+prototype, descriptor and integrity mutation.
 
 Required `FunctionIntrospection` owns function-property lookup and constructor
 capability declarations. Both bodies are emitted at their original separate

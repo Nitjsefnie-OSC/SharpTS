@@ -29,6 +29,7 @@ public sealed class ClassRegistry
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _instanceGetters;
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _instanceSetters;
     private readonly Dictionary<MethodBuilder, string?> _sourceInstanceGetters = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<TypeBuilder, HashSet<string?>> _instancePrototypeBarriers = new(ReferenceEqualityComparer.Instance);
 
     // Static members
     private readonly Dictionary<string, Dictionary<string, FieldBuilder>> _staticFields;
@@ -216,6 +217,31 @@ public sealed class ClassRegistry
 
     internal void RegisterSourceGeneratorMethod(MethodBuilder method)
         => _sourceGeneratorMethods.Add(method);
+
+    internal void RegisterInstancePrototypeBarrier(TypeBuilder owner, string? name)
+    {
+        if (!_instancePrototypeBarriers.TryGetValue(owner, out var names))
+            _instancePrototypeBarriers[owner] = names = [];
+        names.Add(name);
+    }
+
+    internal bool HasInstancePrototypeBarrier(string className, string name, MethodBuilder target)
+    {
+        for (string? current = className; current != null; current = _superclass.GetValueOrDefault(current))
+        {
+            // A computed member may evaluate to any string. Named accessors are
+            // prototype properties; unlike instance fields, they can shadow the
+            // farther method selected by the nominal method-only registry.
+            if (_builders.TryGetValue(current, out var owner)
+                && _instancePrototypeBarriers.TryGetValue(owner, out var names)
+                && (names.Contains(null) || names.Contains(name)))
+                return true;
+            if (_instanceMethods.TryGetValue(current, out var methods)
+                && methods.TryGetValue(name, out var method) && ReferenceEquals(method, target))
+                return false;
+        }
+        return true;
+    }
 
     /// <summary>
     /// State-machine methods cannot make a nonvirtual call to a virtual parent method:

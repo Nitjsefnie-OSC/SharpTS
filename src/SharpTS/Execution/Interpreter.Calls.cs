@@ -151,11 +151,31 @@ public partial class Interpreter
             callee = PerformIndexGet(memberIndex.Object, receiver, key).ToObject();
             return BindMemberCallReceiver(callee, receiver);
         }
-        callee = (await ctx.EvaluateExprAsync(expression)).ToObject();
-        if (reference is Expr.Super { Method: not null } && _environment.StaticSuper)
-            callee = BindMemberCallReceiver(callee,
-                _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject());
-        return callee;
+        if (reference is Expr.Super { Method: not null })
+        {
+            object? receiver = ctx.Environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject();
+            // EvaluateSuper performs the live lexical-home Get. A descriptor's
+            // returned function is raw, so this call Reference supplies this.
+            callee = (await ctx.EvaluateExprAsync(expression)).ToObject();
+            return callee switch
+            {
+                SharpTSAsyncArrowFunction { HasOwnThis: true } function => function.Bind(receiver!),
+                SharpTSProxy proxy => new SuperProxyCall(proxy, receiver),
+                _ => BindMemberCallReceiver(callee, receiver)
+            };
+        }
+        return (await ctx.EvaluateExprAsync(expression)).ToObject();
+    }
+
+    private sealed class SuperProxyCall(SharpTSProxy proxy, object? receiver) : ISharpTSNonConstructorCallable
+    {
+        public int Arity() => proxy.Arity();
+        public object? Call(Interpreter interpreter, List<object?> arguments)
+        {
+            if (!proxy.IsCallable)
+                throw new ThrowException(new SharpTSTypeError("object is not a function"));
+            return proxy.TrapApply(receiver, arguments, interpreter);
+        }
     }
 
     /// <summary>

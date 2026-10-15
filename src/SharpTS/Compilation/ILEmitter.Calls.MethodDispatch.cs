@@ -1002,6 +1002,9 @@ public partial class ILEmitter
                 resolvedSuperName, methodName, out declaringClassName, out methodBuilder))
             return false;
 
+        if (!CanEmitNominalSuperMethodCall(resolvedSuperName, methodName, methodBuilder, arguments))
+            return false;
+
         MethodBuilder dispatchBuilder = methodBuilder;
         MethodBuilder? typedCore = null;
         bool useTypedCore = _ctx.RuntimeFeatures?.UsesDynamicPropertyDescriptors == false

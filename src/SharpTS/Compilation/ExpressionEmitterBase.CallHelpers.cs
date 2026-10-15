@@ -2001,15 +2001,8 @@ public abstract partial class ExpressionEmitterBase
     /// </summary>
     private void EmitOptionalCall(Expr.Call c)
     {
+        if (TryEmitGuestSuperCall(c)) return;
         var reference = UnwrapCallReference(c.Callee);
-
-        // A resolvable super method must use a non-virtual base call.  Looking
-        // it up dynamically from the derived instance re-enters the override
-        // and recurses; since the method exists, the optional callable check is
-        // known to succeed and the direct call is semantically equivalent.
-        if (reference is Expr.Super { Method: not null } super
-            && TryEmitSuperMethodCall(super.Method.Lexeme, c.Arguments))
-            return;
 
         var nullishLabel = IL.DefineLabel();
         var endLabel = IL.DefineLabel();
@@ -2269,7 +2262,7 @@ public abstract partial class ExpressionEmitterBase
 
         string resolvedSuperName = Ctx.ResolveClassName(superclassName);
         var methodBuilder = Ctx.ResolveInstanceMethod(resolvedSuperName, methodName);
-        if (methodBuilder == null)
+        if (methodBuilder == null || !CanEmitNominalSuperMethodCall(resolvedSuperName, methodName, methodBuilder, arguments))
             return false;
 
         if (Ctx.CurrentClassBuilder is not { } owner || Ctx.ClassRegistry is not { } registry)

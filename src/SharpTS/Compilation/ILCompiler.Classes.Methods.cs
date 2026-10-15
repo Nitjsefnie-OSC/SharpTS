@@ -74,6 +74,19 @@ public partial class ILCompiler
         // prototype constructor on each module-qualified TypeBuilder.
         DefineClassPrototypeConstructor(typeBuilder);
 
+        // The direct-super proof must see prototype accessors and unknown
+        // computed keys even when the method-only lookup reaches an ancestor.
+        var registry = GetClassRegistry();
+        foreach (var accessor in classStmt.Accessors ?? [])
+            if (!accessor.IsStatic)
+                registry.RegisterInstancePrototypeBarrier(typeBuilder,
+                    accessor.ComputedKey == null ? accessor.Name.Lexeme : null);
+        foreach (var accessor in classStmt.AutoAccessors ?? [])
+            if (!accessor.IsStatic)
+                registry.RegisterInstancePrototypeBarrier(typeBuilder, accessor.Name.Lexeme);
+        if (classStmt.Methods.Any(method => !method.IsStatic && !method.IsPrivate && method.ComputedKey != null))
+            registry.RegisterInstancePrototypeBarrier(typeBuilder, null);
+
         // Skip if instance methods are already defined for this class
         if (_classes.InstanceMethods.ContainsKey(qualifiedClassName))
             return;

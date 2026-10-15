@@ -94,17 +94,66 @@ public abstract partial class ExpressionEmitterBase
 
     protected bool TryEmitGuestSuperCall(Expr.Call call)
     {
-        if ((!Ctx.HasGuestReceiver && !Ctx.IsStaticSuperContext) || call.Callee is not Expr.Super { Method: not null } super
+        if (Ctx.CurrentClassBuilder == null || Ctx.Runtime == null
+            || UnwrapSuperCallReference(call.Callee) is not Expr.Super { Method: not null } super
             || (!Ctx.IsStaticSuperContext && super.Method.Lexeme == "constructor")) return false;
-        // Nominal declaration helpers use the existing lexical-class bridge,
-        // which keeps the actual receiver and bypasses virtual overrides.
-        if (Ctx.UseNominalSuperCallBridge && Ctx.CurrentClassExpr == null && Ctx.CurrentClassBuilder != null
-            && !Ctx.IsStaticSuperContext && TryEmitSuperMethodCall(super.Method.Lexeme, call.Arguments))
+
+        // An unchanged, fixed-signature parent can retain its proven direct
+        // dispatch. Every mutation-capable or variadic call resolves the live
+        // property first, including calls from arrows and state machines.
+        if (TryEmitSuperMethodCall(super.Method.Lexeme, call.Arguments))
             return true;
+
         var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
         EmitGuestSuperValue(super.Method.Lexeme, receiver);
+        if (call.Optional)
+        {
+            var callable = _helpers.SpillStoreObject();
+            var missing = IL.DefineLabel();
+            var end = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, callable);
+            IL.Emit(OpCodes.Brfalse, missing);
+            IL.Emit(OpCodes.Ldloc, callable);
+            IL.Emit(OpCodes.Isinst, Ctx.Runtime.Sentinels.UndefinedType);
+            IL.Emit(OpCodes.Brtrue, missing);
+            IL.Emit(OpCodes.Ldloc, callable);
+            EmitGuestMethodInvocation(receiver, call.Arguments);
+            IL.Emit(OpCodes.Br, end);
+            IL.MarkLabel(missing);
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime.Sentinels.UndefinedInstance);
+            IL.MarkLabel(end);
+            SetStackUnknown();
+            return true;
+        }
         EmitGuestMethodInvocation(receiver, call.Arguments);
         return true;
+    }
+
+    private static Expr UnwrapSuperCallReference(Expr expression) => expression switch
+    {
+        Expr.Grouping grouping => UnwrapSuperCallReference(grouping.Expression),
+        Expr.TypeAssertion assertion => UnwrapSuperCallReference(assertion.Expression),
+        Expr.Satisfies satisfies => UnwrapSuperCallReference(satisfies.Expression),
+        Expr.NonNullAssertion assertion => UnwrapSuperCallReference(assertion.Expression),
+        _ => expression
+    };
+
+    protected bool CanEmitNominalSuperMethodCall(string superclass, string name,
+        MethodBuilder method, IReadOnlyList<Expr> arguments)
+    {
+        if (Ctx.IsStaticSuperContext || Ctx.CurrentClassExpr != null
+            || Ctx.RuntimeFeatures is not
+                { UsesClassPrototypeMutation: false, UsesDynamicPropertyDescriptors: false, UsesObjectIntegrityMutation: false }
+            || arguments.Any(argument => argument is Expr.Spread) || AnyContainsSuspension(arguments)
+            || Ctx.MethodsCapturingArguments?.Contains(method) == true
+            || Ctx.ClassRegistry?.HasInstancePrototypeBarrier(superclass, name, method) != false)
+            return false;
+        var parameters = method.GetParameters();
+        // Defaults, rest markers and guest object slots require the function
+        // value ABI. Exact primitive slots need no packing or omission padding.
+        return arguments.Count == parameters.Length && parameters.All(parameter =>
+            parameter.ParameterType == Types.Double || parameter.ParameterType == Types.Boolean
+                || parameter.ParameterType == Types.String);
     }
 
     protected void EmitGuestSuperValue(string name, LocalBuilder receiver)
@@ -125,7 +174,7 @@ public abstract partial class ExpressionEmitterBase
 
     private void EmitUnchangedSuperMethodValue(string name, LocalBuilder receiver)
     {
-        if (Ctx.IsStaticSuperContext || Ctx.CurrentClassExpr != null
+        if (Ctx.IsStaticSuperContext
             || Ctx.CurrentClassBuilder is not { } owner || Ctx.ClassRegistry is not { } registry) return;
         string? superclass = Ctx.CurrentSuperclassName
             ?? registry.GetSuperclass(owner.FullName ?? Ctx.CurrentClassName!)
@@ -155,7 +204,11 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Ldloc, function);
         IL.Emit(OpCodes.Callvirt, Ctx.Runtime.FunctionValues.GetMethodInfo);
         IL.Emit(OpCodes.Callvirt, Types.GetProperty(Types.MethodInfo, "MetadataToken")!.GetGetMethod()!);
-        IL.Emit(OpCodes.Ldc_I4, parent.MetadataToken);
+        // Persisted assembly layout can remap MethodDef rows after emission.
+        // Resolve both tokens at runtime rather than embedding a provisional
+        // MethodBuilder token in the unchanged-value test.
+        Types.EmitLoadMethodInfo(IL, parent);
+        IL.Emit(OpCodes.Callvirt, Types.GetProperty(Types.MethodInfo, "MetadataToken")!.GetGetMethod()!);
         IL.Emit(OpCodes.Bne_Un, unchanged);
         var (_, bridge) = registry.GetOrCreateSuperCallBridge(owner, parent, Ctx.Runtime.FunctionAttributes);
         IL.Emit(OpCodes.Ldloc, receiver);

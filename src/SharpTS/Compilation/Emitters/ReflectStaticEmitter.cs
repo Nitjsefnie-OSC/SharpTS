@@ -96,8 +96,7 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
                 else
                     il.Emit(OpCodes.Ldnull);
 
-                il.Emit(OpCodes.Call, ctx.Runtime!.StringCoercion.ToJsString);
-                var keyLocal = il.DeclareLocal(ctx.Types.String);
+                var keyLocal = il.DeclareLocal(ctx.Types.Object);
                 il.Emit(OpCodes.Stloc, keyLocal);
                 il.Emit(OpCodes.Ldloc, targetLocal);
                 il.Emit(OpCodes.Ldloc, keyLocal);
@@ -110,7 +109,7 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
                 {
                     il.Emit(OpCodes.Ldloc, targetLocal);
                 }
-                il.Emit(OpCodes.Call, ctx.Runtime.Reflect.Get);
+                il.Emit(OpCodes.Call, ctx.Runtime!.Reflect.Get);
                 return true;
             }
 

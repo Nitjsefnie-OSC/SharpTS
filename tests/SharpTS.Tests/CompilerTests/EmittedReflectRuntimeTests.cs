@@ -78,7 +78,7 @@ public class EmittedReflectRuntimeTests
         var owner = new EmittedRuntime().Reflect;
         Assert.NotSame(owner, new EmittedRuntime().Reflect);
         Assert.Null(typeof(EmittedRuntime).GetProperty(nameof(EmittedRuntime.Reflect))!.SetMethod);
-        Assert.Equal(19, HandleNames.Count());
+        Assert.Equal(20, HandleNames.Count());
         Assert.Null(owner.Assignment);
         Assert.Null(owner.Namespace);
         Assert.Null(owner.Metadata);
@@ -87,6 +87,7 @@ public class EmittedReflectRuntimeTests
         Assert.Throws<InvalidOperationException>(() => owner.RequireMetadata());
         Assert.Throws<InvalidOperationException>(owner.CompleteEmission);
         owner.Get = CreateDeclarations().Get;
+        owner.ToPropertyKey = CreateDeclarations().ToPropertyKey;
         owner.CompleteEmission();
         AssertFrozen(owner);
 
@@ -228,7 +229,7 @@ public class EmittedReflectRuntimeTests
         var owner = runtime.Reflect;
         var get = type.GetMethod("ReflectGet")!;
         Assert.Equal(typeof(object), get.ReturnType);
-        Assert.Equal(new[] { typeof(object), typeof(string), typeof(object) }, get.GetParameters().Select(p => p.ParameterType));
+        Assert.Equal(new[] { typeof(object), typeof(object), typeof(object) }, get.GetParameters().Select(p => p.ParameterType));
         Assert.Equal(7d, Call(type, "ReflectGet", target, "x", target));
         Assert.Equal(owner.Assignment is not null, type.GetMethod("ReflectSet") is not null);
         if (owner.Assignment is { } assignment)

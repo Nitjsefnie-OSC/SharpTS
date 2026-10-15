@@ -112,7 +112,7 @@ public class SharpTSProxy : ISharpTSCallable
         object? value = _handler is SharpTSProxy proxy
             ? proxy.TrapGetCompiled(
                 trapName, proxy,
-                (target, key, _) => ordinaryGet(target, key),
+                (target, key, _) => ordinaryGet(target, (string)key),
                 ordinaryGet, ordinaryGet,
                 (_, _) => SharpTSUndefined.Instance)
             : ordinaryGet(_handler!, trapName);
@@ -163,9 +163,9 @@ public class SharpTSProxy : ISharpTSCallable
     /// BuiltInRegistry's interpreter-oriented fallback.
     /// </summary>
     public object? TrapGetCompiled(
-        string prop,
+        object prop,
         object? receiver,
-        Func<object, string, object, object?> ordinaryGet,
+        Func<object, object, object, object?> ordinaryGet,
         Func<object, string, object?> ordinaryHandlerGet,
         Func<object, string, object?> ordinaryFunctionGet,
         Func<object, object, object?> ordinaryGetOwnPropertyDescriptor)
@@ -178,9 +178,9 @@ public class SharpTSProxy : ISharpTSCallable
                     prop, receiver, ordinaryGet, ordinaryHandlerGet,
                     ordinaryFunctionGet,
                     ordinaryGetOwnPropertyDescriptor)
-                : prop is "call" or "apply" or "bind"
+                : prop is string functionProperty && (functionProperty is "call" or "apply" or "bind")
                     && IsCallable
-                    ? ordinaryFunctionGet(this, prop)
+                    ? ordinaryFunctionGet(this, functionProperty)
                     : ordinaryGet(_target, prop, receiver!);
         }
 
@@ -534,7 +534,7 @@ public class SharpTSProxy : ISharpTSCallable
     /// while preserving the original receiver through proxy forwarding.
     /// </summary>
     public bool TrapSetCompiled(
-        string prop,
+        object prop,
         object? value,
         object? receiver,
         Func<object, object, object, object, bool> ordinarySet,
@@ -1187,7 +1187,7 @@ public class SharpTSProxy : ISharpTSCallable
     /// object representations.
     /// </summary>
     public bool TrapDefinePropertyCompiled(
-        string prop,
+        object prop,
         object descriptor,
         Func<object, object, object, object?> ordinaryDefine,
         Func<object, object, object?> ordinaryGetOwnPropertyDescriptor,

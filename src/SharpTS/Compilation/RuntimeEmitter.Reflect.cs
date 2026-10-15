@@ -17,7 +17,12 @@ public partial class RuntimeEmitter
     private readonly record struct ReflectGetInputs(MethodInfo InvokeMethodUnwrapped,
         MethodInfo ObjectGetOwnPropertyDescriptor, MethodInfo HasOwnPropertyHelperMethod,
         MethodInfo GetFunctionMethod, MethodInfo InvokeMethodValue, FieldInfo UndefinedInstance, Type UndefinedType,
-        MethodInfo GetProperty, MethodInfo GetPrototypeOf);
+        MethodInfo GetProperty, MethodInfo GetPrototypeOf, MethodInfo GetIndex, MethodInfo IsSymbol,
+        MethodInfo FindOwnSymbolMethod);
+
+    private readonly record struct ReflectToPropertyKeyInputs(Type SymbolType, FieldInfo SymbolToPrimitive,
+        Type UndefinedType, MethodInfo ToJsString, MethodInfo GetProperty, MethodInfo InvokeMethodValue,
+        MethodInfo TypeOf, MethodInfo CreateException, ConstructorInfo TypeErrorConstructor);
 
     private readonly record struct ReflectDeletePropertyInputs(MethodInfo InvokeMethodUnwrapped,
         MethodInfo ObjectGetOwnPropertyDescriptor, MethodInfo ToJsString, MethodInfo ObjectIsExtensible,
@@ -28,8 +33,8 @@ public partial class RuntimeEmitter
 
     private readonly record struct ReflectSetInputs(ProxySetCallInputs ProxySet,
         MethodInfo ObjectGetOwnPropertyDescriptor, MethodInfo IsFrozen, MethodInfo HasOwnPropertyHelperMethod,
-        MethodInfo ToJsString, MethodInfo ObjectGetPrototypeOf, MethodInfo IsTruthy, MethodInfo InvokeMethodValue,
-        Type UndefinedType, MethodInfo GetProperty, MethodInfo SetProperty);
+        MethodInfo ToPropertyKey, MethodInfo ObjectGetPrototypeOf, MethodInfo IsTruthy, MethodInfo InvokeMethodValue,
+        Type UndefinedType, MethodInfo GetProperty, MethodInfo SetProperty, MethodInfo IsSymbol);
 
     private readonly record struct ReflectSetPrototypeOfInputs(MethodInfo CreateException,
         ConstructorInfo TypeErrorConstructor, MethodInfo InvokeMethodUnwrapped, MethodInfo ObjectGetPrototypeOf,
@@ -37,7 +42,7 @@ public partial class RuntimeEmitter
         MethodInfo GetProperty);
 
     private readonly record struct ReflectDefinePropertyInputs(MethodInfo InvokeMethodUnwrapped,
-        MethodInfo ObjectGetOwnPropertyDescriptor, MethodInfo HasOwnPropertyHelperMethod, MethodInfo ToJsString,
+        MethodInfo ObjectGetOwnPropertyDescriptor, MethodInfo HasOwnPropertyHelperMethod, MethodInfo ToPropertyKey,
         MethodInfo ObjectDefineProperty, MethodInfo ObjectIsExtensible, MethodInfo GetProperty);
 
     private readonly record struct ReflectOwnKeysInputs(MethodInfo CreateException,
@@ -53,13 +58,123 @@ public partial class RuntimeEmitter
         MethodInfo GetProperty, EmittedDataViewRuntime? DataView, EmittedPromiseRuntime? Promise);
 
     private readonly record struct ReflectValueFormMethodsInputs(MethodInfo Get, MethodInfo Set,
-        MethodInfo DefineProperty, MethodInfo ObjectGetOwnPropertyDescriptor, MethodInfo ToJsString,
+        MethodInfo DefineProperty, MethodInfo ObjectGetOwnPropertyDescriptor,
         MethodInfo ObjectGetPrototypeOf, MethodInfo ObjectIsExtensible, MethodInfo HasIn);
+
+    /// <summary>ToPropertyKey preserves Symbol results of string-hint ToPrimitive.</summary>
+    private void EmitReflectToPropertyKey(EmittedReflectRuntime reflect, ReflectToPropertyKeyInputs inputs)
+    {
+        var il = reflect.ToPropertyKey.GetILGenerator();
+        var value = il.DeclareLocal(_types.Object);
+        var callable = il.DeclareLocal(_types.Object);
+        var primitive = il.DefineLabel();
+        var ordinary = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, value);
+        EmitPrimitiveBranch();
+
+        // GetMethod(input, @@toPrimitive) must use ordinary [[Get]], including
+        // inherited getters and Proxy traps, with input as its receiver.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, inputs.SymbolToPrimitive);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, reflect.Get);
+        il.Emit(OpCodes.Stloc, callable);
+        il.Emit(OpCodes.Ldloc, callable);
+        il.Emit(OpCodes.Brfalse, ordinary);
+        il.Emit(OpCodes.Ldloc, callable);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, ordinary);
+        var exoticCallable = il.DefineLabel();
+        EmitCallableBranch(exoticCallable);
+        GuestErrorEmitter.ThrowError(il, inputs.CreateException, inputs.TypeErrorConstructor,
+            "Symbol.toPrimitive is not callable");
+        il.MarkLabel(exoticCallable);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, callable);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldstr, "string");
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
+        il.Emit(OpCodes.Stloc, value);
+        EmitPrimitiveBranch();
+        EmitCannotConvert();
+
+        il.MarkLabel(ordinary);
+        foreach (var name in new[] { "toString", "valueOf" })
+        {
+            var next = il.DefineLabel();
+            var invoke = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, inputs.GetProperty);
+            il.Emit(OpCodes.Stloc, callable);
+            EmitCallableBranch(invoke);
+            il.Emit(OpCodes.Br, next);
+            il.MarkLabel(invoke);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, callable);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
+            il.Emit(OpCodes.Stloc, value);
+            EmitPrimitiveBranch();
+            il.MarkLabel(next);
+        }
+        EmitCannotConvert();
+
+        il.MarkLabel(primitive);
+        var stringify = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, value);
+        il.Emit(OpCodes.Isinst, inputs.SymbolType);
+        il.Emit(OpCodes.Brfalse, stringify);
+        il.Emit(OpCodes.Ldloc, value);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(stringify);
+        il.Emit(OpCodes.Ldloc, value);
+        il.Emit(OpCodes.Call, inputs.ToJsString);
+        il.Emit(OpCodes.Ret);
+
+        void EmitPrimitiveBranch()
+        {
+            il.Emit(OpCodes.Ldloc, value);
+            il.Emit(OpCodes.Brfalse, primitive);
+            foreach (var type in new[] { inputs.SymbolType, inputs.UndefinedType,
+                         _types.String, _types.Boolean, _types.Double, _types.Int32, _types.Int64,
+                         _types.Single, _types.Decimal, _types.UInt32, _types.UInt64,
+                         _types.Int16, _types.UInt16, _types.Byte, _types.SByte, _types.Char,
+                         _types.BigInteger })
+            {
+                il.Emit(OpCodes.Ldloc, value);
+                il.Emit(OpCodes.Isinst, type);
+                il.Emit(OpCodes.Brtrue, primitive);
+            }
+        }
+
+        void EmitCallableBranch(Label label)
+        {
+            il.Emit(OpCodes.Ldloc, callable);
+            il.Emit(OpCodes.Call, inputs.TypeOf);
+            il.Emit(OpCodes.Ldstr, "function");
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, label);
+        }
+
+        void EmitCannotConvert() => GuestErrorEmitter.ThrowError(il, inputs.CreateException,
+            inputs.TypeErrorConstructor, "Cannot convert object to primitive value");
+    }
 
     private void EmitReflectGet(TypeBuilder typeBuilder, EmittedReflectRuntime reflect, ReflectGetInputs inputs)
     {
         var method = reflect.Get;
         var il = method.GetILGenerator();
+        var key = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, reflect.ToPropertyKey);
+        il.Emit(OpCodes.Stloc, key);
 
         var proxyLabel = il.DefineLabel();
         var notProxyLabel = il.DefineLabel();
@@ -74,14 +189,14 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Newarr, _types.Object);
                 il.Emit(OpCodes.Dup);
                 il.Emit(OpCodes.Ldc_I4_0);
-                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldloc, key);
                 il.Emit(OpCodes.Stelem_Ref);
                 il.Emit(OpCodes.Dup);
                 il.Emit(OpCodes.Ldc_I4_1);
                 il.Emit(OpCodes.Ldarg_2);
                 il.Emit(OpCodes.Stelem_Ref);
                 EmitDelegate(2, reflect.Get,
-                    typeof(Func<object, string, object, object?>));
+                    typeof(Func<object, object, object, object?>));
                 EmitDelegate(3, inputs.GetProperty,
                     typeof(Func<object, string, object?>));
                 EmitDelegate(4, inputs.GetFunctionMethod,
@@ -106,7 +221,7 @@ public partial class RuntimeEmitter
         var descriptorLocal = il.DeclareLocal(_types.Object);
         var ordinaryGetLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, key);
         il.Emit(OpCodes.Call, inputs.ObjectGetOwnPropertyDescriptor);
         il.Emit(OpCodes.Stloc, descriptorLocal);
         il.Emit(OpCodes.Ldloc, descriptorLocal);
@@ -143,8 +258,33 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(noGetterFieldLabel);
         var readTargetLabel = il.DefineLabel();
-        il.Emit(OpCodes.Br, readTargetLabel);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Call, inputs.IsSymbol);
+        il.Emit(OpCodes.Brfalse, readTargetLabel);
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Call, inputs.GetProperty);
+        il.Emit(OpCodes.Ret);
         il.MarkLabel(ordinaryGetLabel);
+        // Declared static Symbol methods use the class registry rather than
+        // symbol descriptor storage. They are own data properties and must win
+        // over any inherited descriptor before traversing the prototype.
+        var noOwnSymbolMethod = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Call, inputs.IsSymbol);
+        il.Emit(OpCodes.Brfalse, noOwnSymbolMethod);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brfalse, noOwnSymbolMethod);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Call, inputs.FindOwnSymbolMethod);
+        il.Emit(OpCodes.Brfalse, noOwnSymbolMethod);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Call, inputs.GetIndex);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(noOwnSymbolMethod);
         // A missing own descriptor continues [[Get]] without changing Receiver.
         var prototypeLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);
@@ -153,13 +293,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, prototypeLocal);
         il.Emit(OpCodes.Brfalse, readTargetLabel);
         il.Emit(OpCodes.Ldloc, prototypeLocal);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, key);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, method);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(readTargetLabel);
+        var stringKey = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Call, inputs.IsSymbol);
+        il.Emit(OpCodes.Brfalse, stringKey);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Call, inputs.GetIndex);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(stringKey);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Call, inputs.GetProperty);
         il.Emit(OpCodes.Ret);
     }
@@ -309,9 +459,9 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notNullLabel);
 
-        var keyLocal = il.DeclareLocal(_types.String);
+        var keyLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, inputs.ToJsString);
+        il.Emit(OpCodes.Call, inputs.ToPropertyKey);
         il.Emit(OpCodes.Stloc, keyLocal);
 
         // Proxy target: perform its [[Set]] with the caller-provided receiver.
@@ -439,13 +589,18 @@ public partial class RuntimeEmitter
         il.MarkLabel(notFrozenLabel);
 
         // The common no-explicit-receiver case can use the existing ordinary
-        // property store directly.
+        // string property store directly. Symbol writes use DefineOwnProperty
+        // so a rejected addition returns false instead of SetIndex's void result.
         var distinctReceiverLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Call, inputs.IsSymbol);
+        il.Emit(OpCodes.Brtrue, distinctReceiverLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_3);
         il.Emit(OpCodes.Bne_Un, distinctReceiverLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, inputs.SetProperty);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -470,6 +625,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, receiverDescriptorLocal);
         il.Emit(OpCodes.Isinst, inputs.UndefinedType);
         il.Emit(OpCodes.Brtrue, receiverMissingLabel);
+
+        // An existing receiver accessor cannot be replaced with a data
+        // property by OrdinarySet, even when it is configurable.
+        var receiverDataLabel = il.DefineLabel();
+        var receiverRejectedLabel = il.DefineLabel();
+        foreach (var accessorField in new[] { "get", "set" })
+        {
+            il.Emit(OpCodes.Ldloc, receiverDescriptorLocal);
+            il.Emit(OpCodes.Ldstr, accessorField);
+            il.Emit(OpCodes.Call, inputs.HasOwnPropertyHelperMethod);
+            il.Emit(OpCodes.Brtrue, receiverRejectedLabel);
+        }
+        il.Emit(OpCodes.Ldloc, receiverDescriptorLocal);
+        il.Emit(OpCodes.Ldstr, "writable");
+        il.Emit(OpCodes.Call, inputs.GetProperty);
+        il.Emit(OpCodes.Call, inputs.IsTruthy);
+        il.Emit(OpCodes.Brtrue, receiverDataLabel);
+        il.MarkLabel(receiverRejectedLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(receiverDataLabel);
 
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, descriptorLocal);
@@ -663,9 +839,9 @@ public partial class RuntimeEmitter
         // invariant violations and abrupt trap completions must propagate.
         // Do this before the ordinary Object.defineProperty wrapper below,
         // whose catch converts only ordinary definition rejection to false.
-        var reflectDefineKeyLocal = il.DeclareLocal(_types.String);
+        var reflectDefineKeyLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, inputs.ToJsString);
+        il.Emit(OpCodes.Call, inputs.ToPropertyKey);
         il.Emit(OpCodes.Stloc, reflectDefineKeyLocal);
         var proxyDefineLabel = il.DefineLabel();
         var ordinaryDefineLabel = il.DefineLabel();
@@ -718,7 +894,7 @@ public partial class RuntimeEmitter
         il.BeginExceptionBlock();
 
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, reflectDefineKeyLocal);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, inputs.ObjectDefineProperty);
         il.Emit(OpCodes.Pop); // ObjectDefineProperty returns the object; discard
@@ -1609,7 +1785,6 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Stloc, target);
             il.Emit(OpCodes.Ldloc, target);
             EmitArgument(il, 1);
-            il.Emit(OpCodes.Call, inputs.ToJsString);
             EmitArgumentOrLocal(il, 2, target);
             il.Emit(OpCodes.Call, inputs.Get);
             il.Emit(OpCodes.Ret);

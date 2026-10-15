@@ -163,8 +163,14 @@ public partial class ILEmitter
     /// Emits static member access on a class (used for both ClassName.property and this.property in static context).
     /// Returns true if successful, false if property not found.
     /// </summary>
-    private bool EmitStaticMemberAccess(string className, System.Reflection.Emit.TypeBuilder classBuilder, string propertyName)
+    private bool EmitStaticMemberAccess(string className, System.Reflection.Emit.TypeBuilder classBuilder, Expr receiver, string propertyName)
     {
+        if (_ctx.ClassRegistry!.IsSourceStaticGetter(className, propertyName))
+        {
+            EmitSourceStaticGetterRead(receiver, propertyName);
+            return true;
+        }
+
         // Try static getter first (for auto-accessors and explicit static accessors)
         if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(className, propertyName, classBuilder, out var staticGetter))
         {
@@ -217,6 +223,17 @@ public partial class ILEmitter
         }
 
         return false;
+    }
+
+    private void EmitSourceStaticGetterRead(Expr receiver, string propertyName)
+    {
+        // The source descriptor owns an accessor value with an explicit guest
+        // receiver. Calling the nominal CLR getter directly skips that receiver.
+        EmitExpression(receiver);
+        EmitBoxIfNeeded(receiver);
+        IL.Emit(OpCodes.Ldstr, propertyName);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.ObjectRead.Property);
+        SetStackUnknown();
     }
 
     /// <summary>

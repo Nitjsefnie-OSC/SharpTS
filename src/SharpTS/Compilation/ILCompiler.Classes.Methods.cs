@@ -325,8 +325,13 @@ public partial class ILCompiler
                     paramTypes
                 );
                 _classes.AccessorBuilders[accessor] = methodBuilder;
-                if (!accessor.IsStatic && accessor.Kind.Type == TokenType.GET)
-                    GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, accessor.Name.Lexeme);
+                if (accessor.Kind.Type == TokenType.GET)
+                {
+                    if (accessor.IsStatic)
+                        GetClassRegistry().RegisterSourceStaticGetter(methodBuilder);
+                    else
+                        GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, accessor.Name.Lexeme);
+                }
 
                 // Track getter/setter. Static accessors register in StaticGetters/StaticSetters
                 // keyed by original (camelCase) name, matching the auto-accessor convention and

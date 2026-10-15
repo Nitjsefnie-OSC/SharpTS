@@ -2632,7 +2632,32 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Stloc, baseDescLocal);
             il.Emit(OpCodes.Ldloc, baseDescLocal);
             var baseProbeDeclaredLabel = il.DefineLabel();
+            var baseDescriptorReady = il.DefineLabel();
+            il.Emit(OpCodes.Brtrue, baseDescriptorReady);
+
+            // Source generic constructors own descriptors on the open source
+            // type, while CLR BaseType supplies a constructed owner. Preserve
+            // an exact descriptor first, then probe that source identity.
+            il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
             il.Emit(OpCodes.Brfalse, baseProbeDeclaredLabel);
+            var baseDescriptorOwner = il.DeclareLocal(_types.Type);
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Call, inputs.SymbolAccessors.RegistryKey);
+            il.Emit(OpCodes.Stloc, baseDescriptorOwner);
+            il.Emit(OpCodes.Ldloc, baseDescriptorOwner);
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Beq, baseProbeDeclaredLabel);
+            il.Emit(OpCodes.Ldloc, baseDescriptorOwner);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, baseDescLocal);
+            il.Emit(OpCodes.Ldloc, baseDescLocal);
+            il.Emit(OpCodes.Brfalse, baseProbeDeclaredLabel);
+
+            il.MarkLabel(baseDescriptorReady);
             var baseDescDataLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldloc, baseDescLocal);
             il.Emit(OpCodes.Callvirt,

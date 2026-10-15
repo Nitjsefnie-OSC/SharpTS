@@ -35,6 +35,7 @@ public sealed class ClassRegistry
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _staticMethods;
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _staticGetters;
     private readonly Dictionary<string, Dictionary<string, MethodBuilder>> _staticSetters;
+    private readonly HashSet<MethodBuilder> _sourceStaticGetters = new(ReferenceEqualityComparer.Instance);
 
     // Generic parameters
     private readonly ClassGenericParameterRegistry _genericParameters;
@@ -474,6 +475,13 @@ public sealed class ClassRegistry
         getter = null;
         return false;
     }
+
+    internal void RegisterSourceStaticGetter(MethodBuilder getter)
+        => _sourceStaticGetters.Add(getter);
+
+    internal bool IsSourceStaticGetter(string className, string propertyName)
+        => TryResolveStaticGetter(className, propertyName, out _, out var getter)
+            && _sourceStaticGetters.Contains(getter);
 
     private bool TryResolveStaticGetter(string className, string propertyName, out string declaringClass, out MethodBuilder getter)
     {

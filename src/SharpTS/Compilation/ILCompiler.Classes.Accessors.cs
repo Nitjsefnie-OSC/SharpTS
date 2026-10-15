@@ -9,6 +9,14 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class ILCompiler
 {
+    private static string? GetConstantComputedAccessorName(Expr? key) => key switch
+    {
+        Expr.Literal { Value: string name } => name,
+        Expr.Literal { Value: double number } => number.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        Expr.Literal { Value: int number } => number.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        _ => null,
+    };
+
     /// <summary>
     /// Pre-defines a synthetic method for a symbol-keyed computed accessor (#266),
     /// e.g. <c>static get [Symbol.species]()</c>. The method has no spec-visible
@@ -45,15 +53,14 @@ public partial class ILCompiler
         // A statically known computed string/number key also participates in normal named-member
         // dispatch. Register it in source order so later definitions replace earlier ones, matching
         // DefinePropertyOrThrow semantics for `get b()` followed by `get ["b"]()` (and vice versa).
-        string? constantKey = accessor.ComputedKey switch
+        string? constantKey = GetConstantComputedAccessorName(accessor.ComputedKey);
+        if (isGetter)
         {
-            Expr.Literal { Value: string s } => s,
-            Expr.Literal { Value: double d } => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            Expr.Literal { Value: int i } => i.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            _ => null,
-        };
-        if (!accessor.IsStatic && isGetter)
-            GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, constantKey);
+            if (accessor.IsStatic)
+                GetClassRegistry().RegisterSourceStaticGetter(methodBuilder);
+            else
+                GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, constantKey);
+        }
         if (constantKey != null)
         {
             var registry = isGetter
@@ -192,8 +199,13 @@ public partial class ILCompiler
             }
         }
 
-        if (!accessor.IsStatic && accessor.Kind.Type == TokenType.GET)
-            GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, accessor.Name.Lexeme);
+        if (accessor.Kind.Type == TokenType.GET)
+        {
+            if (accessor.IsStatic)
+                GetClassRegistry().RegisterSourceStaticGetter(methodBuilder);
+            else
+                GetClassRegistry().RegisterSourceInstanceGetter(methodBuilder, accessor.Name.Lexeme);
+        }
         EmitAccessorBody(typeBuilder, accessor, methodBuilder, fieldsField);
     }
 

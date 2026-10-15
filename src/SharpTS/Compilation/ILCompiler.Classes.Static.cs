@@ -263,6 +263,11 @@ public partial class ILCompiler
         {
             if (_classes.DeferredDefinitions.TryGet(typeBuilder, out _))
                 continue;
+            // Literal static keys are installed before user initialization by
+            // EmitKnownDeclaredAccessorDescriptors, with no key evaluation.
+            if (accessor.IsStatic && GetConstantComputedAccessorName(accessor.ComputedKey) != null
+                && GetNominalClassDeclaration(typeBuilder) != null)
+                continue;
             // property key: preserve Symbols; coerce every other value exactly as bracket
             // access does (notably null -> "null") before using it as a registry key.
             EmitComputedPropertyKey(emitter, il, accessor.ComputedKey!);

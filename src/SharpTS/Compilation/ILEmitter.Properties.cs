@@ -228,7 +228,7 @@ public partial class ILEmitter
             if (currentClassName != null)
             {
                 // Emit as static field access on the current class
-                if (EmitStaticMemberAccess(currentClassName, _ctx.CurrentClassBuilder, g.Name.Lexeme))
+                if (EmitStaticMemberAccess(currentClassName, _ctx.CurrentClassBuilder, g.Object, g.Name.Lexeme))
                 {
                     return;
                 }
@@ -244,6 +244,12 @@ public partial class ILEmitter
             string resolvedClassName = _ctx.ResolveClassName(_ctx.TypeMap?.Get(classVar), classVar.Name.Lexeme);
             if (_ctx.Classes.TryGetValue(resolvedClassName, out var classBuilder))
             {
+                if (_ctx.ClassRegistry!.IsSourceStaticGetter(resolvedClassName, g.Name.Lexeme))
+                {
+                    EmitSourceStaticGetterRead(g.Object, g.Name.Lexeme);
+                    return;
+                }
+
                 // Try static getter first (for auto-accessors and explicit static accessors)
                 if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(resolvedClassName, g.Name.Lexeme, classBuilder, out var staticGetter))
                 {
@@ -301,6 +307,12 @@ public partial class ILEmitter
             _ctx.ImportedClassAliases?.TryGetValue(importedClassVar.Name.Lexeme, out var importedQualifiedClassName) == true &&
             _ctx.Classes.TryGetValue(importedQualifiedClassName, out var importedClassBuilder))
         {
+            if (_ctx.ClassRegistry!.IsSourceStaticGetter(importedQualifiedClassName, g.Name.Lexeme))
+            {
+                EmitSourceStaticGetterRead(g.Object, g.Name.Lexeme);
+                return;
+            }
+
             // Try static getter first
             if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(importedQualifiedClassName, g.Name.Lexeme, importedClassBuilder, out var importedStaticGetter))
             {

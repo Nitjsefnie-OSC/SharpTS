@@ -285,7 +285,7 @@ public partial class RuntimeEmitter
         EmitPDSIsSealed(typeBuilder, storage, frozenSealedField, frozenSealedTryGet);
         EmitPDSCanAddProperty(typeBuilder, storage, frozenSealedField, frozenSealedTryGet, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictContainsKey, descriptorsDictTryGetValue);
         EmitPDSTryGetGetter(typeBuilder, storage, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue, keys, undefinedType);
-        EmitPDSTryGetSetter(typeBuilder, storage, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue, keys);
+        EmitPDSTryGetSetter(typeBuilder, storage, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue, keys, undefinedType);
         EmitPDSIsWritable(typeBuilder, storage, frozenSealedField, frozenSealedTryGet, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue, keys);
         EmitPDSSetPrototype(typeBuilder, storage, prototypeStoreField, prototypeGetOrCreate);
         EmitPDSGetPrototype(typeBuilder, storage, prototypeStoreField, prototypeTryGet);
@@ -693,7 +693,7 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitPDSTryGetSetter(TypeBuilder typeBuilder, EmittedDescriptorStorageRuntime storage,
         FieldBuilder descriptorsField, MethodInfo descriptorsTryGet, Type descriptorsDictType,
-        MethodInfo descriptorsDictTryGetValue, DescriptorKeyInputs keys)
+        MethodInfo descriptorsDictTryGetValue, DescriptorKeyInputs keys, Type undefinedType)
     {
         var method = typeBuilder.DefineMethod(
             "TryGetSetter",
@@ -728,6 +728,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, descriptorLocal);
         il.Emit(OpCodes.Callvirt, storage.DescriptorSetter.GetGetMethod()!);
         il.Emit(OpCodes.Brfalse, returnFalseLabel);
+
+        // Explicit undefined retains the accessor descriptor's presence, but
+        // does not supply a callable setter. Writers still apply the stored
+        // descriptor's sloppy/strict rejection policy after this lookup misses.
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Callvirt, storage.DescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Isinst, undefinedType);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel);
 
         // setter = descriptor.Setter; return true
         il.Emit(OpCodes.Ldarg_2);

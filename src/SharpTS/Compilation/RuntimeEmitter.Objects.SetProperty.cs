@@ -2348,6 +2348,72 @@ public partial class RuntimeEmitter
 
     }
 
+    // A descriptor claims its key even when it has no callable setter. This
+    // distinction matters for arrays: a missing setter must not fall through
+    // to a farther inherited setter or create a dense own element.
+    private void EmitArrayDescriptorSetPolicy(
+        ILGenerator il, EmittedDescriptorStorageRuntime descriptors, Type undefinedType,
+        MethodBuilder invokeMethodValue, LocalBuilder descriptor, Label writableData, Label reject)
+    {
+        var setter = il.DeclareLocal(_types.Object);
+        var noSetter = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, descriptors.DescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, setter);
+        il.Emit(OpCodes.Ldloc, setter);
+        il.Emit(OpCodes.Brfalse, noSetter);
+        il.Emit(OpCodes.Ldloc, setter);
+        il.Emit(OpCodes.Isinst, undefinedType);
+        il.Emit(OpCodes.Brtrue, reject);
+        EmitInvokePdsSetterWithValueAndReturn(il, invokeMethodValue, setter);
+
+        il.MarkLabel(noSetter);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, descriptors.DescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, reject);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, descriptors.DescriptorWritable.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, reject);
+        il.Emit(OpCodes.Br, writableData);
+    }
+
+    private void EmitInheritedArrayIndexSetPolicy(
+        ILGenerator il, EmittedDescriptorStorageRuntime descriptors, Type undefinedType,
+        MethodBuilder invokeMethodValue, FieldBuilder arrayPrototype, Action loadKey,
+        Label writableData, Label reject)
+    {
+        var prototype = il.DeclareLocal(_types.Object);
+        var descriptor = il.DeclareLocal(descriptors.DescriptorType);
+        var loop = il.DefineLabel();
+        var next = il.DefineLabel();
+        var inheritedData = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, arrayPrototype);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Brfalse, writableData);
+        il.Emit(OpCodes.Ldloc, prototype);
+        loadKey();
+        il.Emit(OpCodes.Call, descriptors.GetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descriptor);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Brfalse, next);
+        EmitArrayDescriptorSetPolicy(il, descriptors, undefinedType, invokeMethodValue, descriptor, inheritedData, reject);
+        il.MarkLabel(inheritedData);
+        // Frozen prototype data is effectively non-writable even when the
+        // stored descriptor predates the integrity-level change.
+        il.Emit(OpCodes.Ldloc, prototype);
+        loadKey();
+        il.Emit(OpCodes.Call, descriptors.IsWritable);
+        il.Emit(OpCodes.Brfalse, reject);
+        il.Emit(OpCodes.Br, writableData);
+        il.MarkLabel(next);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Call, descriptors.GetPrototype);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.Emit(OpCodes.Br, loop);
+    }
+
     /// <summary>
     /// Emits SetPropertyStrict(object obj, string name, object value, bool strictMode) -> void
     /// In strict mode, throws TypeError for modifications to frozen objects or new properties on sealed objects.
@@ -2577,6 +2643,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(arraySetStrictLabel);
         {
             var arrayDoStoreLabel = il.DefineLabel();
+            var arrayRejectLabel = il.DefineLabel();
 
             // String-keyed writes to canonical array indexes must use the
             // indexed OrdinarySet path.  Array mutators spell their target
@@ -2612,23 +2679,10 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Conv_U8);
             il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.HasIndex);
             il.Emit(OpCodes.Brtrue, arrayIndexedRawStoreLabel);
-            var arrayInheritedSetterLocal = il.DeclareLocal(_types.Object);
-            il.Emit(OpCodes.Ldsfld, inputs.ArrayOperations.PrototypeField);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Ldloca, arrayInheritedSetterLocal);
-            il.Emit(OpCodes.Call, inputs.DescriptorStorage.TryGetSetter);
-            il.Emit(OpCodes.Brfalse, arrayIndexedRawStoreLabel);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloc, arrayInheritedSetterLocal);
-            il.Emit(OpCodes.Ldc_I4_1);
-            il.Emit(OpCodes.Newarr, _types.Object);
-            il.Emit(OpCodes.Dup);
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Stelem_Ref);
-            il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
-            il.Emit(OpCodes.Pop);
-            il.Emit(OpCodes.Ret);
+            EmitInheritedArrayIndexSetPolicy(
+                il, inputs.DescriptorStorage, inputs.UndefinedType, inputs.InvokeMethodValue,
+                inputs.ArrayOperations.PrototypeField, () => il.Emit(OpCodes.Ldarg_1),
+                arrayIndexedRawStoreLabel, arrayRejectLabel);
 
             il.MarkLabel(arrayIndexedRawStoreLabel);
             il.Emit(OpCodes.Ldarg_0);
@@ -2641,41 +2695,35 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(arrayNamedPropertyLabel);
 
-            // Frozen array → throw "Cannot assign to read only property 'name'".
-            var arrayNotFrozenLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Call, inputs.DescriptorStorage.IsFrozen);
-            il.Emit(OpCodes.Brfalse, arrayNotFrozenLabel);
-            EmitThrowTypeErrorWithName(
-                il,
-                inputs.Errors,
-                "Cannot assign to read only property '",
-                "' of object '[object Array]'"
-            );
-            il.MarkLabel(arrayNotFrozenLabel);
-
-            // Own non-writable DATA descriptor → throw. Accessor descriptors
-            // (setter present) and writable/absent descriptors fall through to
-            // the store, where SetProperty invokes the setter or overwrites.
+            // Callable setters run even on frozen receivers. Missing setters
+            // reject before the ordinary data/integrity checks.
+            var arrayCheckFrozenLabel = il.DefineLabel();
             var arrayDescLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
             il.Emit(OpCodes.Stloc, arrayDescLocal);
             il.Emit(OpCodes.Ldloc, arrayDescLocal);
-            il.Emit(OpCodes.Brfalse, arrayDoStoreLabel); // no descriptor → store
-            il.Emit(OpCodes.Ldloc, arrayDescLocal);
-            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
-            il.Emit(OpCodes.Brtrue, arrayDoStoreLabel); // accessor → delegate (invokes setter)
-            il.Emit(OpCodes.Ldloc, arrayDescLocal);
-            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorWritable.GetGetMethod()!);
-            il.Emit(OpCodes.Brtrue, arrayDoStoreLabel); // writable → store
+            il.Emit(OpCodes.Brfalse, arrayCheckFrozenLabel);
+            EmitArrayDescriptorSetPolicy(
+                il, inputs.DescriptorStorage, inputs.UndefinedType, inputs.InvokeMethodValue,
+                arrayDescLocal, arrayCheckFrozenLabel, arrayRejectLabel);
+            il.MarkLabel(arrayCheckFrozenLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, inputs.DescriptorStorage.IsFrozen);
+            il.Emit(OpCodes.Brfalse, arrayDoStoreLabel);
+            il.MarkLabel(arrayRejectLabel);
+            il.Emit(OpCodes.Ldarg_3);
+            var arraySloppyReturnLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, arraySloppyReturnLabel);
             EmitThrowTypeErrorWithName(
                 il,
                 inputs.Errors,
                 "Cannot assign to read only property '",
                 "' of object '[object Array]'"
             );
+            il.MarkLabel(arraySloppyReturnLabel);
+            il.Emit(OpCodes.Ret);
 
             il.MarkLabel(arrayDoStoreLabel);
             il.Emit(OpCodes.Ldarg_0);
@@ -3146,8 +3194,8 @@ public partial class RuntimeEmitter
         il.MarkLabel(sharpTSArrayLabel);
         var strictArrayKeyLocal = il.DeclareLocal(_types.String);
         var strictArrayDescriptorLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
-        var strictArraySetterLocal = il.DeclareLocal(_types.Object);
         var strictArrayRawStoreLabel = il.DefineLabel();
+        var strictArrayNoInheritedSetterLabel = il.DefineLabel();
         var strictArrayRejectLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_1);
@@ -3160,39 +3208,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, strictArrayDescriptorLocal);
         il.Emit(OpCodes.Brfalse, strictArrayRawStoreLabel);
 
-        // A callable setter handles the write with the array as receiver.
-        il.Emit(OpCodes.Ldloc, strictArrayDescriptorLocal);
-        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, strictArraySetterLocal);
-        il.Emit(OpCodes.Ldloc, strictArraySetterLocal);
-        var strictArrayNoSetterLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, strictArrayNoSetterLabel);
-        il.Emit(OpCodes.Ldloc, strictArraySetterLocal);
-        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
-        il.Emit(OpCodes.Brtrue, strictArrayRejectLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, strictArraySetterLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(strictArrayNoSetterLabel);
-        // Getter-only accessors and non-writable data descriptors reject a
-        // Throw=true write.  In the (rare) sloppy call to this helper, retain
-        // the normal silent failure behavior.
-        il.Emit(OpCodes.Ldloc, strictArrayDescriptorLocal);
-        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
-        il.Emit(OpCodes.Brtrue, strictArrayRejectLabel);
-        il.Emit(OpCodes.Ldloc, strictArrayDescriptorLocal);
-        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorWritable.GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, strictArrayRejectLabel);
-        il.Emit(OpCodes.Br, strictArrayRawStoreLabel);
+        // Own descriptors claim the key even without a dense element.
+        EmitArrayDescriptorSetPolicy(
+            il, inputs.DescriptorStorage, inputs.UndefinedType, inputs.InvokeMethodValue,
+            strictArrayDescriptorLocal, strictArrayNoInheritedSetterLabel, strictArrayRejectLabel);
 
         il.MarkLabel(strictArrayRejectLabel);
         il.Emit(OpCodes.Ldarg_3);
@@ -3205,49 +3224,19 @@ public partial class RuntimeEmitter
         // Stage E.2 M6: widened from TSArraySetStrict (int) to
         // TSArraySetStrictLong so large indexes do not truncate.
         il.MarkLabel(strictArrayRawStoreLabel);
-        var strictArrayNoInheritedSetterLabel = il.DefineLabel();
-        var strictArrayInheritedSetterLocal = il.DeclareLocal(_types.Object);
-        var strictArrayPrototypeLocal = il.DeclareLocal(_types.Object);
-        var strictArrayPrototypeLoop = il.DefineLabel();
-        var strictArrayNextPrototype = il.DefineLabel();
 
         // An existing dense own element shadows the prototype chain. For a
-        // hole, however, OrdinarySet must walk every inherited object looking
-        // for an indexed accessor before creating a new own element.
+        // hole, the nearest inherited descriptor decides OrdinarySet.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, inputs.ArrayStorage.Type);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
         il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.HasIndex);
         il.Emit(OpCodes.Brtrue, strictArrayNoInheritedSetterLabel);
-        il.Emit(OpCodes.Ldsfld, inputs.ArrayOperations.PrototypeField);
-        il.Emit(OpCodes.Stloc, strictArrayPrototypeLocal);
-
-        il.MarkLabel(strictArrayPrototypeLoop);
-        il.Emit(OpCodes.Ldloc, strictArrayPrototypeLocal);
-        il.Emit(OpCodes.Brfalse, strictArrayNoInheritedSetterLabel);
-        il.Emit(OpCodes.Ldloc, strictArrayPrototypeLocal);
-        il.Emit(OpCodes.Ldloc, strictArrayKeyLocal);
-        il.Emit(OpCodes.Ldloca, strictArrayInheritedSetterLocal);
-        il.Emit(OpCodes.Call, inputs.DescriptorStorage.TryGetSetter);
-        il.Emit(OpCodes.Brfalse, strictArrayNextPrototype);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, strictArrayInheritedSetterLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(strictArrayNextPrototype);
-        il.Emit(OpCodes.Ldloc, strictArrayPrototypeLocal);
-        il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPrototype);
-        il.Emit(OpCodes.Stloc, strictArrayPrototypeLocal);
-        il.Emit(OpCodes.Br, strictArrayPrototypeLoop);
+        EmitInheritedArrayIndexSetPolicy(
+            il, inputs.DescriptorStorage, inputs.UndefinedType, inputs.InvokeMethodValue,
+            inputs.ArrayOperations.PrototypeField, () => il.Emit(OpCodes.Ldloc, strictArrayKeyLocal),
+            strictArrayNoInheritedSetterLabel, strictArrayRejectLabel);
 
         il.MarkLabel(strictArrayNoInheritedSetterLabel);
         il.Emit(OpCodes.Ldarg_0);

@@ -952,8 +952,11 @@ public partial class Parser
                 // If next is `,`, consume and continue (may be trailing).
                 if (!Match(TokenType.COMMA)) break;
             }
+            bool hasTrailingComma = Previous().Type == TokenType.COMMA;
             Consume(TokenType.RIGHT_BRACKET, "Expect ']' after array elements.");
-            return new Expr.ArrayLiteral(elements, holeIndices);
+            var array = new Expr.ArrayLiteral(elements, holeIndices);
+            if (hasTrailingComma) _literalsWithTrailingComma.Add(array);
+            return array;
         }
 
         if (Match(TokenType.LEFT_BRACE))
@@ -1193,8 +1196,11 @@ public partial class Parser
                 RecordError("',' expected.", "TS1005");
                 Advance();
             }
+            bool hasTrailingComma = Previous().Type == TokenType.COMMA;
             Consume(TokenType.RIGHT_BRACE, "Expect '}' after object literal.");
-            return new Expr.ObjectLiteral(properties);
+            var obj = new Expr.ObjectLiteral(properties);
+            if (hasTrailingComma) _literalsWithTrailingComma.Add(obj);
+            return obj;
         }
 
         // async function expression: async function [name]() {} or async function*() {}

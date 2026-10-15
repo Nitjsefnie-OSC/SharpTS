@@ -35,6 +35,9 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
     private readonly DecoratorMode _decoratorMode = decoratorMode;
     private int _current = 0;
     private int _tempVarCounter = 0;
+    // Cover literals may contain a trailing comma, but their assignment-pattern
+    // interpretation cannot have one after rest. Keep that syntax off the AST.
+    private readonly HashSet<Expr> _literalsWithTrailingComma = new(ReferenceEqualityComparer.Instance);
     private int _ambientNamespaceDepth = 0;
     private int _ambientClassDepth = 0;
     private bool _isDeclarationFile = false;

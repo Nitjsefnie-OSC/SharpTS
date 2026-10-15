@@ -121,6 +121,9 @@ public class SharpTSArrayClass : SharpTSClass
     /// built-in Array constructor semantics directly.
     /// </summary>
     public override object? Call(Interpreter interpreter, List<object?> arguments)
+        => Construct(interpreter, arguments, this);
+
+    internal override object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
     {
         var instance = new SharpTSArraySubclassInstance(this);
 
@@ -131,7 +134,7 @@ public class SharpTSArrayClass : SharpTSClass
 
         if (hasUserConstructor && constructor != null)
         {
-            var result = BindMethodToReceiver(constructor, instance).Call(interpreter, arguments);
+            var result = InvokeConstructorBody(interpreter, constructor, instance, arguments, newTarget);
             return ResolveConstructorReturn(result, instance);
         }
         else

@@ -28,6 +28,8 @@ public class SuperConstructorHandler : ICallHandler
             emitter.IL.Emit(OpCodes.Call, ctx.Runtime!.ClassDefinitions.GetParent);
             emitter.IL.Emit(OpCodes.Ldarg_0);
             emitter.EmitArgsArrayWithSpread(call.Arguments);
+            if (ctx.NewTargetParameterIndex is { } targetIndex) emitter.IL.Emit(OpCodes.Ldarg, targetIndex);
+            else emitter.IL.Emit(OpCodes.Ldsfld, ctx.Runtime.Sentinels.UndefinedInstance);
             emitter.IL.Emit(OpCodes.Call, ctx.Runtime.ClassDefinitions.InitializeReceiver);
             emitter.IL.Emit(OpCodes.Ldarg_0);
             emitter.SetStackUnknown();
@@ -306,10 +308,16 @@ public class SuperConstructorHandler : ICallHandler
             il.Emit(OpCodes.Isinst, ctx.Runtime.ClassDefinitions.Type);
         }
 
-        System.Reflection.ConstructorInfo ctorToCall = parentCtor;
+        var bodyConstructor = ctx.NewTargetConstructorBodies?.GetValueOrDefault(parentCtor) ?? parentCtor;
+        if (bodyConstructor != parentCtor)
+        {
+            if (ctx.NewTargetParameterIndex is { } index) il.Emit(OpCodes.Ldarg, index);
+            else il.Emit(OpCodes.Ldsfld, ctx.Runtime!.Sentinels.UndefinedInstance);
+        }
+        System.Reflection.ConstructorInfo ctorToCall = bodyConstructor;
         Type? baseType = ctx.CurrentClassBuilder?.BaseType;
         if (baseType != null && baseType.IsGenericType && baseType.IsConstructedGenericType)
-            ctorToCall = EmitterTypeHelpers.ResolveConstructor(baseType, parentCtor);
+            ctorToCall = EmitterTypeHelpers.ResolveConstructor(baseType, bodyConstructor);
 
         il.Emit(OpCodes.Call, ctorToCall);
         CaptureConstructorReceiver(emitter);

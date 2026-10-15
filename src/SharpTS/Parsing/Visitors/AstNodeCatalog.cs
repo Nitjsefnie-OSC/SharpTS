@@ -45,6 +45,7 @@ public static class AstNodeCatalog
         typeof(Expr.SetPrivate),
         typeof(Expr.CallPrivate),
         typeof(Expr.This),
+        typeof(Expr.NewTarget),
         typeof(Expr.New),
         typeof(Expr.ArrayLiteral),
         typeof(Expr.ObjectLiteral),

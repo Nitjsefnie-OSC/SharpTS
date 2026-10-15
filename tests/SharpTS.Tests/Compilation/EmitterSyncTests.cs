@@ -146,6 +146,7 @@ public class EmitterSyncTests
             "EmitAssign",           // Capture indirection
             "EmitStoreVariable",    // Capture indirection
             "EmitThis",             // Outer state machine capture
+            "TryEmitNewTargetCapture", // #2082: standalone async arrows retain lexical new.target in a state-machine capture field
             "EmitSuper",            // This field indirection
             // (EmitAwait is inherited from AsyncFunctionMoveNextEmitter since #1122 — see above.)
             "EmitArrowFunction",    // Nested async arrows in state machine

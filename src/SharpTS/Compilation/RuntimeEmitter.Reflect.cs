@@ -1444,27 +1444,10 @@ public partial class RuntimeEmitter
         GuestErrorEmitter.ThrowError(il, inputs.CreateException, inputs.TypeErrorConstructor, "Reflect.construct: target is not a constructor");
         il.MarkLabel(targetOkLabel);
 
-        // newTarget defaults to target if null/undefined.
-        var haveNewTargetLabel = il.DefineLabel();
-        var newTargetSetLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Brtrue, haveNewTargetLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stloc, newTargetLocal);
-        il.Emit(OpCodes.Br, newTargetSetLabel);
-        il.MarkLabel(haveNewTargetLabel);
-        // Distinguish $Undefined from a real value
-        var notUndefNewTargetLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
-        il.Emit(OpCodes.Brfalse, notUndefNewTargetLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stloc, newTargetLocal);
-        il.Emit(OpCodes.Br, newTargetSetLabel);
-        il.MarkLabel(notUndefNewTargetLabel);
+        // Call adapters supply target only when the third argument was omitted.
+        // An explicitly supplied null or undefined must fail IsConstructor.
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Stloc, newTargetLocal);
-        il.MarkLabel(newTargetSetLabel);
 
         // Validate newTarget via IsConstructor — throws TypeError if not constructable.
         il.Emit(OpCodes.Ldloc, newTargetLocal);
@@ -1524,7 +1507,7 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Ldnull);
                 il.Emit(OpCodes.Ldftn, inputs.ConstructDynamicValue);
                 il.Emit(OpCodes.Newobj, _types.GetConstructor(
-                    typeof(Func<object, object?[], object?>),
+                    typeof(Func<object, object?[], object?, object?>),
                     _types.Object, _types.IntPtr)!);
                 il.Emit(OpCodes.Stelem_Ref);
                 il.Emit(OpCodes.Dup);
@@ -1550,6 +1533,7 @@ public partial class RuntimeEmitter
         // Not a Type - use the ordinary function-construction protocol.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, newTargetLocal);
         il.Emit(OpCodes.Call, inputs.ConstructDynamicValue);
         il.Emit(OpCodes.Ret);
 
@@ -1678,9 +1662,9 @@ public partial class RuntimeEmitter
             il.MarkLabel(notDataViewTypeLabel);
         }
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.Type);
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(typeof(Activator), "CreateInstance", _types.Type, _types.ObjectArray));
+        il.Emit(OpCodes.Ldloc, newTargetLocal);
+        il.Emit(OpCodes.Call, inputs.ConstructDynamicValue);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1755,9 +1739,12 @@ public partial class RuntimeEmitter
         });
         Define("construct", il =>
         {
+            var target = il.DeclareLocal(_types.Object);
             EmitArgument(il, 0);
+            il.Emit(OpCodes.Stloc, target);
+            il.Emit(OpCodes.Ldloc, target);
             EmitArgument(il, 1);
-            EmitArgument(il, 2);
+            EmitArgumentOrLocal(il, 2, target);
             il.Emit(OpCodes.Call, reflectNamespace.Construct);
             il.Emit(OpCodes.Ret);
         });

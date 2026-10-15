@@ -23,6 +23,16 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     private bool _hasDirectBinding;
     private SharpTSClass? _privateClass;
     private bool? _staticSuper;
+    private bool _ownsNewTarget;
+    private RuntimeValue _newTarget;
+
+    // Ordinary invocations own a slot, including undefined. True arrows and
+    // ordinary block scopes inherit the nearest invocation's lexical slot.
+    internal RuntimeValue NewTarget
+    {
+        get => _ownsNewTarget ? _newTarget : Enclosing?.NewTarget ?? RuntimeValue.Undefined;
+        set { _ownsNewTarget = true; _newTarget = value; }
+    }
 
     // The super facet follows the lexical method, including through arrows;
     // rebinding this must not change which parent member is selected.

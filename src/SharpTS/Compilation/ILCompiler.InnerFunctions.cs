@@ -427,6 +427,7 @@ public partial class ILCompiler
             // pad with the `undefined` sentinel (JS semantics), not CLR null. (#640)
             MarkPadsUndefined(_innerFunctionMethods[func]);
             MarkFunctionLength(_innerFunctionMethods[func], func.Parameters);
+            DefineNewTargetBody(_innerFunctionMethods[func]);
         }
     }
 
@@ -443,7 +444,7 @@ public partial class ILCompiler
             {
                 _modules.CurrentPath = NormalizeToEmissionPath(fnModule);
             }
-            var method = _innerFunctionMethods[func];
+            var method = NewTargetBody(_innerFunctionMethods[func]);
             var hasDisplayClass = _innerFunctionDisplayClasses.TryGetValue(func, out var displayClass);
 
             var il = ((MethodBuilder)method).GetILGenerator();
@@ -452,6 +453,7 @@ public partial class ILCompiler
             _innerFunctionParamTypes.TryGetValue(func, out var innerParamTypes);
 
             var ctx = CreateModuleMemberContext(il, ((MethodBuilder)method));
+            ConfigureNewTargetBody(ctx, (MethodBuilder)method);
             ctx.IsStrictMode = _strictInnerFunctions.Contains(func)
                 || _isStrictMode
                 || BodyDeclaresUseStrict(func.Body);
@@ -465,7 +467,7 @@ public partial class ILCompiler
             // Enable self-reference: the function can call itself by name
             ctx.InnerFunctionMethodsByName = new Dictionary<string, MethodBuilder>
             {
-                [func.Name.Lexeme] = method
+                [func.Name.Lexeme] = _innerFunctionMethods[func]
             };
             ctx.InnerFunctionDisplayClassesByName = hasDisplayClass
                 ? new Dictionary<string, TypeBuilder> { [func.Name.Lexeme] = displayClass! }

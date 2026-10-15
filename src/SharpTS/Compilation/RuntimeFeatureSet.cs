@@ -18,6 +18,7 @@ namespace SharpTS.Compilation;
 /// </summary>
 public sealed class RuntimeFeatureSet
 {
+    public bool UsesNewTarget { get; set; } = true;
     internal HashSet<Expr.ArrayLiteral> LocalRecordNumericArrays { get; } = new(ReferenceEqualityComparer.Instance);
     /// <summary>
     /// Closed record shapes reachable from a direct, one-argument

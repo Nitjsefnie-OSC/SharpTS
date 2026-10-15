@@ -344,7 +344,8 @@ public partial class ILCompiler
         foreach (var field in fields.Where(field => field.ComputedKey != null && !field.IsDeclare))
             deferred.Add((field.ComputedKey!, null, field.IsStatic, null, field.Name.Start, field));
         // Field names are evaluated with the definition, even when no key suspends.
-        if (!deferred.Any(entry => entry.Field != null || ExpressionContainsSuspension(entry.Key)))
+        if (!deferred.Any(entry => entry.Field != null || ExpressionContainsSuspension(entry.Key)
+            || ExpressionContainsLexicalNewTarget(entry.Key)))
             return;
 
         deferred = deferred.OrderBy(entry => entry.Position).ToList();

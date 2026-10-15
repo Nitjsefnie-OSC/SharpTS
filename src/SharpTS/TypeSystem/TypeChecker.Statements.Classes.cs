@@ -611,6 +611,7 @@ public partial class TypeChecker
                     ? preregisteredClass
                     : new TypeInfo.MutableClass(classStmt.Name.Lexeme, declarationId);
             mutableClass.Superclass = superclass;
+            _newTargetSourceTypes[classStmt] = mutableClass;
             mutableClass.IsAbstract = classStmt.IsAbstract;
             RegisterSourceClassMembers(classStmt, mutableClass.DeclarationId);
             MarkEditorBodyEntered(classStmt);

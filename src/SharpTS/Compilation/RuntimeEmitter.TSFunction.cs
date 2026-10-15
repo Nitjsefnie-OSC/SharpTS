@@ -959,6 +959,10 @@ public partial class RuntimeEmitter
         iwt.Emit(OpCodes.Callvirt, iwtInvokerInvokeSpan);
         iwt.Emit(OpCodes.Ret);
 
+        EmitTSFunctionInvokeConstructed(typeBuilder, functionValues, inputs.FunctionAttributes,
+            inputs.Arguments.CurrentField, methodField, targetField, expectsThisField, currentThisField,
+            adjustArgsMethod, EmitConvertArguments);
+
         EmitTSFunctionInvokeWithThis0(
             typeBuilder,
             functionValues,

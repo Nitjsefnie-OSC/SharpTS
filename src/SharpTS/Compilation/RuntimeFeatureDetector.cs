@@ -66,6 +66,7 @@ public sealed class RuntimeFeatureDetector
         // Start with everything off; the walk flips flags on as triggers are seen.
         _set = new RuntimeFeatureSet
         {
+            UsesNewTarget = false,
             UsesNet = false,
             UsesHttp = false,
             UsesTls = false,
@@ -897,6 +898,9 @@ public sealed class RuntimeFeatureDetector
             _set.UsesPromise = true;
         switch (expr)
         {
+            case Expr.NewTarget:
+                _set.UsesNewTarget = true;
+                break;
             case Expr.Variable v:
                 HandleIdentifier(v.Name.Lexeme);
                 break;

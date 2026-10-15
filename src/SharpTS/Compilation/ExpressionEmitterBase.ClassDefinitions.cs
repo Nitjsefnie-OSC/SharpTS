@@ -256,7 +256,7 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
         IL.Emit(OpCodes.Ldnull);
         IL.Emit(OpCodes.Ldftn, factory.Method);
-        IL.Emit(OpCodes.Newobj, Types.GetConstructor(typeof(Func<object[], object, object>), Types.Object, Types.IntPtr));
+        IL.Emit(OpCodes.Newobj, Types.GetConstructor(typeof(Func<object[], object, object, object>), Types.Object, Types.IntPtr));
         IL.Emit(OpCodes.Ldstr, factory.Name);
         IL.Emit(OpCodes.Ldc_R8, (double)factory.Length);
         IL.Emit(OpCodes.Ldloc, parent);

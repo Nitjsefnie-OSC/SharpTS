@@ -544,6 +544,9 @@ public partial class Parser
 
         if (Match(TokenType.NEW))
         {
+            Token keyword = Previous();
+            if (Match(TokenType.DOT))
+                return ParseCallChain(ParseNewTarget(keyword));
             // Parse the callee expression: can be identifier, member access, or parenthesized expression
             // Examples: new ClassName(), new Namespace.Class(), new (condition ? A : B)()
             Expr callee = ParseNewCallee();
@@ -756,7 +759,13 @@ public partial class Parser
 
         // Nested `new`: `new new X()` parses as `new (new X())` — the inner `new X()`
         // is itself a MemberExpression callee.
-        if (Match(TokenType.NEW))
+        if (Check(TokenType.NEW) && CheckNext(TokenType.DOT))
+        {
+            Token keyword = Advance();
+            Advance();
+            callee = ParseNewTarget(keyword);
+        }
+        else if (Match(TokenType.NEW))
         {
             Expr innerCallee = ParseNewCallee();
             List<string>? innerTypeArgs = TryParseTypeArguments(out var innerTypeArgNodes);
@@ -815,6 +824,14 @@ public partial class Parser
         }
 
         return callee;
+    }
+
+    private Expr ParseNewTarget(Token keyword)
+    {
+        Token property = ConsumePropertyName("Expect 'target' after 'new.'.");
+        if (property.Lexeme != "target")
+            throw new ParseError("'target' is the only valid meta property for 'new'.", "TS17012");
+        return CompleteExpression(new Expr.NewTarget(keyword), keyword.Start);
     }
 
     private Expr Primary()

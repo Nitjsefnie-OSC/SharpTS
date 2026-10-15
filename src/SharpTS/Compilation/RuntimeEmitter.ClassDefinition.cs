@@ -19,7 +19,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
         il.Emit(OpCodes.Ret);
-        var factoryType = typeof(Func<object[], object, object>);
+        var factoryType = typeof(Func<object[], object, object, object>);
         var template = type.DefineField("Template", _types.Type, FieldAttributes.Assembly);
         var factory = type.DefineField("Factory", factoryType, FieldAttributes.Assembly);
         var prototype = type.DefineField("Prototype", _types.Object, FieldAttributes.Assembly);
@@ -31,7 +31,7 @@ public partial class RuntimeEmitter
             ? type.DefineMethod("Create", MethodAttributes.Public | MethodAttributes.Static,
                 type, [_types.Type, factoryType, _types.String, _types.Double, _types.Object, _types.ObjectArray, _types.ObjectArray]) : null;
         var construct = type.DefineMethod("Construct", MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object, [type, _types.ObjectArray]);
+            _types.Object, [type, _types.ObjectArray, _types.Object]);
         var read = type.DefineMethod("ReadProperty", MethodAttributes.Public | MethodAttributes.Static,
             _types.Object, [type, _types.String]);
         var invoke = type.DefineMethod("Invoke", MethodAttributes.Public, _types.Object, [_types.ObjectArray]);
@@ -70,7 +70,7 @@ public partial class RuntimeEmitter
                 _types.Object, [_types.Object]) : null;
         var initializeReceiver = _features.UsesUserClasses
             ? type.DefineMethod("InitializeReceiver", MethodAttributes.Public | MethodAttributes.Static,
-                _types.Void, [_types.Object, _types.Object, _types.ObjectArray]) : null;
+                _types.Void, [_types.Object, _types.Object, _types.ObjectArray, _types.Object]) : null;
         var getParent = _features.UsesUserClasses
             ? type.DefineMethod("GetParent", MethodAttributes.Public | MethodAttributes.Static,
                 _types.Object, [_types.Object]) : null;
@@ -260,7 +260,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, definitions.Factory);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Func<object[], object, object>), "Invoke", _types.ObjectArray, _types.Object));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Func<object[], object, object, object>), "Invoke", _types.ObjectArray, _types.Object, _types.Object));
         il.Emit(OpCodes.Ret);
 
         il = definitions.ReadProperty.GetILGenerator();

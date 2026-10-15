@@ -112,6 +112,9 @@ public partial class SharpTSClass(
     }
 
     public virtual object? Call(Interpreter interpreter, List<object?> arguments)
+        => Construct(interpreter, arguments, this);
+
+    internal virtual object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
     {
         SharpTSInstance instance = new(this);
 
@@ -127,11 +130,21 @@ public partial class SharpTSClass(
         ISharpTSCallable? constructor = FindMethod("constructor");
         if (constructor != null)
         {
-            var result = BindMethod(constructor, instance).Call(interpreter, arguments);
+            var result = InvokeConstructorBody(interpreter, constructor, instance, arguments, newTarget);
             return ResolveConstructorReturn(result, instance);
         }
 
         return instance;
+    }
+
+    internal static object? InvokeConstructorBody(
+        Interpreter interpreter, ISharpTSCallable constructor, object receiver,
+        List<object?> arguments, object? newTarget)
+    {
+        var bound = BindMethodToReceiver(constructor, receiver);
+        return bound is SharpTSFunction function
+            ? function.CallConstructed(interpreter, arguments, newTarget)
+            : bound.Call(interpreter, arguments);
     }
 
     protected object? ResolveConstructorReturn(object? result, object receiver)

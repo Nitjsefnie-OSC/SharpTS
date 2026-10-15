@@ -202,6 +202,7 @@ public partial class RuntimeEmitter
         // Carries the ECMAScript Function.length of emitted user methods. This must be
         // available before $TSFunction so its reflective constructor can cache the value.
         EmitFunctionLengthAttribute(moduleBuilder, runtime.FunctionAttributes);
+        EmitNewTargetCoreAttribute(moduleBuilder, runtime.FunctionAttributes);
         EmitFunctionNameAttribute(moduleBuilder, runtime.FunctionAttributes);
         EmitNumericRest4Attribute(moduleBuilder, runtime.FunctionAttributes);
         EmitNonConstructibleAttribute(moduleBuilder, runtime.FunctionAttributes);
@@ -694,6 +695,20 @@ public partial class RuntimeEmitter
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Object,
             [_types.Object, _types.ObjectArray]);
+        runtime.DynamicConstruction.FunctionWithNewTarget = runtime.RuntimeClass.Type.DefineMethod(
+            "NewOnFunctionWithNewTarget", MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object, [_types.Object, _types.ObjectArray, _types.Object]);
+        runtime.DynamicConstruction.ConstructWithNewTarget = runtime.RuntimeClass.Type.DefineMethod(
+            "ConstructWithNewTarget", MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object, [_types.Object, _types.ObjectArray, _types.Object]);
+        foreach (var pair in new[] {
+                     (runtime.DynamicConstruction.Function, runtime.DynamicConstruction.FunctionWithNewTarget),
+                     (runtime.DynamicConstruction.Value, runtime.DynamicConstruction.ConstructWithNewTarget) })
+        {
+            var il = pair.Item1.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, pair.Item2); il.Emit(OpCodes.Ret);
+        }
 
         EmitClassConstructorReturns(runtime.RuntimeClass.Type, runtime.DynamicConstruction,
             new ClassConstructorReturnInputs(runtime.Errors, runtime.Sentinels.UndefinedType, runtime.Symbols.Type));
@@ -717,7 +732,8 @@ public partial class RuntimeEmitter
                 runtime.ObjectRead,
                 runtime.ObjectStorage,
                 runtime.ReflectedMethods,
-                runtime.Sentinels.UndefinedInstance
+                runtime.Sentinels.UndefinedInstance,
+                runtime.Operators.TypeOf
             )
         );
 

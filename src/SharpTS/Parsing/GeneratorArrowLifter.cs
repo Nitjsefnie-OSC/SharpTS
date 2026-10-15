@@ -780,7 +780,7 @@ internal sealed class GeneratorArrowLifter
 
             default:
                 // Leaf / type-only / declaration-only nodes carry no nested generator expression:
-                // Literal, Variable, This, Super, RegexLiteral, ImportMeta. Returned unchanged.
+                // Literal, Variable, This, NewTarget, Super, RegexLiteral, ImportMeta. Returned unchanged.
                 return expr;
         }
     }

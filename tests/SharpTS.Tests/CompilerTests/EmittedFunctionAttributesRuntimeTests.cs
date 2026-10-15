@@ -9,7 +9,7 @@ namespace SharpTS.Tests.CompilerTests;
 public sealed class EmittedFunctionAttributesRuntimeTests
 {
     private const BindingFlags Members = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-    private static readonly string[] Helpers = ["CapturesArguments", "PadUndefined", "FunctionLength", "FunctionName", "NumericRest4", "NonConstructible", "ExpectsThis", "SourceParameters"];
+    private static readonly string[] Helpers = ["CapturesArguments", "PadUndefined", "FunctionLength", "FunctionName", "NumericRest4", "NonConstructible", "ExpectsThis", "SourceParameters", "NewTargetCore"];
     public static IEnumerable<object[]> Handles => typeof(EmittedFunctionAttributesRuntime).GetProperties()
         .Where(p => typeof(MemberInfo).IsAssignableFrom(p.PropertyType)).Select(p => new object[] { p.Name });
 
@@ -42,7 +42,7 @@ public sealed class EmittedFunctionAttributesRuntimeTests
         var builder = NewAssembly(); var module = builder.DefineDynamicModule("main");
         var owner = new EmittedFunctionAttributesRuntime(); Populate(module, owner); owner.CompleteEmission();
         var members = typeof(EmittedFunctionAttributesRuntime).GetProperties().Where(p => typeof(MemberInfo).IsAssignableFrom(p.PropertyType)).ToArray();
-        Assert.Equal(19, members.Length);
+        Assert.Equal(22, members.Length);
         foreach (var property in members)
         {
             var member = Assert.IsAssignableFrom<MemberInfo>(property.GetValue(owner));
@@ -53,7 +53,7 @@ public sealed class EmittedFunctionAttributesRuntimeTests
         foreach (var name in Helpers)
         {
             var type = loaded.GetType("$" + name)!; Assert.Equal(typeof(Attribute), type.BaseType);
-            object[] args = name == "FunctionLength" ? [3] : name is "FunctionName" or "NumericRest4" ? ["supplied"] : [];
+            object[] args = name == "FunctionLength" ? [3] : name is "FunctionName" or "NumericRest4" or "NewTargetCore" ? ["supplied"] : [];
             var value = Activator.CreateInstance(type, args)!;
             if (args.Length > 0)
                 Assert.Equal(args[0], Assert.Single(type.GetFields(BindingFlags.Public | BindingFlags.Instance)).GetValue(value));

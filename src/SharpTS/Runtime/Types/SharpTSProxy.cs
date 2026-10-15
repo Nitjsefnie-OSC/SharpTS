@@ -1649,7 +1649,7 @@ public class SharpTSProxy : ISharpTSCallable
                 return targetProxy.TrapConstruct(
                     args, interp, newTarget ?? this);
             if (interp is not null)
-                return interp.Construct(_target, args);
+                return interp.Construct(_target, args, newTarget ?? this);
             throw new Exception("Runtime Error: Proxy target is not constructable.");
         }
 
@@ -1665,7 +1665,7 @@ public class SharpTSProxy : ISharpTSCallable
     public object? TrapConstructCompiled(
         object?[] args,
         object? newTarget,
-        Func<object, object?[], object?> ordinaryConstruct,
+        Func<object, object?[], object?, object?> ordinaryConstruct,
         Func<object, string, object?> ordinaryGet)
     {
         object effectiveNewTarget = newTarget ?? this;
@@ -1675,7 +1675,7 @@ public class SharpTSProxy : ISharpTSCallable
             if (_target is SharpTSProxy targetProxy)
                 return targetProxy.TrapConstructCompiled(
                     args, effectiveNewTarget, ordinaryConstruct, ordinaryGet);
-            return ordinaryConstruct(_target, args);
+            return ordinaryConstruct(_target, args, effectiveNewTarget);
         }
 
         object? result = InvokeTrap(

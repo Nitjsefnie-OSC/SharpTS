@@ -2131,7 +2131,7 @@ public partial class Interpreter
                     {
                         // Old behavior: evaluate immediately
                         object? fieldValue = field.Initializer != null
-                            ? Evaluate(field.Initializer)
+                            ? EvaluateEarlyStaticInitializer(field.Initializer)
                             : null;
                         staticPrivateFields[field.Name.Lexeme] = fieldValue;
                     }
@@ -2149,7 +2149,7 @@ public partial class Interpreter
                 {
                     // Old behavior: evaluate immediately
                     object? fieldValue = field.Initializer != null
-                        ? Evaluate(field.Initializer)
+                        ? EvaluateEarlyStaticInitializer(field.Initializer)
                         : null;
                     staticProperties[field.Name.Lexeme] = fieldValue;
                 }
@@ -2288,7 +2288,7 @@ public partial class Interpreter
                 {
                     // Evaluate static auto-accessor initializer now
                     object? initValue = autoAccessor.Initializer != null
-                        ? Evaluate(autoAccessor.Initializer)
+                        ? EvaluateEarlyStaticInitializer(autoAccessor.Initializer)
                         : null;
                     staticAutoAccessors[autoAccessor.Name.Lexeme] = initValue;
                 }
@@ -2410,6 +2410,7 @@ public partial class Interpreter
             // Also make the class name available so code like Foo.x works
             var staticEnv = new RuntimeEnvironment(_environment, strictMode: true)
                 { PrivateClass = klass, StaticSuper = true };
+            staticEnv.NewTarget = RuntimeValue.Undefined;
             staticEnv.Define("this", klass);
             staticEnv.Define(classStmt.Name.Lexeme, klass);
 

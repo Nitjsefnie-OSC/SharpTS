@@ -10,16 +10,16 @@ public partial class ILCompiler
         ConstructorBuilder constructor, Type[] parameterTypes)
     {
         Type template = builder;
-        ConstructorInfo target = constructor;
+        ConstructorInfo target = NewTargetConstructor(constructor);
         if (builder.IsGenericTypeDefinition)
         {
             var erased = expression.TypeParams!.Select(parameter => parameter.Constraint is { } constraint
                 ? ResolveConstraintType(constraint) : _types.Object).ToArray();
             template = EmitGenerics.MakeGenericType(builder, erased);
-            target = EmitterTypeHelpers.ResolveConstructor(template, constructor);
+            target = EmitterTypeHelpers.ResolveConstructor(template, NewTargetConstructor(constructor));
         }
         var method = _programType.DefineMethod("$Create_" + _classExprs.Names[expression],
-            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.ObjectArray, _types.Object]);
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.ObjectArray, _types.Object, _types.Object]);
         var il = method.GetILGenerator();
         var sourceParameters = ResolveClassExpressionConstructorSourceParameters(expression);
         var emitter = new ILEmitter(CreateModuleMemberContext(il, method));
@@ -39,6 +39,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldloc, receiver);
             il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_2);
             il.Emit(OpCodes.Call, _runtime.ClassDefinitions.InitializeReceiver);
             il.Emit(OpCodes.Ldloc, receiver);
             il.Emit(OpCodes.Ret);
@@ -102,6 +103,7 @@ public partial class ILCompiler
             }
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Castclass, _runtime.ClassDefinitions.Type);
+            if (_features?.UsesNewTarget == true) il.Emit(OpCodes.Ldarg_2);
             il.Emit(OpCodes.Newobj, target);
             il.Emit(OpCodes.Call, _runtime.DynamicConstruction.ResolveClassReturn);
             il.Emit(OpCodes.Ret);

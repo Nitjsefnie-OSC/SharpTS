@@ -194,6 +194,17 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
             statements.Insert(insertAt, BuildJsxRuntimeImport());
         }
 
+        // Validate source function environments before lowering can lift a callable out
+        // of its original lexical position. Unchecked JavaScript also runs this pass.
+        foreach (var (expression, context) in NewTargetContextIndex.Collect(statements))
+        {
+            expression.SourceTypeScriptContextAllowed = context.IsTypeScriptAllowed;
+            if (!context.IsJavaScriptAllowed)
+                _diagnostics.AddError(DiagnosticCode.ParseError,
+                    "'new.target' is not allowed outside a function.",
+                    new SourceLocation(_filePath, expression.Keyword.Line), "TS17013");
+        }
+
         // Apply var hoisting to the top-level (module/script) statement list. Function bodies
         // and arrow function bodies are hoisted at their respective parse sites.
         _cancellationToken.ThrowIfCancellationRequested();

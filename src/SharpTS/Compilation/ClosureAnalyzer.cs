@@ -942,6 +942,16 @@ public class ClosureAnalyzer : AstVisitorBase
         CaptureLexicalThis();
     }
 
+    protected override void VisitNewTarget(Expr.NewTarget expr)
+    {
+        foreach (var frame in _functionStack)
+        {
+            if (frame is not Expr.ArrowFunction { HasOwnThis: false } arrow) break;
+            _captures[arrow].Add(CompilationContext.NewTargetCaptureName);
+            _allCapturedVariables.Add(CompilationContext.NewTargetCaptureName);
+        }
+    }
+
     protected override void VisitSuper(Expr.Super expr)
     {
         CaptureLexicalThis();

@@ -16,6 +16,18 @@ public partial class AsyncArrowMoveNextEmitter
     // (EmitVarDeclaration, EmitReturn, …) already EnsureBoxed before storing, so no eager boxing
     // is needed.
 
+    protected override bool TryEmitNewTargetCapture()
+    {
+        if (_builder.IsStandalone && _builder.StandaloneCaptureFields.TryGetValue(
+            CompilationContext.NewTargetCaptureName, out var target))
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, target);
+            return true;
+        }
+        return base.TryEmitNewTargetCapture();
+    }
+
     protected override void EmitThis()
     {
         // Standalone async function expression: `this` is bound dynamically at

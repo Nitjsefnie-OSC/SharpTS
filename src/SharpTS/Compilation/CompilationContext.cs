@@ -77,6 +77,10 @@ public record struct HoistedCompactRecordEntry(
 /// <seealso cref="LocalsManager"/>
 public partial class CompilationContext
 {
+    internal const string NewTargetCaptureName = "<>newTarget";
+    internal int? NewTargetParameterIndex { get; set; }
+    internal IReadOnlyDictionary<ConstructorBuilder, ConstructorBuilder>? NewTargetConstructorBodies { get; set; }
+    internal bool SuppressNewTarget { get; set; }
     private readonly HashSet<MethodBuilder> _sourceParameterMethods = [];
     // ============================================
     // Core Compilation Infrastructure

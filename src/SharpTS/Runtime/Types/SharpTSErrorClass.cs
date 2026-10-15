@@ -205,6 +205,9 @@ public class SharpTSErrorClass : SharpTSClass
     /// Overrides <see cref="SharpTSClass.Call"/> to initialise error fields after instance creation.
     /// </summary>
     public override object? Call(Interpreter interpreter, List<object?> arguments)
+        => Construct(interpreter, arguments, this);
+
+    internal override object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
     {
         SharpTSInstance instance = new(this);
 
@@ -218,7 +221,7 @@ public class SharpTSErrorClass : SharpTSClass
         if (hasUserConstructor && constructor != null)
         {
             // User-defined constructor — super() in body will call ErrorConstructorCallable
-            var result = BindMethod(constructor, instance).Call(interpreter, arguments);
+            var result = InvokeConstructorBody(interpreter, constructor, instance, arguments, newTarget);
             return ResolveConstructorReturn(result, instance);
         }
         else

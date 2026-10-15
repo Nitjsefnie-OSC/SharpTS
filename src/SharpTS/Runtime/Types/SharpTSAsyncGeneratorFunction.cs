@@ -71,6 +71,7 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
         RuntimeEnvironment environment = new(closure,
             strictMode: _declaration.IsPrivate || _declaration.IsStatic ? true : null)
             { PrivateClass = PrivateOwner, StaticSuper = _declaration.IsStatic };
+        environment.NewTarget = RuntimeValue.Undefined;
         if (_declaration.IsPrivate || _declaration.IsStatic)
         {
             environment.Define("this", _thisBound ? _boundThis : SharpTSUndefined.Instance);
@@ -180,6 +181,7 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSGeneratorFunctionValue
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
         RuntimeEnvironment environment = new(_closure);
+        if (HasOwnThis) environment.NewTarget = RuntimeValue.Undefined;
         // Named async generator function expression: bind self-reference alongside params.
         if (_declaration.Name != null)
         {

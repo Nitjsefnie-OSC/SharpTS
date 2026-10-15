@@ -1990,6 +1990,20 @@ configuration and intentionally mutable process-level host configuration; resolv
 belongs to each instance. See the [legacy bridge audit](docs/compiler-ownership/I04.md)
 for target identities, lifetimes and hosted/absent-runtime verification.
 
+### Construction context
+
+Construction carries the actual `new.target` explicitly through bound functions, Reflect,
+Proxy, and superclass construction. Interpreter invocation environments own that value;
+ordinary calls establish `undefined`, and true arrows retain their enclosing environment.
+Compiled ordinary functions keep their canonical callable entry and metadata identity. When
+the program uses `new.target`, a `$NewTargetCore` marker identifies an internal body with an
+appended context parameter. Ordinary entries supply `undefined`; constructed invocation shapes
+the guest arguments before appending the context. Guest class constructors use internal
+constructor cores with the same forwarding rule. The hidden parameter never contributes to
+guest `length`, defaults, rest parameters, or `arguments`. Arrow capture fields retain the
+value across suspension; field initializers establish `undefined`, while computed class keys
+run in their enclosing evaluation context.
+
 ### Runtime tree-shaking
 
 `RuntimeFeatureDetector` derives a conservative feature set from the whole checked graph. The

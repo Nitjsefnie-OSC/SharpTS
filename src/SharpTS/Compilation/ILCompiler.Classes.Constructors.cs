@@ -50,8 +50,11 @@ public partial class ILCompiler
                 MarkJsVariadicConstructor(ctorBuilder);
         }
 
+        var canonicalConstructor = ctorBuilder;
+        ctorBuilder = DefineNewTargetConstructor(canonicalConstructor);
         var il = ctorBuilder.GetILGenerator();
         var ctx = CreateModuleMemberContext(il, ctorBuilder);
+        if (ctorBuilder != canonicalConstructor) ctx.NewTargetParameterIndex = ctorBuilder.GetParameters().Length;
         ctx.IsStrictMode = true;
         ctx.CurrentSuperclassName = Expr.GetSuperclassLeafName(classStmt.SuperclassExpr);
         ctx.CurrentSuperclassIsAnonymousEmptyClass = classStmt.SuperclassExpr is Expr.ClassExpr
@@ -222,12 +225,14 @@ public partial class ILCompiler
 
             // Handle generic superclass with type arguments (e.g., extends Box<string>)
             // We need to call the constructor on the closed generic type, not the open generic
-            ConstructorInfo ctorToCall = parentCtor;
+            var bodyConstructor = NewTargetConstructor(parentCtor);
+            if (bodyConstructor != parentCtor) EmitForwardedNewTarget(ctx);
+            ConstructorInfo ctorToCall = bodyConstructor;
             Type? baseType = typeBuilder.BaseType;
             if (baseType != null && baseType.IsGenericType && baseType.IsConstructedGenericType)
             {
                 // Get the constructor for the closed generic type
-                ctorToCall = EmitterTypeHelpers.ResolveConstructor(baseType, parentCtor);
+                ctorToCall = EmitterTypeHelpers.ResolveConstructor(baseType, bodyConstructor);
             }
 
             il.Emit(OpCodes.Call, ctorToCall);
@@ -237,7 +242,9 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldarg_0);
             foreach (var parameter in classExprParentCtor.GetParameters())
                 new ILEmitter(ctx).EmitOmittedArgument(parameter.ParameterType);
-            il.Emit(OpCodes.Call, classExprParentCtor);
+            var bodyConstructor = NewTargetConstructor(classExprParentCtor);
+            if (bodyConstructor != classExprParentCtor) EmitForwardedNewTarget(ctx);
+            il.Emit(OpCodes.Call, bodyConstructor);
         }
         else if (constructor != null && qualifiedSuperclass != null && _classes.Constructors.ContainsKey(qualifiedSuperclass))
         {
@@ -277,10 +284,13 @@ public partial class ILCompiler
                 ctx.IsInstanceMethod = true;
                 var autoAccessorEmitter = new ILEmitter(ctx);
 
+                bool previous = ctx.SuppressNewTarget;
+                ctx.SuppressNewTarget = true;
                 foreach (var autoAccessor in instanceAutoAccessors)
                 {
                     EmitAutoAccessorInitializer(autoAccessorEmitter, autoAccessor, className, isStatic: false);
                 }
+                ctx.SuppressNewTarget = previous;
             }
         }
 
@@ -344,6 +354,14 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ret);
 
         void EmitOrderedFieldInitializers()
+        {
+            bool previous = ctx.SuppressNewTarget;
+            ctx.SuppressNewTarget = true;
+            EmitOrderedFieldInitializersCore();
+            ctx.SuppressNewTarget = previous;
+        }
+
+        void EmitOrderedFieldInitializersCore()
         {
             // Note: Declare fields are excluded - they have no initialization
             var instanceFieldsWithInit = classStmt.Fields.Where(f =>

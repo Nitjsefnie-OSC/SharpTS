@@ -111,7 +111,7 @@ public sealed class EmittedDynamicConstructionRuntimeTests
     [Fact]
     public void OwnerAndHelpersUseExplicitDependencies()
     {
-        Assert.Equal(7, Properties.Length);
+        Assert.Equal(9, Properties.Length);
         Assert.NotSame(new EmittedRuntime().DynamicConstruction, new EmittedRuntime().DynamicConstruction);
         Assert.Null(typeof(EmittedRuntime).GetProperty("DynamicConstruction")!.SetMethod);
         foreach (string old in new[] { "NewOnFunction", "ConstructDynamicValue" }) Assert.Null(typeof(EmittedRuntime).GetProperty(old));
@@ -143,6 +143,10 @@ public sealed class EmittedDynamicConstructionRuntimeTests
         {
             ["Function"] = type.DefineMethod("Function", MethodAttributes.Public | MethodAttributes.Static, typeof(object), Type.EmptyTypes),
             ["Value"] = type.DefineMethod("Value", MethodAttributes.Public | MethodAttributes.Static, typeof(object), Type.EmptyTypes),
+            ["ConstructWithNewTarget"] = type.DefineMethod("ConstructWithNewTarget", MethodAttributes.Public | MethodAttributes.Static,
+                typeof(object), [typeof(object), typeof(object[]), typeof(object)]),
+            ["FunctionWithNewTarget"] = type.DefineMethod("FunctionWithNewTarget", MethodAttributes.Public | MethodAttributes.Static,
+                typeof(object), [typeof(object), typeof(object[]), typeof(object)]),
             ["RecordClassReturn"] = type.DefineMethod("RecordClassReturn", MethodAttributes.Public | MethodAttributes.Static,
                 typeof(void), [typeof(object), typeof(object), typeof(bool), typeof(object)]),
             ["ResolveClassReturn"] = type.DefineMethod("ResolveClassReturn", MethodAttributes.Public | MethodAttributes.Static,

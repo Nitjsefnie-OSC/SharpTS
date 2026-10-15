@@ -45,6 +45,7 @@ public abstract class AstVisitorBase
             case Expr.SetPrivate e: VisitSetPrivate(e); break;
             case Expr.CallPrivate e: VisitCallPrivate(e); break;
             case Expr.This e: VisitThis(e); break;
+            case Expr.NewTarget e: VisitNewTarget(e); break;
             case Expr.New e: VisitNew(e); break;
             case Expr.ArrayLiteral e: VisitArrayLiteral(e); break;
             case Expr.ObjectLiteral e: VisitObjectLiteral(e); break;
@@ -248,6 +249,8 @@ public abstract class AstVisitorBase
         foreach (var arg in expr.Arguments)
             Visit(arg);
     }
+
+    protected virtual void VisitNewTarget(Expr.NewTarget expr) { }
 
     protected virtual void VisitThis(Expr.This expr)
     {

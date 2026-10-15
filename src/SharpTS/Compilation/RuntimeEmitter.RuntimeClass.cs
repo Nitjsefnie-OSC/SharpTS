@@ -2242,7 +2242,7 @@ public partial class RuntimeEmitter
                     runtime.Errors.CreateErrorFromTypeOrNull,
                     runtime.NumericCoercion.ToNumber,
                     runtime.FunctionIntrospection.IsConstructor,
-                    runtime.DynamicConstruction.Value,
+                    runtime.DynamicConstruction.ConstructWithNewTarget,
                     runtime.Sentinels.UndefinedType,
                     runtime.ObjectRead.Property,
                     runtime.DataView,

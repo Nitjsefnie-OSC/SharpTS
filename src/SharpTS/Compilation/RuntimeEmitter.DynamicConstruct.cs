@@ -60,7 +60,7 @@ public partial class RuntimeEmitter
         ConstructDynamicValueInputs inputs
     )
     {
-        var method = dynamicConstruction.Value;
+        var method = dynamicConstruction.ConstructWithNewTarget;
 
         var il = method.GetILGenerator();
         var throwLabel = il.DefineLabel();
@@ -71,6 +71,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Brfalse, notClassDefinition);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, inputs.ClassDefinitions.Construct);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notClassDefinition);
@@ -221,7 +222,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, attributes);
         il.Emit(OpCodes.Ldlen);
         il.Emit(OpCodes.Brfalse, useClrConstructor);
-        il.Emit(OpCodes.Ldtoken, typeof(Func<object[], object>));
+        il.Emit(OpCodes.Ldtoken, typeof(Func<object[], object, object>));
         il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
         il.Emit(OpCodes.Ldloc, constructorType);
         il.Emit(OpCodes.Ldloc, attributes);
@@ -232,9 +233,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly));
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
         il.Emit(OpCodes.Call, _types.GetMethod(typeof(Delegate), "CreateDelegate", _types.Type, typeof(MethodInfo)));
-        il.Emit(OpCodes.Castclass, typeof(Func<object[], object>));
+        il.Emit(OpCodes.Castclass, typeof(Func<object[], object, object>));
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Func<object[], object>), "Invoke", _types.ObjectArray));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(Func<object[], object, object>), "Invoke", _types.ObjectArray, _types.Object));
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(useClrConstructor);
@@ -254,7 +256,8 @@ public partial class RuntimeEmitter
         // Callable values ($TSFunction and wrappers) → NewOnFunction(ctor, args)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, dynamicConstruction.Function);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, dynamicConstruction.FunctionWithNewTarget);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(throwLabel);

@@ -124,7 +124,8 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Dup);
                 IL.Emit(OpCodes.Ldc_I4, i);
                 var captureName = captureOrder[i];
-                if (captureName == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+                if (captureName == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
+                else if (captureName == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
                 else if (arrowBuilder.StandaloneLiveCaptureFields.TryGetValue(captureName, out var liveField))
                 {
                     StandaloneAsyncCaptureEmitter.EmitReference(IL, _ctx, liveField, captureName);
@@ -385,7 +386,9 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Dup); // Keep display class on stack
 
             // Load the captured variable's current value
-            if (capturedVar == CompilationContext.SuperOwnerCaptureName)
+            if (capturedVar == CompilationContext.NewTargetCaptureName)
+                EmitNewTargetValue();
+            else if (capturedVar == CompilationContext.SuperOwnerCaptureName)
             {
                 if (!TryEmitOwnedClassDefinition())
                     throw new InvalidOperationException("A static super closure requires its lexical class definition.");

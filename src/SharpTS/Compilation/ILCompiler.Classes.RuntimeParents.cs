@@ -115,7 +115,7 @@ public partial class ILCompiler
     {
         if (_receiverInitializers.TryGetValue(owner, out var existing)) return existing;
         var method = owner.DefineMethod("$InitializeReceiver", MethodAttributes.Public | MethodAttributes.Static,
-            _types.Void, [_types.Object, _types.ObjectArray, _types.Object]);
+            _types.Void, [_types.Object, _types.ObjectArray, _types.Object, _types.Object]);
         _receiverInitializers.Add(owner, method);
         return method;
     }
@@ -136,6 +136,7 @@ public partial class ILCompiler
         ctx.HasGuestReceiver = true;
         ctx.GuestThisVariableName = "__this";
         ctx.ClassDefinitionParameterIndex = 2;
+        ctx.NewTargetParameterIndex = 3;
         ctx.DefineParameter("__this", 0, _types.Object);
         ApplyCapturedTopLevelVariableAccess(ctx);
         var emitter = new ILEmitter(ctx);
@@ -184,6 +185,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Call, _runtime.ClassDefinitions.GetParent);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_3);
             il.Emit(OpCodes.Call, _runtime.ClassDefinitions.InitializeReceiver);
         }
         bool initialized = false;
@@ -200,6 +202,8 @@ public partial class ILCompiler
         void InitializeFields()
         {
             initialized = true;
+            bool previous = ctx.SuppressNewTarget;
+            ctx.SuppressNewTarget = true;
             foreach (var field in declaration.Fields.Where(field => !field.IsStatic && !field.IsDeclare && !field.IsPrivate))
             {
                 il.Emit(OpCodes.Ldarg_0);
@@ -208,6 +212,7 @@ public partial class ILCompiler
                 else il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
                 il.Emit(OpCodes.Call, _runtime.ObjectWrite.Index);
             }
+            ctx.SuppressNewTarget = previous;
         }
     }
 

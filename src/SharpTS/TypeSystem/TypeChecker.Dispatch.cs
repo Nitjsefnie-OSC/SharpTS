@@ -38,6 +38,7 @@ public partial class TypeChecker
         Expr.SetPrivate e => VisitSetPrivate(e),
         Expr.CallPrivate e => VisitCallPrivate(e),
         Expr.This e => VisitThis(e),
+        Expr.NewTarget e => VisitNewTarget(e),
         Expr.New e => VisitNew(e),
         Expr.ArrayLiteral e => VisitArrayLiteral(e),
         Expr.ObjectLiteral e => VisitObjectLiteral(e),

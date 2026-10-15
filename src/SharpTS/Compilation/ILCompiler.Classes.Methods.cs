@@ -136,6 +136,7 @@ public partial class ILCompiler
                 MarkJsVariadicConstructor(ctorBuilder);
 
             _classes.Constructors[qualifiedClassName] = ctorBuilder;
+            DefineNewTargetConstructor(ctorBuilder);
             RegisterArgumentsCapturingMethod(ctorBuilder, constructor?.Body, constructor?.Parameters);
             if (constructor == null && classStmt.SuperclassExpr != null)
             {

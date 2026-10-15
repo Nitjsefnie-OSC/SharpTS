@@ -8,6 +8,18 @@ public sealed class EmittedDynamicConstructionRuntime
 {
     internal EmittedDynamicConstructionRuntime() { }
     public bool IsComplete { get; private set; }
+    private MethodBuilder? _constructWithNewTarget;
+    public MethodBuilder ConstructWithNewTarget
+    {
+        get => Require(_constructWithNewTarget);
+        internal set => SetHandle(ref _constructWithNewTarget, value);
+    }
+    private MethodBuilder? _functionWithNewTarget;
+    public MethodBuilder FunctionWithNewTarget
+    {
+        get => Require(_functionWithNewTarget);
+        internal set => SetHandle(ref _functionWithNewTarget, value);
+    }
     private bool _functionBodyEmitted;
 
     private MethodBuilder? _recordClassReturn;
@@ -91,6 +103,8 @@ public sealed class EmittedDynamicConstructionRuntime
         EnsureMutable();
         _ = Function;
         _ = Value;
+        _ = ConstructWithNewTarget;
+        _ = FunctionWithNewTarget;
         _ = FactoryAttributeType;
         _ = FactoryAttributeConstructor;
         _ = FactoryAttributeName;

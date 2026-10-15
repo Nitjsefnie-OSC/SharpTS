@@ -75,6 +75,7 @@ public partial class Interpreter
     internal RuntimeValue VisitCallPrivate(Expr.CallPrivate cp) => EvaluateCallPrivate(cp);
     internal RuntimeValue VisitThis(Expr.This thisExpr) => EvaluateThis(thisExpr);
     internal RuntimeValue VisitNew(Expr.New newExpr) => EvaluateNew(newExpr);
+    internal RuntimeValue VisitNewTarget(Expr.NewTarget newTarget) => _environment.NewTarget;
     internal RuntimeValue VisitArrayLiteral(Expr.ArrayLiteral array) => EvaluateArray(array);
     internal RuntimeValue VisitObjectLiteral(Expr.ObjectLiteral obj) => EvaluateObject(obj);
     internal RuntimeValue VisitGetIndex(Expr.GetIndex getIndex) => EvaluateGetIndex(getIndex);
@@ -156,6 +157,7 @@ public partial class Interpreter
     internal ValueTask<RuntimeValue> VisitCallPrivateAsync(Expr.CallPrivate cp) => new(EvaluateCallPrivateAsync(cp));
     internal ValueTask<RuntimeValue> VisitThisAsync(Expr.This thisExpr) => new(EvaluateThis(thisExpr));
     internal ValueTask<RuntimeValue> VisitNewAsync(Expr.New newExpr) => new(EvaluateNewAsync(newExpr));
+    internal ValueTask<RuntimeValue> VisitNewTargetAsync(Expr.NewTarget newTarget) => new(_environment.NewTarget);
     internal ValueTask<RuntimeValue> VisitArrayLiteralAsync(Expr.ArrayLiteral array) => new(EvaluateArrayAsync(array));
     internal ValueTask<RuntimeValue> VisitObjectLiteralAsync(Expr.ObjectLiteral obj) => new(EvaluateObjectAsync(obj));
     internal ValueTask<RuntimeValue> VisitGetIndexAsync(Expr.GetIndex getIndex) => EvaluateGetIndexCore(_asyncContext, getIndex);
@@ -434,7 +436,19 @@ public partial class Interpreter
             throw new InterpreterException($"Undefined property '{methodName}'.");
         }
 
+        if (expr.Method is null)
+            return RuntimeValue.FromObject(new SuperConstructorCallable(
+                method, thisReceiver!, _environment.NewTarget.ToObject()));
+
         return RuntimeValue.FromObject(SharpTSClass.BindMethodToReceiver(method, thisReceiver!));
+    }
+
+    private sealed class SuperConstructorCallable(
+        ISharpTSCallable constructor, object receiver, object? newTarget) : ISharpTSNonConstructorCallable
+    {
+        public int Arity() => constructor.Arity();
+        public object? Call(Interpreter interpreter, List<object?> arguments)
+            => SharpTSClass.InvokeConstructorBody(interpreter, constructor, receiver, arguments, newTarget);
     }
 
     /// <summary>
@@ -2197,7 +2211,7 @@ public partial class Interpreter
                 {
                     if (!field.IsStatic) instancePrivateFields.Add(field);
                     else staticPrivateFields[field.Name.Lexeme] = !hasStaticInitializers && field.Initializer != null
-                        ? Evaluate(field.Initializer) : SharpTSUndefined.Instance;
+                        ? EvaluateEarlyStaticInitializer(field.Initializer) : SharpTSUndefined.Instance;
                 }
                 else if (field.IsStatic)
                 {
@@ -2205,7 +2219,7 @@ public partial class Interpreter
                     {
                         // Old behavior: evaluate immediately
                         object? fieldValue = field.Initializer != null
-                            ? Evaluate(field.Initializer)
+                            ? EvaluateEarlyStaticInitializer(field.Initializer)
                             : null;
                         staticProperties[field.Name.Lexeme] = fieldValue;
                     }
@@ -2392,6 +2406,7 @@ public partial class Interpreter
                 // Also make the class name available so code like Foo.x works
                 var staticEnv = new RuntimeEnvironment(_environment, strictMode: true)
                     { PrivateClass = klass, StaticSuper = true };
+                staticEnv.NewTarget = RuntimeValue.Undefined;
                 staticEnv.Define("this", klass);
                 if (classExpr.Name != null)
                 {

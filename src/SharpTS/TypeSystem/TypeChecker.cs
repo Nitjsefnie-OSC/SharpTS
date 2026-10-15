@@ -1345,6 +1345,7 @@ public partial class TypeChecker
     /// </summary>
     public TypeMap Check(List<Stmt> statements, SourceDocument? sourceDocument)
     {
+        IndexNewTargetContexts(statements);
         _globalDeclarationEnvironment = _environment;
         Bindings.Clear();
         _members?.Clear();
@@ -1435,6 +1436,7 @@ public partial class TypeChecker
         List<Stmt> statements,
         SourceDocument? sourceDocument)
     {
+        IndexNewTargetContexts(statements);
         _globalDeclarationEnvironment = _environment;
         Bindings.Clear();
         _members?.Clear();
@@ -1730,6 +1732,7 @@ public partial class TypeChecker
     /// <returns>A TypeMap containing resolved types for all expressions across all modules</returns>
     public TypeMap CheckModules(List<ParsedModule> modules, ModuleResolver resolver)
     {
+        IndexNewTargetContexts(modules.SelectMany(module => module.Statements));
         Bindings.Clear();
         _members?.Clear();
         _sourceClassNesting = null;
@@ -3124,6 +3127,7 @@ public partial class TypeChecker
         Expr.Grouping g => TryGetExprLine(g.Expression),
         Expr.Variable v => v.Name.Line,
         Expr.This t => t.Keyword.Line,
+        Expr.NewTarget nt => nt.Keyword.Line,
         Expr.ImportMeta im => im.Keyword.Line,
         Expr.Set s => s.Name.Line,
         Expr.Get g => g.Name.Line,

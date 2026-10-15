@@ -78,7 +78,8 @@ public partial class AsyncArrowMoveNextEmitter
 
             // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE, not its
             // value (LoadVariableForCapture would deref the cell). The closure body derefs.
-            if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+            if (capturedVar == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
+            else if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
             else if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
                 _il.Emit(OpCodes.Ldloc, cellLocal);
             else
@@ -159,7 +160,8 @@ public partial class AsyncArrowMoveNextEmitter
                     _il.Emit(OpCodes.Dup);
                     _il.Emit(OpCodes.Ldc_I4, i);
                     var name = captureOrder[i];
-                    if (name == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+                    if (name == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
+                    else if (name == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
                     else if (nestedBuilder.StandaloneLiveCaptureFields.TryGetValue(name, out var liveField))
                         StandaloneAsyncCaptureEmitter.EmitReference(_il, _ctx!, liveField, name, _builder);
                     else

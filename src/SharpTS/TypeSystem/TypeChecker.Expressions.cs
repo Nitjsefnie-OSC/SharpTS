@@ -1783,6 +1783,7 @@ public partial class TypeChecker
         TypeInfo funcType = (typeParams != null && typeParams.Count > 0)
             ? new TypeInfo.GenericFunction(typeParams, paramTypes, returnType, requiredParams, hasRest, thisType, paramNames)
             : new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, thisType, paramNames);
+        _newTargetSourceTypes[arrow] = funcType;
 
         // Create new environment for function body
         TypeEnvironment arrowEnv = new(typeParamEnv);
@@ -2543,6 +2544,7 @@ public partial class TypeChecker
         var mutableClass = previousClass is null
             ? new TypeInfo.MutableClass(className)
             : new TypeInfo.MutableClass(className, previousClass.Core.DeclarationId);
+        _newTargetSourceTypes[classExpr] = mutableClass;
         mutableClass.Superclass = superclass;
         mutableClass.IsAbstract = classExpr.IsAbstract;
         RegisterSourceClassMembers(classExpr, mutableClass.DeclarationId);

@@ -481,6 +481,7 @@ public partial class ILCompiler
             MarkFunctionName(_closures.ArrowMethods[arrow], arrow.Name?.Lexeme ?? "");
             if (!arrow.HasOwnThis || arrow.IsMethod)
                 MarkNonConstructible(_closures.ArrowMethods[arrow]);
+            else DefineNewTargetBody(_closures.ArrowMethods[arrow]);
         }
     }
 
@@ -1613,6 +1614,7 @@ public partial class ILCompiler
 
     private void EmitArrowBody(Expr.ArrowFunction arrow, MethodBuilder method, TypeBuilder? displayClass)
     {
+        method = NewTargetBody(method);
         var il = method.GetILGenerator();
 
         // Get the resolved return type for this arrow (for typed return optimization)
@@ -1620,6 +1622,7 @@ public partial class ILCompiler
         arrowReturnType ??= _types.Object;
 
         var ctx = CreateModuleMemberContext(il, method);
+        ConfigureNewTargetBody(ctx, method);
         ctx.AsyncArrowBuilders = _async.ArrowBuilders.Count > 0 ? _async.ArrowBuilders : null;
         // A function expression / arrow with its own "use strict" prologue is
         // strict even when the enclosing code is sloppy. Detect it here (not

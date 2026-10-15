@@ -296,6 +296,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case Expr.This:
                 EmitThis();
                 break;
+            case Expr.NewTarget:
+                EmitNewTargetValue();
+                break;
             case Expr.Super s:
                 EmitSuper(s);
                 break;
@@ -793,6 +796,20 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             SetStackType(StackType.Null);
         }
     }
+
+    protected void EmitNewTargetValue()
+    {
+        if (Ctx.SuppressNewTarget)
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Sentinels.UndefinedInstance);
+        else if (Ctx.NewTargetParameterIndex is { } argument)
+            IL.Emit(OpCodes.Ldarg, argument);
+        else if (!TryEmitNewTargetCapture())
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Sentinels.UndefinedInstance);
+        SetStackUnknown();
+    }
+
+    protected virtual bool TryEmitNewTargetCapture() =>
+        Resolver.TryLoadVariable(CompilationContext.NewTargetCaptureName) != null;
 
     /// <summary>
     /// Emits a super method access. Default loads 'this' via EmitThis(), then calls GetSuperMethod.
@@ -2035,7 +2052,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE so the
                 // closure shares this iteration's cell (the cell local is repointed to a fresh
                 // box each iteration). Checked first; cell bindings are never hoisted fields.
-                if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+                if (capturedVar == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
+                else if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
                 else if (Ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
                 {
                     IL.Emit(OpCodes.Ldloc, cellLocal);

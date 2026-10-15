@@ -405,6 +405,7 @@ public partial class ILCompiler
             && _functions.MethodsCapturingArguments.Contains(parentConstructor))
             _functions.MethodsCapturingArguments.Add(ctorBuilder);
         DefineClassPrototypeConstructor(typeBuilder);
+        DefineNewTargetConstructor(ctorBuilder, expression: true);
         DefineClassExpressionFactory(classExpr, typeBuilder, ctorBuilder, ctorParamTypes);
 
         // Define static methods (computed symbol-keyed methods are handled by
@@ -709,6 +710,8 @@ public partial class ILCompiler
         var ctorBuilder = _classExprs.Constructors[classExpr];
         var constructor = classExpr.Methods.FirstOrDefault(m => !m.IsStatic && m.Name.Lexeme == "constructor" && m.Body != null);
 
+        var canonicalConstructor = ctorBuilder;
+        ctorBuilder = NewTargetConstructor(ctorBuilder);
         var il = ctorBuilder.GetILGenerator();
         if (HasRuntimeParent(classExpr))
         {
@@ -719,9 +722,12 @@ public partial class ILCompiler
             return;
         }
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg, ctorBuilder.GetParameters().Length);
+        il.Emit(OpCodes.Ldarg, canonicalConstructor.GetParameters().Length);
         il.Emit(OpCodes.Stfld, EmitterTypeHelpers.SelfFieldReference(_classExprs.DefinitionFields[classExpr]));
         var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, fieldsField, ctorBuilder);
+        ctx.ClassDefinitionParameterIndex = canonicalConstructor.GetParameters().Length;
+        ctx.ClassDefinitionThisParameterIndex = 0;
+        if (ctorBuilder != canonicalConstructor) ctx.NewTargetParameterIndex = ctorBuilder.GetParameters().Length;
         ctx.IsInstanceMethod = true;
         if (constructor != null)
             SetupSyncMethodFunctionDisplayClass(ctx, il, constructor);
@@ -824,9 +830,11 @@ public partial class ILCompiler
                         il.Emit(OpCodes.Ldarg, guestArgument++);
                     else emitter.EmitOmittedArgument(p.ParameterType);
                 }
+                var bodyConstructor = NewTargetConstructor(baseCtor);
+                if (bodyConstructor != baseCtor) EmitForwardedNewTarget(ctx);
                 var baseType = typeBuilder.BaseType;
                 il.Emit(OpCodes.Call, baseType?.IsConstructedGenericType == true
-                    ? EmitterTypeHelpers.ResolveConstructor(baseType, baseCtor) : baseCtor);
+                    ? EmitterTypeHelpers.ResolveConstructor(baseType, bodyConstructor) : bodyConstructor);
             }
             else
             {
@@ -847,7 +855,7 @@ public partial class ILCompiler
                 ctx.DefineParameter(constructor.Parameters[i].Name.Lexeme, i + 1, paramType);
             }
 
-            var constructorParamTypes = ctorBuilder.GetParameters().SkipLast(1).Select(p => p.ParameterType).ToArray();
+            var constructorParamTypes = canonicalConstructor.GetParameters().SkipLast(1).Select(p => p.ParameterType).ToArray();
             EmitFunctionEnvironmentPrologue(
                 il,
                 ctx,
@@ -894,6 +902,14 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ret);
 
         void EmitInstanceFieldInitializers()
+        {
+            bool previous = ctx.SuppressNewTarget;
+            ctx.SuppressNewTarget = true;
+            EmitInstanceFieldInitializersCore();
+            ctx.SuppressNewTarget = previous;
+        }
+
+        void EmitInstanceFieldInitializersCore()
         {
             var privateStorage = EmitPrivateFieldStorage(il, className);
             foreach (var field in classExpr.Fields.Where(f => !f.IsStatic && !f.IsDeclare && (f.IsPrivate || f.Initializer != null || f.ComputedKey != null)))

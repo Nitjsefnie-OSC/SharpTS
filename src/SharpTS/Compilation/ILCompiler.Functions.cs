@@ -242,7 +242,7 @@ public partial class ILCompiler
             int regularCount = funcStmt.Parameters.Count(p => !p.IsRest);
             _functions.RestParams[qualifiedFunctionName] = (restIndex, regularCount);
 
-            if (_stableNumericRestFunctions.TryGetValue(funcStmt, out var flattenedInfo))
+            if (_features?.UsesNewTarget != true && _stableNumericRestFunctions.TryGetValue(funcStmt, out var flattenedInfo))
             {
                 var companions = new Dictionary<int, MethodBuilder>();
                 for (int variantIndex = 0; variantIndex < flattenedInfo.Variants.Count; variantIndex++)
@@ -300,6 +300,7 @@ public partial class ILCompiler
 
         // Create function-level display class if this function has captured locals
         DefineFunctionDisplayClass(funcStmt, qualifiedFunctionName);
+        DefineNewTargetBody(methodBuilder, funcStmt.TypeParams);
     }
 
     /// <summary>
@@ -486,7 +487,8 @@ public partial class ILCompiler
         if (funcStmt.IsGenerator || _generators.StateMachines.ContainsKey(qualifiedFunctionName))
             return;
 
-        var methodBuilder = _functions.Builders[qualifiedFunctionName];
+        var ordinaryEntry = _functions.Builders[qualifiedFunctionName];
+        var methodBuilder = NewTargetBody(ordinaryEntry);
         var il = methodBuilder.GetILGenerator();
 
         // Check if this function has captured locals that need a display class.
@@ -507,8 +509,9 @@ public partial class ILCompiler
         Dictionary<string, FieldBuilder>? topLevelVars = BuildModuleMemberTopLevelStaticVarsForModule(_modules.CurrentPath);
 
         var ctx = CreateModuleMemberContext(il, methodBuilder);
+        ConfigureNewTargetBody(ctx, methodBuilder);
         if (_stableSelfCallFunctions.Contains(funcStmt))
-            ctx.StableDirectSelfCallTarget = methodBuilder;
+            ctx.StableDirectSelfCallTarget = ordinaryEntry;
         ctx.FunctionOverloads = _functions.Overloads;
         ctx.AsyncArrowBuilders = _async.ArrowBuilders.Count > 0 ? _async.ArrowBuilders : null;
         // CJS/ESM resolution — needed so require('./literal') and module.exports/exports

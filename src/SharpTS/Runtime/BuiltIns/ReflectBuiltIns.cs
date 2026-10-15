@@ -528,18 +528,19 @@ public static class ReflectBuiltIns
                 var target = args[0].ToObject() ?? throw new ThrowException(new SharpTSTypeError(
                     "Reflect.construct called on non-constructor"));
                 var argsList = args[1].ToObject();
+                if (IsNotConstructor(target))
+                    throw new ThrowException(new SharpTSTypeError(
+                        "Reflect.construct target is not a constructor"));
 
                 // ECMA-262 28.1.2: validate newTarget is a constructor when
                 // explicitly supplied. Test262's `isConstructor(f)` harness
                 // helper relies on this — it calls
                 // `Reflect.construct(function(){}, [], f)` and checks for a
                 // throw when f isn't constructable.
-                if (args.Length > 2 && args[2].ToObject() is { } newTarget)
-                {
-                    if (IsNotConstructor(newTarget))
-                        throw new ThrowException(new SharpTSTypeError(
-                            "Reflect.construct newTarget is not a constructor"));
-                }
+                object? effectiveNewTarget = args.Length > 2 ? args[2].ToObject() : target;
+                if (IsNotConstructor(effectiveNewTarget))
+                    throw new ThrowException(new SharpTSTypeError(
+                        "Reflect.construct newTarget is not a constructor"));
 
                 List<object?> callArgs;
                 if (argsList == null)
@@ -560,10 +561,6 @@ public static class ReflectBuiltIns
                         "Reflect.construct second argument must be an array-like object"));
                 }
 
-                if (IsNotConstructor(target))
-                    throw new ThrowException(new SharpTSTypeError(
-                        "Reflect.construct target is not a constructor"));
-
                 // Promise validates the executor before
                 // GetPrototypeFromConstructor(newTarget). In particular, an
                 // accessor on newTarget.prototype must not run when the
@@ -575,24 +572,7 @@ public static class ReflectBuiltIns
                         "Promise executor must be callable"));
                 }
 
-                if (target is SharpTSClass cls)
-                {
-                    return RuntimeValue.FromBoxed(cls.Call(interpreter, callArgs));
-                }
-                if (target is SharpTSProxy proxy)
-                {
-                    object effectiveNewTarget = args.Length > 2
-                        ? args[2].ToObject()!
-                        : target;
-                    return RuntimeValue.FromBoxed(proxy.TrapConstruct(
-                        callArgs, interpreter, effectiveNewTarget));
-                }
-                if (target is ISharpTSCallable)
-                {
-                    return RuntimeValue.FromBoxed(interpreter.Construct(target, callArgs));
-                }
-                throw new ThrowException(new SharpTSTypeError(
-                    "Reflect.construct target is not a constructor"));
+                return RuntimeValue.FromBoxed(interpreter.Construct(target, callArgs, effectiveNewTarget));
             }),
 
             _ => null

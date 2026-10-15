@@ -61,10 +61,11 @@ public partial class RuntimeEmitter
         il.MarkLabel(haveAdapter);
         il.BeginExceptionBlock();
         il.Emit(OpCodes.Ldloc, adapter); il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldc_I4_3); il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Ldc_I4_4); il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4_3); il.Emit(OpCodes.Ldarg_3); il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray)); il.Emit(OpCodes.Pop);
         il.BeginCatchBlock(typeof(TargetInvocationException));
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "InnerException")!.GetGetMethod()!);

@@ -57,7 +57,8 @@ public partial class TypeChecker
         var projection = _inStaticMethod ? new EditorMemberProjection { IsComplete = false } :
             CollectEditorClassMembers(superclass, isStatic: false, includePrivate: false);
         EditorFacts.SetReceiverMembers(document, expression,
-            projection.Members.Values.Where(candidate => candidate.Kind == EditorMemberKind.Method).ToArray(),
+            projection.Members.Values.Where(candidate => candidate.Kind is
+                EditorMemberKind.Method or EditorMemberKind.Accessor or EditorMemberKind.AutoAccessor).ToArray(),
             projection.IsComplete, projection.IsTruncated, _inStaticMethod ? null : superclass);
     }
 

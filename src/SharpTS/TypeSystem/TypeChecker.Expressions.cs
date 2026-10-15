@@ -2544,6 +2544,7 @@ public partial class TypeChecker
         var mutableClass = previousClass is null
             ? new TypeInfo.MutableClass(className)
             : new TypeInfo.MutableClass(className, previousClass.Core.DeclarationId);
+        HashSet<string> pendingInstanceGetters = [];
         _newTargetSourceTypes[classExpr] = mutableClass;
         mutableClass.Superclass = superclass;
         mutableClass.IsAbstract = classExpr.IsAbstract;
@@ -2698,20 +2699,19 @@ public partial class TypeChecker
                         ? TryGetWellKnownSymbolMemberName(accessor.ComputedKey)
                         : accessor.Name.Lexeme;
                     if (propName is null) continue;
-                    if (accessor.IsStatic)
-                        mutableClass.StaticFieldAccess[propName] = accessor.Access;
+                    PublishAccessorReadAccess(mutableClass, accessor, propName);
                     if (accessor.Kind.Type == TokenType.GET)
                     {
                         TypeInfo getterRetType = accessor.ReturnType != null
                             ? ResolveAnnotation(accessor.ReturnType, accessor.ReturnTypeNode, accessor, EditorAnnotationSlot.Return)!
-                            : accessor.IsStatic ? TypeInfo.Inferred.Shared : TypeInfo.Any.Shared;
+                            : TypeInfo.Inferred.Shared;
                         (accessor.IsStatic ? mutableClass.StaticGetters : mutableClass.Getters)[propName] = getterRetType;
                     }
                     else
                     {
                         TypeInfo paramType = accessor.SetterParam?.Type != null
                             ? ResolveAnnotation(accessor.SetterParam.Type, accessor.SetterParam.TypeAnnotationNode, accessor.SetterParam)!
-                            : accessor.IsStatic ? TypeInfo.Inferred.Shared : TypeInfo.Any.Shared;
+                            : TypeInfo.Inferred.Shared;
                         (accessor.IsStatic ? mutableClass.StaticSetters : mutableClass.Setters)[propName] = paramType;
                     }
                 }
@@ -2719,9 +2719,29 @@ public partial class TypeChecker
                 // Validate getter/setter type compatibility
                 foreach (var propName in mutableClass.Getters.Keys.Intersect(mutableClass.Setters.Keys))
                 {
-                    if (!IsCompatible(mutableClass.Getters[propName], mutableClass.Setters[propName]))
+                    TypeInfo getterType = mutableClass.Getters[propName];
+                    TypeInfo setterType = mutableClass.Setters[propName];
+                    if (getterType is TypeInfo.Inferred && setterType is not TypeInfo.Inferred)
+                        mutableClass.Getters[propName] = setterType;
+                    else if (setterType is TypeInfo.Inferred && getterType is not TypeInfo.Inferred)
+                        mutableClass.Setters[propName] = getterType;
+                    else if (!IsCompatible(getterType, setterType))
                         throw new TypeCheckException($" Getter and setter for '{propName}' have incompatible types.", tsCode: "TS2380");
                 }
+                // Methods are checked before accessor bodies. Preserve their
+                // existing permissive view of pending expression getters, then
+                // infer those getters before publishing the final class type.
+                foreach (string name in mutableClass.Getters.Keys.ToList())
+                    if (mutableClass.Getters[name] is TypeInfo.Inferred)
+                    {
+                        pendingInstanceGetters.Add(name);
+                        mutableClass.Getters[name] = TypeInfo.Any.Shared;
+                    }
+                // No known getter type can contextually type these setter
+                // parameters yet; keep their prior permissive body behavior.
+                foreach (string name in mutableClass.Setters.Keys.ToList())
+                    if (mutableClass.Setters[name] is TypeInfo.Inferred)
+                        mutableClass.Setters[name] = TypeInfo.Any.Shared;
                 ValidateStaticAccessorPairs(mutableClass);
             }
         }
@@ -3000,6 +3020,8 @@ public partial class TypeChecker
                 }
             }
 
+            foreach (string name in pendingInstanceGetters)
+                mutableClass.Getters[name] = TypeInfo.Inferred.Shared;
             anyInferredMethodReturnResolved |= CheckClassAccessorBodies(
                 classExpr.Accessors, mutableClass, recoverComputedSymbolDiagnostics: false);
 

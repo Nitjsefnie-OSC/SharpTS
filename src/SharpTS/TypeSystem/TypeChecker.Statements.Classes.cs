@@ -395,8 +395,7 @@ public partial class TypeChecker
                 }
 
                 string propName = canonicalName;
-                if (accessor.IsStatic)
-                    mutableClass.StaticFieldAccess[propName] = accessor.Access;
+                PublishAccessorReadAccess(mutableClass, accessor, propName);
 
                 if (accessor.Kind.Type == TokenType.GET)
                 {
@@ -448,6 +447,17 @@ public partial class TypeChecker
         }
     }
 
+    private static void PublishAccessorReadAccess(
+        TypeInfo.MutableClass mutableClass, Stmt.Accessor accessor, string name)
+    {
+        if (accessor.IsStatic)
+            mutableClass.StaticFieldAccess[name] = accessor.Access;
+        else if (accessor.Kind.Type == TokenType.GET || !mutableClass.Getters.ContainsKey(name))
+            // A paired setter's visibility does not restrict reads through a
+            // public getter, regardless of the declarations' source order.
+            mutableClass.FieldAccess[name] = accessor.Access;
+    }
+
     // Resolves auto-accessors in the active class environment, mutating signatures before the caller freezes them.
     private void CollectClassAutoAccessorTypes(Stmt.Class classStmt, TypeInfo.MutableClass mutableClass, TypeInfo? superclass)
     {
@@ -479,6 +489,8 @@ public partial class TypeChecker
 
                 // Register as getter (always available)
                 mutableClass.Getters[propName] = accessorType;
+                if (!autoAccessor.IsStatic)
+                    mutableClass.FieldAccess[propName] = autoAccessor.Access;
 
                 // Register as setter (unless readonly)
                 if (!autoAccessor.IsReadonly)
@@ -1461,7 +1473,7 @@ public partial class TypeChecker
                 }
 
                 if (!TryResolveAmbientMember(
-                        () => accessor.Kind.Type == TokenType.SET && accessor.IsStatic
+                        () => accessor.Kind.Type == TokenType.SET
                             ? ResolveAnnotation(accessor.SetterParam?.Type, accessor.SetterParam?.TypeAnnotationNode, accessor.SetterParam!) ?? TypeInfo.Any.Shared
                             : accessor.ReturnType != null
                                 ? ResolveAnnotation(accessor.ReturnType, accessor.ReturnTypeNode, accessor, EditorAnnotationSlot.Return)!
@@ -1477,8 +1489,7 @@ public partial class TypeChecker
                 {
                     (accessor.IsStatic ? mutableClass.StaticSetters : mutableClass.Setters)[accessor.Name.Lexeme] = accessorType;
                 }
-                if (accessor.IsStatic)
-                    mutableClass.StaticFieldAccess[accessor.Name.Lexeme] = accessor.Access;
+                PublishAccessorReadAccess(mutableClass, accessor, accessor.Name.Lexeme);
             }
             PublishStaticAccessorTypes(mutableClass);
         }

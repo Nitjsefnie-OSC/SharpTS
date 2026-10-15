@@ -195,6 +195,10 @@ internal static class EmitterTypeHelpers
         return SubstituteBaseTypeArguments(parent, replacements);
     }
 
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "Substituted array types are Reflection.Emit signature shapes serialized into the output assembly. The native compiler host never allocates these arrays or instantiates their element types.")]
     private static Type SubstituteBaseTypeArguments(Type type, IReadOnlyDictionary<Type, Type> replacements)
     {
         if (replacements.TryGetValue(type, out var argument)) return argument;

@@ -58,9 +58,12 @@ public partial class ILCompiler
             EmitTypeDefinitions.AddInterfaceImplementation(owner, contract);
             owner.DefineMethodOverride(getterImplementation, getterDeclaration);
             if (setterDeclaration != null) owner.DefineMethodOverride(setterImplementation!, setterDeclaration);
-            rawReceiverType = contract.CreateType()!;
-            rawGetter = rawReceiverType.GetMethod("Get")!;
-            rawSetter = rawReceiverType.GetMethod("Set");
+            contract.CreateType();
+            rawReceiverType = contract;
+            // These exact declarations are the emitted interface slots. Retain
+            // their builders instead of reflecting over the finalized owner.
+            rawGetter = getterDeclaration;
+            rawSetter = setterDeclaration;
             rawValueType = _types.Object;
         }
         var tableType = typeof(System.Runtime.CompilerServices.ConditionalWeakTable<object, Dictionary<string, object?>>);

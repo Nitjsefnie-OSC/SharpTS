@@ -456,6 +456,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                     => number.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
                 SharpTSStringPrototype stringPrototype
                     => stringPrototype.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
+                SharpTSFunctionPrototype functionPrototype
+                    => functionPrototype.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
                 _ => false,
             };
         }

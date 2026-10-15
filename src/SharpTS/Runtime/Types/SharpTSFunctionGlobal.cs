@@ -77,6 +77,14 @@ public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSS
     public ISharpTSCallable? GetExtraGetter(string name) => _overlay.GetGetter(name);
     public ISharpTSCallable? GetExtraSetter(string name) => _overlay.GetSetter(name);
 
+    public bool DefineProperty(SharpTSSymbol symbol, SharpTSPropertyDescriptor descriptor)
+        => _overlay.DefineProperty(symbol, descriptor);
+    public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(SharpTSSymbol symbol)
+        => _overlay.GetOwnPropertyDescriptor(symbol);
+    public IEnumerable<SharpTSSymbol> GetSymbolPropertyNames() => _overlay.GetSymbolPropertyNames();
+    public bool DeleteBySymbolStrict(SharpTSSymbol symbol, bool strictMode)
+        => !_overlay.HasSymbolProperty(symbol) || _overlay.DeleteBySymbolStrict(symbol, strictMode);
+
     bool ISharpTSSymbolPropertyBag.HasSymbolProperty(SharpTSSymbol symbol)
         => _overlay.HasSymbolProperty(symbol);
     object? ISharpTSSymbolPropertyBag.GetBySymbol(SharpTSSymbol symbol)

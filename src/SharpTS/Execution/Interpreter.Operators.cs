@@ -1127,6 +1127,8 @@ public partial class Interpreter
                 SharpTSJSON json => json.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSBigIntPrototype bigIntPrototype
                     => bigIntPrototype.DeleteBySymbolStrict(symbol, strictMode),
+                SharpTSFunctionPrototype functionPrototype
+                    => functionPrototype.DeleteBySymbolStrict(symbol, strictMode),
                 _ => true
             };
         }

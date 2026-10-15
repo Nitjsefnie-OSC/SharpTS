@@ -1144,6 +1144,10 @@ public partial class Interpreter
                 ? GetSymbolPropertyValue(functionObject, functionSymbol)
                 : GetPropertyValue(functionObject, ToPropertyKeyString(index)));
 
+        if (obj is ISharpTSPrimitiveConstructor primitiveConstructor && index is SharpTSSymbol constructorSymbol)
+            return RuntimeValue.FromBoxed(GetPrimitiveConstructorSymbolValue(
+                primitiveConstructor, constructorSymbol, primitiveConstructor));
+
         if (obj is ISharpTSSymbolPropertyBag symbolBag
             && index is SharpTSSymbol bagSymbol)
         {
@@ -1574,10 +1578,12 @@ public partial class Interpreter
         {
             if (index is SharpTSSymbol functionSymbol)
             {
+                var properties = FunctionObjectProperties.GetProperties(functionObject, this);
                 if (!TryAssignThroughDescriptor(
-                        functionObject.OwnProperties.GetOwnPropertyDescriptor(functionSymbol),
+                        properties.GetOwnPropertyDescriptor(functionSymbol)
+                            ?? FindInheritedSymbolDescriptor(functionObject, functionSymbol),
                         functionObject, functionSymbol.ToString(), value, strictMode))
-                    functionObject.OwnProperties.SetBySymbolStrict(functionSymbol, value, strictMode);
+                    properties.SetBySymbolStrict(functionSymbol, value, strictMode);
             }
             else SetFunctionObjectProperty(functionObject, ToPropertyKeyString(index), value, strictMode);
             return RuntimeValue.FromBoxed(value);
@@ -1586,9 +1592,14 @@ public partial class Interpreter
         if (obj is ISharpTSSymbolPropertyBag symbolBag
             && index is SharpTSSymbol bagSymbol)
         {
-            if (obj is not ISharpTSPrimitiveConstructor symbolConstructor
-                || !TryAssignThroughDescriptor(symbolConstructor.GetOwnPropertyDescriptor(bagSymbol),
-                    symbolConstructor, bagSymbol.ToString(), value, strictMode))
+            var descriptor = obj switch
+            {
+                ISharpTSPrimitiveConstructor symbolConstructor => symbolConstructor.GetOwnPropertyDescriptor(bagSymbol)
+                    ?? FindInheritedSymbolDescriptor(symbolConstructor, bagSymbol),
+                SharpTSFunctionPrototype functionPrototype => functionPrototype.GetOwnPropertyDescriptor(bagSymbol),
+                _ => null
+            };
+            if (!TryAssignThroughDescriptor(descriptor, obj, bagSymbol.ToString(), value, strictMode))
                 symbolBag.SetBySymbolStrict(bagSymbol, value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
@@ -1599,7 +1610,8 @@ public partial class Interpreter
             var properties = generatorFunction.FunctionProperties.GetProperties(this);
             if (index is SharpTSSymbol symbol)
             {
-                if (!TryAssignThroughDescriptor(properties.GetOwnPropertyDescriptor(symbol), obj, symbol.ToString(), value, strictMode))
+                if (!TryAssignThroughDescriptor(properties.GetOwnPropertyDescriptor(symbol)
+                        ?? FindInheritedSymbolDescriptor(obj, symbol), obj, symbol.ToString(), value, strictMode))
                     properties.SetBySymbolStrict(symbol, value, strictMode);
             }
             else
@@ -1619,6 +1631,11 @@ public partial class Interpreter
             // reads.
             if (index is SharpTSSymbol fnSym)
             {
+                if (!fn.TryGetSymbolProperty(fnSym, out _)
+                    && !fn.TryGetSymbolAccessor(fnSym, out _, out _)
+                    && TryAssignThroughDescriptor(FindInheritedSymbolDescriptor(fn, fnSym),
+                        fn, fnSym.ToString(), value, strictMode))
+                    return RuntimeValue.FromBoxed(value);
                 fn.SetBySymbol(fnSym, value);
                 return RuntimeValue.FromBoxed(value);
             }
@@ -1629,6 +1646,11 @@ public partial class Interpreter
         {
             if (index is SharpTSSymbol arrSym)
             {
+                if (!afn.TryGetSymbolProperty(arrSym, out _)
+                    && !afn.TryGetSymbolAccessor(arrSym, out _, out _)
+                    && TryAssignThroughDescriptor(FindInheritedSymbolDescriptor(afn, arrSym),
+                        afn, arrSym.ToString(), value, strictMode))
+                    return RuntimeValue.FromBoxed(value);
                 afn.SetBySymbol(arrSym, value);
                 return RuntimeValue.FromBoxed(value);
             }

@@ -881,6 +881,14 @@ public partial class Interpreter
                 continue;
             }
 
+            if (current is ISharpTSPrimitiveConstructor primitiveConstructor)
+            {
+                if (TryReadDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(symbol), receiver, out var value))
+                    return value;
+                current = GetFunctionPrototype();
+                continue;
+            }
+
             if (current is ISharpTSSymbolPropertyBag symbolBag)
             {
                 if (symbolBag.TryGetSymbolAccessor(symbol, out var getter, out _))
@@ -912,8 +920,7 @@ public partial class Interpreter
 
     internal object? GetPrimitiveConstructorSymbolValue(
         ISharpTSPrimitiveConstructor primitiveConstructor, SharpTSSymbol symbol, object? receiver)
-        => TryReadDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(symbol), receiver, out var value)
-            ? value : SharpTSUndefined.Instance;
+        => GetSymbolPropertyValue(primitiveConstructor, symbol, receiver!);
 
     /// <summary>
     /// ECMA-262 §7.3.11 HasProperty(O, P): true when <paramref name="obj"/> or
@@ -1000,6 +1007,12 @@ public partial class Interpreter
             {
                 if (FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(symbol) is not null) return true;
                 current = ObjectBuiltIns.PrototypeOf(this, functionObject);
+                continue;
+            }
+            if (current is ISharpTSPrimitiveConstructor primitiveConstructor)
+            {
+                if (primitiveConstructor.GetOwnPropertyDescriptor(symbol) is not null) return true;
+                current = GetFunctionPrototype();
                 continue;
             }
             if (current is SharpTSArray array)
@@ -2205,6 +2218,24 @@ public partial class Interpreter
         }
 
         return false;
+    }
+
+    // Inspect actual prototypes rather than assuming every callable immediately
+    // inherits Function.prototype (generator functions have another level).
+    internal SharpTSPropertyDescriptor? FindInheritedSymbolDescriptor(object target, SharpTSSymbol symbol)
+    {
+        object? current = ObjectBuiltIns.PrototypeOf(this, target);
+        for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
+        {
+            // A Proxy requires its [[Set]] protocol rather than ordinary
+            // descriptor probing, which would expose the wrong traps (#2221).
+            if (current is SharpTSProxy) return null;
+            object? descriptor = ObjectBuiltIns.RuntimeGetOwnPropertyDescriptor(current, symbol);
+            if (descriptor is not (null or SharpTSUndefined))
+                return SharpTSPropertyDescriptor.FromAnyObject(descriptor);
+            current = ObjectBuiltIns.PrototypeOf(this, current);
+        }
+        return null;
     }
 
     private void SetFunctionObjectProperty(

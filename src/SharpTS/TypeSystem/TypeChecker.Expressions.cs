@@ -2491,6 +2491,7 @@ public partial class TypeChecker
         if (classExpr.SuperclassExpr != null)
         {
             TypeInfo superType = CheckExpr(classExpr.SuperclassExpr);
+            superType = ProjectDefaultLibraryErrorHeritage(classExpr.SuperclassExpr, superType);
             if (classExpr.SuperclassTypeArgs is { Count: > 0 })
             {
                 if (superType is TypeInfo.GenericClass genericSuperclass)

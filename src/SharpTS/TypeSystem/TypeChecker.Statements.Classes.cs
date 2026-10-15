@@ -1132,6 +1132,7 @@ public partial class TypeChecker
         }
 
         TypeInfo superType = CheckExpr(classStmt.SuperclassExpr);
+        superType = ProjectDefaultLibraryErrorHeritage(classStmt.SuperclassExpr, superType);
         if (IsDefaultLibraryArrayHeritage(classStmt.SuperclassExpr, superType))
         {
             // The runtime's Array subclass bridge is also used by the single-file API.

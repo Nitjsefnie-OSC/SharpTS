@@ -1077,24 +1077,27 @@ public abstract partial class ExpressionEmitterBase
     /// <c>List&lt;object&gt;</c> rest marker receives the packed remainder.
     /// </summary>
     public void EmitStaticCallArguments(List<Expr> arguments, MethodBase targetMethod)
+        => EmitStaticCallArguments(arguments, targetMethod, targetMethod.GetParameters());
+
+    /// <summary>Uses guest slots for lowering and the canonical target for arguments capture.</summary>
+    public void EmitStaticCallArguments(List<Expr> arguments, MethodBase targetMethod, ParameterInfo[] guestParameters)
     {
-        var targetParams = targetMethod.GetParameters();
-        int paramCount = targetParams.Length;
+        int paramCount = guestParameters.Length;
 
         // Implicit `extends Array` constructors are represented by one internal
         // params object[] slot so their CLR signature can carry an arbitrary JS
         // argument list. Pack spreads and ordinary arguments through the normal
         // JS argument-array helper instead of treating the first value as object[].
         if (paramCount == 1
-            && targetParams[0].ParameterType == Types.ObjectArray
-            && targetParams[0].Name == "__jsArgs")
+            && guestParameters[0].ParameterType == Types.ObjectArray
+            && guestParameters[0].Name == "__jsArgs")
         {
             EmitArgsArrayWithSpread(arguments);
             return;
         }
 
         bool hasRestParam = paramCount > 0 &&
-            targetParams[paramCount - 1].ParameterType == typeof(List<object>);
+            guestParameters[paramCount - 1].ParameterType == typeof(List<object>);
 
         bool publishesArguments =
             Ctx.MethodsCapturingArguments?.Contains(targetMethod) == true &&
@@ -1102,7 +1105,7 @@ public abstract partial class ExpressionEmitterBase
 
         if (publishesArguments)
         {
-            EmitArgumentsObservingCall(arguments, targetParams, hasRestParam);
+            EmitArgumentsObservingCall(arguments, guestParameters, hasRestParam);
             return;
         }
 
@@ -1129,10 +1132,10 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Ldloc, expandedArguments);
                 IL.Emit(OpCodes.Ldc_I4, i);
                 IL.Emit(OpCodes.Ldelem_Ref);
-                EmitCoerceBoxedToType(targetParams[i].ParameterType);
+                EmitCoerceBoxedToType(guestParameters[i].ParameterType);
                 IL.Emit(OpCodes.Br, loaded);
                 IL.MarkLabel(missing);
-                EmitOmittedArgument(targetParams[i].ParameterType);
+                EmitOmittedArgument(guestParameters[i].ParameterType);
                 IL.MarkLabel(loaded);
             }
             return;
@@ -1140,7 +1143,7 @@ public abstract partial class ExpressionEmitterBase
 
         if (hasRestParam)
         {
-            EmitRestParameterCall(arguments, paramCount - 1, targetParams);
+            EmitRestParameterCall(arguments, paramCount - 1, guestParameters);
             return;
         }
 
@@ -1152,7 +1155,7 @@ public abstract partial class ExpressionEmitterBase
             for (int i = 0; i < arguments.Count; i++)
             {
                 if (i < paramCount)
-                    argLocals[i] = SpillConvertedArg(arguments[i], targetParams[i].ParameterType);
+                    argLocals[i] = SpillConvertedArg(arguments[i], guestParameters[i].ParameterType);
                 else
                     argLocals[i] = SpillBoxed(arguments[i]);
             }
@@ -1160,7 +1163,7 @@ public abstract partial class ExpressionEmitterBase
             for (int i = 0; i < Math.Min(arguments.Count, paramCount); i++)
             {
                 IL.Emit(OpCodes.Ldloc, argLocals[i]);
-                EmitCoerceBoxedToType(targetParams[i].ParameterType);
+                EmitCoerceBoxedToType(guestParameters[i].ParameterType);
             }
         }
         else
@@ -1170,7 +1173,7 @@ public abstract partial class ExpressionEmitterBase
                 EmitExpression(arguments[i]);
                 if (i < paramCount)
                 {
-                    EmitConversionForParameter(arguments[i], targetParams[i].ParameterType);
+                    EmitConversionForParameter(arguments[i], guestParameters[i].ParameterType);
                 }
                 else
                 {
@@ -1182,7 +1185,7 @@ public abstract partial class ExpressionEmitterBase
         }
 
         for (int i = arguments.Count; i < paramCount; i++)
-            EmitOmittedArgument(targetParams[i].ParameterType);
+            EmitOmittedArgument(guestParameters[i].ParameterType);
     }
 
     /// <summary>

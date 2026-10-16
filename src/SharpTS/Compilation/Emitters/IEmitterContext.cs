@@ -119,6 +119,12 @@ public interface IEmitterContext
     void EmitStaticCallArguments(List<Expr> arguments, MethodBase targetMethod);
 
     /// <summary>
+    /// Emits only the guest-visible parameter slots, retaining the original target identity
+    /// for raw arguments publication when the CLR signature also carries hidden metadata.
+    /// </summary>
+    void EmitStaticCallArguments(List<Expr> arguments, MethodBase targetMethod, ParameterInfo[] guestParameters);
+
+    /// <summary>
     /// True when evaluating any of <paramref name="args"/> can suspend the enclosing state machine
     /// (contains an <c>await</c>/<c>yield</c>). Type-emitter strategies use this to decide whether a
     /// fast path must spill arguments before touching the receiver: leaving the receiver (or a partly

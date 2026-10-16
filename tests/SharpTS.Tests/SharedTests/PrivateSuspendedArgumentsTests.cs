@@ -202,12 +202,7 @@ public sealed class PrivateSuspendedArgumentsTests
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
-        // #2155: pending class-method scope interference also affects ordinary
-        // captured arrays on the baseline interpreter; immediate awaits still check
-        // each call's argument identity, mutation, and escaped arrow in both modes.
-        ((string)row[0] == "pending-snapshots"
-            ? new[] { ExecutionMode.Compiled }
-            : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
         .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]

@@ -42,7 +42,6 @@ namespace SharpTS.Execution;
 /// <seealso cref="ILCompiler"/>
 public partial class Interpreter : IDisposable
 {
-    private RuntimeEnvironment _environment = new();
     internal InterpreterDebugHost? DebugHost { get; set; }
     internal InterpreterDebugController? DebugController { get; set; }
     // Keyed by AST-node identity, not structural value. The resolver stores and reads the
@@ -373,7 +372,11 @@ public partial class Interpreter : IDisposable
     /// via <c>g.next(v)</c> (currently always undefined); for <c>yield*</c>, the delegated
     /// iterator's return value per ECMA-262 §14.4.14.
     /// </summary>
-    internal Func<object?, bool, object?>? YieldCallback { get; set; }
+    internal Func<object?, bool, object?>? YieldCallback
+    {
+        get => CurrentExecutionFrame.YieldCallback;
+        set => CurrentExecutionFrame = CurrentExecutionFrame with { YieldCallback = value };
+    }
 
     /// <summary>
     /// The async generator whose body is currently executing, if any. An async generator body runs as
@@ -383,7 +386,11 @@ public partial class Interpreter : IDisposable
     /// via <see cref="AwaitPreservingEnvironment"/>, and the generator re-asserts it itself at each
     /// <c>yield</c> resume — so interleaved async generators never observe each other's binding.
     /// </summary>
-    internal Runtime.Types.SharpTSAsyncGenerator? CurrentAsyncGenerator { get; set; }
+    internal Runtime.Types.SharpTSAsyncGenerator? CurrentAsyncGenerator
+    {
+        get => CurrentExecutionFrame.AsyncGenerator;
+        set => CurrentExecutionFrame = CurrentExecutionFrame with { AsyncGenerator = value };
+    }
 
     /// <summary>
     /// Registers a timer for tracking. Called by TimerBuiltIns when creating setTimeout/setInterval.
@@ -1174,6 +1181,10 @@ public partial class Interpreter : IDisposable
     /// </summary>
     public void Dispose()
     {
+        // AsyncLocal values are rooted by the caller's ExecutionContext, even
+        // after this interpreter is otherwise unreachable. Clear on every call
+        // so idempotent disposal also releases a separately inherited context.
+        _executionFrame.Value = null;
         if (_isDisposed)
         {
             // Already disposed - idempotent disposal pattern

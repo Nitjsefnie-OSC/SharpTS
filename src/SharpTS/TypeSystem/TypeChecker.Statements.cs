@@ -735,6 +735,7 @@ public partial class TypeChecker
         // initialized with an array: array members are callable without a spurious possibly-
         // undefined diagnostic.
         _environment.Define(stmt.Name.Lexeme, initializerFlowType ?? constDeclaredType);
+        RecordClassFieldConstWidening(stmt, constDeclaredType);
         RecordDeclaredType(stmt.Name.Lexeme, constDeclaredType);
         RecordEditorFinalDeclaration(stmt.Name, constDeclaredType);
         // Register as local variable for escape analysis

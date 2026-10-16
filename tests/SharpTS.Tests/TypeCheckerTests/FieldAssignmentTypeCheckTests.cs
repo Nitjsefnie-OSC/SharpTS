@@ -61,14 +61,20 @@ public class FieldAssignmentTypeCheckTests
     }
 
     [Fact]
-    public void UntypedField_AssignmentNotConstrained()
+    public void InferredNumberField_AllowsWidenedNumberAssignments()
     {
-        // A field with no annotation is `any`; assignments to it are unconstrained.
+        // Mutable numeric initializers widen to number rather than the literal zero.
         TestHarness.RunInterpreted("""
             class C { x = 0; m(): void { this.x = 1; } }
             let c: C = new C();
             c.m();
             console.log("ok");
             """);
+    }
+
+    [Fact]
+    public void ExplicitAnyField_AllowsAssignmentsOfUnrelatedTypes()
+    {
+        TestHarness.RunInterpreted("class C { x: any = 0; write(): void { this.x = 'free'; } } new C().write();");
     }
 }

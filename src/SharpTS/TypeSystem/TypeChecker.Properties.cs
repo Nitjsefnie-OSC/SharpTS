@@ -191,7 +191,9 @@ public partial class TypeChecker
 
         bool directGlobalObject = get.Object is Expr.Variable { Name.Lexeme: "globalThis" } ||
             get.Object is Expr.This &&
-                (_currentFunctionReturnType is null || _currentArrowCapturesScriptGlobalThis);
+                (_currentArrowCapturesScriptGlobalThis ||
+                 _currentClass is null && _currentFunctionThisType is null &&
+                 _currentFunctionReturnType is null);
         if (_hasDefaultLibraries && directGlobalObject &&
             !GetGlobalThisType().Members.ContainsKey(get.Name.Lexeme))
         {
@@ -969,7 +971,7 @@ public partial class TypeChecker
              }
 
              // Handle regular Class
-             if (instance.ClassType is not TypeInfo.Class startClass)
+             if (instance.ResolvedClassType is not TypeInfo.Class startClass)
                  return CheckExpr(set.Value);
 
              TypeInfo? current = startClass;
@@ -1458,7 +1460,7 @@ public partial class TypeChecker
 
         if (!IsCompatible(fieldType, valueType))
         {
-            throw new TypeCheckException($" Cannot assign type '{valueType}' to private field '{fieldName}' of type '{fieldType}'.", tsCode: "TS2322");
+            throw new TypeCheckException($" Cannot assign type '{valueType}' to private field '{fieldName}' of type '{fieldType}'.", line: set.Name.Line, tsCode: "TS2322");
         }
 
         return valueType;
@@ -1524,7 +1526,7 @@ public partial class TypeChecker
         // Check argument types against the callable member's signature.
         if (methodType is not TypeInfo.Function funcType)
         {
-            throw new TypeCheckException($" Private member '{methodName}' is not callable.", tsCode: "TS2349");
+            throw new TypeCheckException($" Private member '{methodName}' is not callable.", line: call.Name.Line, tsCode: "TS2349");
         }
         if (EditorFacts.IsEnabled && HasPrivateSourceOwner(objType, owner.Core.DeclarationId,
                 selectedFacet == MemberFacet.PrivateStatic))

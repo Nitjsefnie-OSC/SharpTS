@@ -646,12 +646,18 @@ public partial class TypeChecker
 
             TypeInfo.Class classTypeForBody = PublishInitialClassType(classStmt, mutableClass, classTypeParams);
 
+            bool anyInferredFieldTypeResolved = CheckClassFieldInitializers(
+                classStmt, classStmt.Fields, mutableClass, classTypeEnv, classTypeParams);
+            if (anyInferredFieldTypeResolved)
+            {
+                classTypeForBody = PublishInitialClassType(classStmt, mutableClass, classTypeParams);
+                _compatibilityCache = null;
+                _identityCompatibilityCache = null;
+            }
+
             ValidateDeclaredClassInterfaces(classStmt, classTypeForBody, classTypeParams);
 
             ValidateDeclaredClassMembers(classStmt, classTypeForBody, classTypeParams, classTypeEnv);
-
-            bool anyInferredFieldTypeResolved = CheckClassStaticFieldInitializers(
-                classStmt, classTypeForBody, mutableClass);
 
             CheckClassAutoAccessorInitializers(classStmt, classTypeForBody);
 
@@ -673,7 +679,6 @@ public partial class TypeChecker
 
             try
             {
-                CheckClassInstanceFieldInitializers(classStmt, classTypeForBody);
                 anyInferredMethodReturnResolved = CheckClassMethodBodies(
                     classStmt, classTypeForBody, mutableClass, prevEnv, recoverComputedSymbolDiagnostics);
                 anyInferredMethodReturnResolved |= CheckClassAccessorBodies(
@@ -702,28 +707,6 @@ public partial class TypeChecker
         finally
         {
             _recoveryMode = previousRecoveryMode;
-        }
-    }
-
-    // Called in the caller-owned instance environment. Each body stage restores its
-    // per-function state even on errors; the declaration owns class scope and recovery.
-    private void CheckClassInstanceFieldInitializers(Stmt.Class classStmt, TypeInfo.Class classTypeForBody)
-    {
-        // Check instance field initializers (e.g. `x = 5`, `r = () => { ... }`) within the
-        // instance context so `this` and the class's type parameters resolve inside them. Static
-        // fields are checked separately at class scope. Inferred/Any field types skip the
-        // assignability check but the initializer is still type-checked.
-        foreach (var field in classStmt.Fields)
-        {
-            if (field.IsStatic || field.Initializer == null) continue;
-            TypeInfo initType = CheckExpr(field.Initializer);
-            var declaredTypes = field.IsPrivate ? classTypeForBody.PrivateFieldTypes : classTypeForBody.FieldTypes;
-            if (declaredTypes.TryGetValue(GetFieldMemberName(field), out var fieldDeclaredType)
-                && fieldDeclaredType is not (TypeInfo.Inferred or TypeInfo.Any)
-                && !IsCompatible(fieldDeclaredType, initType))
-            {
-                throw new TypeCheckException($" Cannot assign type '{initType}' to field '{field.Name.Lexeme}' of type '{fieldDeclaredType}'.", tsCode: "TS2322");
-            }
         }
     }
 

@@ -2673,7 +2673,7 @@ public partial class TypeChecker
             // Collect field types
             foreach (var field in classExpr.Fields)
             {
-                string fieldName = field.Name.Lexeme;
+                string fieldName = GetFieldMemberName(field);
                 TypeInfo fieldType = ResolveAnnotation(field.TypeAnnotation, field.TypeAnnotationNode, field)
                     ?? TypeInfo.Any.Shared;
 
@@ -2748,7 +2748,16 @@ public partial class TypeChecker
             }
         }
 
-        // Freeze the mutable class
+        bool anyInferredFieldTypeResolved = CheckClassFieldInitializers(
+            classExpr, classExpr.Fields, mutableClass, classTypeEnv, classTypeParams);
+        if (anyInferredFieldTypeResolved)
+        {
+            _compatibilityCache = null;
+            _identityCompatibilityCache = null;
+        }
+
+        // Freeze the mutable class after initializer inference so every body and
+        // external expression result sees the same completed field metadata.
         // For body checking, always use the frozen MutableClass (which is a TypeInfo.Class)
         // This matches CheckClassDeclaration: generic classes store GenericClass externally but use
         // the frozen MutableClass for body checking since it has the same methods/fields structure.
@@ -3026,22 +3035,6 @@ public partial class TypeChecker
                 mutableClass.Getters[name] = TypeInfo.Inferred.Shared;
             anyInferredMethodReturnResolved |= CheckClassAccessorBodies(
                 classExpr.Accessors, mutableClass, recoverComputedSymbolDiagnostics: false);
-
-            // Check field initializers
-            foreach (var field in classExpr.Fields.Where(f => f.Initializer != null))
-            {
-                TypeInfo initType = CheckExpr(field.Initializer!);
-                TypeInfo fieldDeclaredType = field.IsPrivate
-                    ? field.IsStatic
-                        ? classTypeForBody.StaticPrivateFieldTypes[field.Name.Lexeme]
-                        : classTypeForBody.PrivateFieldTypes[field.Name.Lexeme]
-                    : field.IsStatic
-                    ? classTypeForBody.StaticProperties[field.Name.Lexeme]
-                    : classTypeForBody.FieldTypes[field.Name.Lexeme];
-
-                if (!IsCompatible(fieldDeclaredType, initType))
-                    throw new TypeCheckException($" Cannot assign type '{initType}' to field '{field.Name.Lexeme}' of type '{fieldDeclaredType}'.", tsCode: "TS2322");
-            }
         }
         finally
         {
@@ -3057,7 +3050,7 @@ public partial class TypeChecker
         // mutable state, re-register the TypeMap, and recompute the result type returned below.
         // Unlike a class declaration, a class expression publishes nothing to the outer environment —
         // its resolved type flows out solely through the return value and the TypeMap (#793).
-        if (anyInferredMethodReturnResolved)
+        if (anyInferredMethodReturnResolved || anyInferredFieldTypeResolved)
         {
             mutableClass.ResetFrozenCache();
             if (classTypeParams != null && classTypeParams.Count > 0)

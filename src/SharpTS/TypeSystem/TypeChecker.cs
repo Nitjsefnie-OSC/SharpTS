@@ -408,6 +408,9 @@ public partial class TypeChecker
     // Track the declared 'this' type for explicit this parameter (e.g., function f(this: MyType) {})
     private TypeInfo? _currentFunctionThisType = null;
     private bool _currentArrowCapturesScriptGlobalThis;
+    // Instance initializers are checked before construction. Their assignments may widen
+    // scopes created inside the initializer, but must not alter the enclosing live flow.
+    private TypeEnvironment? _deferredInitializerFlowBoundary;
     // Contextual 'this' type for object literal accessor bodies (set during CheckObject two-pass)
     private TypeInfo? _pendingObjectThisType = null;
 
@@ -601,6 +604,9 @@ public partial class TypeChecker
         BindingSymbol? assignedBinding = _environment.GetValueBinding(name);
         for (TypeEnvironment? env = _environment.Enclosing; env != null; env = env.Enclosing)
         {
+            if (ReferenceEquals(env, _deferredInitializerFlowBoundary))
+                return;
+
             if (!env.IsDefinedLocally(name))
                 continue;
 

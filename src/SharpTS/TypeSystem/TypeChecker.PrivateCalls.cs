@@ -33,14 +33,14 @@ public partial class TypeChecker
         if (!hasLooseSpread && guaranteedCount < signature.MinArity)
             throw new TypeCheckException(
                 $" Private method '{call.Name.Lexeme}' requires at least {signature.MinArity} arguments, got {guaranteedCount}.",
-                tsCode: "TS2554");
+                line: call.Name.Line, tsCode: "TS2554");
 
         void CheckElement(TypeInfo type, bool optionalElement)
         {
             if (parameterIndex >= regularCount && restElement == null)
                 throw new TypeCheckException(
                     $" Private method '{call.Name.Lexeme}' accepts at most {signature.ParamTypes.Count} arguments, got at least {parameterIndex + 1}.",
-                    tsCode: "TS2554");
+                    line: call.Name.Line, tsCode: "TS2554");
 
             TypeInfo expected = parameterIndex < regularCount
                 ? signature.ParamTypes[parameterIndex] : restElement!;
@@ -50,7 +50,7 @@ public partial class TypeChecker
             if (!IsArgumentCompatible(expected, type, optionalParameter))
                 throw new TypeCheckException(
                     $" Argument {parameterIndex + 1} to private method '{call.Name.Lexeme}' has type '{type}' but expected '{expected}'.",
-                    tsCode: "TS2345");
+                    line: call.Name.Line, tsCode: "TS2345");
 
             parameterIndex++;
             if (!optionalElement) guaranteedCount++;
@@ -72,7 +72,7 @@ public partial class TypeChecker
             if (!TryGetSpreadElementType(type, out var element))
                 throw new TypeCheckException(
                     $"Spread argument must be an iterable type (array, iterator, set, map, string, or generator), got '{type}'.",
-                    tsCode: "TS2488");
+                    line: call.Name.Line, tsCode: "TS2488");
             CheckRestElement(element);
         }
 
@@ -90,11 +90,11 @@ public partial class TypeChecker
             if (restElement == null || parameterIndex < regularCount)
                 throw new TypeCheckException(
                     "A spread argument must either have a tuple type or be passed to a rest parameter.",
-                    tsCode: "TS2556");
+                    line: call.Name.Line, tsCode: "TS2556");
             if (!IsCompatible(restElement, element))
                 throw new TypeCheckException(
                     $"Spread element type '{element}' not compatible with rest parameter type '{restElement}'.",
-                    tsCode: "TS2345");
+                    line: call.Name.Line, tsCode: "TS2345");
         }
     }
 }

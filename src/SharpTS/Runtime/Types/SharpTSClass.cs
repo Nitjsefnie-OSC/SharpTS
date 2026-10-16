@@ -572,6 +572,18 @@ public partial class SharpTSClass(
     public void AddSymbolMethod(SharpTSSymbol symbol, ISharpTSCallable func, bool isStatic)
     {
         string name = symbol.Description is { } description ? $"[{description}]" : "";
+        SetComputedMethodName(func, name);
+        BindPrivateMemberOwner(func);
+        if (isStatic) (_staticSymbolMethods ??= [])[symbol] = func;
+        else
+        {
+            (_symbolMethods ??= [])[symbol] = func;
+            _prototype?.DefineDeclaredSymbolMethod(symbol, func);
+        }
+    }
+
+    internal static void SetComputedMethodName(ISharpTSCallable func, string name)
+    {
         switch (func)
         {
             case SharpTSFunction function:
@@ -586,13 +598,6 @@ public partial class SharpTSClass(
             case SharpTSAsyncGeneratorFunction function:
                 function.ComputedName = name;
                 break;
-        }
-        BindPrivateMemberOwner(func);
-        if (isStatic) (_staticSymbolMethods ??= [])[symbol] = func;
-        else
-        {
-            (_symbolMethods ??= [])[symbol] = func;
-            _prototype?.DefineDeclaredSymbolMethod(symbol, func);
         }
     }
 

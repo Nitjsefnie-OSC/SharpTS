@@ -2439,26 +2439,84 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noComputedStaticGetterLabel);
 
-            // Computed static methods are emitted under synthetic CLR names
-            // and registered by their evaluated JavaScript property key. They
-            // therefore cannot be found by the ordinary name-based reflection
-            // probes below. Consult the shared registry after own descriptor
-            // storage (which may shadow the method), matching the instance
-            // $IHasFields dispatch path.
-            var noComputedStaticMethodLabel = il.DefineLabel();
-            var computedStaticMethodLocal = il.DeclareLocal(_types.Object);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindMethod);
-            il.Emit(OpCodes.Stloc, computedStaticMethodLocal);
-            il.Emit(OpCodes.Ldloc, computedStaticMethodLocal);
-            il.Emit(OpCodes.Brfalse, noComputedStaticMethodLabel);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloc, computedStaticMethodLocal);
-            il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(noComputedStaticMethodLabel);
+            if (_features.UsesUserClasses)
+            {
+                // Computed static methods own canonical data descriptors. Once the
+                // own descriptor misses, their registry entry is ownership metadata,
+                // not a value to reconstruct: follow the live constructor prototype
+                // so deletion cannot resurrect a synthetic CLR method wrapper.
+                var noComputedStaticMethodLabel = il.DefineLabel();
+                var computedStaticMethodLocal = il.DeclareLocal(_types.Object);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindMethod);
+                il.Emit(OpCodes.Stloc, computedStaticMethodLocal);
+                il.Emit(OpCodes.Ldloc, computedStaticMethodLocal);
+                il.Emit(OpCodes.Brfalse, noComputedStaticMethodLabel);
+                var computedMethodPrototype = il.DeclareLocal(_types.Object);
+                var computedMethodMissing = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+                il.Emit(OpCodes.Stloc, computedMethodPrototype);
+                var computedPrototypeLoop = il.DefineLabel();
+                il.MarkLabel(computedPrototypeLoop);
+                il.Emit(OpCodes.Ldloc, computedMethodPrototype);
+                il.Emit(OpCodes.Brfalse, computedMethodMissing);
+
+                // CLR inheritance can expose Base<T> as a constructed Type even
+                // though its guest static descriptors belong to open Base. Respect
+                // an exact descriptor on the actual prototype first, then use that
+                // source constructor identity at every source-class prototype hop.
+                // Native CLR Types and arbitrary prototypes keep Reflect.get's path.
+                var computedPrototypeReady = il.DefineLabel();
+                var computedPrototypeType = il.DeclareLocal(_types.Type);
+                var computedPrototypeDescriptor = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
+                il.Emit(OpCodes.Ldloc, computedMethodPrototype);
+                il.Emit(OpCodes.Isinst, _types.Type);
+                il.Emit(OpCodes.Stloc, computedPrototypeType);
+                il.Emit(OpCodes.Ldloc, computedPrototypeType);
+                il.Emit(OpCodes.Brfalse, computedPrototypeReady);
+                il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+                il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+                il.Emit(OpCodes.Ldloc, computedPrototypeType);
+                il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+                il.Emit(OpCodes.Brfalse, computedPrototypeReady);
+                il.Emit(OpCodes.Ldloc, computedMethodPrototype);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+                il.Emit(OpCodes.Stloc, computedPrototypeDescriptor);
+                var noExactComputedDescriptor = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, computedPrototypeDescriptor);
+                il.Emit(OpCodes.Brfalse, noExactComputedDescriptor);
+                EmitDescriptorReadAndReturn(il, inputs.DescriptorStorage, computedPrototypeDescriptor,
+                    () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
+                il.MarkLabel(noExactComputedDescriptor);
+                il.Emit(OpCodes.Ldloc, computedPrototypeType);
+                il.Emit(OpCodes.Call, inputs.SymbolAccessors.RegistryKey);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+                il.Emit(OpCodes.Stloc, computedPrototypeDescriptor);
+                var noSourceComputedDescriptor = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, computedPrototypeDescriptor);
+                il.Emit(OpCodes.Brfalse, noSourceComputedDescriptor);
+                EmitDescriptorReadAndReturn(il, inputs.DescriptorStorage, computedPrototypeDescriptor,
+                    () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
+                il.MarkLabel(noSourceComputedDescriptor);
+                il.Emit(OpCodes.Ldloc, computedMethodPrototype);
+                il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+                il.Emit(OpCodes.Stloc, computedMethodPrototype);
+                il.Emit(OpCodes.Br, computedPrototypeLoop);
+                il.MarkLabel(computedPrototypeReady);
+                il.Emit(OpCodes.Ldloc, computedMethodPrototype);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Call, inputs.Reflect.Get);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(computedMethodMissing);
+                il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(noComputedStaticMethodLabel);
+            }
 
             // A deleted own built-in must not be synthesized again, but reads
             // still follow the live prototype with the original receiver.

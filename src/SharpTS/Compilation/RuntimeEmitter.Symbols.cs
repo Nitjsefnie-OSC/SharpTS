@@ -85,7 +85,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    /// <summary>Derives a declared method name from an already evaluated Symbol key.</summary>
+    /// <summary>Derives a declared method name from an already canonical property key.</summary>
     private void EmitSymbolMethodName(TypeBuilder typeBuilder, EmittedSymbolRuntime symbols)
     {
         var method = typeBuilder.DefineMethod(
@@ -118,6 +118,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "");
         il.Emit(OpCodes.Ret);
         il.MarkLabel(ordinaryKey);
+        var fallbackName = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, fallbackName);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(fallbackName);
+        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ret);
     }

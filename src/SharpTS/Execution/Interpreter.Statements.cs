@@ -2198,6 +2198,7 @@ public partial class Interpreter
                     continue;
                 }
                 string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
+                SharpTSClass.SetComputedMethodName(func, keyStr);
                 (method.IsStatic ? staticMethods : methods)[keyStr] = func;
                 continue;
             }

@@ -52,8 +52,8 @@ public partial class ILCompiler
         context.CurrentClassBuilder = owner.Owner;
         context.CurrentClassName = owner.Owner.FullName;
         context.IsStrictMode = true;
-        context.IsInstanceMethod = true;
-        context.IsStaticSuperContext = false;
+        context.IsInstanceMethod = !owner.Source.IsStatic;
+        context.IsStaticSuperContext = owner.Source.IsStatic;
         context.HasGuestReceiver = true;
         context.UseNominalSuperCallBridge = true;
         context.GuestThisVariableName = "__this";
@@ -95,9 +95,59 @@ public partial class ILCompiler
         => _classes.Declarations.Any(source => !_runtimeClassDeclarations.ContainsKey(source)
             && _classes.DeclarationNames.GetValueOrDefault(source) == owner.FullName);
 
-    private void EmitDeclaredSymbolMethodDescriptor(ILGenerator il, TypeBuilder owner,
+    private void EmitDeclaredComputedMethodDescriptor(ILGenerator il, TypeBuilder owner,
         Stmt.Function source, MethodBuilder original, LocalBuilder key, Type? descriptorOwner = null)
     {
+        var registrationDone = il.DefineLabel();
+        if (!source.IsStatic && (owner.Attributes & TypeAttributes.Abstract) != 0)
+        {
+            // Abstract CLR owners do not yet have a registered guest prototype.
+            // Keep their existing ordinary legacy dispatch rather than defining
+            // an instance property on GetClassPrototype's Object.prototype fallback.
+            il.Emit(OpCodes.Ldloc, key); il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Brtrue, registrationDone);
+        }
+        if (source.IsStatic && owner.IsGenericTypeDefinition && descriptorOwner == null)
+        {
+            // A source generic class has one constructor object. Initializing
+            // another CLR instantiation must not restore a deleted/replaced slot.
+            il.Emit(OpCodes.Ldtoken, EmitGenerics.MakeGenericType(owner, owner.GetGenericArguments()));
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Ldtoken, CanonicalGenericClassOwner(owner));
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Bne_Un, registrationDone);
+        }
+
+        // Plain methods are installed by prototype registration before computed
+        // names are evaluated. A later plain method still wins a name collision.
+        // The evaluated key is already primitive, so this never coerces it again.
+        foreach (var later in GetNominalClassDeclaration(owner)?.Methods ?? [])
+        {
+            if (later.Body == null || later.IsPrivate || later.ComputedKey != null
+                || later.IsStatic != source.IsStatic || later.Name.Start <= source.Name.Start
+                || (!later.IsStatic && later.Name.Lexeme == "constructor")) continue;
+            il.Emit(OpCodes.Ldloc, key);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Ldstr, later.Name.Lexeme);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, registrationDone);
+        }
+        foreach (var later in GetNominalClassDeclaration(owner)?.Accessors ?? [])
+        {
+            if (later.IsAbstract || later.IsStatic != source.IsStatic
+                || later.Name.Start <= source.Name.Start) continue;
+            // Literal static computed accessors are also installed eagerly by
+            // prototype registration, rather than replayed after static blocks.
+            var laterName = later.ComputedKey == null ? later.Name.Lexeme
+                : later.IsStatic ? GetConstantComputedAccessorName(later.ComputedKey) : null;
+            if (laterName == null) continue;
+            il.Emit(OpCodes.Ldloc, key);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Ldstr, laterName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, registrationDone);
+        }
+
         var adapter = DefineDeclarationMethodValue(owner, source, original);
         var haveValue = il.DefineLabel();
         il.Emit(OpCodes.Ldsfld, adapter.Value);
@@ -134,12 +184,24 @@ public partial class ILCompiler
         }
         il.Emit(OpCodes.Ldloc, descriptor); il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Callvirt, storage.DescriptorEnumerable.GetSetMethod()!);
-        Type self = descriptorOwner ?? (owner.IsGenericTypeDefinition
+        Type self = source.IsStatic ? owner : descriptorOwner ?? (owner.IsGenericTypeDefinition
             ? EmitGenerics.MakeGenericType(owner, owner.GetGenericArguments()) : owner);
         il.Emit(OpCodes.Ldtoken, self); il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Call, _runtime.ClassPrototypes.Get);
+        if (!source.IsStatic) il.Emit(OpCodes.Call, _runtime.ClassPrototypes.Get);
+        var receiver = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, receiver);
+        var symbol = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, key); il.Emit(OpCodes.Isinst, _types.String); il.Emit(OpCodes.Brfalse, symbol);
+        il.Emit(OpCodes.Ldloc, receiver);
+        il.Emit(OpCodes.Ldloc, key); il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Call, storage.DefineProperty); il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, registrationDone);
+        il.MarkLabel(symbol);
+        il.Emit(OpCodes.Ldloc, receiver);
         il.Emit(OpCodes.Call, _runtime.Symbols.GetStorage);
         il.Emit(OpCodes.Ldloc, key); il.Emit(OpCodes.Ldloc, descriptor);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item", _types.Object, _types.Object));
+        il.MarkLabel(registrationDone);
     }
 }

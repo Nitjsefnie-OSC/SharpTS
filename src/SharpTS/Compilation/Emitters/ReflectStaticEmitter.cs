@@ -350,7 +350,7 @@ public sealed class ReflectStaticEmitter : IStaticTypeEmitterStrategy
                 else
                     il.Emit(OpCodes.Ldnull);
 
-                // newTarget — defaults to target inside ReflectConstruct when null.
+                // Only an omitted newTarget defaults to target; explicit nullish values are invalid.
                 if (arguments.Count > 2)
                 {
                     emitter.EmitExpression(arguments[2]);

@@ -5,6 +5,17 @@ namespace SharpTS.Tests.SharedTests;
 
 public sealed class ClassExpressionConstructorForwardingTests
 {
+    public const string AlternatingGenericReadSource = """
+        class Root<T> {
+            value: T;
+            constructor(value: T) { this.value = value; }
+            read(): T { return this.value; }
+        }
+        const Middle = class<T> extends Root<T> {};
+        class Leaf extends Middle<number> {}
+        console.log(new Leaf(43).read());
+        """;
+
     public static IEnumerable<object[]> Cases()
     {
         yield return ["implicit", """
@@ -71,6 +82,20 @@ public sealed class ClassExpressionConstructorForwardingTests
 
     public static IEnumerable<object[]> SingleSourceControls()
     {
+        yield return ["exported-generic-heritage", """
+            export class Root<T> { constructor(value: T) { console.log(value); } }
+            const Middle = class<T> extends Root<T> {};
+            export class Leaf extends Middle<number> {}
+            new Leaf(43);
+            """, "43\n"];
+        yield return ["alternating-generic-heritage", """
+            class Root<T> { constructor(value: T) { console.log(value); } }
+            const Middle = class extends Root<number> {
+                constructor(value: number) { super(value); }
+            };
+            class Leaf extends Middle {}
+            new Leaf(43);
+            """, "43\n"];
         yield return ["private-accessor", """
             const C = class {
                 #value = 43;
@@ -112,9 +137,7 @@ public sealed class ClassExpressionConstructorForwardingTests
             """, "true 43\n"];
     }
 
-    public static IEnumerable<object[]> SingleModeCases() => WithModes(Cases()
-        .Where(row => row[0] is not ("generic-declaration-slot" or "generic-declaration-child"))
-        .Concat(SingleSourceControls()));
+    public static IEnumerable<object[]> SingleModeCases() => WithModes(Cases().Concat(SingleSourceControls()));
     public static IEnumerable<object[]> ModuleModeCases() => WithModes(Cases());
     private static IEnumerable<object[]> WithModes(IEnumerable<object[]> cases) => cases.SelectMany(row =>
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }.Select(mode => new object[] { row[0], row[1], row[2], mode }));
@@ -132,5 +155,14 @@ public sealed class ClassExpressionConstructorForwardingTests
     {
         Assert.NotEmpty(name);
         Assert.Equal(expected, TestHarness.RunModules(new Dictionary<string, string> { ["main.ts"] = source }, "main.ts", mode));
+    }
+
+    [Theory, ModeData]
+    public void SingleSourceAlternatingGenericHeritagePreservesInheritedValues(ExecutionMode mode)
+    {
+        // Module expression registration remains a separate boundary (#2332).
+        if (mode == ExecutionMode.Compiled)
+            Assert.Empty(TestHarness.CompileAndVerifyOnly(AlternatingGenericReadSource));
+        Assert.Equal("43\n", TestHarness.Run(AlternatingGenericReadSource, mode));
     }
 }

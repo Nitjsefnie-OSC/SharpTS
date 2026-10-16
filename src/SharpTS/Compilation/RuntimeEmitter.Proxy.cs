@@ -991,7 +991,8 @@ public partial class RuntimeEmitter
 
         // Late-bound construction of SharpTSProxy(target, handler) — soft dependency
         // on SharpTS.dll (the Proxy feature records Deployment.Require).
-        EmitReflectionCreateInstance(il, "SharpTS.Runtime.Types.SharpTSProxy, SharpTS", 2);
+        EmitReflectionCreateInstance(il, "SharpTS.Runtime.Types.SharpTSProxy, SharpTS", 2,
+            runtimeFeature: "Proxy");
         il.Emit(OpCodes.Ret);
     }
 

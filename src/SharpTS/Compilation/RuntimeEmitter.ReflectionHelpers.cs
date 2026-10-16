@@ -92,12 +92,7 @@ public partial class RuntimeEmitter
         }
         else
         {
-            il.Emit(
-                OpCodes.Ldstr,
-                $"{methodName} requires the SharpTS runtime (SharpTS.dll). " +
-                "Recompile without --standalone or deploy SharpTS.dll next to the output.");
-            il.Emit(OpCodes.Newobj, _types.InvalidOperationExceptionCtorString);
-            il.Emit(OpCodes.Throw);
+            EmitMissingSharpTSRuntime(il, methodName);
         }
         il.MarkLabel(typeOk);
         il.Emit(OpCodes.Ldloc, typeLocal);
@@ -118,11 +113,29 @@ public partial class RuntimeEmitter
     /// SharpTS runtime TYPE (e.g. SharpTSProxy) rather than a static method.
     /// </summary>
     private void EmitReflectionCreateInstance(ILGenerator il, string typeName, int argCount,
-        System.Action<int>? emitArg = null)
+        System.Action<int>? emitArg = null, string? runtimeFeature = null)
     {
         il.Emit(OpCodes.Ldstr, typeName);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        var typeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Stloc, typeLocal);
+        var typeOk = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brtrue, typeOk);
+        EmitMissingSharpTSRuntime(il, runtimeFeature ?? typeName);
+        il.MarkLabel(typeOk);
+        il.Emit(OpCodes.Ldloc, typeLocal);
         EmitObjectArray(il, argCount, emitArg ?? (i => il.Emit(OpCodes.Ldarg, i)));
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Activator, "CreateInstance", _types.Type, _types.ObjectArray)!);
+    }
+
+    private void EmitMissingSharpTSRuntime(ILGenerator il, string feature)
+    {
+        il.Emit(
+            OpCodes.Ldstr,
+            $"{feature} requires the SharpTS runtime (SharpTS.dll). " +
+            "Recompile without --standalone or deploy SharpTS.dll next to the output.");
+        il.Emit(OpCodes.Newobj, _types.InvalidOperationExceptionCtorString);
+        il.Emit(OpCodes.Throw);
     }
 }

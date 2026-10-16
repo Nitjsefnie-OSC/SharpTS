@@ -23,7 +23,7 @@ namespace SharpTS.Compilation;
 /// Virtual methods provide default implementations that subclasses may override
 /// for optimization (e.g., ILEmitter's dead code elimination and stack type tracking).
 /// </remarks>
-public abstract class StatementEmitterBase : ExpressionEmitterBase
+public abstract partial class StatementEmitterBase : ExpressionEmitterBase
 {
     protected StatementEmitterBase(StateMachineEmitHelpers helpers)
         : base(helpers)
@@ -63,6 +63,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// </summary>
     protected virtual void EmitVarDeclaration(Stmt.Var v)
     {
+        if (TryInitializeLoopBodyBinding(v)) return;
         string name = v.Name.Lexeme;
 
         var field = GetHoistedVariableField(name);
@@ -239,7 +240,9 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
 
         MarkStatementStart(stmt);
         Ctx.HoistedDebugSymbols?.RecordStatementStart(stmt, IL.ILOffset);
-        EmitStatementCore(stmt);
+        var lexicalLoop = EnterGeneratorLoopScope(stmt);
+        try { EmitStatementCore(stmt); }
+        finally { ExitGeneratorLoopScope(lexicalLoop); }
         Ctx.HoistedDebugSymbols?.RecordStatementEnd(stmt, IL.ILOffset);
     }
 
@@ -643,6 +646,8 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         if (f.Initializer != null)
             EmitStatement(f.Initializer);
 
+        CopyGeneratorForBindings(f);
+
         // Per-iteration reference cells (#650): see EmitForLoopCellInit. In a state-machine
         // emitter the cell stays an IL local — valid because the analyzer only marks a loop
         // when its body has no direct suspension point, so the whole loop runs within one
@@ -674,6 +679,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
 
         // Continue target: increment goes here
         IL.MarkLabel(continueLabel);
+        CopyGeneratorForBindings(f);
         if (activeCells != null)
             EmitForLoopCellCopyForward(activeCells);
         if (f.Increment != null)
@@ -1016,6 +1022,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         var active = new List<(string, LocalBuilder?)>();
         foreach (var name in cellNames)
         {
+            if (Ctx.LoopBodyCellDeclarations.ContainsKey(name)) continue;
             // Load the binding's initial value through the resolver so this works whether the
             // loop variable lives as an IL local (sync / async fn / generator) or a hoisted
             // state-machine field (async arrow). The cell is not registered yet, so the
@@ -1563,13 +1570,16 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         // Without this, an inner `const x = ...` registers a local that shadows the
         // outer `let x` for the rest of the method — even after the block exits.
         Ctx.Locals.EnterScope();
+        List<LoopBodyCellScopeEntry> cells = [];
         try
         {
+            EnterLoopBodyCellScope(b.Statements, cells);
             foreach (var stmt in b.Statements)
                 EmitStatement(stmt);
         }
         finally
         {
+            ExitLoopBodyCellScope(cells);
             Ctx.Locals.ExitScope();
         }
     }
@@ -1741,15 +1751,19 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// </summary>
     protected virtual void EmitSwitch(Stmt.Switch s)
     {
+        EmitExpression(s.Subject);
+        EnsureBoxed();
+        var subject = IL.DeclareLocal(Types.Object);
+        IL.Emit(OpCodes.Stloc, subject);
+        WithGeneratorLexicalScope(s.Cases.SelectMany(item => item.Body).Concat(s.DefaultBody ?? []),
+            () => EmitSwitchCases(s, subject));
+    }
+
+    private void EmitSwitchCases(Stmt.Switch s, LocalBuilder subjectLocal)
+    {
         var endLabel = IL.DefineLabel();
         var defaultLabel = IL.DefineLabel();
         var caseLabels = s.Cases.Select(_ => IL.DefineLabel()).ToList();
-
-        // Evaluate subject
-        EmitExpression(s.Subject);
-        EnsureBoxed();
-        var subjectLocal = IL.DeclareLocal(Types.Object);
-        IL.Emit(OpCodes.Stloc, subjectLocal);
 
         // Generate case comparisons
         for (int i = 0; i < s.Cases.Count; i++)
@@ -1830,6 +1844,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// </summary>
     protected virtual LocalBuilder? DeclareLoopVariable(string name)
     {
+        if (Ctx.LoopBodyCellDeclarations.ContainsKey(name)) return null;
         if (GetHoistedVariableField(name) != null)
             return null;
 
@@ -1853,6 +1868,12 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// </summary>
     protected virtual void EmitStoreLoopVariable(LocalBuilder? local, string name, Action emitValue)
     {
+        if (Ctx.LoopBodyCellDeclarations.TryGetValue(name, out var declaration))
+        {
+            emitValue();
+            TryInitializeLexicalCell(declaration, fresh: true);
+            return;
+        }
         var field = GetHoistedVariableField(name);
         if (field != null)
         {

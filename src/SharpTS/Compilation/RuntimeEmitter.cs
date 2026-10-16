@@ -302,7 +302,8 @@ public partial class RuntimeEmitter
         // well as dense/sparse storage. The descriptor store itself depends
         // only on helper types emitted above.
         EmitPropertyDescriptorTypes(moduleBuilder, runtime.DescriptorStorage,
-            new DescriptorKeyInputs(runtime.FunctionValues.Type, runtime.FunctionValues.GetMethodInfo),
+            new DescriptorKeyInputs(runtime.FunctionValues.Type, runtime.FunctionValues.GetMethodInfo,
+                runtime.FunctionValues.PropertyIdentityField),
             runtime.Sentinels.UndefinedType);
 
         // Emit $Array class for standalone array support

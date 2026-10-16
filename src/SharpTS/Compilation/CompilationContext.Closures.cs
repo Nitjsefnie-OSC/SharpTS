@@ -461,6 +461,9 @@ public partial class CompilationContext
     // Body lexical cells have declaration identity and a block activation lifetime,
     // unlike the copy-forward cells used by a for initializer.
     internal Dictionary<string, Token> LoopBodyCellDeclarations { get; } = [];
+    internal Dictionary<string, FieldBuilder> LoopBodyCellFields { get; } = [];
+    internal Dictionary<string, FieldBuilder> LoopBodyCellShadowFields { get; } = [];
+    internal Dictionary<Token, string> LexicalCellStorageNames { get; } = new(ReferenceEqualityComparer.Instance);
     internal Dictionary<string, Token> LoopBodyCellShadows { get; } = [];
     internal IReadOnlyDictionary<string, Token>? LoopBodyCellCaptures { get; set; }
 

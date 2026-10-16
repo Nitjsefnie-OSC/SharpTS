@@ -494,6 +494,11 @@ public partial class ILCompiler
         // reference) is verifiable. Read-only captures stay on the SM field (the existing, working
         // load path).
         var promotedToFunctionDC = ComputeArrowWrittenCapturesToPromote(analysis.AsyncArrows);
+        // A retained generator expression also needs a reference to live storage,
+        // including when an intermediate async arrow only reads this binding.
+        // Its iterator can then share the existing function DC instead of a
+        // snapshot or a copy of the outer value-type state machine.
+        promotedToFunctionDC.UnionWith(GetGeneratorExpressionAncestorCaptures(funcStmt));
         if (EmitDebugSymbols)
         {
             // Captures need a typed reference to their authoritative storage for managed expression
@@ -1839,7 +1844,7 @@ public partial class ILCompiler
         foreach (var (arrow, captures) in _collectedArrows)
         {
             // Only process async arrows that aren't already handled
-            if (!arrow.IsAsync || _async.ArrowBuilders.ContainsKey(arrow))
+            if (!arrow.IsAsync || arrow.IsGenerator || _async.ArrowBuilders.ContainsKey(arrow))
             {
                 continue;
             }
@@ -1907,11 +1912,11 @@ public partial class ILCompiler
         object? enclosing = _arrowEnclosingCallable.GetValueOrDefault(arrow);
         while (enclosing is Expr.ArrowFunction parentArrow)
         {
-            if (!parentArrow.IsAsync)
+            if (!parentArrow.IsAsync || parentArrow.IsGenerator)
                 return false; // a sync arrow does not build a state machine to claim descendants
             enclosing = _arrowEnclosingCallable.GetValueOrDefault(parentArrow);
         }
-        return enclosing is Stmt.Function { IsAsync: true };
+        return enclosing is Stmt.Function { IsAsync: true, IsGenerator: false };
     }
 
     /// <summary>

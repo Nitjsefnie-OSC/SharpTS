@@ -335,6 +335,7 @@ public partial class GeneratorMoveNextEmitter
     /// </summary>
     protected override void EmitTryCatch(Stmt.TryCatch t)
     {
+        var lexicalDeclaration = t;
         // Lowering clones the try node. Resolve its binding while the original declaration identity
         // is available, then carry that storage token into the lowered node.
         Token? catchParameter = t.CatchParam;
@@ -361,9 +362,9 @@ public partial class GeneratorMoveNextEmitter
             && ContainsEscapingExit2(t.FinallyBlock, insideLoop: false, insideSwitch: false);
 
         if (hasYields || finallyHasEscapingExit)
-            EmitTryCatchWithYields(t);
+            EmitTryCatchWithYields(t, lexicalDeclaration);
         else
-            EmitSimpleTryCatch(t);
+            EmitSimpleTryCatch(t, lexicalDeclaration);
     }
 
     // The no-suspension EmitSimpleTryCatch (real IL exception blocks — correct and cheapest when no
@@ -377,7 +378,7 @@ public partial class GeneratorMoveNextEmitter
     /// are emitted at the top level (outside any protected region) so their resume labels are
     /// reachable from the state-dispatch switch and their `ret`/`br` are legal.
     /// </summary>
-    private void EmitTryCatchWithYields(Stmt.TryCatch t)
+    private void EmitTryCatchWithYields(Stmt.TryCatch t, Stmt.TryCatch lexicalDeclaration)
     {
         var caughtExceptionLocal = _il.DeclareLocal(typeof(object));
         // Whether the try body raised an exception, tracked separately from caughtExceptionLocal's
@@ -447,7 +448,7 @@ public partial class GeneratorMoveNextEmitter
         var previousTryBody = _tryBodyContext;
         _inHandlerBody = false;
         _tryBodyContext = (afterTryBodyLabel, caughtExceptionLocal, exceptionPresentLocal, _exitScopes.Count);
-        EmitTryBodyWithYields(t.TryBlock, caughtExceptionLocal, exceptionPresentLocal, afterTryBodyLabel);
+        EmitScopedTryBodyWithYields(t.TryBlock, caughtExceptionLocal, exceptionPresentLocal, afterTryBodyLabel);
         _tryBodyContext = previousTryBody;
         _inHandlerBody = previousInHandler;
 
@@ -463,21 +464,24 @@ public partial class GeneratorMoveNextEmitter
             _il.Emit(OpCodes.Ldloc, exceptionPresentLocal);
             _il.Emit(OpCodes.Brfalse, skipCatchLabel);
 
-            if (t.CatchParam != null)
+            WithGeneratorLexicalScope([], () =>
             {
-                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                StoreCaughtExceptionToParam(GetBindingStorageName(t, t.CatchParam.Lexeme));
-            }
+                if (lexicalDeclaration.CatchParam is { } parameter)
+                {
+                    _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                    StoreCaughtExceptionToParam(GetBindingStorageName(lexicalDeclaration, parameter.Lexeme), parameter);
+                }
 
-            // Catch handles it; clear the present flag so the post-finally rethrow below is skipped —
-            // and so a routed exit re-entering afterTryBodyLabel skips the catch rather than re-running
-            // it. The flag (not the value) is the gate now, so clearing it is what matters (#619).
-            _il.Emit(OpCodes.Ldc_I4_0);
-            _il.Emit(OpCodes.Stloc, exceptionPresentLocal);
+                // Catch handles it; clear the present flag so the post-finally rethrow below is skipped —
+                // and so a routed exit re-entering afterTryBodyLabel skips the catch rather than re-running
+                // it. The flag (not the value) is the gate now, so clearing it is what matters (#619).
+                _il.Emit(OpCodes.Ldc_I4_0);
+                _il.Emit(OpCodes.Stloc, exceptionPresentLocal);
 
-            _inHandlerBody = true;
-            EmitHandlerBodyWithCapture(t.CatchBlock);
-            _inHandlerBody = previousInHandler;
+                _inHandlerBody = true;
+                EmitHandlerBodyWithCapture(t.CatchBlock);
+                _inHandlerBody = previousInHandler;
+            }, lexicalDeclaration, lexicalDeclaration.CatchParam);
 
             _il.MarkLabel(skipCatchLabel);
         }
@@ -548,6 +552,9 @@ public partial class GeneratorMoveNextEmitter
     /// Walks the try body, wrapping runs of plain statements in mini IL try/catch blocks while
     /// emitting suspension points and non-local exits (return/break/continue) at the top level.
     /// </summary>
+    private void EmitScopedTryBodyWithYields(List<Stmt> tryBody, LocalBuilder caughtExceptionLocal, LocalBuilder exceptionPresentLocal, Label afterTryLabel)
+        => WithGeneratorLexicalScope(tryBody, () => EmitTryBodyWithYields(tryBody, caughtExceptionLocal, exceptionPresentLocal, afterTryLabel));
+
     private void EmitTryBodyWithYields(List<Stmt> tryBody, LocalBuilder caughtExceptionLocal, LocalBuilder exceptionPresentLocal, Label afterTryLabel)
     {
         List<Stmt> syncSegment = [];
@@ -634,6 +641,9 @@ public partial class GeneratorMoveNextEmitter
     /// already in flight, which no <c>throw</c> statement intercepts. Caller sets <c>_inHandlerBody</c>.</para>
     /// </summary>
     private void EmitHandlerBodyWithCapture(List<Stmt> body)
+        => WithGeneratorLexicalScope(body, () => EmitHandlerBodyWithCaptureCore(body));
+
+    private void EmitHandlerBodyWithCaptureCore(List<Stmt> body)
     {
         var handlerCaught = _il.DeclareLocal(typeof(object));
         var handlerPresent = _il.DeclareLocal(typeof(bool));

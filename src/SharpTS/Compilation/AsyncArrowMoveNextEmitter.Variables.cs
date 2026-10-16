@@ -22,6 +22,7 @@ public partial class AsyncArrowMoveNextEmitter
 
         string name = v.Name.Lexeme;
 
+        if (LexicalEnvironmentCellAccess.TryLoad(_il, Ctx, name)) { SetStackUnknown(); return; }
         // Outer DC, then own DC, before the resolver: promoted captures may still have
         // stale hoisted fields. Reads retain this order; writes put per-iteration cells first.
         if (TryResolveDisplayClassStorage(name) is { } displayStorage)
@@ -121,6 +122,7 @@ public partial class AsyncArrowMoveNextEmitter
         EnsureBoxed();
         _il.Emit(OpCodes.Dup);
 
+        if (LexicalEnvironmentCellAccess.TryStore(_il, Ctx, name)) { SetStackUnknown(); return; }
         // Simple assignment keeps module storage ahead of the resolver fallback. Declaration
         // and compound/increment stores below instead resolve hoisted/captured fields first.
         var storage = _resolver!.TryResolveCell(name)
@@ -138,6 +140,7 @@ public partial class AsyncArrowMoveNextEmitter
 
     private void StoreVariable(string name)
     {
+        if (LexicalEnvironmentCellAccess.TryStore(_il, Ctx, name)) return;
         // Renaming happens at the AST boundary. Cells and live display classes win over any
         // hoisted copy; hoisted parameters/locals and outer captures win over module globals.
         var storage = _resolver!.TryResolveCell(name)

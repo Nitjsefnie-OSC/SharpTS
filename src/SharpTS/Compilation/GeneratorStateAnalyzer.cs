@@ -69,13 +69,15 @@ public class GeneratorStateAnalyzer : AstVisitorBase
     /// <summary>
     /// Analyzes a generator function to determine yield points and hoisted variables.
     /// </summary>
-    public GeneratorFunctionAnalysis Analyze(Stmt.Function func, bool preserveDebugBindings = false)
+    public GeneratorFunctionAnalysis Analyze(Stmt.Function func, bool preserveDebugBindings = false,
+        IEnumerable<string>? outerCaptureNames = null)
     {
         Reset();
 
         // Disambiguate block-scoped let/const declarations that shadow an enclosing binding so the
         // hoisting decision below is made per-binding rather than per-name (#711).
-        var renameResult = GeneratorBlockScopeRenamer.Compute(func, preserveDebugBindings: preserveDebugBindings);
+        var renameResult = GeneratorBlockScopeRenamer.Compute(func, preserveDebugBindings: preserveDebugBindings,
+            outerCaptureNames: outerCaptureNames);
         _renames = renameResult.Renames;
         _captureRenames = renameResult.CaptureRenames;
 

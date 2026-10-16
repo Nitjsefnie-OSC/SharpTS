@@ -330,7 +330,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 EmitPostfixIncrement(poi);
                 break;
             case Expr.ArrowFunction af:
-                EmitArrowFunction(af);
+                if (af.IsGenerator) EmitGeneratorExpression(af);
+                else EmitArrowFunction(af);
                 break;
             case Expr.RegexLiteral re:
                 EmitRegexLiteral(re);
@@ -1957,7 +1958,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
     private void EmitCapturingArrowDisplayViaHooks(
         Expr.ArrowFunction af,
-        ConstructorBuilder displayCtor)
+        ConstructorBuilder displayCtor,
+        bool generatorExpression = false)
     {
         IL.Emit(OpCodes.Newobj, displayCtor);
 
@@ -2000,6 +2002,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         {
             foreach (var (capturedVar, field) in fieldMap)
             {
+                if (generatorExpression && af.Name?.Lexeme == capturedVar) continue;
                 IL.Emit(OpCodes.Dup);
 
                 // #767: a captured nested-block shadow was renamed to its own generator storage; source
@@ -2013,6 +2016,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 if (capturedVar == "this" && Resolver.TryLoadThisBindingCell()) { }
                 else if (capturedVar == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
                 else if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+                else if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(IL, Ctx, af, capturedVar)) { }
                 else if (Ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
                 {
                     IL.Emit(OpCodes.Ldloc, cellLocal);

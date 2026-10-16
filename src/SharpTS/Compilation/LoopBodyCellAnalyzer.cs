@@ -1,22 +1,25 @@
 using SharpTS.Parsing;
 using SharpTS.Parsing.Visitors;
+using SharpTS.Diagnostics.Exceptions;
 
 namespace SharpTS.Compilation;
 
 /// <summary>
-/// Selects captured block lexical declarations inside synchronous for-of and for bodies.
+/// Selects live lexical cells for residual generator expressions and synchronous
+/// for-of and for body closures.
 /// Identity is the original declaration token, rather than the callable's name set.
 /// </summary>
 internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 {
-    private sealed class Owner(object node, bool canOwnCells, bool canForward)
+    private sealed class Owner(object node, bool canOwnCells, bool canForward, bool canOwnGeneratorCells = true)
     {
         public object Node { get; } = node;
         public bool CanOwnCells { get; } = canOwnCells;
         public bool CanForward { get; } = canForward;
+        public bool CanOwnGeneratorCells { get; } = canOwnGeneratorCells;
     }
 
-    private sealed class Binding(Token name, Owner owner, bool candidate, Binding? shadowOf)
+    private sealed class Binding(Token name, Owner owner, bool candidate, Binding? shadowOf, bool lexical)
     {
         public Token Name { get; } = name;
         public Owner Owner { get; } = owner;
@@ -24,6 +27,9 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         public bool Eligible { get; set; } = candidate;
         public bool Captured { get; set; }
         public Binding? ShadowOf { get; } = shadowOf;
+        public bool Lexical { get; } = lexical;
+        public bool GeneratorCaptured { get; set; }
+        public bool GeneratorEligible { get; set; } = lexical;
     }
 
     private readonly List<Owner> _owners = [];
@@ -58,13 +64,30 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
         foreach (var binding in _declarations.Values)
             if (binding.Eligible && binding.Captured && binding.ShadowOf is null) _cells.Add(binding.Name);
+        HashSet<Token> generatorCells = new(ReferenceEqualityComparer.Instance);
+        foreach (var binding in _declarations.Values.Where(b => b.GeneratorCaptured))
+        {
+            if (!binding.GeneratorEligible)
+                throw new CompileException($"Generator lexical capture '{binding.Name.Lexeme}' crosses an unsupported closure or binding scope.");
+            _cells.Add(binding.Name);
+            generatorCells.Add(binding.Name);
+        }
         bool added;
         do
         {
             added = false;
             foreach (var binding in _declarations.Values)
-                if (binding.Eligible && binding.Captured && binding.ShadowOf is { } parent
-                    && _cells.Contains(parent.Name)) added |= _cells.Add(binding.Name);
+            {
+                if (binding.ShadowOf is not { } parent || !_cells.Contains(parent.Name)) continue;
+                if (generatorCells.Contains(parent.Name))
+                {
+                    if (!binding.GeneratorEligible)
+                        throw new CompileException($"Generator lexical shadow '{binding.Name.Lexeme}' crosses an unsupported closure or binding scope.");
+                    added |= _cells.Add(binding.Name);
+                    added |= generatorCells.Add(binding.Name);
+                }
+                else if (binding.Captured && binding.Eligible) added |= _cells.Add(binding.Name);
+            }
         } while (added);
         foreach (var (closure, captures) in _tentative)
             foreach (var (name, binding) in captures)
@@ -83,21 +106,35 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         return null;
     }
 
-    private void Declare(Token name, bool candidate = false, bool unsupportedShadow = false, Binding? shadowOf = null)
+    private void Declare(Token name, bool candidate = false, bool unsupportedShadow = false, Binding? shadowOf = null, bool lexical = false)
     {
+        // Header, catch and switch lists have their own selected-cell scope
+        // emitters. A same-name binding must mask a selected generator cell
+        // even when this inner binding is never captured itself.
+        if (lexical && !candidate && shadowOf == null
+            && VisibleBinding(name.Lexeme) is { } parent
+            && parent is { Candidate: true } or { Lexical: true })
+            shadowOf = parent;
         if (unsupportedShadow)
             foreach (var scope in _scopes)
                 if (scope.TryGetValue(name.Lexeme, out var outer))
                 {
-                    if (outer.Candidate && !ReferenceEquals(outer.Name, name)) outer.Eligible = false;
+                    if (!ReferenceEquals(outer.Name, name))
+                    {
+                        outer.Eligible = false;
+                        // Header/catch/switch lexical shadows get their own cell scopes;
+                        // opaque declaration forms still cannot carry a selected parent.
+                        if (!lexical) outer.GeneratorEligible = false;
+                    }
                     break;
                 }
         if (!_declarations.TryGetValue(name, out var binding))
-            _declarations[name] = binding = new(name, _owners[^1], candidate, shadowOf);
+            _declarations[name] = binding = new(name, _owners[^1], candidate, shadowOf, lexical);
+        if (lexical && !_owners[^1].CanOwnGeneratorCells) binding.GeneratorEligible = false;
         _scopes.Peek()[name.Lexeme] = binding;
     }
 
-    private void EnterScope(IEnumerable<Stmt> statements, bool allowCandidates, bool hoistVars = false, bool unsupportedShadows = false)
+    private void EnterScope(IEnumerable<Stmt> statements, bool allowCandidates, bool hoistVars = false, bool unsupportedShadows = false, bool generatorLexicals = false)
     {
         _scopes.Push(new(StringComparer.Ordinal));
         if (hoistVars)
@@ -106,20 +143,21 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             foreach (var statement in statements) vars.Visit(statement);
             foreach (var token in vars.Names) Declare(token);
         }
-        foreach (var statement in statements) Predeclare(statement, allowCandidates, unsupportedShadows);
+        foreach (var statement in statements) Predeclare(statement, allowCandidates, unsupportedShadows, generatorLexicals);
     }
 
-    private void Predeclare(Stmt statement, bool allowCandidates, bool unsupportedShadows)
+    private void Predeclare(Stmt statement, bool allowCandidates, bool unsupportedShadows, bool generatorLexicals)
     {
         void Lexical(Token name)
         {
             bool direct = allowCandidates && _loopBodyDepth > 0 && _owners[^1].CanOwnCells;
-            var parent = !direct && allowCandidates && _owners[^1].CanOwnCells
+            var parent = !direct && allowCandidates && _owners[^1].CanOwnGeneratorCells
                 ? VisibleBinding(name.Lexeme) : null;
-            bool relatedShadow = parent?.Candidate == true;
+            bool relatedShadow = parent is { Candidate: true } or { Lexical: true };
             // A callback's inner shadow also needs a cell when it masks an actual
             // outer cell. Final selection waits for that parent's selected status.
-            Declare(name, direct || relatedShadow, unsupportedShadows, relatedShadow ? parent : null);
+            Declare(name, direct || (relatedShadow && _owners[^1].CanOwnCells), unsupportedShadows, relatedShadow ? parent : null,
+                lexical: generatorLexicals);
         }
         switch (statement)
         {
@@ -133,10 +171,14 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
                 foreach (var binding in resource.Bindings)
                     if (binding.Name is { } name) Declare(name, unsupportedShadow: true);
                     else foreach (var scope in _scopes)
-                        foreach (var outer in scope.Values) outer.Eligible = false;
+                        foreach (var outer in scope.Values)
+                        {
+                            outer.Eligible = false;
+                            outer.GeneratorEligible = false;
+                        }
                 break;
             case Stmt.Sequence sequence:
-                foreach (var child in sequence.Statements) Predeclare(child, allowCandidates, unsupportedShadows);
+                foreach (var child in sequence.Statements) Predeclare(child, allowCandidates, unsupportedShadows, generatorLexicals);
                 break;
         }
     }
@@ -144,23 +186,46 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     private void Reference(string name)
     {
         var binding = VisibleBinding(name);
-        if (binding is null || !binding.Candidate || ReferenceEquals(binding.Owner, _owners[^1])) return;
+        if (binding is null || ReferenceEquals(binding.Owner, _owners[^1])) return;
+        if (binding.Lexical)
+        {
+            bool generator = false;
+            for (int index = _owners.Count - 1; index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
+            {
+                var node = _owners[index].Node;
+                generator |= node is Expr.ArrowFunction { IsGenerator: true };
+                bool supported = node is Expr.ArrowFunction { IsGenerator: true }
+                    or Expr.ArrowFunction { IsAsync: false, IsGenerator: false };
+                if (!supported) binding.GeneratorEligible = false;
+                else RecordCapture(node, name, binding);
+            }
+            binding.Captured = true;
+            binding.GeneratorCaptured |= generator;
+        }
+        if (!binding.Candidate) return;
 
         binding.Captured = true;
         for (int index = _owners.Count - 1; index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
         {
             var owner = _owners[index];
             if (!owner.CanForward) { binding.Eligible = false; continue; }
-            if (!_tentative.TryGetValue(owner.Node, out var captures))
-                _tentative[owner.Node] = captures = new(StringComparer.Ordinal);
-            if (captures.TryGetValue(name, out var previous) && !ReferenceEquals(previous, binding))
-            {
-                // One name-keyed closure field cannot hold two lexical declarations.
-                previous.Eligible = false;
-                binding.Eligible = false;
-            }
-            else captures[name] = binding;
+            RecordCapture(owner.Node, name, binding);
         }
+    }
+
+    private void RecordCapture(object node, string name, Binding binding)
+    {
+        if (!_tentative.TryGetValue(node, out var captures))
+            _tentative[node] = captures = new(StringComparer.Ordinal);
+        if (captures.TryGetValue(name, out var previous) && !ReferenceEquals(previous, binding))
+        {
+            // One name-keyed closure field cannot hold two lexical declarations.
+            previous.Eligible = false;
+            binding.Eligible = false;
+            previous.GeneratorEligible = false;
+            binding.GeneratorEligible = false;
+        }
+        else captures[name] = binding;
     }
 
     protected override void VisitVariable(Expr.Variable expr) => Reference(expr.Name.Lexeme);
@@ -170,7 +235,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
     protected override void VisitBlock(Stmt.Block stmt)
     {
-        EnterScope(stmt.Statements, allowCandidates: true);
+        EnterScope(stmt.Statements, allowCandidates: true, generatorLexicals: true);
         try { base.VisitBlock(stmt); }
         finally { _scopes.Pop(); }
     }
@@ -179,7 +244,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     {
         Visit(stmt.Iterable); // Iterator acquisition precedes the loop binding's scope.
         _scopes.Push(new(StringComparer.Ordinal));
-        if (stmt.IsDeclaration && !stmt.IsVar) Declare(stmt.Variable, unsupportedShadow: true);
+        if (stmt.IsDeclaration && !stmt.IsVar) Declare(stmt.Variable, unsupportedShadow: true, lexical: true);
         else if (!stmt.IsDeclaration) Reference(stmt.Variable.Lexeme);
         try { VisitLoopBody(stmt.Body, !stmt.IsAsync); }
         finally { _scopes.Pop(); }
@@ -189,7 +254,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     {
         Visit(stmt.Object);
         _scopes.Push(new(StringComparer.Ordinal));
-        if (stmt.IsDeclaration && !stmt.IsVar) Declare(stmt.Variable, unsupportedShadow: true);
+        if (stmt.IsDeclaration && !stmt.IsVar) Declare(stmt.Variable, unsupportedShadow: true, lexical: true);
         else if (!stmt.IsDeclaration) Reference(stmt.Variable.Lexeme);
         try { Visit(stmt.Body); }
         finally { _scopes.Pop(); }
@@ -197,7 +262,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
     protected override void VisitFor(Stmt.For stmt)
     {
-        EnterScope(stmt.Initializer is null ? [] : [stmt.Initializer], allowCandidates: false, unsupportedShadows: true);
+        EnterScope(stmt.Initializer is null ? [] : [stmt.Initializer], allowCandidates: false, unsupportedShadows: true, generatorLexicals: true);
         try
         {
             // Header bindings keep the separate copy-forward cell policy (#650).
@@ -223,8 +288,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         VisitStatementScope(stmt.TryBlock);
         if (stmt.CatchBlock is { } catchBlock)
         {
-            EnterScope(catchBlock, allowCandidates: false, unsupportedShadows: true);
-            if (stmt.CatchParam is { } parameter) Declare(parameter, unsupportedShadow: true);
+            EnterScope(catchBlock, allowCandidates: false, unsupportedShadows: true, generatorLexicals: true);
+            if (stmt.CatchParam is { } parameter) Declare(parameter, unsupportedShadow: true, lexical: true);
             try { foreach (var statement in catchBlock) Visit(statement); }
             finally { _scopes.Pop(); }
         }
@@ -234,7 +299,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     private void VisitStatementScope(List<Stmt> statements)
     {
         // These AST lists are not emitted through EmitBlock's cell prologue.
-        EnterScope(statements, allowCandidates: false, unsupportedShadows: true);
+        EnterScope(statements, allowCandidates: false, unsupportedShadows: true, generatorLexicals: true);
         try { foreach (var statement in statements) Visit(statement); }
         finally { _scopes.Pop(); }
     }
@@ -243,7 +308,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     {
         Visit(stmt.Subject);
         var statements = stmt.Cases.SelectMany(c => c.Body).Concat(stmt.DefaultBody ?? []).ToList();
-        EnterScope(statements, allowCandidates: false, unsupportedShadows: true);
+        EnterScope(statements, allowCandidates: false, unsupportedShadows: true, generatorLexicals: true);
         try
         {
             foreach (var @case in stmt.Cases)
@@ -330,7 +395,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         int previousDepth = _loopBodyDepth;
         _loopBodyDepth = 0;
         _classDepth++;
-        _owners.Add(new(new object(), false, false));
+        _owners.Add(new(new object(), false, false, canOwnGeneratorCells: false));
         EnterScope([], allowCandidates: false);
         try { if (name is not null) Declare(name); visit(); }
         finally { _scopes.Pop(); _owners.RemoveAt(_owners.Count - 1); _classDepth--; _loopBodyDepth = previousDepth; }

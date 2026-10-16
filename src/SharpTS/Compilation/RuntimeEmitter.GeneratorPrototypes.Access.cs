@@ -24,13 +24,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, candidate); EmitIntrinsicGeneratorPrototype(il, prototypes, kind);
         il.Emit(OpCodes.Call, inputs.Descriptors.SetPrototype);
 
-        // Receiver views share the existing MethodInfo property key. Choose the
-        // cache winner before installing the matching initial own descriptor.
+        // Declaration receiver views share a MethodInfo key. Evaluated
+        // expressions retain their distinct property identity and prototype.
+        var useSharedCache = il.DefineLabel();
+        var candidateReady = il.DefineLabel();
+        var function = il.DeclareLocal(inputs.Functions.Type);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Isinst, inputs.Functions.Type);
+        il.Emit(OpCodes.Stloc, function);
+        il.Emit(OpCodes.Ldloc, function); il.Emit(OpCodes.Brfalse, useSharedCache);
+        il.Emit(OpCodes.Ldloc, function); il.Emit(OpCodes.Ldfld, inputs.Functions.PropertyIdentityField);
+        il.Emit(OpCodes.Brtrue, candidateReady);
+        il.MarkLabel(useSharedCache);
         var cacheType = inputs.Functions.PrototypeCacheField.FieldType;
         var getOrAdd = _types.GetMethods(cacheType).Single(method => method.Name == "GetOrAdd"
             && method.GetParameters().Length == 2 && method.GetParameters()[1].ParameterType == _types.Object);
         il.Emit(OpCodes.Ldsfld, inputs.Functions.PrototypeCacheField); il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldloc, candidate);
         il.Emit(OpCodes.Callvirt, getOrAdd); il.Emit(OpCodes.Stloc, candidate);
+        il.MarkLabel(candidateReady);
         il.Emit(OpCodes.Newobj, inputs.Descriptors.DescriptorConstructor); il.Emit(OpCodes.Stloc, descriptor);
         il.Emit(OpCodes.Ldloc, descriptor); il.Emit(OpCodes.Ldloc, candidate);
         il.Emit(OpCodes.Callvirt, inputs.Descriptors.DescriptorValue.GetSetMethod()!);
@@ -51,40 +61,55 @@ public partial class RuntimeEmitter
         iteratorRead.Emit(OpCodes.Call, prototypes.ReadInherited); iteratorRead.Emit(OpCodes.Ret);
         prototypes.MarkBodyEmitted(prototypes.ReadIteratorProperty);
 
-        var associate = prototypes.Associate.GetILGenerator();
-        var done = associate.DefineLabel();
-        var fallback = associate.DefineLabel();
-        var selected = associate.DefineLabel();
-        var sourceKind = associate.DeclareLocal(_types.Int32);
-        var prototype = associate.DeclareLocal(_types.Object);
-        associate.Emit(OpCodes.Ldarg_1); associate.Emit(OpCodes.Call, prototypes.Kind);
-        associate.Emit(OpCodes.Dup); associate.Emit(OpCodes.Stloc, sourceKind); associate.Emit(OpCodes.Brfalse, done);
-        associate.Emit(OpCodes.Call, prototypes.Populate);
-        // PDS normalizes callable receiver views to their MethodInfo. Use that
-        // key directly instead of allocating an uninvoked callable and all of
-        // its invocation metadata for every iterator creation. The generator's
-        // nonconfigurable prototype slot is a data property, so no getter needs
-        // the original callable as its receiver here.
-        associate.Emit(OpCodes.Ldarg_1);
-        associate.Emit(OpCodes.Ldarg_1); associate.Emit(OpCodes.Call, prototypes.EnsureOwnPrototype);
-        associate.Emit(OpCodes.Stloc, prototype);
-        associate.Emit(OpCodes.Ldloc, prototype); associate.Emit(OpCodes.Brfalse, fallback);
-        foreach (var primitive in new[] { inputs.UndefinedType, _types.Boolean, _types.String, inputs.SymbolType,
-                     _types.BigInteger, _types.Double, _types.Single, _types.Decimal, _types.Int32, _types.Int64,
-                     _types.UInt32, _types.UInt64, _types.Int16, _types.UInt16, _types.Byte, _types.SByte })
+        EmitAssociation(prototypes.Associate, actualFunction: false);
+        EmitAssociation(prototypes.AssociateFunction, actualFunction: true);
+
+        void EmitAssociation(MethodBuilder method, bool actualFunction)
         {
-            associate.Emit(OpCodes.Ldloc, prototype); associate.Emit(OpCodes.Isinst, primitive);
-            associate.Emit(OpCodes.Brtrue, fallback);
+            var associate = method.GetILGenerator();
+            var done = associate.DefineLabel();
+            var fallback = associate.DefineLabel();
+            var selected = associate.DefineLabel();
+            var sourceKind = associate.DeclareLocal(_types.Int32);
+            var prototype = associate.DeclareLocal(_types.Object);
+            var kickoff = associate.DeclareLocal(_types.MethodInfo);
+            associate.Emit(OpCodes.Ldarg_1);
+            if (actualFunction)
+            {
+                associate.Emit(OpCodes.Castclass, inputs.Functions.Type);
+                associate.Emit(OpCodes.Callvirt, inputs.Functions.GetMethodInfo);
+            }
+            associate.Emit(OpCodes.Stloc, kickoff);
+            associate.Emit(OpCodes.Ldloc, kickoff); associate.Emit(OpCodes.Call, prototypes.Kind);
+            associate.Emit(OpCodes.Dup); associate.Emit(OpCodes.Stloc, sourceKind); associate.Emit(OpCodes.Brfalse, done);
+            associate.Emit(OpCodes.Call, prototypes.Populate);
+            if (actualFunction) associate.Emit(OpCodes.Ldarg_1);
+            else
+            {
+                // Declaration descriptors use their MethodInfo key directly.
+                // Avoid allocating a callable wrapper for every iterator.
+                associate.Emit(OpCodes.Ldloc, kickoff);
+            }
+            associate.Emit(OpCodes.Ldloc, kickoff); associate.Emit(OpCodes.Call, prototypes.EnsureOwnPrototype);
+            associate.Emit(OpCodes.Stloc, prototype);
+            associate.Emit(OpCodes.Ldloc, prototype); associate.Emit(OpCodes.Brfalse, fallback);
+            foreach (var primitive in new[] { inputs.UndefinedType, _types.Boolean, _types.String, inputs.SymbolType,
+                         _types.BigInteger, _types.Double, _types.Single, _types.Decimal, _types.Int32, _types.Int64,
+                         _types.UInt32, _types.UInt64, _types.Int16, _types.UInt16, _types.Byte, _types.SByte })
+            {
+                associate.Emit(OpCodes.Ldloc, prototype); associate.Emit(OpCodes.Isinst, primitive);
+                associate.Emit(OpCodes.Brtrue, fallback);
+            }
+            associate.Emit(OpCodes.Br, selected);
+            associate.MarkLabel(fallback);
+            EmitIntrinsicGeneratorPrototype(associate, prototypes, sourceKind);
+            associate.Emit(OpCodes.Stloc, prototype);
+            associate.MarkLabel(selected);
+            associate.Emit(OpCodes.Ldarg_0); associate.Emit(OpCodes.Ldloc, prototype);
+            associate.Emit(OpCodes.Call, inputs.Descriptors.SetPrototype);
+            associate.MarkLabel(done); associate.Emit(OpCodes.Ret);
+            prototypes.MarkBodyEmitted(method);
         }
-        associate.Emit(OpCodes.Br, selected);
-        associate.MarkLabel(fallback);
-        EmitIntrinsicGeneratorPrototype(associate, prototypes, sourceKind);
-        associate.Emit(OpCodes.Stloc, prototype);
-        associate.MarkLabel(selected);
-        associate.Emit(OpCodes.Ldarg_0); associate.Emit(OpCodes.Ldloc, prototype);
-        associate.Emit(OpCodes.Call, inputs.Descriptors.SetPrototype);
-        associate.MarkLabel(done); associate.Emit(OpCodes.Ret);
-        prototypes.MarkBodyEmitted(prototypes.Associate);
 
         void EmitOrdinaryInheritedRead(System.Reflection.Emit.MethodBuilder method)
         {

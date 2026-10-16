@@ -165,7 +165,8 @@ public partial class AsyncMoveNextEmitter
         // loopVar = result.value
         _il.Emit(OpCodes.Ldloc, resultLocal);
         _il.Emit(OpCodes.Call, _ctx.Runtime.IteratorProtocol.Value);
-        if (varField != null)
+        if (TryInitializeLexicalCell(f.Variable, fresh: true)) { }
+        else if (varField != null)
         {
             var valueTemp = _il.DeclareLocal(_types.Object);
             _il.Emit(OpCodes.Stloc, valueTemp);

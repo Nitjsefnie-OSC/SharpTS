@@ -52,6 +52,8 @@ public class StateMachineVariableResolver : IVariableResolver
     /// <inheritdoc />
     public StackType? TryLoadVariable(string name)
     {
+        if (ConstructorContext is { } context && LexicalEnvironmentCellAccess.TryLoad(_il, context, name))
+            return StackType.Unknown;
         // 0. Per-iteration loop-binding cell (#650): read through the StrongBox so closures
         //    that captured the cell observe end-of-iteration mutations.
         if (_cellBindingLocals != null && _cellBindingLocals.TryGetValue(name, out var loadCell))
@@ -77,21 +79,27 @@ public class StateMachineVariableResolver : IVariableResolver
             return MapTypeToStackType(local.LocalType);
         }
 
+        if (GeneratorExpressionCaptureAccess.TryLoad(_il, ConstructorContext, name))
+            return StackType.Unknown;
+
         return null; // Not found - caller handles fallback
     }
 
     /// <inheritdoc />
     public bool HasVariable(string name)
     {
+        if (ConstructorContext is { } context && LexicalEnvironmentCellAccess.HasOwnAccess(context, name)) return true;
         if (_cellBindingLocals != null && _cellBindingLocals.ContainsKey(name)) return true;
         if (_getVariableField(name) != null) return true;
         if (_locals.HasLocal(name)) return true;
+        if (GeneratorExpressionCaptureAccess.HasCapture(ConstructorContext, name)) return true;
         return false;
     }
 
     /// <inheritdoc />
     public bool TryStoreVariable(string name)
     {
+        if (ConstructorContext is { } context && LexicalEnvironmentCellAccess.TryStore(_il, context, name)) return true;
         // 0. Per-iteration loop-binding cell (#650): write through the StrongBox.
         if (_cellBindingLocals != null && _cellBindingLocals.TryGetValue(name, out var storeCell))
         {
@@ -123,6 +131,8 @@ public class StateMachineVariableResolver : IVariableResolver
             _il.Emit(OpCodes.Stloc, local);
             return true;
         }
+
+        if (GeneratorExpressionCaptureAccess.TryStore(_il, ConstructorContext, name)) return true;
 
         return false; // Not found
     }

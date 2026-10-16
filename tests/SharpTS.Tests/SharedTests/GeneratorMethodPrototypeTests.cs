@@ -110,8 +110,8 @@ public sealed class GeneratorMethodPrototypeTests
             TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void InterpreterDeclarationAndUnliftedExpressionWrappersUseTheSamePrototypeContract()
+    [Theory, ModeData]
+    public void DeclarationAndUnliftedExpressionWrappersUseTheSamePrototypeContract(ExecutionMode mode)
     {
         const string source = """
             function* declared() {}
@@ -129,7 +129,7 @@ public sealed class GeneratorMethodPrototypeTests
             }
             """;
         Assert.Equal(string.Concat(Enumerable.Repeat("true true false false true\n", 4)),
-            TestHarness.Run(source, ExecutionMode.Interpreted));
+            TestHarness.Run(source, mode));
     }
 
     [Fact]

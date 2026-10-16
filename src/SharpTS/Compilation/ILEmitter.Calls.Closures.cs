@@ -414,7 +414,7 @@ public partial class ILEmitter
                 // parent arrow; class-method arg0 for the outermost).
                 if (!_resolver.TryLoadThisBindingCell()) _resolver.LoadThis();
             }
-            else if (TryEmitLoopBodyCellReference(af, capturedVar)) { }
+            else if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(IL, _ctx, af, capturedVar)) { }
             else if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
             {
                 // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE

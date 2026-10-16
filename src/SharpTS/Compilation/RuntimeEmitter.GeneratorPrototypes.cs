@@ -17,6 +17,7 @@ public partial class RuntimeEmitter
         prototypes.ReadInherited = Define("ReadInherited", _types.Object, [_types.Object, _types.String]);
         prototypes.ReadIteratorProperty = Define("ReadIteratorProperty", _types.Object, [_types.Object, _types.String]);
         prototypes.Associate = Define("Associate", _types.Void, [_types.Object, _types.MethodInfo]);
+        prototypes.AssociateFunction = Define("AssociateFunction", _types.Void, [_types.Object, _types.Object]);
         DefineKind(prototypes.Sync, "Generator");
         if (includeAsync)
         {

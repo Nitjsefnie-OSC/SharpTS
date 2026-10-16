@@ -993,6 +993,7 @@ public partial class ILCompiler
         EmitTopLevelAsyncArrowBodies(); // Emit MoveNext for top-level async arrows
         EmitGeneratorStateMachineBodies();
         EmitAsyncGeneratorStateMachineBodies();
+        EmitGeneratorExpressionBodies();
     }
 
     /// <summary>
@@ -1617,6 +1618,7 @@ public partial class ILCompiler
         EmitTopLevelAsyncArrowBodies(); // Emit MoveNext for top-level async arrows
         EmitGeneratorStateMachineBodies();
         EmitAsyncGeneratorStateMachineBodies();
+        EmitGeneratorExpressionBodies();
     }
 
     /// <summary>

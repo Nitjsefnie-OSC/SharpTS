@@ -78,6 +78,7 @@ public abstract partial class ExpressionEmitterBase
     /// </remarks>
     protected virtual void EmitStoreVariable(string name)
     {
+        if (LexicalEnvironmentCellAccess.TryStore(IL, Ctx, name)) return;
         if (TryEmitStoreClassDefinitionCapture(name)) return;
         // Per-iteration loop-binding cell (#650): write through the StrongBox. This base
         // helper (used by state-machine increments/compound/logical assignment) hand-rolls
@@ -160,7 +161,7 @@ public abstract partial class ExpressionEmitterBase
     private bool TryEmitNativeNumericLocalCompound(Expr.CompoundAssign compound)
     {
         string name = compound.Name.Lexeme;
-        if (Ctx.CellBindingLocals.ContainsKey(name)
+        if (Ctx.HasLoopBodyBindingAccess(name) || Ctx.CellBindingLocals.ContainsKey(name)
             || !Ctx.Locals.TryGetLocal(name, out var local)
             || local.LocalType != Types.Double
             || !IsArithmeticCompound(compound.Operator.Type)
@@ -354,7 +355,7 @@ public abstract partial class ExpressionEmitterBase
         bool isPrefix)
     {
         string name = variable.Name.Lexeme;
-        if (Ctx.CellBindingLocals.ContainsKey(name))
+        if (Ctx.HasLoopBodyBindingAccess(name) || Ctx.CellBindingLocals.ContainsKey(name))
         {
             return false;
         }

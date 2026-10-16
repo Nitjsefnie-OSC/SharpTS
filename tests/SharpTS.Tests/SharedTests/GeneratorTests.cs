@@ -1867,7 +1867,7 @@ public class GeneratorTests
         // expression path. Same-named static/instance methods must receive distinct DC keys. The static
         // parameter cases also pin argument offset zero for both iterator families.
         var source = """
-            const C = true ? class {
+            const C: any = true ? class {
               *m(seed: number) {
                 const g = function*() { yield seed; };
                 seed += 1;
@@ -2024,14 +2024,10 @@ public class GeneratorTests
     // variable, a catch parameter, or a let/const declared in a nested block or switch body) cannot be
     // lifted to a top-level declaration — the lift target sits outside that block, so the captured name
     // would be out of scope. The GeneratorArrowLifter leaves it in place as an expression; the
-    // interpreter runs it natively (SharpTSGenerator) and the type checker establishes the generator
-    // context directly. These run interpreted-only: the compiler has no generator-expression IL path
-    // for a generator that captures a block-scoped binding and reports a clear "Yield not supported in
-    // this context" error (the lift target sits outside the block, so unlike #534's enclosing-FUNCTION
-    // local — which is now lambda-lifted and runs in both modes — this cannot be lowered; asserted by
-    // the *_CompiledRejectsClearly test).
+    // interpreter runs it natively and the compiler preserves its expression environment (#2149).
+    // Both paths must retain the original block binding rather than lifting outside its scope.
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void GeneratorExpression_CapturesForOfLoopVariable(ExecutionMode mode)
     {
         // The exact repro from issue #678.
@@ -2045,7 +2041,7 @@ public class GeneratorTests
         Assert.Equal("10\n20\n", TestHarness.Run(source, mode));
     }
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void GeneratorExpression_CapturesNestedBlockLet(ExecutionMode mode)
     {
         // The second repro from issue #678: a let in a nested block within a function.
@@ -2063,7 +2059,7 @@ public class GeneratorTests
         Assert.Equal("[5]\n", TestHarness.Run(source, mode));
     }
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void GeneratorExpression_CapturesForLetLoopVariable(ExecutionMode mode)
     {
         var source = """
@@ -2076,7 +2072,7 @@ public class GeneratorTests
         Assert.Equal("10\n20\n", TestHarness.Run(source, mode));
     }
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void GeneratorExpression_CapturesForInKey(ExecutionMode mode)
     {
         var source = """
@@ -2090,7 +2086,7 @@ public class GeneratorTests
         Assert.Equal("a\nb\n", TestHarness.Run(source, mode));
     }
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void GeneratorExpression_CapturesCatchParameter(ExecutionMode mode)
     {
         var source = """
@@ -2105,7 +2101,7 @@ public class GeneratorTests
         Assert.Equal("boom\n", TestHarness.Run(source, mode));
     }
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void GeneratorExpression_CapturesSwitchCaseBinding(ExecutionMode mode)
     {
         var source = """
@@ -2122,7 +2118,7 @@ public class GeneratorTests
         Assert.Equal("99\n", TestHarness.Run(source, mode));
     }
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void GeneratorExpression_LoopVariableCapturedPerIteration(ExecutionMode mode)
     {
         // Each iteration's for-of binding is distinct, so a generator created in one iteration captures
@@ -2139,7 +2135,7 @@ public class GeneratorTests
         Assert.Equal("1,2,3\n", TestHarness.Run(source, mode));
     }
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void GeneratorExpression_CapturesBlockScopedAndModuleScoped(ExecutionMode mode)
     {
         // A capture mixing a block-scoped loop variable with a module-scoped const still works: the
@@ -2156,7 +2152,7 @@ public class GeneratorTests
         Assert.Equal("200\n", TestHarness.Run(source, mode));
     }
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void GeneratorExpression_NamedSelfRecursionCapturingLoopVariable(ExecutionMode mode)
     {
         // #678 + #679 together: a NAMED generator expression that both closes over a loop variable and
@@ -2174,12 +2170,8 @@ public class GeneratorTests
     }
 
     [Fact]
-    public void GeneratorExpression_BlockScopedCapture_CompiledRejectsClearly()
+    public void GeneratorExpression_BlockScopedCapture_CompilesAndRuns()
     {
-        // The compiler has no generator-expression IL path for a generator that closes over a
-        // block-scoped binding (it cannot be lifted out of its block, and nested-generator lowering is
-        // incomplete, #501). It must FAIL FAST with a clear message rather than crash or silently
-        // misbehave — matching the #534 enclosing-function-local decline cases (this/rest/recursion).
         var source = """
             for (const n of [1, 2]) {
               const g = function* () { yield n; };
@@ -2187,8 +2179,7 @@ public class GeneratorTests
             }
             """;
 
-        var ex = Assert.Throws<CompileException>(() => TestHarness.RunCompiled(source));
-        Assert.Contains("Yield not supported", ex.Message);
+        Assert.Equal("1\n2\n", TestHarness.RunCompiled(source));
     }
 
     #endregion
@@ -2200,10 +2191,9 @@ public class GeneratorTests
     // GeneratorArrowLifter leaves it in place. EvaluateArrowFunction dispatches IsAsync && IsGenerator to
     // a SharpTSAsyncArrowGeneratorFunction so the interpreter runs it natively (previously it was
     // mishandled as a plain async function, leaving the capture out of scope — "Undefined variable").
-    // Interpreted-only: the compiler has no generator-expression IL path and reports a clear
-    // "Yield not supported in this context" error (asserted by the *_CompiledRejectsClearly test).
+    // Compilation now uses the async-generator expression path while retaining the same binding (#2149).
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void AsyncGeneratorExpression_CapturesForOfLoopVariable(ExecutionMode mode)
     {
         // The exact repro from issue #734.
@@ -2222,7 +2212,7 @@ public class GeneratorTests
         Assert.Equal("10\n", TestHarness.Run(source, mode));
     }
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void AsyncGeneratorExpression_CapturesNestedBlockLet(ExecutionMode mode)
     {
         // A let in a nested block captured by an in-place async generator expression, driven by direct
@@ -2242,7 +2232,7 @@ public class GeneratorTests
         Assert.Equal("5,6\n", TestHarness.Run(source, mode));
     }
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void AsyncGeneratorExpression_CapturesLoopVariablePerIteration(ExecutionMode mode)
     {
         // Each iteration's for-of binding is distinct, so an async generator created in one iteration
@@ -2264,11 +2254,8 @@ public class GeneratorTests
     }
 
     [Fact]
-    public void AsyncGeneratorExpression_BlockScopedCapture_CompiledRejectsClearly()
+    public void AsyncGeneratorExpression_BlockScopedCapture_CompilesAndRuns()
     {
-        // The compiler has no generator-expression IL path for an async generator that closes over a
-        // block-scoped binding; it must FAIL FAST with a clear message rather than crash (matching the
-        // sync #678 case).
         var source = """
             async function main() {
               for (const n of [1, 2]) {
@@ -2279,8 +2266,7 @@ public class GeneratorTests
             main();
             """;
 
-        var ex = Assert.Throws<CompileException>(() => TestHarness.RunCompiled(source));
-        Assert.Contains("Yield not supported", ex.Message);
+        Assert.Equal("1\n2\n", TestHarness.RunCompiled(source));
     }
 
     #endregion

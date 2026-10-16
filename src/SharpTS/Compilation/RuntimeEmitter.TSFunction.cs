@@ -233,6 +233,10 @@ public partial class RuntimeEmitter
         // Fields
         var targetField = typeBuilder.DefineField("_target", _types.Object, FieldAttributes.Private);
         var methodField = typeBuilder.DefineField("_method", _types.MethodInfo, FieldAttributes.Private);
+        // Expression evaluation can supply a distinct function property identity.
+        // Declaration views retain the existing MethodInfo identity when unset.
+        functionValues.PropertyIdentityField = typeBuilder.DefineField(
+            "_propertyIdentity", _types.Object, FieldAttributes.Public);
         var numericRest4Field = typeBuilder.DefineField("_numericRest4",
             typeof(Func<double, double, double, double, double>), FieldAttributes.Assembly | FieldAttributes.InitOnly);
         functionValues.NumericRest4Field = numericRest4Field;

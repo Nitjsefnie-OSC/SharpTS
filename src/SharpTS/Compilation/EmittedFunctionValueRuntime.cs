@@ -44,6 +44,14 @@ public sealed class EmittedFunctionValueRuntime
         internal set => SetHandle(ref _getTarget, value);
     }
 
+    private FieldBuilder? _propertyIdentityField;
+    /// <summary>Optional identity of a function created by evaluating an expression.</summary>
+    public FieldBuilder PropertyIdentityField
+    {
+        get => Require(_propertyIdentityField);
+        internal set => SetHandle(ref _propertyIdentityField, value);
+    }
+
     private MethodBuilder? _bindThis;
     public MethodBuilder BindThis
     {
@@ -154,6 +162,7 @@ public sealed class EmittedFunctionValueRuntime
         _ = InvokeWithThis;
         _ = InvokeConstructed;
         _ = GetTarget;
+        _ = PropertyIdentityField;
         _ = BindThis;
         _ = LengthGetter;
         _ = NameGetter;

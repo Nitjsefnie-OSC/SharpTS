@@ -78,6 +78,13 @@ public sealed class EmittedGeneratorPrototypeRuntime
         internal set => SetHandle(ref _associate, value);
     }
 
+    private MethodBuilder? _associateFunction;
+    public MethodBuilder AssociateFunction
+    {
+        get => Require(_associateFunction);
+        internal set => SetHandle(ref _associateFunction, value);
+    }
+
     internal void MarkBodyEmitted(MethodBuilder method)
     {
         EnsureMutable();
@@ -96,6 +103,7 @@ public sealed class EmittedGeneratorPrototypeRuntime
         yield return ReadInherited;
         yield return ReadIteratorProperty;
         yield return Associate;
+        yield return AssociateFunction;
         foreach (var method in Sync.RequiredMethods()) yield return method;
         if (Async != null)
             foreach (var method in Async.RequiredMethods()) yield return method;

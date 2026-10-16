@@ -33,6 +33,7 @@ public partial class AsyncMoveNextEmitter
     /// </summary>
     protected override void EmitVarDeclaration(Stmt.Var v)
     {
+        if (TryInitializeLoopBodyBinding(v)) return;
         bool stableNumeric = Ctx.TypeMap?.IsStableNumericStateMachineLocal(v) == true;
 
         // Resolve a shadowing block-scoped binding to its own storage before any DC routing (#766);
@@ -95,6 +96,7 @@ public partial class AsyncMoveNextEmitter
 
         string name = v.Name.Lexeme;
 
+        if (LexicalEnvironmentCellAccess.TryLoad(_il, Ctx, name)) { SetStackUnknown(); return; }
         if (TryGetFunctionDCField(name, out var dcField))
         {
             _il.Emit(OpCodes.Ldarg_0);
@@ -117,6 +119,15 @@ public partial class AsyncMoveNextEmitter
 
         string name = a.Name.Lexeme;
 
+        if (LexicalEnvironmentCellAccess.HasOwnAccess(Ctx, name))
+        {
+            EmitExpression(a.Value);
+            EnsureBoxed();
+            _il.Emit(OpCodes.Dup);
+            LexicalEnvironmentCellAccess.TryStore(_il, Ctx, name);
+            SetStackUnknown();
+            return;
+        }
         if (a.IsLexicalInitialization)
         {
             EmitHostedTopLevelLexicalInitialization(a);
@@ -209,6 +220,7 @@ public partial class AsyncMoveNextEmitter
     /// </summary>
     protected override void EmitStoreVariable(string name)
     {
+        if (LexicalEnvironmentCellAccess.TryStore(_il, Ctx, name)) return;
         if (TryGetFunctionDCField(name, out var dcField))
         {
             // Value is on stack — store to both locations

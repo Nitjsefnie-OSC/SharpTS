@@ -36,6 +36,7 @@ internal class NestedAsyncArrowVisitor : AstVisitorBase
 
     protected override void VisitArrowFunction(Expr.ArrowFunction expr)
     {
+        if (expr.IsGenerator) return;
         if (expr.IsAsync)
         {
             // Found a nested async arrow - notify the caller

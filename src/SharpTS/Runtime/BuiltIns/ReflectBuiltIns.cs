@@ -187,6 +187,14 @@ public static class ReflectBuiltIns
                         : interpreter.GetPropertyValue(function,
                             interpreter.ToPropertyKeyString(args[1].ToObject()), functionReceiver));
                 }
+                if (target is SharpTSFunction or SharpTSArrowFunction)
+                {
+                    object? functionReceiver = args.Length > 2 ? args[2].ToObject() : target;
+                    return RuntimeValue.FromBoxed(args[1].ToObject() is SharpTSSymbol symbol
+                        ? interpreter.GetSymbolPropertyValue(target, symbol, functionReceiver!)
+                        : interpreter.GetPropertyValue(target,
+                            interpreter.ToPropertyKeyString(args[1].ToObject()), functionReceiver));
+                }
                 if (target is SharpTSObjectNamespace objectNamespace && args[1].ToObject() is not SharpTSSymbol)
                 {
                     object? objectReceiver = args.Length > 2 ? args[2].ToObject() : target;
@@ -280,6 +288,8 @@ public static class ReflectBuiltIns
             "getPrototypeOf" => BuiltInMethod.CreateV2("getPrototypeOf", 1, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.getPrototypeOf requires a target object.");
+                if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var functionStorage))
+                    return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
                 if (target is ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator)
                     return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
                 return RuntimeValue.FromBoxed(target switch

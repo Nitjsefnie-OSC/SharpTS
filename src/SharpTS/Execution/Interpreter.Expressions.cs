@@ -1184,6 +1184,10 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(GetSymbolPropertyValue(obj, generatorSymbol));
 
         // JS functions are objects — bracket access reads user properties.
+        if (FunctionObjectProperties.TryGetExplicitPrototype(obj, this, out _))
+            return RuntimeValue.FromBoxed(index is SharpTSSymbol inheritedSymbol
+                ? GetSymbolPropertyValue(obj!, inheritedSymbol)
+                : GetPropertyValue(obj, ToPropertyKeyString(index)));
         if (obj is SharpTSFunction fn)
         {
             // Symbol-keyed bracket access (`fn[Symbol.species]`) routes
@@ -1586,6 +1590,18 @@ public partial class Interpreter
                     properties.SetBySymbolStrict(functionSymbol, value, strictMode);
             }
             else SetFunctionObjectProperty(functionObject, ToPropertyKeyString(index), value, strictMode);
+            return RuntimeValue.FromBoxed(value);
+        }
+
+        if (index is not SharpTSSymbol
+            && FunctionObjectProperties.TryGetExplicitPrototype(obj, this, out _))
+        {
+            string key = ToPropertyKeyString(index);
+            if (!TrySetExplicitFunctionPrototypeProperty(obj!, key, value, strictMode))
+            {
+                FunctionObjectProperties.TryGetStorage(obj, this, out var storage);
+                storage.SetPropertyStrict(key, value, strictMode);
+            }
             return RuntimeValue.FromBoxed(value);
         }
 

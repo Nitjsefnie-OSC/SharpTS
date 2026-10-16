@@ -417,7 +417,7 @@ public partial class Interpreter
                 if (TryReadDescriptor(generatorFunction.FunctionProperties.GetProperties(this)
                         .GetOwnPropertyDescriptor(name), receiver, out var ownValue))
                     return ownValue;
-                current = generatorFunction.FunctionProperties.GetFunctionPrototype(this);
+                current = ObjectBuiltIns.PrototypeOf(this, generatorFunction);
                 continue;
             }
             if (current is SharpTSGenerator or SharpTSAsyncGenerator)
@@ -569,6 +569,12 @@ public partial class Interpreter
                     receiver, out var objectConstructorValue))
                 return objectConstructorValue;
 
+            if (FunctionObjectProperties.TryGetExplicitPrototype(current, this, out var explicitPrototype))
+            {
+                current = explicitPrototype;
+                continue;
+            }
+
             if (current is ISharpTSCallable callable)
             {
                 // Built-in callable metadata is an own property even when it
@@ -638,7 +644,7 @@ public partial class Interpreter
                 if (TryReadDescriptor(generatorFunction.FunctionProperties.GetProperties(this)
                         .GetOwnPropertyDescriptor(symbol), receiver, out var ownValue))
                     return ownValue;
-                current = generatorFunction.FunctionProperties.GetFunctionPrototype(this);
+                current = ObjectBuiltIns.PrototypeOf(this, generatorFunction);
                 continue;
             }
             if (current is SharpTSGenerator or SharpTSAsyncGenerator)
@@ -691,7 +697,7 @@ public partial class Interpreter
                 if (TryReadDescriptor(FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(symbol),
                         receiver, out var value))
                     return value;
-                current = GetFunctionPrototype();
+                current = ObjectBuiltIns.PrototypeOf(this, functionObject);
                 continue;
             }
 
@@ -703,7 +709,7 @@ public partial class Interpreter
                         : BindAccessorToObject(getter, receiver).CallBoxed(this, []);
                 if (function.TryGetSymbolProperty(symbol, out var value))
                     return value;
-                current = GetFunctionPrototype();
+                current = ObjectBuiltIns.PrototypeOf(this, function);
                 continue;
             }
 
@@ -715,7 +721,7 @@ public partial class Interpreter
                         : BindAccessorToObject(getter, receiver).CallBoxed(this, []);
                 if (arrow.TryGetSymbolProperty(symbol, out var value))
                     return value;
-                current = GetFunctionPrototype();
+                current = ObjectBuiltIns.PrototypeOf(this, arrow);
                 continue;
             }
 
@@ -826,6 +832,18 @@ public partial class Interpreter
                 obj = ObjectBuiltIns.PrototypeOf(this, functionObject);
                 continue;
             }
+            if (obj is SharpTSFunction function)
+            {
+                if (function.GetOwnPropertyDescriptor(name) is not null) return true;
+                obj = ObjectBuiltIns.PrototypeOf(this, function);
+                continue;
+            }
+            if (obj is SharpTSArrowFunction expression)
+            {
+                if (expression.GetOwnPropertyDescriptor(name) is not null) return true;
+                obj = ObjectBuiltIns.PrototypeOf(this, expression);
+                continue;
+            }
             if (obj is SharpTSObject so)
             {
                 // SharpTSObject.HasProperty covers own fields + getters; add setters
@@ -879,6 +897,20 @@ public partial class Interpreter
             {
                 if (FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(symbol) is not null) return true;
                 current = ObjectBuiltIns.PrototypeOf(this, functionObject);
+                continue;
+            }
+            if (current is SharpTSFunction function)
+            {
+                if (function.TryGetSymbolProperty(symbol, out _)
+                    || function.TryGetSymbolAccessor(symbol, out _, out _)) return true;
+                current = ObjectBuiltIns.PrototypeOf(this, function);
+                continue;
+            }
+            if (current is SharpTSArrowFunction expression)
+            {
+                if (expression.TryGetSymbolProperty(symbol, out _)
+                    || expression.TryGetSymbolAccessor(symbol, out _, out _)) return true;
+                current = ObjectBuiltIns.PrototypeOf(this, expression);
                 continue;
             }
             if (current is ISharpTSPrimitiveConstructor primitiveConstructor)
@@ -1199,6 +1231,8 @@ public partial class Interpreter
 
         // JS functions are objects — surface user-set properties before
         // falling through to built-in members (e.g. `bind`, `call`).
+        if (FunctionObjectProperties.TryGetExplicitPrototype(obj, this, out _))
+            return RuntimeValue.FromBoxed(GetPropertyValue(obj, memberName));
         if (obj is ISharpTSFunctionObject functionObject)
             return RuntimeValue.FromBoxed(GetPropertyValue(functionObject, memberName));
         if (obj is SharpTSFunction fn)
@@ -2134,6 +2168,12 @@ public partial class Interpreter
     private void SetFunctionObjectProperty(
         ISharpTSFunctionObject function, string name, object? value, bool strictMode)
     {
+        if (FunctionObjectProperties.TryGetExplicitPrototype(function, this, out _))
+        {
+            if (!TrySetExplicitFunctionPrototypeProperty(function, name, value, strictMode))
+                FunctionObjectProperties.GetProperties(function, this).SetPropertyStrict(name, value, strictMode);
+            return;
+        }
         var ownDescriptor = FunctionObjectProperties.GetProperties(function, this).GetOwnPropertyDescriptor(name);
         if (TryAssignThroughDescriptor(ownDescriptor, function, name, value, strictMode)) return;
         if (ownDescriptor is null
@@ -2144,11 +2184,36 @@ public partial class Interpreter
         FunctionObjectProperties.GetProperties(function, this).SetPropertyStrict(name, value, strictMode);
     }
 
+    private bool TrySetExplicitFunctionPrototypeProperty(
+        object function, string name, object? value, bool strictMode)
+    {
+        if (!FunctionObjectProperties.TryGetExplicitPrototype(function, this, out var prototype)) return false;
+        if (ObjectBuiltIns.OwnPropertyDescriptorOf(this, function, name) is { } ownDescriptor)
+            return TryAssignThroughDescriptor(ownDescriptor, function, name, value, strictMode);
+
+        object? current = prototype;
+        for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
+        {
+            if (current is SharpTSProxy proxy)
+            {
+                if (!proxy.TrapSetProperty(name, value, this, function) && strictMode)
+                    throw new ThrowException(new SharpTSTypeError($"Proxy set trap rejected property '{name}'"));
+                return true;
+            }
+            if (ObjectBuiltIns.OwnPropertyDescriptorOf(this, current, name) is { } descriptor)
+                return TryAssignThroughDescriptor(descriptor, function, name, value, strictMode);
+            current = ObjectBuiltIns.PrototypeOf(this, current);
+        }
+        return false;
+    }
+
     /// <summary>
     /// Fallback for property access on built-in types and ISharpTSPropertyAccessor.
     /// </summary>
     private object? EvaluateGetOnFallback(object? obj, string memberName)
     {
+        if (FunctionObjectProperties.TryGetExplicitPrototype(obj, this, out _))
+            return GetPropertyValue(obj, memberName);
         if (obj is ISharpTSFunctionObject functionObject)
             return GetPropertyValue(functionObject, memberName);
         if (obj is ISharpTSPrimitiveConstructor primitiveConstructor)
@@ -2576,6 +2641,15 @@ public partial class Interpreter
         }
 
         // JS functions are objects — allow property assignment on them.
+        if (FunctionObjectProperties.TryGetExplicitPrototype(obj, this, out _))
+        {
+            if (!TrySetExplicitFunctionPrototypeProperty(obj!, set.Name.Lexeme, value, strictMode))
+            {
+                FunctionObjectProperties.TryGetStorage(obj, this, out var storage);
+                storage.SetPropertyStrict(set.Name.Lexeme, value, strictMode);
+            }
+            return value;
+        }
         if (obj is ISharpTSFunctionObject functionObject)
         {
             SetFunctionObjectProperty(functionObject, set.Name.Lexeme, value, strictMode);

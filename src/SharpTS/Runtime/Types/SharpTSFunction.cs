@@ -72,6 +72,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     // Reuse the descriptor-aware object store for assignment, accessors, and
     // Object.defineProperty invariants.
     private SharpTSObject _properties = new([]);
+    internal SharpTSObject OwnPropertyStorage => _properties;
 
     public SharpTSFunction(Stmt.Function declaration, RuntimeEnvironment closure)
         : this(declaration, closure, isConstructible: true)
@@ -505,6 +506,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
     // Arrow/function expressions are ordinary objects for user-defined string
     // properties, including descriptor attributes and accessors.
     private SharpTSObject _properties;
+    internal SharpTSObject OwnPropertyStorage => _properties;
 
     /// <summary>
     /// Indicates whether this function has its own 'this' binding (function expressions)

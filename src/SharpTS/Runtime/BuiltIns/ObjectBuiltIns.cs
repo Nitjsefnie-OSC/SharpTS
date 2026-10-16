@@ -1923,6 +1923,8 @@ public static partial class ObjectBuiltIns
         // `Object.getPrototypeOf(RangeError) === Error`. A base class falls back to
         // Function.prototype like any other function object.
         SharpTSClass klass => (object?)klass.Superclass ?? interp?.GetFunctionPrototype(),
+        ISharpTSCallable function when FunctionObjectProperties.TryGetExplicitPrototype(function, interp, out var prototype)
+            => prototype,
         ISharpTSGeneratorFunctionValue generator when interp is not null
             => generator.FunctionProperties.GetFunctionPrototype(interp),
         ISharpTSCallable => interp?.GetFunctionPrototype(),
@@ -1989,6 +1991,13 @@ public static partial class ObjectBuiltIns
             case SharpTSInstance instance:
                 return ReferenceEquals(PrototypeOf(interpreter, instance), proto);
 
+            case ISharpTSCallable function when FunctionObjectProperties.TryGetStorage(function, interpreter, out var storage):
+                if (ReferenceEquals(PrototypeOf(interpreter, function), proto)) return true;
+                if (!storage.IsExtensible) return false;
+                if (WouldCreatePrototypeCycle(interpreter, function, proto)) return false;
+                FunctionObjectProperties.SetExplicitPrototype(storage, proto);
+                return true;
+
             case Dictionary<string, object?> dict:
                 if (ReferenceEquals(PropertyDescriptorStore.GetPrototype(dict), proto)) return true;
                 if (!PropertyDescriptorStore.IsExtensible(dict)) return false;
@@ -2021,6 +2030,8 @@ public static partial class ObjectBuiltIns
             {
                 SharpTSObject or SharpTSArray or Dictionary<string, object?>
                     => PrototypeOf(interpreter, candidate),
+                ISharpTSCallable function when FunctionObjectProperties.TryGetStorage(function, interpreter, out _)
+                    => PrototypeOf(interpreter, function),
                 _ => null
             };
         }

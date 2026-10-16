@@ -102,7 +102,7 @@ public partial class ILCompiler
             }
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Castclass, _runtime.ClassDefinitions.Type);
-            if (_features?.UsesNewTarget == true) il.Emit(OpCodes.Ldarg_2);
+            if (NewTargetConstructor(constructor) != constructor) il.Emit(OpCodes.Ldarg_2);
             il.Emit(OpCodes.Newobj, target);
             il.Emit(OpCodes.Call, _runtime.DynamicConstruction.ResolveClassReturn);
             il.Emit(OpCodes.Ret);

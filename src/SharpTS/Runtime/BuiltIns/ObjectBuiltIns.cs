@@ -1878,7 +1878,7 @@ public static partial class ObjectBuiltIns
         SharpTSObject obj => obj.Prototype,
         // A class instance's [[Prototype]] is its constructor's `prototype` object, so
         // `Object.getPrototypeOf(new C()) === C.prototype`.
-        SharpTSInstance inst => inst.RuntimeClass.Prototype,
+        SharpTSInstance inst => inst.Prototype,
         SharpTSGenerator generator => generator.Prototype ?? interp?.GetGeneratorIntrinsics(false).GeneratorPrototype,
         SharpTSAsyncGenerator generator => generator.Prototype ?? interp?.GetGeneratorIntrinsics(true).GeneratorPrototype,
         // Native errors raised from C# carry only their type name; resolve it back to the

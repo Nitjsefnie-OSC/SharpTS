@@ -32,10 +32,12 @@ public partial class RuntimeEmitter
         EmittedAbortRuntime? Abort,
         EmittedBooleanRuntime Booleans,
         EmittedBoxedPrimitiveRuntime BoxedPrimitives,
+        EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
         EmittedFunctionBindingRuntime FunctionBindings,
         MethodBuilder GetFunctionMethod,
         MethodBuilder InvokeMethodValue,
+        Type IHasFieldsInterface,
         EmittedObjectPrototypeRuntime ObjectPrototypes,
         EmittedObjectReadRuntime ObjectRead,
         EmittedPromiseRuntime? Promise,
@@ -951,6 +953,38 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, _types.Type);
         il.Emit(OpCodes.Stloc, classTypeLocal);
+
+        // A class instance allocated for another newTarget keeps its CLR
+        // storage type, but instanceof follows the explicit guest prototype
+        // chain. Failure to find the prototype is terminal for user classes.
+        var nominalClassInstance = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.HasPrototypeEntry);
+        il.Emit(OpCodes.Brfalse, nominalClassInstance);
+        il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+        il.Emit(OpCodes.Brfalse, nominalClassInstance);
+        var allocationPrototype = il.DeclareLocal(_types.Object);
+        var allocationCandidate = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.Get);
+        il.Emit(OpCodes.Stloc, allocationPrototype);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, allocationCandidate);
+        var allocationWalk = il.DefineLabel();
+        il.MarkLabel(allocationWalk);
+        il.Emit(OpCodes.Ldloc, allocationCandidate);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, allocationCandidate);
+        il.Emit(OpCodes.Ldloc, allocationCandidate);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldloc, allocationCandidate);
+        il.Emit(OpCodes.Ldloc, allocationPrototype);
+        il.Emit(OpCodes.Beq, trueLabel);
+        il.Emit(OpCodes.Br, allocationWalk);
+        il.MarkLabel(nominalClassInstance);
 
         // A guest class-definition receiver can inherit a selected user template
         // without CLR assignability. Consult its ordinary prototype chain first.

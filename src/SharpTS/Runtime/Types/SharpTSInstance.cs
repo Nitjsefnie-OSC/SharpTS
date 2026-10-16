@@ -59,10 +59,18 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public bool IsExtensible { get; private set; } = true;
 
     /// <summary>
-    /// The prototype of this class instance.
-    /// For class instances, this is null as SharpTS doesn't implement a full prototype chain for classes.
+    /// The instance's effective prototype. Construction may select another
+    /// constructor's prototype while retaining this instance's private brands.
     /// </summary>
-    public object? Prototype => null;
+    public object? Prototype => HasExplicitPrototype ? _explicitPrototype : _klass.Prototype;
+    private object? _explicitPrototype;
+    internal bool HasExplicitPrototype { get; private set; }
+
+    internal void SetExplicitPrototype(object? prototype)
+    {
+        _explicitPrototype = prototype;
+        HasExplicitPrototype = true;
+    }
 
     /// <summary>
     /// Freezes this instance, preventing any property changes.
@@ -195,6 +203,15 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public object? Get(Token name)
     {
         string propName = name.Lexeme;
+        if (HasExplicitPrototype)
+        {
+            if (_getters?.TryGetValue(propName, out var getter) == true)
+                return InvokeOwnAccessor(getter, []);
+            if (_setters?.ContainsKey(propName) == true)
+                return SharpTSUndefined.Instance;
+            if (_fields.TryGetValue(propName, out var value)) return value;
+            return _interpreter!.GetInstancePrototypeProperty(this, propName);
+        }
         if (!_fields.ContainsKey(propName) && _getters?.ContainsKey(propName) != true
             && _setters?.ContainsKey(propName) != true && _klass.HasInstanceAccessorDeclaration(propName))
         {
@@ -258,6 +275,11 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public void Set(Token name, object? value)
     {
         string propName = name.Lexeme;
+        if (HasExplicitPrototype)
+        {
+            _interpreter!.SetInstancePropertyWithExplicitPrototype(this, propName, value, false);
+            return;
+        }
         if (TrySetClassAccessor(propName, value, false)) return;
 
         if (_setters?.TryGetValue(propName, out var ownSetter) == true)
@@ -321,6 +343,11 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public void SetStrict(Token name, object? value, bool strictMode)
     {
         string propName = name.Lexeme;
+        if (HasExplicitPrototype)
+        {
+            _interpreter!.SetInstancePropertyWithExplicitPrototype(this, propName, value, strictMode);
+            return;
+        }
         if (TrySetClassAccessor(propName, value, strictMode)) return;
 
         if (_setters?.TryGetValue(propName, out var ownSetter) == true)
@@ -404,6 +431,8 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
     public bool HasProperty(string name)
     {
+        if (HasExplicitPrototype)
+            return GetOwnPropertyDescriptor(name) is not null || _interpreter!.HasProperty(Prototype, name);
         if (!_lookupCache.TryGetValue(name, out PropertyResolution? resolution))
         {
             resolution = ResolveProperty(name);

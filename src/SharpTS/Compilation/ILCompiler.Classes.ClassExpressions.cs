@@ -869,6 +869,9 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Call, fallbackCtor);
             }
         }
+        if (classExpr.SuperclassExpr == null)
+            EmitConstructedClassPrototype(ctx);
+
         if (!hasExplicitSuperCall)
         {
             InitializeClassConstructorReceiver(ctx, il);

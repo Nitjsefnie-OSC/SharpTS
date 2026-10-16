@@ -118,6 +118,7 @@ public partial class SharpTSClass(
     internal virtual object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
     {
         SharpTSInstance instance = new(this);
+        instance.SetInterpreter(interpreter);
         return ExecuteConstructorLevel(interpreter, instance, arguments, newTarget);
     }
 
@@ -131,6 +132,13 @@ public partial class SharpTSClass(
         var constructor = FindOwnMethod("constructor");
         if (Superclass is null)
         {
+            // OrdinaryCreateFromConstructor belongs to the base constructor's
+            // entry, after any derived body code preceding super(). A derived
+            // constructor that returns an object without super never observes
+            // newTarget.prototype.
+            if (allocation is SharpTSInstance instance
+                && !ReferenceEquals(newTarget, instance.RuntimeClass))
+                instance.SetExplicitPrototype(interpreter.GetConstructorPrototype(newTarget));
             frame.InitializeOwnElements(interpreter);
             return constructor is null ? allocation
                 : ResolveOwnConstructorReturn(

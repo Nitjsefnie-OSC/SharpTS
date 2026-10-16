@@ -191,7 +191,7 @@ public partial class Interpreter
         throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
     }
 
-    private object GetConstructorPrototype(object? newTarget)
+    internal object GetConstructorPrototype(object? newTarget)
     {
         object? prototype = GetPropertyValue(newTarget, "prototype");
         return IsConstructorReturnObject(prototype) ? prototype! : GetObjectPrototype();
@@ -491,6 +491,14 @@ public partial class Interpreter
                 continue;
             }
 
+            if (current is SharpTSInstance { HasExplicitPrototype: true } instance)
+            {
+                if (TryReadDescriptor(instance.GetOwnPropertyDescriptor(name), receiver, out var instanceValue))
+                    return instanceValue;
+                current = instance.Prototype;
+                continue;
+            }
+
             if (current is SharpTSClassPrototype classPrototype)
             {
                 if (TryReadDescriptor(classPrototype.GetOwnPropertyDescriptor(name),
@@ -549,6 +557,10 @@ public partial class Interpreter
                             this, arrowDescriptor.Get, receiver, [])
                     : arrowDescriptor.Value;
             }
+
+            if (current is SharpTSClass klass
+                && TryReadDescriptor(klass.FindStaticPropertyDescriptor(name), receiver, out var classValue))
+                return classValue;
 
             if (current is ISharpTSPrimitiveConstructor primitiveConstructor
                 && TryReadDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(name), receiver, out var primitiveValue))
@@ -823,6 +835,19 @@ public partial class Interpreter
                 // so a setter-only accessor registers as present.
                 if (so.HasProperty(name) || so.HasSetter(name)) return true;
                 obj = GetRecordPrototype(so);
+                continue;
+            }
+            if (obj is SharpTSInstance { HasExplicitPrototype: true } instance)
+            {
+                if (instance.GetOwnPropertyDescriptor(name) is not null) return true;
+                obj = instance.Prototype;
+                continue;
+            }
+            if (obj is SharpTSClassPrototype classPrototype)
+            {
+                if (classPrototype.GetOwnPropertyDescriptor(name) is not null
+                    || classPrototype.TryGetOwnMember(name, out _)) return true;
+                obj = ObjectBuiltIns.PrototypeOf(this, classPrototype);
                 continue;
             }
             // Non-record receivers (instances, built-ins like RegExp, boxed
@@ -1643,6 +1668,7 @@ public partial class Interpreter
     private RuntimeValue EvaluateGetOnInstanceRV(SharpTSInstance instance, Token memberName)
     {
         instance.SetInterpreter(this);
+        if (instance.HasExplicitPrototype) return instance.GetRV(memberName);
         if (instance.GetOwnPropertyDescriptor(memberName.Lexeme) is not null)
             return instance.GetRV(memberName);
 
@@ -1666,6 +1692,37 @@ public partial class Interpreter
         return RuntimeValue.FromBoxed(
             InheritedObjectPrototypeMember(instance, memberName.Lexeme)
                 ?? SharpTSUndefined.Instance);
+    }
+
+    internal object? GetInstancePrototypeProperty(SharpTSInstance instance, string name)
+    {
+        object? value = GetPropertyValueFromChain(instance.Prototype, name, instance, bindClassMethods: true);
+        return TryBindReceiverForMethodAccess(value, instance) ?? value;
+    }
+
+    internal void SetInstancePropertyWithExplicitPrototype(
+        SharpTSInstance instance, string name, object? value, bool strictMode)
+    {
+        var descriptor = instance.GetOwnPropertyDescriptor(name);
+        if (descriptor is null)
+        {
+            object? current = instance.Prototype;
+            for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
+            {
+                if (current is SharpTSProxy proxy)
+                {
+                    if (!proxy.TrapSetProperty(name, value, this, instance) && strictMode)
+                        throw new ThrowException(new SharpTSTypeError($"Proxy set trap rejected property '{name}'"));
+                    return;
+                }
+                descriptor = ObjectBuiltIns.OwnPropertyDescriptorOf(this, current, name);
+                if (descriptor is not null) break;
+                current = ObjectBuiltIns.PrototypeOf(this, current);
+            }
+        }
+        if (TryAssignThroughDescriptor(descriptor, instance, name, value, strictMode)) return;
+        if (strictMode) instance.SetRawFieldStrict(name, value, strictMode);
+        else instance.SetRawField(name, value);
     }
 
     /// <summary>

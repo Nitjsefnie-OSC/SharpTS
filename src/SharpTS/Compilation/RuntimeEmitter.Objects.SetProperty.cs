@@ -2626,6 +2626,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notGenericStaticField);
 
+        if (inputs.ReflectAssignment is { } classAssignment)
+        {
+            // Class storage can be allocated with another constructor's
+            // prototype. Its strict writes must use that guest chain too,
+            // including inherited setters, before the CLR field fallback.
+            var nominalClassWrite = il.DefineLabel();
+            var classWriteReturned = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, inputs.IHasFieldsInterface);
+            il.Emit(OpCodes.Brfalse, nominalClassWrite);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, inputs.DescriptorStorage.HasPrototypeEntry);
+            il.Emit(OpCodes.Brfalse, nominalClassWrite);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, classAssignment.Set);
+            il.Emit(OpCodes.Brtrue, classWriteReturned);
+            il.Emit(OpCodes.Ldarg_3);
+            il.Emit(OpCodes.Brfalse, classWriteReturned);
+            EmitThrowTypeErrorWithName(il, inputs.Errors,
+                "Cannot assign to read only property '", "' of object");
+            il.MarkLabel(classWriteReturned);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(nominalClassWrite);
+        }
+
         // Not a dict or $Object or $TSFunction or $CJSModule or array - fall back to SetFieldsPropertyStrict.
         // Native Type and other receiver kinds retain their existing fallback.
         il.Emit(OpCodes.Ldarg_0);

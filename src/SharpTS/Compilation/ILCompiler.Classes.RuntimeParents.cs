@@ -174,6 +174,8 @@ public partial class ILCompiler
         ctx.CurrentMethodReturnType = _types.Void;
         ctx.IsRuntimeReceiverInitializer = true;
         ConfigureClassConstructorReturns(ctx, constructor, declaration.SuperclassExpr != null, forceReceiver: true);
+        if (declaration.SuperclassExpr == null)
+            EmitConstructedClassPrototype(ctx);
         EmitOnceOnlyConstructorElements(ctx, () => EmitEffectiveClassElements(ctx, declaration.Fields, null, null,
             _ => throw new InvalidOperationException("Runtime receiver initializer cannot have computed fields.")));
         if (constructor?.Body != null && ReferencesArgumentsIdentifier(constructor.Body)

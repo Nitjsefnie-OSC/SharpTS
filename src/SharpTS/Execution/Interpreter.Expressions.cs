@@ -1461,6 +1461,10 @@ public partial class Interpreter
     private object? GetInstanceSymbolValue(SharpTSInstance instance, SharpTSSymbol symbol)
     {
         if (instance.HasSymbolProperty(symbol)) return instance.GetBySymbol(symbol);
+        if (instance.HasExplicitPrototype)
+            return instance.Prototype is { } prototype
+                ? GetSymbolPropertyValue(prototype, symbol, instance)
+                : SharpTSUndefined.Instance;
         var descriptor = instance.GetClass().FindInstanceSymbolPropertyDescriptor(symbol);
         if (!TryReadDescriptor(descriptor, instance, out var value)) return SharpTSUndefined.Instance;
         // A method is an ordinary data-property value. Member calls provide
@@ -1904,7 +1908,8 @@ public partial class Interpreter
                 // write lands in _fields while reads keep hitting the getter, silently
                 // desynchronizing the two (#290). Plain data writes stay on SetRawField so the
                 // defineProperty `writable:false` flag continues to be honored.
-                if (t.Target.GetClass().HasInstanceAccessorDeclaration(t.Key)
+                if (t.Target.HasExplicitPrototype
+                    || t.Target.GetClass().HasInstanceAccessorDeclaration(t.Key)
                     || t.Target.GetClass().FindSetter(t.Key) != null
                     || t.Target.GetClass().HasInstanceAutoAccessor(t.Key))
                 {
@@ -1921,6 +1926,15 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.InstanceSymbol t:
+                if (t.Target.HasExplicitPrototype)
+                {
+                    if (!t.Target.HasSymbolProperty(t.Key)
+                        && TryAssignThroughDescriptor(FindInheritedSymbolDescriptor(t.Target, t.Key),
+                            t.Target, t.Key.ToString(), value, strictMode)) break;
+                    if (strictMode) t.Target.SetBySymbolStrict(t.Key, value, strictMode);
+                    else t.Target.SetBySymbol(t.Key, value);
+                    break;
+                }
                 if (!t.Target.HasSymbolProperty(t.Key))
                 {
                     var descriptor = t.Target.GetClass().FindInstanceSymbolPropertyDescriptor(t.Key);

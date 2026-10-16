@@ -219,9 +219,39 @@ public partial class RuntimeEmitter
         var metadata = il.DeclareLocal(functionValues.Type);
         var missing = il.DefineLabel();
 
-        // FindMethod has already closed generic declaring types. Preserve both
-        // that identity and the evaluated symbol key without computing metadata.
+        // CLR instantiations of one source class share its JavaScript methods.
+        // Canonicalize only their cache identity: invocation still needs the
+        // valid closed MethodInfo returned by FindMethod. External CLR types
+        // retain their separate constructed-generic method identities.
+        var keyMethod = il.DeclareLocal(_types.MethodInfo);
+        var declaringType = il.DeclareLocal(_types.Type);
+        var haveKeyMethod = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, keyMethod);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(MemberInfo), "DeclaringType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, declaringType);
+        il.Emit(OpCodes.Ldloc, declaringType);
+        il.Emit(OpCodes.Brfalse, haveKeyMethod);
+        il.Emit(OpCodes.Ldloc, declaringType);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsConstructedGenericType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, haveKeyMethod);
+        il.Emit(OpCodes.Ldloc, declaringType);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(MemberInfo), "Module")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldtoken, symbolAccessors.GetOrCreateStaticMethod.DeclaringType!);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(MemberInfo), "Module")!.GetGetMethod()!);
+        il.Emit(OpCodes.Bne_Un, haveKeyMethod);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.MethodBase, "MethodHandle")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, declaringType);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "TypeHandle")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.MethodBaseGetMethodFromHandleWithType);
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Stloc, keyMethod);
+        il.MarkLabel(haveKeyMethod);
+        il.Emit(OpCodes.Ldloc, keyMethod);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Newobj, _types.GetConstructor(keyType, _types.MethodInfo, _types.Object));
         il.Emit(OpCodes.Stloc, key);

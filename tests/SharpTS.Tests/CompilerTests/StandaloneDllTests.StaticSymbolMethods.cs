@@ -20,6 +20,17 @@ public partial class StandaloneDllTests
             "cache-keys" => (StaticSymbolMethodIdentityTests.CacheKeySource, StaticSymbolMethodIdentityTests.CacheKeyExpected),
             _ => (StaticSymbolMethodIdentityTests.ReceiverSource, StaticSymbolMethodIdentityTests.ReceiverExpected)
         };
+        AssertStaticSymbolMethodSource(name, source, expected);
+    }
+
+    [Theory]
+    [MemberData(nameof(StaticSymbolMethodIdentityTests.ClosedGenericCases), MemberType = typeof(StaticSymbolMethodIdentityTests))]
+    public void Isolated_Issue2122ClosedGenericStaticSymbolMethods_PreserveCanonicalValues(
+        string name, string source, string expected)
+        => AssertStaticSymbolMethodSource("closed-generic-" + name, source, expected);
+
+    private static void AssertStaticSymbolMethodSource(string name, string source, string expected)
+    {
         using var directory = IntegrationTests.CliTestHelper.CreateTempDirectory();
         var path = directory.CreateFile("main.ts", source);
         var output = directory.GetPath("static-symbol-" + name + ".dll");

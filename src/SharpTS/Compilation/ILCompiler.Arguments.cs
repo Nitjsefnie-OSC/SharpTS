@@ -21,5 +21,6 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldloc, arguments);
             il.Emit(OpCodes.Stfld, field);
         });
+        MarkNonConstructible(builder.StubMethod);
     }
 }

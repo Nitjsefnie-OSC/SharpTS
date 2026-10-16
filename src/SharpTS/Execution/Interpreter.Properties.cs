@@ -405,7 +405,7 @@ public partial class Interpreter
         => GetPropertyValueFromChain(obj, name, receiver);
 
     private object? GetPropertyValueFromChain(
-        object? current, string name, object? receiver, bool bindClassMethods = false)
+        object? current, string name, object? receiver)
     {
         for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
         {
@@ -505,10 +505,7 @@ public partial class Interpreter
                         receiver, out var prototypeValue))
                     return prototypeValue;
                 if (classPrototype.TryGetOwnMember(name, out var member))
-                    return bindClassMethods && member is ISharpTSCallable method
-                        && member is not SharpTSClass
-                        ? SharpTSClass.BindMethodToReceiver(method, receiver!)
-                        : member;
+                    return member;
                 current = ObjectBuiltIns.PrototypeOf(this, classPrototype);
                 continue;
             }
@@ -1695,10 +1692,7 @@ public partial class Interpreter
     }
 
     internal object? GetInstancePrototypeProperty(SharpTSInstance instance, string name)
-    {
-        object? value = GetPropertyValueFromChain(instance.Prototype, name, instance, bindClassMethods: true);
-        return TryBindReceiverForMethodAccess(value, instance) ?? value;
-    }
+        => GetPropertyValueFromChain(instance.Prototype, name, instance);
 
     internal void SetInstancePropertyWithExplicitPrototype(
         SharpTSInstance instance, string name, object? value, bool strictMode)
@@ -1793,6 +1787,11 @@ public partial class Interpreter
     private static object? BindMemberCallReceiver(object? callee, object? receiver)
     {
         if (receiver is null) return callee;
+        // Class properties expose the canonical callable. Install the resolver's
+        // receiver scope only for the invocation, including borrowed methods.
+        if (callee is ISharpTSCallable classCallable
+            && FunctionBuiltIns.BindClassReceiver(classCallable, receiver) is { } classMethod)
+            return classMethod;
         // Raw method data properties preserve function identity on reads.
         // The member call supplies their receiver, including a prototype or
         // an ordinary object onto which a method has been copied.

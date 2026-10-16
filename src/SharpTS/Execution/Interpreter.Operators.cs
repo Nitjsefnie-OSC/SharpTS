@@ -810,7 +810,7 @@ public partial class Interpreter
         result = "";
         var resolved = instance.Get(new Token(TokenType.IDENTIFIER, "toString", null, 0));
         if (resolved is not ISharpTSCallable toString) return false;
-        var coerced = toString.CallV2(this, ReadOnlySpan<RuntimeValue>.Empty).ToObject();
+        var coerced = FunctionBuiltIns.CallWithThis(this, toString, instance, []);
         if (IsObjectLike(coerced)) return false;
         result = coerced as string ?? Stringify(coerced);
         return true;

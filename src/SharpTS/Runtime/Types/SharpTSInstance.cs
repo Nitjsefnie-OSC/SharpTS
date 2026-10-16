@@ -39,10 +39,6 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     private readonly Dictionary<string, PropertyResolution> _lookupCache = [];
     private readonly Dictionary<string, SharpTSFunction?> _setterCache = [];
 
-    // Bound method cache to avoid repeated Bind() allocations
-    // Key is the method name (since we already resolved the method via _lookupCache)
-    private readonly Dictionary<string, ISharpTSCallable> _boundMethodCache = [];
-
     /// <summary>
     /// Whether this instance is frozen (no property additions, removals, or modifications).
     /// </summary>
@@ -131,7 +127,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         Getter,      // Resolved to a getter (invoke on each access)
         OwnAccessor, // Accessor installed with Object.defineProperty
         Field,       // Resolved to an instance field (read from _fields)
-        Method,      // Resolved to a method (bind on access)
+        Method,      // Resolved to the canonical prototype method
         AutoAccessor,// Resolved to an auto-accessor (TypeScript 4.9+)
         ClassSelf,   // The special `constructor` property — returns the class
         NotFound     // Property doesn't exist (cache negative lookups)
@@ -240,7 +236,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
                 ? InvokeOwnAccessor(ownGetter, [])
                 : SharpTSUndefined.Instance,
             ResolutionType.Field => _fields[propName],
-            ResolutionType.Method => GetOrCreateBoundMethod(propName, resolution.Function!),
+            ResolutionType.Method => resolution.Function,
             ResolutionType.ClassSelf => _klass,
             ResolutionType.NotFound => SharpTSUndefined.Instance, // JavaScript semantics: missing properties return undefined
             _ => throw new InvalidOperationException("Unknown resolution type")
@@ -256,21 +252,6 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             SharpTSArrowFunction function => function.Bind(this).Call(_interpreter!, args),
             _ => callable.Call(_interpreter!, args),
         };
-
-    /// <summary>
-    /// Gets a cached bound method or creates and caches a new one.
-    /// Avoids repeated Bind() allocations for frequently accessed methods.
-    /// Handles both sync and async methods via SharpTSClass.BindMethod.
-    /// </summary>
-    private ISharpTSCallable GetOrCreateBoundMethod(string methodName, ISharpTSCallable method)
-    {
-        if (!_boundMethodCache.TryGetValue(methodName, out var boundMethod))
-        {
-            boundMethod = SharpTSClass.BindMethod(method, this);
-            _boundMethodCache[methodName] = boundMethod;
-        }
-        return boundMethod;
-    }
 
     public void Set(Token name, object? value)
     {

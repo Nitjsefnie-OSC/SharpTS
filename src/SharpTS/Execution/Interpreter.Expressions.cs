@@ -407,8 +407,8 @@ public partial class Interpreter
     /// <returns>The property value, or a constructor callable for super().</returns>
     /// <remarks>
     /// Retrieves the superclass from the lexical environment and reads its live
-    /// prototype chain. Accessors use the actual <c>this</c> receiver; unchanged
-    /// declared methods retain their existing bound-method convention.
+    /// prototype chain. Accessors use the actual <c>this</c> receiver; method
+    /// data properties retain their canonical identity until invocation.
     /// Constructor calls capture their lexical invocation and execute every parent
     /// class level before installing this owner's instance elements.
     /// </remarks>
@@ -441,7 +441,7 @@ public partial class Interpreter
                 ? ObjectBuiltIns.PrototypeOf(this, owner.Prototype)
                 : superclass.Prototype;
             return RuntimeValue.FromBoxed(GetPropertyValueFromChain(
-                superPrototype, property.Lexeme, thisReceiver, bindClassMethods: true));
+                superPrototype, property.Lexeme, thisReceiver));
         }
 
         throw new InvalidOperationException("Expected a super property.");

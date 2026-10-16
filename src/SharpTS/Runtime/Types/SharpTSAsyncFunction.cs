@@ -1,5 +1,6 @@
 using SharpTS.Parsing;
 using SharpTS.Runtime;
+using SharpTS.Runtime.BuiltIns;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.Execution;
 using SharpTS.TypeSystem;
@@ -117,6 +118,15 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         }
     }
 
+    internal static Task<object?> ResolveReturnValue(Interpreter interpreter, object? value)
+    {
+        // Inline settlement keeps captured interpreter continuations visible to the
+        // event loop before its next quiescence check, as with combinator capabilities.
+        var completion = new TaskCompletionSource<object?>();
+        PromiseBuiltIns.ResolveThenableIntoCapability(interpreter, completion, value);
+        return completion.Task;
+    }
+
     /// <summary>
     /// Asynchronously executes the function body.
     /// </summary>
@@ -152,8 +162,8 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         var result = await interpreter.ExecuteBlockAsync(_declaration.Body, environment);
         if (result.Type == ExecutionResult.ResultType.Return)
         {
-            // Unwrap Promise if returning a Promise from async function
-            return await SharpTSPromise.UnwrapIfPromise(result.Value.ToObject());
+            return await interpreter.AwaitPreservingEnvironment(
+                ResolveReturnValue(interpreter, result.Value.ToObject()));
         }
         if (result.Type == ExecutionResult.ResultType.Throw)
         {
@@ -324,8 +334,8 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
             {
                 interpreter.SetEnvironment(environment);
                 object? result = (await interpreter.EvaluateAsync(_declaration.ExpressionBody)).ToObject();
-                // Unwrap Promise if returning a Promise from async arrow
-                return await SharpTSPromise.UnwrapIfPromise(result);
+                return await interpreter.AwaitPreservingEnvironment(
+                    SharpTSAsyncFunction.ResolveReturnValue(interpreter, result));
             }
             finally
             {
@@ -337,7 +347,8 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
             var result = await interpreter.ExecuteBlockAsync(_declaration.BlockBody, environment);
             if (result.Type == ExecutionResult.ResultType.Return)
             {
-                return await SharpTSPromise.UnwrapIfPromise(result.Value.ToObject());
+                return await interpreter.AwaitPreservingEnvironment(
+                    SharpTSAsyncFunction.ResolveReturnValue(interpreter, result.Value.ToObject()));
             }
             if (result.Type == ExecutionResult.ResultType.Throw)
             {

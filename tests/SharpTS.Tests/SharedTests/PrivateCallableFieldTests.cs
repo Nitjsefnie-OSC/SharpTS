@@ -6,6 +6,15 @@ namespace SharpTS.Tests.SharedTests;
 
 public sealed class PrivateCallableFieldTests
 {
+    public const string AsyncReturnThenableSource = """
+        class C {
+            #f: any = () => ({ then(resolve: any) { resolve(47); } });
+            async read() { return this.#f(); }
+        }
+        async function run() { console.log(await new C().read()); }
+        run();
+        """;
+
     public const string IssueSource = """
         class C {
             #f = () => 42;
@@ -155,19 +164,10 @@ public sealed class PrivateCallableFieldTests
         Assert.Equal("42 43\n", TestHarness.Run(source, mode));
     }
 
-    // Interpreter async returns currently skip thenable adoption (#2146).
-    [Theory, CompiledOnlyData]
+    [Theory, ModeData]
     public void AsyncReturnAdoptsAnyTypedFieldThenable(ExecutionMode mode)
     {
-        const string source = """
-            class C {
-                #f: any = () => ({ then(resolve: any) { resolve(47); } });
-                async read() { return this.#f(); }
-            }
-            async function run() { console.log(await new C().read()); }
-            run();
-            """;
-        Assert.Equal("47\n", TestHarness.Run(source, mode));
+        Assert.Equal("47\n", TestHarness.Run(AsyncReturnThenableSource, mode));
     }
 
     [Theory]

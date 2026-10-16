@@ -121,8 +121,10 @@ public partial class ILCompiler
     private static bool SupportsReceiverInitialization(Stmt.Class declaration)
     {
         // The finite runtime-parent path is ordinary fields and synchronous
-        // methods. Other templates keep their existing CLR construction path.
-        if (declaration.TypeParams is { Count: > 0 } || declaration.Accessors is { Count: > 0 }
+        // methods. Static accessors do not initialize the instance receiver.
+        // Other templates keep their existing CLR construction path.
+        if (declaration.TypeParams is { Count: > 0 }
+            || (declaration.Accessors?.Any(accessor => !accessor.IsStatic) ?? false)
             || declaration.AutoAccessors is { Count: > 0 }
             || declaration.Fields.Any(field => field.IsPrivate || field.ComputedKey != null)
             || declaration.Methods.Any(method => method.IsPrivate || method.IsAsync || method.IsGenerator

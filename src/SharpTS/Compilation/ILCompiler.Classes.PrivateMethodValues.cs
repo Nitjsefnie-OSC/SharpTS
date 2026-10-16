@@ -163,7 +163,8 @@ public partial class ILCompiler
         if (_generatorMethodFunctionDCKeys.TryGetValue(source, out var generatorKey)) _generatorMethodFunctionDCKeys[lowered] = generatorKey;
         if (_asyncGeneratorMethodFunctionDCKeys.TryGetValue(source, out var asyncGeneratorKey)) _asyncGeneratorMethodFunctionDCKeys[lowered] = asyncGeneratorKey;
         if (source.IsAsync && source.IsGenerator) EmitAsyncGeneratorMethodBody(method, lowered, null, currentClassName: className);
-        else if (source.IsAsync) EmitAsyncMethodBody(method, lowered, null, currentClassName: className);
+        else if (source.IsAsync) EmitAsyncMethodBody(method, lowered, null, currentClassName: className,
+            lexicalThisParameterName: guestThis.Name.Lexeme);
         else if (source.IsGenerator) EmitGeneratorMethodBody(method, lowered, null, currentClassName: className);
         else
         {

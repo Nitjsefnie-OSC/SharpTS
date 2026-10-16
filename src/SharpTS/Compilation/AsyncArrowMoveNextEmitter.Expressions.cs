@@ -42,6 +42,13 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
+        if (_builder.LexicalThisStorage is { } lexicalThis)
+        {
+            lexicalThis.EmitLoad(_il);
+            SetStackUnknown();
+            return;
+        }
+
         // Load 'this' from outer state machine if captured
         if (_builder.Captures.Contains("this"))
         {

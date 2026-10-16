@@ -26,6 +26,15 @@ internal sealed class AsyncArrowStorageAccess
 
     public static AsyncArrowStorageAccess StateMachineField(FieldInfo field) => new(null, field);
 
+    public static AsyncArrowStorageAccess OuterThis(AsyncArrowStateMachineBuilder builder, FieldInfo field)
+        => new(null, field, new ReceiverStep(builder.OuterStateMachineField!, builder.OuterStateMachineType!));
+
+    // `this` is an immutable lexical binding, so a descendant can retain the full
+    // reference path without the bounded transitive paths used by mutable captures.
+    public AsyncArrowStorageAccess ThroughOuterStateMachine(AsyncArrowStateMachineBuilder builder)
+        => new(null, _field,
+            [new(builder.OuterStateMachineField!, builder.OuterStateMachineType!), .. _receiverPath]);
+
     public static AsyncArrowStorageAccess OwnDisplayClassField(FieldInfo displayClassField, FieldInfo field)
         => new(null, field, new ReceiverStep(displayClassField));
 

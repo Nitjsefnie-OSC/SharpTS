@@ -24,50 +24,66 @@ public class AsyncArrowNoDeadDuplicateTests
         return types.Count(t => t?.Name?.Contains("AsyncArrow") == true);
     }
 
+    private static void AssertNestedArrowRepresentations(Assembly assembly, int arrowsPerBody)
+    {
+        Type[] arrows = assembly.GetTypes().Where(type => type.Name.Contains("AsyncArrow")).ToArray();
+        // Typed calls and canonical guest method values have separate, reachable
+        // bodies. Neither may also emit the old dead standalone arrow from #721.
+        Assert.Equal(arrowsPerBody * 2, arrows.Length);
+        Assert.All(arrows, arrow => Assert.NotNull(arrow.GetField("<>__outer",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)));
+    }
+
     [Fact]
-    public void AsyncArrowInAsyncMethod_EmitsExactlyOneStateMachine()
+    public void AsyncArrowInAsyncMethod_EmitsOnlyItsLiveReceiverRepresentations()
     {
         // The #721 repro: one async arrow `w` directly inside the async method `run`.
         var source = """
             class C {
+              value = 5;
               async run() {
-                const w = async () => { await Promise.resolve(1); return 5; };
+                const w = async () => { await Promise.resolve(1); return this.value; };
                 return await w();
               }
             }
             new C().run().then(r => console.log(r));
+            const borrowed: any = new C().run;
+            borrowed.call({ value: 9 }).then((r: any) => console.log(r));
             """;
 
+        Assert.Empty(TestHarness.CompileAndVerifyOnly(source));
         var (assembly, output) = TestHarness.CompileAndRun(source, DecoratorMode.None);
 
-        Assert.Equal("5\n", output);
-        // Exactly one async-arrow state machine — the live nested one. Before #721 a second, dead
-        // standalone duplicate was also emitted.
-        Assert.Equal(1, CountAsyncArrowTypes(assembly));
+        Assert.Equal("5\n9\n", output);
+        AssertNestedArrowRepresentations(assembly, 1);
     }
 
     [Fact]
     public void NestedAsyncArrowsInAsyncMethod_NoDeadDuplicates()
     {
-        // Two async arrows, one nested in the other, both inside the async method: both are claimed by
-        // the method's state machine, so neither gets a standalone duplicate (was 4 types, now 2).
+        // Both arrows are claimed by their containing method representation;
+        // neither may acquire an additional standalone state machine.
         var source = """
             class C {
+              value = 8;
               async run() {
                 const a = async () => {
-                  const w = async () => { await Promise.resolve(1); return 8; };
+                  const w = async () => { await Promise.resolve(1); return this.value; };
                   return await w();
                 };
                 return await a();
               }
             }
             new C().run().then(r => console.log(r));
+            const borrowed: any = new C().run;
+            borrowed.call({ value: 11 }).then((r: any) => console.log(r));
             """;
 
+        Assert.Empty(TestHarness.CompileAndVerifyOnly(source));
         var (assembly, output) = TestHarness.CompileAndRun(source, DecoratorMode.None);
 
-        Assert.Equal("8\n", output);
-        Assert.Equal(2, CountAsyncArrowTypes(assembly));
+        Assert.Equal("8\n11\n", output);
+        AssertNestedArrowRepresentations(assembly, 2);
     }
 
     [Fact]

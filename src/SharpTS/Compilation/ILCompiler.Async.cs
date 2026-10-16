@@ -662,8 +662,10 @@ public partial class ILCompiler
 
     private void DefineAsyncArrowStateMachines(
         List<AsyncStateAnalyzer.AsyncArrowInfo> asyncArrows,
-        AsyncStateMachineBuilder outerBuilder)
+        AsyncStateMachineBuilder outerBuilder,
+        FieldBuilder? lexicalThisField = null)
     {
+        lexicalThisField ??= outerBuilder.ThisField;
         // Get all hoisted fields from the function's state machine
         Dictionary<string, FieldBuilder> functionHoistedFields = [];
         foreach (var (name, field) in outerBuilder.HoistedParameters)
@@ -776,6 +778,9 @@ public partial class ILCompiler
                     parentBuilder.OuterStateMachineType,
                     hasNestedChildren);
 
+                if (!arrowInfo.Arrow.HasOwnThis)
+                    arrowBuilder.LexicalThisStorage = parentBuilder.LexicalThisStorage?.ThroughOuterStateMachine(arrowBuilder);
+
                 // Define the stub method that will be called to invoke the async arrow
                 DefineAsyncArrowStub(arrowBuilder);
                 MarkPadsUndefined(arrowBuilder.StubMethod); // #640
@@ -799,6 +804,9 @@ public partial class ILCompiler
                 arrowInfo.Arrow.Parameters,
                 arrowAnalysis.HoistedLocals,
                 hasNestedAsyncArrows: hasNestedChildren);
+
+            if (!arrowInfo.Arrow.HasOwnThis && lexicalThisField != null)
+                arrowBuilder.LexicalThisStorage = AsyncArrowStorageAccess.OuterThis(arrowBuilder, lexicalThisField);
 
             // Define the stub method that will be called to invoke the async arrow
             DefineAsyncArrowStub(arrowBuilder);
@@ -1680,7 +1688,7 @@ public partial class ILCompiler
     }
 
     private void EmitAsyncMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo? fieldsField,
-        bool isInstanceMethod = true, string? currentClassName = null)
+        bool isInstanceMethod = true, string? currentClassName = null, string? lexicalThisParameterName = null)
     {
         // Analyze async function to determine await points and hoisted variables
         var analysis = _async.Analyzer.Analyze(method, preserveDebugBindings: EmitDebugSymbols);
@@ -1723,7 +1731,11 @@ public partial class ILCompiler
         string? methodDCKey = SetupAsyncMethodFunctionDC(smBuilder, method);
 
         // Build state machines for any async arrows found in this method
-        DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder);
+        // Guest method adapters carry the actual receiver in an explicit parameter;
+        // their CLR instance is only the callable's implementation holder.
+        var lexicalThisField = lexicalThisParameterName == null ? smBuilder.ThisField
+            : smBuilder.HoistedParameters[lexicalThisParameterName];
+        DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder, lexicalThisField);
 
         // Get lock fields if @lock decorator is present (instance vs static field sets)
         FieldBuilder? asyncLockField = null;

@@ -74,6 +74,8 @@ public class AsyncArrowVariableResolver : IVariableResolver
 
     internal AsyncArrowStorageAccess? TryResolveHoistedOrCaptured(string name)
     {
+        if (name == "this" && _builder.LexicalThisStorage is { } lexicalThis)
+            return lexicalThis;
         if (_builder.ParameterFields.TryGetValue(name, out var parameter))
             return AsyncArrowStorageAccess.StateMachineField(parameter);
         if (_builder.LocalFields.TryGetValue(name, out var local))
@@ -111,7 +113,9 @@ public class AsyncArrowVariableResolver : IVariableResolver
             ConstructorReceiverEmitter.ReadCell(_il, ConstructorContext!);
             return;
         }
-        if (_builder.IsCaptured("this") && _builder.CapturedFieldMap.TryGetValue("this", out var thisField))
+        if (_builder.LexicalThisStorage is { } lexicalThis)
+            lexicalThis.EmitLoad(_il);
+        else if (_builder.IsCaptured("this") && _builder.CapturedFieldMap.TryGetValue("this", out var thisField))
             AsyncArrowStorageAccess.CapturedField(_builder, "this", thisField).EmitLoad(_il);
         else
             _il.Emit(OpCodes.Ldnull);

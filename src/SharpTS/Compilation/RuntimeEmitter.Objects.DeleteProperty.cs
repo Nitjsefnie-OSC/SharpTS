@@ -13,6 +13,7 @@ public partial class RuntimeEmitter
         EmittedBooleanRuntime Booleans,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
+        EmittedFunctionBindingRuntime FunctionBindings,
         MethodBuilder GetProperty,
         FieldBuilder GlobalThisProperties,
         FieldBuilder GlobalThisSingletonField,
@@ -33,6 +34,7 @@ public partial class RuntimeEmitter
         EmittedBooleanRuntime Booleans,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
+        EmittedFunctionBindingRuntime FunctionBindings,
         MethodBuilder GetProperty,
         FieldBuilder GlobalThisProperties,
         FieldBuilder GlobalThisSingletonField,
@@ -53,6 +55,7 @@ public partial class RuntimeEmitter
         EmittedBooleanRuntime Booleans,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
+        EmittedFunctionBindingRuntime FunctionBindings,
         MethodBuilder GetProperty,
         FieldBuilder GlobalThisProperties,
         FieldBuilder GlobalThisSingletonField,
@@ -88,6 +91,7 @@ public partial class RuntimeEmitter
                 inputs.Booleans,
                 inputs.DescriptorStorage,
                 inputs.Errors,
+                inputs.FunctionBindings,
                 inputs.GetProperty,
                 inputs.GlobalThisProperties,
                 inputs.GlobalThisSingletonField,
@@ -382,6 +386,58 @@ public partial class RuntimeEmitter
         // configurable). Pre-fix this fell through to trueLabel without
         // recording, so verifyProperty's isConfigurable failed.
         var tsFunctionDelLabel = il.DefineLabel();
+        var boundFunctionDelLabel = il.DefineLabel();
+        var notBoundFunctionDelLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.FunctionBindings.BoundType);
+        il.Emit(OpCodes.Brtrue, boundFunctionDelLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.FunctionBindings.AnyType);
+        il.Emit(OpCodes.Brfalse, notBoundFunctionDelLabel);
+        il.MarkLabel(boundFunctionDelLabel);
+        var boundMetadataDelLabel = il.DefineLabel();
+        foreach (var metadata in new[] { "name", "length" })
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, metadata);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, boundMetadataDelLabel);
+        }
+        // Other bound properties retain the ordinary descriptor-store path.
+        il.Emit(OpCodes.Br, notBoundFunctionDelLabel);
+        il.MarkLabel(boundMetadataDelLabel);
+        var boundOwnMetadataDelLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+        il.Emit(OpCodes.Brfalse, boundOwnMetadataDelLabel);
+        // A previously deleted synthesized slot is absent unless recreated
+        // in PDS. Deleting an absent/inherited key succeeds even when sealed.
+        il.Emit(OpCodes.Ldloc, ordinaryDeleteDescriptorLocal);
+        il.Emit(OpCodes.Brfalse, trueLabel);
+        il.Emit(OpCodes.Ldloc, ordinaryDeleteDescriptorLocal);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.MarkLabel(boundOwnMetadataDelLabel);
+        if (strict)
+        {
+            // Reuse the ordinary bound [[Delete]] operation so both the PDS
+            // override and synthesized metadata are removed. The legacy
+            // strict TSFunction path below only records the deletion.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, objectDeletion.Property);
+            il.Emit(OpCodes.Brtrue, trueLabel);
+            EmitDeleteFail("' of function");
+        }
+        else
+        {
+            // A successful deletion must also suppress the cached own
+            // name/length, allowing inherited values through the retained
+            // bound prototype instead of resurrecting target metadata.
+            il.Emit(OpCodes.Br, tsFunctionDelLabel);
+        }
+        il.MarkLabel(notBoundFunctionDelLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
         il.Emit(OpCodes.Brtrue, tsFunctionDelLabel);
@@ -1041,6 +1097,7 @@ public partial class RuntimeEmitter
                 inputs.Booleans,
                 inputs.DescriptorStorage,
                 inputs.Errors,
+                inputs.FunctionBindings,
                 inputs.GetProperty,
                 inputs.GlobalThisProperties,
                 inputs.GlobalThisSingletonField,

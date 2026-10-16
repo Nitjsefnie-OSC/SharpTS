@@ -411,9 +411,9 @@ public partial class RuntimeEmitter
             il.MarkLabel(noSymGetterLabel);
         }
 
-        // Registered static methods share an unbound callable across constructor
-        // reads. Instance methods retain the receiver-bound wrapper used by
-        // their existing symbol dispatch path.
+        // Registered static methods share an unbound callable, including when
+        // inherited by a bound function. The call site supplies that function
+        // as this; retaining it as a CLR static target would prepend it to args.
         {
             var noSymMethodLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
@@ -425,9 +425,6 @@ public partial class RuntimeEmitter
             il.MarkLabel(symbolMethodFound);
 
             var instanceMethod = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Isinst, _types.Type);
-            il.Emit(OpCodes.Brfalse, instanceMethod);
             il.Emit(OpCodes.Ldloc, symMethodLocal);
             il.Emit(OpCodes.Castclass, _types.MethodInfo);
             il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.MethodInfo, "IsStatic")!.GetGetMethod()!);
@@ -523,9 +520,9 @@ public partial class RuntimeEmitter
         EmitProtoSymbolFallback(inputs.ArrayStorage.Type, inputs.ArrayOperations.PrototypeField, inputs.ArrayOperations.PrototypePopulateMethod);
         // Functions inherit symbol-keyed properties from Function.prototype,
         // including Symbol.isConcatSpreadable. The own symbol dictionary was
-        // already checked above; only a miss reaches this fallback.
+        // already checked above; only a miss reaches this fallback. Bound
+        // functions already walked their snapshotted chain, which can be null.
         EmitProtoSymbolFallback(inputs.TSFunctionType, inputs.FunctionPrototypeField, inputs.FunctionPrototypePopulateMethod);
-        EmitProtoSymbolFallback(inputs.BoundTSFunctionType, inputs.FunctionPrototypeField, inputs.FunctionPrototypePopulateMethod);
 
         // Ordinary symbol-keyed [[Get]] walks the receiver's explicit PDS
         // prototype chain just like string-keyed GetProperty. This is needed

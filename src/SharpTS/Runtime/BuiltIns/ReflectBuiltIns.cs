@@ -134,6 +134,9 @@ public static class ReflectBuiltIns
                         return RuntimeValue.FromBoolean(primitiveConstructorBySymbol.DeleteBySymbolStrict(symbol, false));
                     if (target is ISharpTSFunctionObject functionBySymbol)
                         return RuntimeValue.FromBoolean(FunctionObjectProperties.GetProperties(functionBySymbol, interpreter).DeleteBySymbolStrict(symbol, false));
+                    if (target is BoundFunction boundBySymbol)
+                        return RuntimeValue.FromBoolean(!boundBySymbol.OwnPropertyStorage.HasSymbolProperty(symbol)
+                            || boundBySymbol.OwnPropertyStorage.DeleteBySymbolStrict(symbol, false));
                     if (target is SharpTSFunctionPrototype functionPrototypeBySymbol)
                         return RuntimeValue.FromBoolean(functionPrototypeBySymbol.DeleteBySymbolStrict(symbol, false));
                 }
@@ -150,6 +153,8 @@ public static class ReflectBuiltIns
                             obj.DeleteProperty(propertyKey));
                     case ISharpTSFunctionObject function:
                         return RuntimeValue.FromBoolean(FunctionObjectProperties.GetProperties(function, interpreter).DeletePropertyStrict(propertyKey, false));
+                    case BoundFunction bound:
+                        return RuntimeValue.FromBoolean(bound.DeleteProperty(propertyKey, false));
                     case SharpTSInstance inst:
                         if ((inst.IsFrozen || inst.IsSealed) && inst.HasField(propertyKey))
                             return RuntimeValue.False;
@@ -187,7 +192,7 @@ public static class ReflectBuiltIns
                         : interpreter.GetPropertyValue(function,
                             interpreter.ToPropertyKeyString(args[1].ToObject()), functionReceiver));
                 }
-                if (target is SharpTSFunction or SharpTSArrowFunction)
+                if (target is SharpTSFunction or SharpTSArrowFunction or BoundFunction)
                 {
                     object? functionReceiver = args.Length > 2 ? args[2].ToObject() : target;
                     return RuntimeValue.FromBoxed(args[1].ToObject() is SharpTSSymbol symbol

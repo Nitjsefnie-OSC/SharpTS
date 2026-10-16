@@ -559,6 +559,10 @@ public partial class Interpreter
                 && TryReadDescriptor(klass.FindStaticPropertyDescriptor(name), receiver, out var classValue))
                 return classValue;
 
+            if (current is BoundFunction bound
+                && TryReadDescriptor(bound.GetOwnPropertyDescriptor(name), receiver, out var boundValue))
+                return boundValue;
+
             if (current is ISharpTSPrimitiveConstructor primitiveConstructor
                 && TryReadDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(name), receiver, out var primitiveValue))
                 return primitiveValue;
@@ -725,6 +729,14 @@ public partial class Interpreter
                 continue;
             }
 
+            if (current is BoundFunction bound)
+            {
+                if (TryReadDescriptor(bound.OwnPropertyStorage.GetOwnPropertyDescriptor(symbol), receiver, out var value))
+                    return value;
+                current = ObjectBuiltIns.PrototypeOf(this, bound);
+                continue;
+            }
+
             if (current is SharpTSArray array)
             {
                 if (array.TryGetSymbolAccessor(symbol, out var getter, out _))
@@ -766,7 +778,12 @@ public partial class Interpreter
             }
 
             if (current is SharpTSClass klass)
-                return GetClassSymbolValue(klass, symbol);
+            {
+                if (TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), receiver, out var value))
+                    return value;
+                current = ObjectBuiltIns.PrototypeOf(this, klass);
+                continue;
+            }
             if (current is SharpTSInstance instance)
                 return GetInstanceSymbolValue(instance, symbol);
             if (current is SharpTSRegExp)
@@ -844,6 +861,12 @@ public partial class Interpreter
                 obj = ObjectBuiltIns.PrototypeOf(this, expression);
                 continue;
             }
+            if (obj is BoundFunction bound)
+            {
+                if (bound.GetOwnPropertyDescriptor(name) is not null) return true;
+                obj = ObjectBuiltIns.PrototypeOf(this, bound);
+                continue;
+            }
             if (obj is SharpTSObject so)
             {
                 // SharpTSObject.HasProperty covers own fields + getters; add setters
@@ -911,6 +934,12 @@ public partial class Interpreter
                 if (expression.TryGetSymbolProperty(symbol, out _)
                     || expression.TryGetSymbolAccessor(symbol, out _, out _)) return true;
                 current = ObjectBuiltIns.PrototypeOf(this, expression);
+                continue;
+            }
+            if (current is BoundFunction bound)
+            {
+                if (bound.OwnPropertyStorage.GetOwnPropertyDescriptor(symbol) is not null) return true;
+                current = ObjectBuiltIns.PrototypeOf(this, bound);
                 continue;
             }
             if (current is ISharpTSPrimitiveConstructor primitiveConstructor)

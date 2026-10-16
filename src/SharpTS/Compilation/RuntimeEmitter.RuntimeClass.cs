@@ -891,6 +891,11 @@ public partial class RuntimeEmitter
         );
         // ObjectPrototypePopulate / ArrayPrototypePopulate shells already
         // defined above (before cctor) so the cctor can call them eagerly.
+        runtime.Reflect.Get = typeBuilder.DefineMethod(
+            "ReflectGet",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]);
         EmitGetFunctionMethod(
             typeBuilder,
             runtime.FunctionIntrospection,
@@ -905,11 +910,14 @@ public partial class RuntimeEmitter
                 runtime.ObjectPrototypes,
                 runtime.ObjectState,
                 runtime.ObjectStorage,
+                runtime.Reflect.Get,
                 runtime.Sentinels.UndefinedInstance,
                 runtime.Sentinels.UndefinedType
             )
         );  // For bind/call/apply on functions
         EmitBoundFunctionName(runtime.FunctionBindings.CaptureName, runtime.FunctionIntrospection.GetProperty);
+        EmitBoundFunctionPrototype(runtime.FunctionBindings.CapturePrototype,
+            runtime.ObjectPrototypes, runtime.DescriptorStorage);
         // Pre-define IsBoxedPrimitiveOfType shell so InstanceOf can reference
         // it. Body emitted later (after the prototype singletons are defined).
         DefineIsBoxedPrimitiveOfTypeShell(typeBuilder, runtime.BoxedPrimitives);
@@ -943,11 +951,6 @@ public partial class RuntimeEmitter
         // their normalization path consumes arbitrary iterables. Reserve the
         // method token now and fill its body in EmitIteratorMethodsAdvanced.
         DeclareIterateToList(typeBuilder, runtime.IteratorCollection, runtime.Symbols.Type);
-        runtime.Reflect.Get = typeBuilder.DefineMethod(
-            "ReflectGet",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            [_types.Object, _types.Object, _types.Object]);
         runtime.Reflect.ToPropertyKey = typeBuilder.DefineMethod(
             "ToPropertyKey",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -1394,6 +1397,7 @@ public partial class RuntimeEmitter
                 runtime.Booleans,
                 runtime.DescriptorStorage,
                 runtime.Errors,
+                runtime.FunctionBindings,
                 runtime.ObjectRead.Property,
                 runtime.GlobalObject.Properties,
                 runtime.GlobalObject.SingletonField,
@@ -1417,6 +1421,7 @@ public partial class RuntimeEmitter
                 runtime.Booleans,
                 runtime.DescriptorStorage,
                 runtime.Errors,
+                runtime.FunctionBindings,
                 runtime.ObjectRead.Property,
                 runtime.GlobalObject.Properties,
                 runtime.GlobalObject.SingletonField,
@@ -2195,7 +2200,8 @@ public partial class RuntimeEmitter
                     runtime.ObjectState.IsExtensible,
                     runtime.ObjectDeletion.Property,
                     runtime.Sentinels.UndefinedType,
-                    runtime.ObjectRead.Property
+                    runtime.ObjectRead.Property,
+                    runtime.FunctionBindings
                 )
             );
             EmitReflectPreventExtensions(

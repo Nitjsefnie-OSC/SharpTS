@@ -1094,6 +1094,7 @@ public partial class Interpreter
             SharpTSObject tsObj => tsObj.DeletePropertyStrict(name, strictMode),
             ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, this)
                 .DeletePropertyStrict(name, strictMode),
+            BoundFunction bound => bound.DeleteProperty(name, strictMode),
             SharpTSInstance tsInst => tsInst.DeleteFieldStrict(name, strictMode),
             SharpTSMath math => math.DeleteExtra(name),
             SharpTSJSON json => json.DeleteExtra(name),
@@ -1161,6 +1162,8 @@ public partial class Interpreter
             }
             return obj switch
             {
+                BoundFunction bound => !bound.OwnPropertyStorage.HasSymbolProperty(symbol)
+                    || bound.OwnPropertyStorage.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSObject tsObj => tsObj.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSInstance tsInst => tsInst.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSClass klass => klass.DeleteStaticSymbolProperty(symbol, strictMode),

@@ -1593,6 +1593,16 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(value);
         }
 
+        if (obj is BoundFunction boundFunction && index is SharpTSSymbol boundSymbol)
+        {
+            var storage = boundFunction.OwnPropertyStorage;
+            if (!TryAssignThroughDescriptor(storage.GetOwnPropertyDescriptor(boundSymbol)
+                    ?? FindInheritedSymbolDescriptor(boundFunction, boundSymbol),
+                    boundFunction, boundSymbol.ToString(), value, strictMode))
+                storage.SetBySymbolStrict(boundSymbol, value, strictMode);
+            return RuntimeValue.FromBoxed(value);
+        }
+
         if (index is not SharpTSSymbol
             && FunctionObjectProperties.TryGetExplicitPrototype(obj, this, out _))
         {

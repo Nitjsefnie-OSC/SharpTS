@@ -1,3 +1,4 @@
+using SharpTS.Compilation;
 using SharpTS.Execution;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
@@ -128,14 +129,22 @@ public static class FunctionBuiltIns
         for (int i = 1; i < args.Length; i++)
             boundArgs.Add(args[i].ToObject());
 
+        // BoundFunctionCreate snapshots the target's actual internal prototype,
+        // including a derived class's base constructor and explicit null.
+        object? prototype = ObjectBuiltIns.PrototypeOf(interp, callable);
+
         // Arrow functions ignore thisArg (they capture 'this' from lexical scope)
         if (callable is SharpTSArrowFunction arrow && !arrow.HasOwnThis)
         {
             // Still create a bound function for partial application, but 'this' won't change
-            return RuntimeValue.FromObject(new BoundFunction(callable, null, boundArgs, ignoreThisArg: true));
+            var boundArrow = new BoundFunction(callable, null, boundArgs, ignoreThisArg: true);
+            boundArrow.SetPrototypeSnapshot(prototype);
+            return RuntimeValue.FromObject(boundArrow);
         }
 
-        return RuntimeValue.FromObject(new BoundFunction(callable, thisArg, boundArgs));
+        var bound = new BoundFunction(callable, thisArg, boundArgs);
+        bound.SetPrototypeSnapshot(prototype);
+        return RuntimeValue.FromObject(bound);
     }
 
     /// <summary>
@@ -416,6 +425,31 @@ public class BoundFunction : ISharpTSCallable
     private readonly List<object?> _boundArgs;
     private readonly bool _ignoreThisArg;
     private SharpTSObject? _ownProperties;
+    internal SharpTSObject OwnPropertyStorage => _ownProperties ??= FunctionObjectProperties.Create(Name, Arity());
+
+    internal void SetPrototypeSnapshot(object? prototype)
+        => FunctionObjectProperties.SetExplicitPrototype(OwnPropertyStorage, prototype);
+
+    internal void FreezeOwnProperties()
+    {
+        OwnPropertyStorage.Freeze();
+        PropertyDescriptorStore.Freeze(this);
+    }
+
+    internal void SealOwnProperties()
+    {
+        OwnPropertyStorage.Seal();
+        PropertyDescriptorStore.Seal(this);
+    }
+
+    internal void PreventExtensions()
+    {
+        OwnPropertyStorage.PreventExtensions();
+        PropertyDescriptorStore.PreventExtensions(this);
+    }
+
+    internal bool DeleteProperty(string name, bool strictMode)
+        => GetOwnPropertyDescriptor(name) is null || OwnPropertyStorage.DeletePropertyStrict(name, strictMode);
 
     internal ISharpTSCallable Target => _target;
 

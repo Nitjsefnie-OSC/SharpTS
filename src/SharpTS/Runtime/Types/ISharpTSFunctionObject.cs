@@ -1,4 +1,5 @@
 using SharpTS.Execution;
+using SharpTS.Runtime.BuiltIns;
 using System.Runtime.CompilerServices;
 
 namespace SharpTS.Runtime.Types;
@@ -26,6 +27,7 @@ internal static class FunctionObjectProperties
         {
             SharpTSFunction declaration => declaration.OwnPropertyStorage,
             SharpTSArrowFunction expression => expression.OwnPropertyStorage,
+            BoundFunction bound => bound.OwnPropertyStorage,
             ISharpTSFunctionObject value => interpreter is null ? value.OwnProperties : GetProperties(value, interpreter),
             _ => null!
         };

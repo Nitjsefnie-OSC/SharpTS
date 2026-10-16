@@ -42,7 +42,7 @@ public sealed class CustomHasInstanceTests
             const prototype: any = { [Symbol.hasInstance]: function(value: any) { return this === matcher && value === 7; } };
             const matcher: any = Object.create(prototype);
             console.log(7 instanceof matcher, 8 instanceof matcher);
-            """, "true true false\ntrue false\n"];
+            """, "true false false\ntrue false\n"];
         yield return ["errors", """
             const token: any = {};
             const lookup: any = {};

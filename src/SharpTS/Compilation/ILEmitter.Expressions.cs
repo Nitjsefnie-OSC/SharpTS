@@ -41,6 +41,11 @@ public partial class ILEmitter
     protected override void EmitVariable(Expr.Variable v)
     {
         var name = v.Name.Lexeme;
+        if (_ctx.HasLoopBodyBindingAccess(name))
+        {
+            SetStackType(_resolver.TryLoadVariable(name)!.Value);
+            return;
+        }
 
         if (TryEmitEnumInitializerMember(name))
             return;
@@ -401,6 +406,15 @@ public partial class ILEmitter
 
     protected override void EmitAssign(Expr.Assign a)
     {
+        if (_ctx.HasLoopBodyBindingAccess(a.Name.Lexeme))
+        {
+            EmitExpression(a.Value);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Dup);
+            _resolver.TryStoreVariable(a.Name.Lexeme);
+            SetStackUnknown();
+            return;
+        }
         // CommonJS: `exports = X` → stsfld $exports (mirrors TryEmitCjsSet for module.exports).
         // Must run before EmitExpression(a.Value) so we can own the box+dup+stsfld sequence
         // cleanly — otherwise the generic "Unknown target" fallback at the bottom of this method

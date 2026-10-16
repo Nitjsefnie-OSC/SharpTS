@@ -37,6 +37,7 @@ public class LocalVariableResolver : IVariableResolver
     /// <inheritdoc />
     public StackType? TryLoadVariable(string name)
     {
+        if (TryLoadLoopBodyBinding(name)) return StackType.Unknown;
         // 0. Per-iteration loop-binding cell (#650): in the loop body / condition /
         //    increment the binding is accessed through its StrongBox so closures that
         //    captured the cell observe end-of-iteration mutations. Takes precedence
@@ -297,6 +298,7 @@ public class LocalVariableResolver : IVariableResolver
     /// <inheritdoc />
     public bool TryStoreVariable(string name)
     {
+        if (TryStoreLoopBodyBinding(name)) return true;
         // 0. Per-iteration loop-binding cell (#650): write through the StrongBox so the
         //    mutation is visible to closures that captured this iteration's cell.
         if (_ctx.CellBindingLocals.TryGetValue(name, out var storeCell))
@@ -568,6 +570,56 @@ public class LocalVariableResolver : IVariableResolver
         }
 
         return false;
+    }
+
+    private bool TryLoadLoopBodyBinding(string name)
+    {
+        if (!_ctx.HasLoopBodyBindingAccess(name)) return false;
+        if (_ctx.LoopBodyCellDeclarations.ContainsKey(name))
+        {
+            _il.Emit(OpCodes.Ldloc, _ctx.CellBindingLocals[name]);
+            _il.Emit(OpCodes.Ldfld, _types.StrongBoxOfObjectValueField);
+        }
+        else if (_ctx.LoopBodyCellShadows.ContainsKey(name))
+            _il.Emit(OpCodes.Ldloc, _ctx.Locals.GetLocal(name)!);
+        else
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _ctx.CapturedFields![name]);
+            _il.Emit(OpCodes.Castclass, _types.StrongBoxOfObject);
+            _il.Emit(OpCodes.Ldfld, _types.StrongBoxOfObjectValueField);
+        }
+        _ctx.EmitLexicalTdzValueCheck(_il, name);
+        return true;
+    }
+
+    private bool TryStoreLoopBodyBinding(string name)
+    {
+        if (!_ctx.HasLoopBodyBindingAccess(name)) return false;
+        var value = _il.DeclareLocal(_types.Object);
+        _il.Emit(OpCodes.Stloc, value);
+        TryLoadLoopBodyBinding(name);
+        _il.Emit(OpCodes.Pop);
+        if (_ctx.LoopBodyCellDeclarations.ContainsKey(name))
+        {
+            _il.Emit(OpCodes.Ldloc, _ctx.CellBindingLocals[name]);
+            _il.Emit(OpCodes.Ldloc, value);
+            _il.Emit(OpCodes.Stfld, _types.StrongBoxOfObjectValueField);
+        }
+        else if (_ctx.LoopBodyCellShadows.ContainsKey(name))
+        {
+            _il.Emit(OpCodes.Ldloc, value);
+            _il.Emit(OpCodes.Stloc, _ctx.Locals.GetLocal(name)!);
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _ctx.CapturedFields![name]);
+            _il.Emit(OpCodes.Castclass, _types.StrongBoxOfObject);
+            _il.Emit(OpCodes.Ldloc, value);
+            _il.Emit(OpCodes.Stfld, _types.StrongBoxOfObjectValueField);
+        }
+        return true;
     }
 
     private void EmitCapturedLexicalStoreGuard(string name, Action emitCurrentValue)

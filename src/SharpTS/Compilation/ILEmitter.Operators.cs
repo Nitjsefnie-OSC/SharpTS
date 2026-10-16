@@ -767,6 +767,7 @@ public partial class ILEmitter
 
     protected override void EmitCompoundAssign(Expr.CompoundAssign ca)
     {
+        if (_ctx.HasLoopBodyBindingAccess(ca.Name.Lexeme)) { base.EmitCompoundAssign(ca); return; }
         if (TryGetClassDefinitionCaptureSlot(ca.Name.Lexeme, out _)) { base.EmitCompoundAssign(ca); return; }
         if (TryEmitExternalCompoundAssign(ca))
             return;
@@ -992,6 +993,7 @@ public partial class ILEmitter
 
     protected override void EmitLogicalAssign(Expr.LogicalAssign la)
     {
+        if (_ctx.HasLoopBodyBindingAccess(la.Name.Lexeme)) { base.EmitLogicalAssign(la); return; }
         if (TryGetClassDefinitionCaptureSlot(la.Name.Lexeme, out _)) { base.EmitLogicalAssign(la); return; }
         // An unresolvable reference throws before the logical operator can
         // inspect its value.  Letting the generic store path handle this left
@@ -1960,6 +1962,14 @@ public partial class ILEmitter
     /// </remarks>
     private void EmitStoreIncrementedVariable(string name, bool isTypedDouble, bool resultIsUnboxedDouble)
     {
+        if (_ctx.HasLoopBodyBindingAccess(name))
+        {
+            if (isTypedDouble) IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            _resolver.TryStoreVariable(name);
+            if (resultIsUnboxedDouble) IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            SetStackUnknown();
+            return;
+        }
         if (TryGetClassDefinitionCaptureSlot(name, out _))
         {
             if (isTypedDouble) IL.Emit(OpCodes.Box, _ctx.Types.Double);
@@ -2176,7 +2186,7 @@ public partial class ILEmitter
             var localType = _ctx.Locals.GetLocalType(v.Name.Lexeme);
             bool isTypedDouble = localType != null && _ctx.Types.IsDouble(localType);
             string prefixDCName = _ctx.ResolveFunctionDCFieldName(v.Name.Lexeme);
-            if (!isTypedDouble &&
+            if (!isTypedDouble && !_ctx.HasLoopBodyBindingAccess(v.Name.Lexeme) &&
                 _ctx.FunctionDisplayClassFields?.TryGetValue(prefixDCName, out var prefixDCField) == true)
                 isTypedDouble = prefixDCField.FieldType == _ctx.Types.Double;
 
@@ -2376,7 +2386,7 @@ public partial class ILEmitter
             var localType = _ctx.Locals.GetLocalType(v.Name.Lexeme);
             bool isTypedDouble = localType != null && _ctx.Types.IsDouble(localType);
             string postfixDCName = _ctx.ResolveFunctionDCFieldName(v.Name.Lexeme);
-            if (!isTypedDouble &&
+            if (!isTypedDouble && !_ctx.HasLoopBodyBindingAccess(v.Name.Lexeme) &&
                 _ctx.FunctionDisplayClassFields?.TryGetValue(postfixDCName, out var postfixDCField) == true)
                 isTypedDouble = postfixDCField.FieldType == _ctx.Types.Double;
 

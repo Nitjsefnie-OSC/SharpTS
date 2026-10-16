@@ -150,6 +150,13 @@ public class ClosureAnalyzer : AstVisitorBase
     // Per-iteration reference-cell analysis (#650), run alongside capture analysis
     // and reachable wherever this analyzer is threaded (via _ctx.ClosureAnalyzer).
     private readonly PerIterationCellAnalyzer _cells = new();
+    private readonly LoopBodyCellAnalyzer _bodyCells = new();
+
+    internal bool IsLoopBodyCellDeclaration(Token declaration) => _bodyCells.IsCellDeclaration(declaration);
+    internal bool TryGetLoopBodyCellCapture(object closure, string name, out Token declaration) =>
+        _bodyCells.TryGetCaptureDeclaration(closure, name, out declaration);
+    internal IReadOnlyDictionary<string, Token>? GetLoopBodyCellCaptures(object closure) =>
+        _bodyCells.ClosureCaptures.GetValueOrDefault(closure);
 
     /// <summary>
     /// The <c>for (let/const …)</c> binding names in <paramref name="loop"/> that need
@@ -161,7 +168,13 @@ public class ClosureAnalyzer : AstVisitorBase
     /// The captured names in <paramref name="closure"/> that hold a per-iteration cell
     /// (the closure body must dereference <c>StrongBox.Value</c>); empty when none do.
     /// </summary>
-    public HashSet<string> GetClosureCellFields(object closure) => _cells.GetClosureCellFields(closure);
+    public HashSet<string> GetClosureCellFields(object closure)
+    {
+        var cells = new HashSet<string>(_cells.GetClosureCellFields(closure));
+        if (_bodyCells.ClosureCaptures.TryGetValue(closure, out var bodyCells))
+            cells.UnionWith(bodyCells.Keys);
+        return cells;
+    }
 
     /// <summary>
     /// Gets the captured variables for a given function/arrow AST node.
@@ -285,6 +298,13 @@ public class ClosureAnalyzer : AstVisitorBase
         // Per-iteration cell analysis (#650) is independent of capture-source state,
         // so run it as its own pass over the same statements.
         _cells.Analyze(statements);
+        _bodyCells.Analyze(statements);
+        foreach (var (closure, captures) in _bodyCells.ClosureCaptures)
+        {
+            if (!_captures.TryGetValue(closure, out var names)) _captures[closure] = names = [];
+            names.UnionWith(captures.Keys);
+            _allCapturedVariables.UnionWith(captures.Keys);
+        }
     }
 
     /// <summary>

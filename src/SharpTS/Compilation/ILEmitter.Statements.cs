@@ -145,6 +145,8 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GlobalObject.SetProperty);
         }
 
+        if (TryInitializeLoopBodyBinding(v)) return;
+
         // Module-level storage (static field / entry-point display class) is only the right
         // target when this declaration IS a module-level binding: we are emitting the module
         // top-level statements (IsModuleTopLevel) and not inside a nested block. Inside a
@@ -319,15 +321,7 @@ public partial class ILEmitter
             }
             IL.Emit(OpCodes.Stloc, predeclaredLexical);
 
-            if (_ctx.LexicalCaptureWriteBacks.TryGetValue(v.Name.Lexeme, out var writeBacks))
-            {
-                foreach (var (displayClass, field) in writeBacks)
-                {
-                    IL.Emit(OpCodes.Ldloc, displayClass);
-                    IL.Emit(OpCodes.Ldloc, predeclaredLexical);
-                    IL.Emit(OpCodes.Stfld, field);
-                }
-            }
+            RefreshLexicalCaptureSnapshots(v.Name.Lexeme, predeclaredLexical);
             return;
         }
 
@@ -3214,35 +3208,30 @@ public partial class ILEmitter
     protected override void EmitBlock(Stmt.Block b)
     {
         _ctx.Locals.EnterScope();
-
-        RegisterRuntimeClassBindingScopes(b.Statements);
-        _ctx.PredeclareCapturedLexicalLocals?.Invoke(IL, _ctx, b.Statements);
-        InitializeCapturedLexicalTdzBindings(b.Statements);
-
-        // Class declarations have lexical block bindings but their CLR Types
-        // are defined ahead of method emission. Predeclare an undefined local
-        // for TDZ behavior; the declaration statement installs its Type token.
-        PredeclareBlockScopedClassLocals(b.Statements);
-
-        // Check if block contains using declarations
-        var usingResources = new List<UsingResourceLocals>();
-        bool hasUsing = b.Statements.Any(s => s is Stmt.Using);
-
-        if (hasUsing)
+        List<LoopBodyCellScopeEntry> cells = [];
+        try
         {
-            // Emit block with try/finally for disposal
-            EmitBlockWithUsing(b.Statements, usingResources);
-        }
-        else
-        {
-            // Simple block without using declarations
-            foreach (var stmt in b.Statements)
-            {
-                EmitStatement(stmt);
-            }
-        }
+            EnterLoopBodyCellScope(b.Statements, cells);
+            RegisterRuntimeClassBindingScopes(b.Statements);
+            _ctx.PredeclareCapturedLexicalLocals?.Invoke(IL, _ctx, b.Statements);
+            InitializeCapturedLexicalTdzBindings(b.Statements);
 
-        _ctx.Locals.ExitScope();
+            // Class declarations have lexical block bindings but their CLR Types
+            // are defined ahead of method emission. Predeclare an undefined local
+            // for TDZ behavior; the declaration statement installs its Type token.
+            PredeclareBlockScopedClassLocals(b.Statements);
+
+            var usingResources = new List<UsingResourceLocals>();
+            bool hasUsing = b.Statements.Any(s => s is Stmt.Using);
+            if (hasUsing) EmitBlockWithUsing(b.Statements, usingResources);
+            else
+                foreach (var stmt in b.Statements) EmitStatement(stmt);
+        }
+        finally
+        {
+            ExitLoopBodyCellScope(cells);
+            _ctx.Locals.ExitScope();
+        }
     }
 
     private void PredeclareBlockScopedClassLocals(IEnumerable<Stmt> statements)
@@ -3288,6 +3277,8 @@ public partial class ILEmitter
 
         foreach (var name in names)
         {
+            if (_ctx.LoopBodyCellDeclarations.ContainsKey(name) || _ctx.LoopBodyCellShadows.ContainsKey(name))
+                continue;
             if (_ctx.CapturedFunctionLocals?.Contains(name) == true
                 && _ctx.FunctionDisplayClassFields?.TryGetValue(name, out var functionField) == true
                 && _ctx.FunctionDisplayClassLocal != null)

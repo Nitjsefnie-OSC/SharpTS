@@ -357,6 +357,12 @@ public partial class ILCompiler
 
                 foreach (var capturedVar in captures)
                 {
+                    if (_closures.Analyzer.TryGetLoopBodyCellCapture(arrow, capturedVar, out _))
+                    {
+                        fieldMap[capturedVar] = displayClass.DefineField(
+                            capturedVar, _types.Object, FieldAttributes.Public);
+                        continue;
+                    }
                     // A named function expression's own name is a distinct
                     // inner binding even when top-level code declares the same
                     // spelling. Always give it a capture field; wrapper
@@ -1747,6 +1753,7 @@ public partial class ILCompiler
             var arrowCellFields = _closures.Analyzer.GetClosureCellFields(arrow);
             if (arrowCellFields.Count > 0)
                 ctx.CellCapturedFieldNames = arrowCellFields;
+            ctx.LoopBodyCellCaptures = _closures.Analyzer.GetLoopBodyCellCaptures(arrow);
 
             // Set the $entryPointDC field if this arrow captures top-level variables
             if (_closures.ArrowEntryPointDCFields.TryGetValue(arrow, out var entryPointDCField))

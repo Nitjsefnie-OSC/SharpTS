@@ -133,6 +133,10 @@ if ($Suite -in @('All', 'Standalone')) {
     for ($shard = 0; $shard -lt $ShardCount; $shard++) {
         $plan = & (Join-Path $PSScriptRoot 'test-standalone-shard.ps1') -ShardIndex $shard -ShardCount $ShardCount `
             -Configuration $Configuration -IncludeExternal:(-not $Hermetic) -DescribeOnly | ConvertFrom-Json
+        if (-not $DescribeOnly) {
+            $plan | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath `
+                (Join-Path $ResultsDirectory "standalone-$shard.plan.json") -Encoding utf8
+        }
         $stages.Add((New-TestStage "standalone-$shard" $core $plan.Filter))
     }
 }

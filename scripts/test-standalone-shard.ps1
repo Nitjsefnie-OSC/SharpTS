@@ -15,6 +15,7 @@ if ($ShardIndex -ge $ShardCount) {
 }
 
 $repository = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'standalone-shard-plan.ps1')
 $project = Join-Path $repository 'tests/SharpTS.Tests/SharpTS.Tests.csproj'
 $baseFilter = 'Category!=LiveNetwork&Category!=LoadSensitive&Category!=npm&FullyQualifiedName~SharpTS.Tests.CompilerTests.StandaloneDllTests.'
 if ($IncludeExternal) {
@@ -64,43 +65,73 @@ foreach ($line in $discovery) {
     }
     $listedMethods.Add($match.Groups[1].Value)
 }
-$methods = @($listedMethods | Sort-Object -Unique)
-if ($methods.Count -eq 0) {
-    throw 'No standalone test methods were discovered.'
+$plan = New-StandaloneShardPlan -MethodEntries $listedMethods.ToArray() -ShardCount $ShardCount -BaseFilter $baseFilter
+$partition = $plan.Shards[$ShardIndex]
+$methods = $plan.Methods
+$selected = $partition.SelectedMethods
+$filter = $partition.Filter
+$description = [ordered]@{
+    ShardIndex = $ShardIndex
+    ShardCount = $ShardCount
+    BaseFilter = $baseFilter
+    DiscoveredEntries = $plan.DiscoveredEntries
+    Methods = $methods
+    SelectedMethods = $selected
+    Filter = $filter
+    Algorithm = $plan.Algorithm
+    WeightUnit = $plan.WeightUnit
+    InventoryDigest = $plan.InventoryDigest
+    SelectedDiscoveryEntries = $partition.SelectedDiscoveryEntries
+    EstimatedWeight = $partition.EstimatedWeight
+    HeaviestMethodWeight = $plan.HeaviestMethodWeight
+    LowerBound = $plan.LowerBound
+    MethodWeights = $plan.MethodWeights
+    ShardWeights = @($plan.Shards | ForEach-Object {
+        [ordered]@{
+            ShardIndex = $_.ShardIndex
+            MethodCount = $_.SelectedMethods.Count
+            DiscoveredEntries = $_.SelectedDiscoveryEntries
+            EstimatedWeight = $_.EstimatedWeight
+        }
+    })
 }
-
-$selected = @($methods | Where-Object {
-    $digest = [System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($_))
-    ($digest[0] % $ShardCount) -eq $ShardIndex
-})
-if ($selected.Count -eq 0) {
-    throw "Standalone shard $ShardIndex is empty."
-}
-$methodFilter = ($selected | ForEach-Object { "FullyQualifiedName=$_" }) -join '|'
-$filter = "$baseFilter&($methodFilter)"
-if ($filter.Length -gt 24000) {
-    throw 'The standalone shard filter is too long for a portable command line.'
+$descriptionJson = $description | ConvertTo-Json -Depth 6
+$resolvedResultsDirectory = $null
+if ($ResultsDirectory) {
+    $resolvedResultsDirectory = [IO.Path]::GetFullPath($ResultsDirectory)
+    [void][IO.Directory]::CreateDirectory($resolvedResultsDirectory)
+    [IO.File]::WriteAllText((Join-Path $resolvedResultsDirectory "standalone-$ShardIndex-plan.json"), $descriptionJson)
 }
 
 if ($DescribeOnly) {
-    [ordered]@{
-        ShardIndex = $ShardIndex
-        ShardCount = $ShardCount
-        BaseFilter = $baseFilter
-        DiscoveredEntries = $listedMethods.Count
-        Methods = $methods
-        SelectedMethods = $selected
-        Filter = $filter
-    } | ConvertTo-Json -Depth 4
+    $descriptionJson
     return
 }
 
-Write-Host "Standalone shard $ShardIndex/$ShardCount runs $($selected.Count) of $($methods.Count) methods, including every selected theory row."
+Write-Host "Standalone shard $ShardIndex/$ShardCount runs $($selected.Count) of $($methods.Count) methods, weighted at $($partition.SelectedDiscoveryEntries) of $($plan.DiscoveredEntries) discovery entries."
 $testArguments = @('test', $project, '--no-build', '--configuration', $Configuration,
     '--logger', 'console;verbosity=normal', '--filter', $filter,
     '--blame-hang-timeout', "${HangTimeoutSeconds}s", '--blame-hang-dump-type', 'mini')
-if ($ResultsDirectory) {
-    $testArguments += @('--results-directory', $ResultsDirectory, '--logger', "trx;LogFileName=standalone-$ShardIndex.trx")
+if ($resolvedResultsDirectory) {
+    $testArguments += @('--results-directory', $resolvedResultsDirectory, '--logger', "trx;LogFileName=standalone-$ShardIndex.trx")
 }
-& dotnet @testArguments
-exit $LASTEXITCODE
+$started = [DateTimeOffset]::UtcNow
+$elapsed = [Diagnostics.Stopwatch]::StartNew()
+$testExitCode = $null
+try {
+    & dotnet @testArguments
+    $testExitCode = $LASTEXITCODE
+} finally {
+    $elapsed.Stop()
+    if ($resolvedResultsDirectory) {
+        [ordered]@{
+            ShardIndex = $ShardIndex
+            InventoryDigest = $plan.InventoryDigest
+            StartedUtc = $started.ToString('O', [Globalization.CultureInfo]::InvariantCulture)
+            FinishedUtc = [DateTimeOffset]::UtcNow.ToString('O', [Globalization.CultureInfo]::InvariantCulture)
+            ElapsedMilliseconds = $elapsed.ElapsedMilliseconds
+            ExitCode = $testExitCode
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $resolvedResultsDirectory "standalone-$ShardIndex-run.json") -Encoding utf8
+    }
+}
+exit $testExitCode

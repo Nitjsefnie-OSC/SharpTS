@@ -69,6 +69,7 @@ $ci = Get-Content -LiteralPath (Join-Path $workflowRoot 'ci.yml') -Raw
 foreach ($requiredText in @(
     'scripts/get-ci-change-scope.ps1',
     'scripts/test-ci-change-scope.ps1',
+    'scripts/test-standalone-shard-plan.ps1',
     'fetch-depth: 0',
     "mode: `${{ steps.scope.outputs.mode }}",
     "reason: `${{ steps.scope.outputs.reason }}",
@@ -110,9 +111,31 @@ if (-not $coreJob.Contains('--filter "' + $coreFilter + '"', [StringComparison]:
     $errors.Add('Core and standalone discovery must retain their complementary category/class filters.')
 }
 foreach ($requiredText in @('shard: [0, 1, 2, 3, 4, 5]', 'shell: pwsh',
-    './scripts/test-standalone-shard.ps1 -ShardIndex ${{ matrix.shard }} -ShardCount 6', 'timeout-minutes: 25')) {
+    './scripts/test-standalone-shard.ps1 -ShardIndex ${{ matrix.shard }} -ShardCount 6',
+    '-ResultsDirectory artifacts/standalone/${{ matrix.os }}-${{ matrix.shard }}',
+    'timeout-minutes: 25', 'timeout-minutes: 30', 'fail-fast: false', 'if: always()',
+    'name: standalone-${{ matrix.os }}-${{ matrix.shard }}',
+    'path: artifacts/standalone/', 'retention-days: 7')) {
     if (-not $standaloneJob.Contains($requiredText, [StringComparison]::Ordinal)) {
         $errors.Add("ci.yml standalone job is missing its complete shard contract: $requiredText")
+    }
+}
+$policyJob = Get-WorkflowJob $ci 'workflow-policy' 'ci.yml'
+if (-not $policyJob.Contains('./scripts/test-standalone-shard-plan.ps1', [StringComparison]::Ordinal)) {
+    $errors.Add('ci.yml workflow-policy must execute the pure standalone planner regressions.')
+}
+foreach ($requiredText in @('WaitForExit(60000)', '5000',
+    'Unrecognized standalone test identity; refusing partial coverage:',
+    "[ValidateRange(1, 3600)][int]`$HangTimeoutSeconds = 120", '--blame-hang-timeout',
+    "'--blame-hang-dump-type', 'mini'", 'New-StandaloneShardPlan')) {
+    if (-not $standaloneScript.Contains($requiredText, [StringComparison]::Ordinal)) {
+        $errors.Add("Standalone runner is missing its coverage/budget contract: $requiredText")
+    }
+}
+$standalonePlanner = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'standalone-shard-plan.ps1') -Raw
+foreach ($requiredText in @('method-row-lpt-v1', 'discovered-entry', 'InventoryDigest', '24000')) {
+    if (-not $standalonePlanner.Contains($requiredText, [StringComparison]::Ordinal)) {
+        $errors.Add("Standalone planner is missing its deterministic planning contract: $requiredText")
     }
 }
 foreach ($requiredText in @('build, typescript-conformance,', "'typescript-conformance'")) {

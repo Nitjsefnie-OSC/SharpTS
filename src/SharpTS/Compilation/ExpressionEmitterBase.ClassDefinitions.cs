@@ -351,6 +351,7 @@ public abstract partial class ExpressionEmitterBase
             EmitThis();
             EnsureBoxed();
         }
+        EmitThrowIfUndefinedReceiverOnStack(get.Name.Lexeme);
         IL.Emit(OpCodes.Ldstr, get.Name.Lexeme);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Property);
         SetStackUnknown();

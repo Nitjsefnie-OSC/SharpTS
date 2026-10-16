@@ -63,10 +63,7 @@ public sealed class InstanceMethodIdentityTests
     }
 
     public static IEnumerable<object[]> ParityCases()
-        // #2197 tracks the shared compiled guest-this null/undefined read guard.
-        => Cases().SelectMany(row => ((string)row[0] == "detached-method-is-unbound"
-                ? new[] { ExecutionMode.Interpreted }
-                : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
+        => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ParityCases))]

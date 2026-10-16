@@ -862,7 +862,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // CommonJS: bare `exports` → ldsfld $exports of the current CJS module.
         if (TryEmitCjsVariable(name)) return;
 
-        if (TryEmitGlobalVariable(name)) return;
+        if (TryEmitGlobalVariable(name, v)) return;
 
         // An unresolved identifier is a ReferenceError in every execution
         // context, including state-machine bodies.  Returning CLR null here
@@ -2116,14 +2116,16 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
     /// <summary>
     /// Tries to emit a global variable load (after resolver fails).
-    /// Checks TopLevelStaticVars → Functions → NamespaceFields → CapturedTopLevelVars.
+    /// Real module storage precedes checked external class values and name-based fallbacks.
     /// </summary>
-    protected virtual bool TryEmitGlobalVariable(string name)
+    protected virtual bool TryEmitGlobalVariable(string name, Expr.Variable? reference = null)
     {
         // JavaScript global constants — must be checked before user-defined variables. State
         // machine emitters (Async/Generator/AsyncGenerator MoveNextEmitter) reach this via the
         // base EmitVariable; ILEmitter and AsyncArrowMoveNextEmitter call the helper directly.
-        if (TryEmitJsGlobalConstant(name)) return true;
+        // A checked external alias is a module binding, even when it has a global's spelling.
+        if ((reference == null || !TryResolveExternalClassValue(reference, out _)) &&
+            TryEmitJsGlobalConstant(name)) return true;
 
         if (Ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
         {
@@ -2149,6 +2151,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             SetStackUnknown();
             return true;
         }
+
+        if (reference != null && TryEmitExternalClassValue(reference)) return true;
 
         if (Ctx.Functions.TryGetValue(Ctx.ResolveFunctionName(name), out var funcMethod))
         {
@@ -2751,7 +2755,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     _helpers.IL.Emit(OpCodes.Ldstr, "function");
                     _helpers.SetStackUnknown();
                 }
-                else if (u.Right is Expr.Variable tv && !IsKnownVariable(tv.Name.Lexeme))
+                else if (u.Right is Expr.Variable tv && !IsKnownVariable(tv))
                 {
                     _helpers.IL.Emit(OpCodes.Ldstr, "undefined");
                     _helpers.SetStackUnknown();

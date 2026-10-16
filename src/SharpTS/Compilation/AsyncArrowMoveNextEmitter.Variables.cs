@@ -12,6 +12,7 @@ public partial class AsyncArrowMoveNextEmitter
 
     protected override void EmitVariable(Expr.Variable v)
     {
+        var checkedReference = v;
         if (TryEmitDefaultParameterTdz(v.Name.Lexeme))
             return;
 
@@ -45,7 +46,9 @@ public partial class AsyncArrowMoveNextEmitter
         // must check them explicitly — otherwise a bare NaN/Infinity compiled to a null load,
         // e.g. `NaN === NaN` degraded to `null === null` → true (#648). Checked after the
         // resolver so a same-named local/param/capture still shadows the global.
-        if (TryEmitJsGlobalConstant(name)) return;
+        // Checked external aliases wait for the remaining real capture storage below.
+        bool externalClassValue = TryResolveExternalClassValue(checkedReference, out _);
+        if (!externalClassValue && TryEmitJsGlobalConstant(name)) return;
 
         // Check if it's an imported value (from another module) - must check BEFORE Functions
         // because cross-module function references need to go through the import field
@@ -55,8 +58,9 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
-        // Fallback: Check if it's a global function
-        if (_ctx?.Functions.TryGetValue(_ctx.ResolveFunctionName(name), out var funcMethod) == true)
+        // Name-based functions must not steal a checked CLR import from another module.
+        if (!externalClassValue &&
+            _ctx?.Functions.TryGetValue(_ctx.ResolveFunctionName(name), out var funcMethod) == true)
         {
             _il.Emit(OpCodes.Ldnull);
             Types.EmitLoadMethodInfoViaHandle(_il, funcMethod);
@@ -104,7 +108,7 @@ public partial class AsyncArrowMoveNextEmitter
         // disables its static-call strategy. Resolve it after every lexical
         // capture so globals such as Promise remain available without hiding
         // a same-named enclosing binding.
-        if (TryEmitGlobalVariable(name))
+        if (TryEmitGlobalVariable(name, checkedReference))
             return;
 
         // Not found - push null

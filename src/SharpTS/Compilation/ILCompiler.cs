@@ -662,7 +662,7 @@ public partial class ILCompiler
     private void AnalyzeClosuresAndPromotions(List<Stmt> statements, IReadOnlyList<ParsedModule>? modules = null)
     {
         PrepareRepeatingClassDeclarations(statements);
-        Phase2_AnalyzeClosures(statements);
+        Phase2_AnalyzeClosures(statements, modules);
         _closures.ConstArrowBindings = ConstArrowBindingAnalyzer.Collect(statements);
         StableMapIterationAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
         StableCustomIteratorAnalyzer.Analyze(
@@ -750,10 +750,27 @@ public partial class ILCompiler
     /// <summary>
     /// Phase 2: Analyze closures to detect captured variables.
     /// </summary>
-    private void Phase2_AnalyzeClosures(List<Stmt> statements)
+    private void Phase2_AnalyzeClosures(List<Stmt> statements, IReadOnlyList<ParsedModule>? modules = null)
     {
         _closures.Analyzer = new ClosureAnalyzer(_runtimeClassDeclarations);
-        _closures.Analyzer.Analyze(statements);
+        Dictionary<Stmt, IReadOnlySet<string>>? moduleClrImports = null;
+        if (modules != null)
+        {
+            foreach (var module in modules)
+            {
+                var names = module.Statements.OfType<Stmt.Import>()
+                    .Where(import => !import.IsTypeOnly && DotNetImports.IsDotNetSpecifier(import.ModulePath))
+                    .SelectMany(import => import.NamedImports ?? [])
+                    .Where(specifier => !specifier.IsTypeOnly)
+                    .Select(specifier => specifier.LocalName?.Lexeme ?? specifier.Imported.Lexeme)
+                    .ToHashSet(StringComparer.Ordinal);
+                if (names.Count == 0) continue;
+                moduleClrImports ??= new(ReferenceEqualityComparer.Instance);
+                foreach (var statement in module.Statements)
+                    moduleClrImports[statement] = names;
+            }
+        }
+        _closures.Analyzer.Analyze(statements, _typeMap, moduleClrImports);
     }
 
     /// <summary>

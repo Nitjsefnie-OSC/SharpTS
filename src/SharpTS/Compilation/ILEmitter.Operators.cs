@@ -688,7 +688,7 @@ public partial class ILEmitter
                 {
                     IL.Emit(OpCodes.Ldstr, "function");
                 }
-                else if (u.Right is Expr.Variable tv && !IsKnownVariable(tv.Name.Lexeme))
+                else if (u.Right is Expr.Variable tv && !IsKnownVariable(tv))
                 {
                     IL.Emit(OpCodes.Ldstr, "undefined");
                 }

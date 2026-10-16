@@ -1,5 +1,6 @@
 using SharpTS.Parsing;
 using SharpTS.Parsing.Visitors;
+using SharpTS.TypeSystem;
 
 namespace SharpTS.Compilation;
 
@@ -35,6 +36,9 @@ public class ClosureAnalyzer : AstVisitorBase
 
     // Current function being analyzed (for tracking captures)
     private object? _currentFunction;
+
+    private TypeMap? _checkedTypes;
+    private IReadOnlySet<string>? _moduleClrImports;
 
     // Current function's name (for self-reference detection in named function expressions)
     private string? _currentFunctionName;
@@ -283,13 +287,24 @@ public class ClosureAnalyzer : AstVisitorBase
     /// <summary>
     /// Analyze the entire program to detect captures.
     /// </summary>
-    public void Analyze(List<Stmt> statements)
+    public void Analyze(List<Stmt> statements) => Analyze(statements, null, null);
+
+    internal void Analyze(
+        List<Stmt> statements,
+        TypeMap? checkedTypes,
+        IReadOnlyDictionary<Stmt, IReadOnlySet<string>>? moduleClrImports)
     {
+        _checkedTypes = checkedTypes;
         _scopeStack.Push([]);
         HoistFunctionDeclarations(statements);
         foreach (var stmt in statements)
+        {
+            _moduleClrImports = moduleClrImports?.GetValueOrDefault(stmt);
             Visit(stmt);
+        }
         _scopeStack.Pop();
+        _moduleClrImports = null;
+        _checkedTypes = null;
 
         // Resolve sync-arrow chain forwards now that every capture and per-iteration
         // classification is final (#1231).
@@ -925,7 +940,30 @@ public class ClosureAnalyzer : AstVisitorBase
 
     protected override void VisitVariable(Expr.Variable expr)
     {
+        if (IsModuleClrImportReference(expr)) return;
         ReferenceVariable(expr.Name.Lexeme);
+    }
+
+    private bool IsModuleClrImportReference(Expr.Variable expression)
+    {
+        string name = expression.Name.Lexeme;
+        if (_moduleClrImports?.Contains(name) != true ||
+            _checkedTypes?.Get(expression) is not TypeInfo.Class imported ||
+            !DotNetTypeSynthesizer.TryGetClrClassType(imported, out _))
+        {
+            return false;
+        }
+
+        // Module ASTs share a program scope during this walk. A declaration from
+        // another module must not turn a CLR import into a capture of that value.
+        // Every real inner binding still shadows the import and needs its storage.
+        int innerScopes = _scopeStack.Count - 1;
+        foreach (var scope in _scopeStack)
+        {
+            if (innerScopes-- == 0) break;
+            if (scope.Contains(name)) return false;
+        }
+        return true;
     }
 
     protected override void VisitAssign(Expr.Assign expr)

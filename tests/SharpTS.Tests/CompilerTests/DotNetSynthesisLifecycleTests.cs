@@ -19,12 +19,19 @@ public class DotNetSynthesisLifecycleTests
     {
         var original = DotNetTypeSynthesizer.Synthesize(typeof(StringBuilder));
         var retained = new TypeInfo.Instance(original);
+        Assert.True(DotNetTypeSynthesizer.TryGetClrClassType(original, out var classBefore));
+        Assert.Same(typeof(StringBuilder), classBefore);
+        Assert.False(DotNetTypeSynthesizer.TryGetClrType(original, out _));
         Assert.True(DotNetTypeSynthesizer.TryGetClrType(retained, out var before));
         Assert.Same(typeof(StringBuilder), before);
 
         DotNetTypeSynthesizer.ClearCache();
         var replacement = DotNetTypeSynthesizer.Synthesize(typeof(StringBuilder));
         Assert.NotSame(original, replacement);
+        Assert.True(DotNetTypeSynthesizer.TryGetClrClassType(original, out var classAfter));
+        Assert.Same(typeof(StringBuilder), classAfter);
+        Assert.True(DotNetTypeSynthesizer.TryGetClrClassType(replacement, out var classCurrent));
+        Assert.Same(typeof(StringBuilder), classCurrent);
         Assert.True(DotNetTypeSynthesizer.TryGetClrType(retained, out var after));
         Assert.Same(typeof(StringBuilder), after);
         Assert.True(DotNetTypeSynthesizer.TryGetClrType(new TypeInfo.Instance(replacement), out var current));
@@ -54,6 +61,9 @@ public class DotNetSynthesisLifecycleTests
         var imported = DotNetTypeSynthesizer.Synthesize(typeof(StringBuilder));
         var copy = imported with { };
         Assert.Equal(imported, copy);
+        Assert.False(DotNetTypeSynthesizer.TryGetClrClassType(copy, out _));
+        Assert.True(DotNetTypeSynthesizer.TryGetClrClassType(imported, out var classType));
+        Assert.Same(typeof(StringBuilder), classType);
         Assert.False(DotNetTypeSynthesizer.TryGetClrType(new TypeInfo.Instance(copy), out _));
         Assert.True(DotNetTypeSynthesizer.TryGetClrType(new TypeInfo.Instance(imported), out _));
     }

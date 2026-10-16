@@ -939,8 +939,7 @@ public static partial class ObjectBuiltIns
                 ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
             SharpTSObjectPrototype objectPrototype => objectPrototype.GetOwnPropertyDescriptor(propertyKey)
                 ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
-            SharpTSClassPrototype classPrototype => classPrototype.GetOwnPropertyDescriptor(propertyKey)
-                ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
+            SharpTSClassPrototype classPrototype => GetClassPrototypeOwnPropertyDescriptor(classPrototype, propertyKey),
             SharpTSPromisePrototype promisePrototype when !promisePrototype.HasOwnProperty(propertyKey)
                 => null,
             SharpTSPromisePrototype promisePrototype
@@ -1041,6 +1040,16 @@ public static partial class ObjectBuiltIns
         SharpTSFunction function,
         string propertyKey)
         => function.GetOwnPropertyDescriptor(propertyKey);
+
+    private static SharpTSPropertyDescriptor? GetClassPrototypeOwnPropertyDescriptor(
+        SharpTSClassPrototype prototype, string propertyKey)
+    {
+        if (prototype.GetOwnPropertyDescriptor(propertyKey) is { } descriptor)
+            return descriptor;
+        return prototype.TryGetOwnMember(propertyKey, out var member)
+            ? DataDescriptor(member, writable: true, enumerable: false, configurable: true)
+            : null;
+    }
 
     private static SharpTSPropertyDescriptor? GetFunctionOwnPropertyDescriptor(
         SharpTSArrowFunction function,

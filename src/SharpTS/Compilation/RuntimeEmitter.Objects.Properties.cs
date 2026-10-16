@@ -2460,14 +2460,26 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noComputedStaticMethodLabel);
 
-            // A configurable built-in that was deleted must stay absent. This
-            // check precedes both the JS built-in table and CLR reflection,
-            // either of which would otherwise synthesize it again.
+            // A deleted own built-in must not be synthesized again, but reads
+            // still follow the live prototype with the original receiver.
             var typeBuiltinPresentLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
             il.Emit(OpCodes.Brfalse, typeBuiltinPresentLabel);
+            var deletedTypePrototype = il.DeclareLocal(_types.Object);
+            var deletedTypeMissing = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+            il.Emit(OpCodes.Stloc, deletedTypePrototype);
+            il.Emit(OpCodes.Ldloc, deletedTypePrototype);
+            il.Emit(OpCodes.Brfalse, deletedTypeMissing);
+            il.Emit(OpCodes.Ldloc, deletedTypePrototype);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, inputs.Reflect.Get);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(deletedTypeMissing);
             il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(typeBuiltinPresentLabel);

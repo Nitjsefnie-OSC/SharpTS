@@ -1530,37 +1530,7 @@ public partial class TypeChecker
                 selectedFacet == MemberFacet.PrivateStatic))
             RecordEditorCallCandidates(funcType);
 
-        // Check argument count
-        if (call.Arguments.Count < funcType.RequiredParams)
-        {
-            throw new TypeCheckException($" Private method '{methodName}' requires at least {funcType.RequiredParams} arguments, got {call.Arguments.Count}.", tsCode: "TS2554");
-        }
-
-        if (!funcType.HasRestParam && call.Arguments.Count > funcType.ParamTypes.Count)
-        {
-            throw new TypeCheckException($" Private method '{methodName}' accepts at most {funcType.ParamTypes.Count} arguments, got {call.Arguments.Count}.", tsCode: "TS2554");
-        }
-
-        // Check each argument type
-        for (int i = 0; i < call.Arguments.Count; i++)
-        {
-            TypeInfo argType = CheckExpr(call.Arguments[i]);
-            TypeInfo paramType = i < funcType.ParamTypes.Count
-                ? funcType.ParamTypes[i]
-                : funcType.ParamTypes[^1]; // Rest parameter type
-
-            if (funcType.HasRestParam && i >= funcType.ParamTypes.Count - 1 && paramType is TypeInfo.Array restArray)
-                paramType = restArray.ElementType;
-
-            // Optional/default params accept an explicit `undefined` (#668). A rest parameter's
-            // elements are not optional in that sense, so only widen for non-rest positions.
-            bool optional = i >= funcType.MinArity &&
-                            !(funcType.HasRestParam && i >= funcType.ParamTypes.Count - 1);
-            if (!IsArgumentCompatible(paramType, argType, optional))
-            {
-                throw new TypeCheckException($" Argument {i + 1} to private method '{methodName}' has type '{argType}' but expected '{paramType}'.", tsCode: "TS2345");
-            }
-        }
+        CheckPrivateCallArguments(call, funcType);
 
         RecordProvenSourceMemberCall(call, call.Name, call);
         RecordEditorInvocationSelection(funcType);

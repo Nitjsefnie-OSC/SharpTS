@@ -976,10 +976,10 @@ public static partial class ObjectBuiltIns
                 => meta.HasMetadataProperty(propertyKey)
                     ? GetCallableMetaDescriptor((ISharpTSCallable)meta, propertyKey)
                     : null,
-            ISharpTSCallable callable when propertyKey is "name" or "length"
-                => GetCallableMetaDescriptor(callable, propertyKey),
             SharpTSFunction fn => GetFunctionOwnPropertyDescriptor(fn, propertyKey),
             SharpTSArrowFunction arrow => GetFunctionOwnPropertyDescriptor(arrow, propertyKey),
+            ISharpTSCallable callable when propertyKey is "name" or "length"
+                => GetCallableMetaDescriptor(callable, propertyKey),
             _ => GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey)
         };
     }

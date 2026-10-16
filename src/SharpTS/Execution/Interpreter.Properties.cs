@@ -581,6 +581,19 @@ public partial class Interpreter
                     receiver, out var objectConstructorValue))
                 return objectConstructorValue;
 
+            if (current is SharpTSArrayGlobal arrayGlobal)
+            {
+                if (TryReadDescriptor(arrayGlobal.GetOwnPropertyDescriptor(name),
+                        receiver, out var arrayConstructorValue))
+                    return arrayConstructorValue;
+                if (arrayGlobal.HasOwnProperty(name))
+                    return arrayGlobal.GetMember(name);
+                // Walk the mutable prototype itself so deleted helpers stay absent
+                // and inherited methods retain their canonical, unbound identity.
+                current = ObjectBuiltIns.PrototypeOf(this, arrayGlobal);
+                continue;
+            }
+
             if (current is SharpTSFunctionGlobal && name == "prototype")
                 return GetFunctionPrototype();
 
@@ -2370,17 +2383,7 @@ public partial class Interpreter
 
         // Array global constructor: resolves `Array.prototype`, `Array.from`, etc.
         if (obj is SharpTSArrayGlobal arrGlobal)
-        {
-            if (arrGlobal.GetMember(memberName) is { } ownMember)
-                return ownMember;
-            var functionPrototype = GetFunctionPrototype();
-            if (functionPrototype.GetExtraGetter(memberName) is { } inheritedGetter)
-                return BindAccessorToObject(inheritedGetter, arrGlobal).CallBoxed(this, []);
-            if (functionPrototype.HasExtra(memberName))
-                return functionPrototype.TryGetExtra(memberName);
-            return InheritedObjectPrototypeMember(arrGlobal, memberName)
-                ?? SharpTSUndefined.Instance;
-        }
+            return GetPropertyValue(arrGlobal, memberName);
         if (obj is SharpTSArrayPrototype arrProto)
         {
             if (arrProto.GetExtraGetter(memberName) is { } getter)

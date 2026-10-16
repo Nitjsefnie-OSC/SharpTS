@@ -91,11 +91,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, methodOwnerLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
         il.Emit(OpCodes.Brfalse, methodOwnerReady);
-        il.Emit(OpCodes.Ldloc, methodOwnerLocal);
+        EmitCloseOpenGenericOwner(il, methodOwnerLocal);
+        il.MarkLabel(methodOwnerReady);
+        return methodOwnerLocal;
+    }
+
+    /// <summary>
+    /// Closes an owner already known to contain generic parameters with arguments
+    /// selected from its emitted CLR bounds. The caller retains the guest owner
+    /// separately for constructor identity and accessor receivers.
+    /// </summary>
+    private void EmitCloseOpenGenericOwner(ILGenerator il, LocalBuilder owner)
+    {
+        il.Emit(OpCodes.Ldloc, owner);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
-        il.Emit(OpCodes.Stloc, methodOwnerLocal);
+        il.Emit(OpCodes.Stloc, owner);
         var argumentsLocal = il.DeclareLocal(_types.MakeArrayType(_types.Type));
-        il.Emit(OpCodes.Ldloc, methodOwnerLocal);
+        il.Emit(OpCodes.Ldloc, owner);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericArguments"));
         il.Emit(OpCodes.Stloc, argumentsLocal);
         var argumentIndex = il.DeclareLocal(_types.Int32);
@@ -161,12 +173,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldlen);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Blt, fillArguments);
-        il.Emit(OpCodes.Ldloc, methodOwnerLocal);
+        il.Emit(OpCodes.Ldloc, owner);
         il.Emit(OpCodes.Ldloc, argumentsLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "MakeGenericType", _types.MakeArrayType(_types.Type)));
-        il.Emit(OpCodes.Stloc, methodOwnerLocal);
-        il.MarkLabel(methodOwnerReady);
-        return methodOwnerLocal;
+        il.Emit(OpCodes.Stloc, owner);
     }
 
     private readonly record struct GetPropertyInputs(

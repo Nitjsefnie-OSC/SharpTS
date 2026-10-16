@@ -93,9 +93,6 @@ public sealed class SetterOnlyOverrideTests
 
     public static IEnumerable<object[]> ParityCases()
         => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            // #2172 still blocks this parent in the hosted single-script path;
-            // the verified standalone expression case is covered separately.
-            .Where(mode => (string)row[0] != "expressions" || mode == ExecutionMode.Interpreted)
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ParityCases))]

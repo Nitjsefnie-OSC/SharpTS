@@ -380,6 +380,9 @@ public partial class TypeChecker
         for (int i = 0; i < gc.TypeParams.Count; i++)
             subs[gc.TypeParams[i].Name] = typeArgs[i];
 
+        if (TryGetDefaultLibraryPromiseType(gc, out _))
+            return CheckGetOnRegularInstance(new TypeInfo.Class(gc.Core), memberToken, subs);
+
         // Check for getter first
         if (gc.Getters?.TryGetValue(memberName, out var getterType) == true)
         {
@@ -458,11 +461,17 @@ public partial class TypeChecker
     /// <summary>
     /// Type checks member access on a regular (non-generic) class instance.
     /// </summary>
-    private TypeInfo CheckGetOnRegularInstance(TypeInfo.Class startClass, Token memberName)
+    private TypeInfo CheckGetOnRegularInstance(
+        TypeInfo.Class startClass, Token memberName,
+        Dictionary<string, TypeInfo>? promiseSubstitutions = null)
     {
         string memberNameStr = memberName.Lexeme;
         TypeInfo? current = startClass;
-        Dictionary<string, TypeInfo> substitutions = [];
+        bool promiseHeritage = TryGetDefaultLibraryPromiseType(startClass, out _);
+        Dictionary<string, TypeInfo> substitutions = promiseSubstitutions ?? [];
+        TypeInfo Sub(TypeInfo type) => promiseHeritage
+            ? SubstituteConstructorMember(type, substitutions)
+            : substitutions.Count > 0 ? Substitute(type, substitutions) : type;
 
         while (current != null)
         {
@@ -480,9 +489,12 @@ public partial class TypeChecker
             if (current is TypeInfo.InstantiatedGeneric igCurrent &&
                 igCurrent.GenericDefinition is TypeInfo.GenericClass gcCurrent)
             {
-                for (int i = 0; i < gcCurrent.TypeParams.Count && i < igCurrent.TypeArguments.Count; i++)
+                if (promiseHeritage)
+                    substitutions = ComposePromiseHeritageSubstitutions(current, substitutions);
+                else
                 {
-                    substitutions[gcCurrent.TypeParams[i].Name] = igCurrent.TypeArguments[i];
+                    for (int i = 0; i < gcCurrent.TypeParams.Count && i < igCurrent.TypeArguments.Count; i++)
+                        substitutions[gcCurrent.TypeParams[i].Name] = igCurrent.TypeArguments[i];
                 }
             }
 
@@ -491,7 +503,7 @@ public partial class TypeChecker
             if (getters != null && getters.TryGetValue(memberNameStr, out var getterType))
             {
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Instance);
-                return substitutions.Count > 0 ? Substitute(getterType, substitutions) : getterType;
+                return Sub(getterType);
             }
 
             // Check access modifier
@@ -518,7 +530,7 @@ public partial class TypeChecker
             if (methods != null && methods.TryGetValue(memberNameStr, out var methodType))
             {
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Instance);
-                return substitutions.Count > 0 ? Substitute(methodType, substitutions) : methodType;
+                return Sub(methodType);
             }
 
             // Check for field
@@ -526,7 +538,7 @@ public partial class TypeChecker
             if (fieldTypes != null && fieldTypes.TryGetValue(memberNameStr, out var fieldType))
             {
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Instance);
-                return substitutions.Count > 0 ? Substitute(fieldType, substitutions) : fieldType;
+                return Sub(fieldType);
             }
 
             current = GetSuperclass(current);

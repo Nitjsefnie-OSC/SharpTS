@@ -773,8 +773,15 @@ public partial class TypeChecker
 
             // Check constructor with substituted parameter types (walk inheritance chain). When the
             // constructor is inherited from a generic-class instantiation, compose the substitutions.
-            var (ctorTypeInfo, owningClass) = FindInheritedConstructor(genericClass);
-            ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, ComposeInheritedClassSubs(owningClass, subs));
+            if (TryGetDefaultLibraryPromiseConstructor(genericClass, subs, out var promiseConstructor))
+            {
+                ValidateConstructorCall(promiseConstructor, newExpr, qualifiedName, contextualArguments: true);
+            }
+            else
+            {
+                var (ctorTypeInfo, owningClass) = FindInheritedConstructor(genericClass);
+                ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, ComposeInheritedClassSubs(owningClass, subs));
+            }
 
             return new TypeInfo.Instance(instantiated);
         }
@@ -784,8 +791,15 @@ public partial class TypeChecker
             // Walk inheritance chain to find constructor. When it's inherited from a generic-class
             // instantiation (e.g. `class StringBox extends Box<string>`), substitute that parent's
             // type arguments so the inherited constructor's parameters resolve (T → string).
-            var (ctorTypeInfo, owningClass) = FindInheritedConstructor(classType);
-            ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, ComposeInheritedClassSubs(owningClass, []));
+            if (TryGetDefaultLibraryPromiseConstructor(classType, [], out var promiseConstructor))
+            {
+                ValidateConstructorCall(promiseConstructor, newExpr, qualifiedName, contextualArguments: true);
+            }
+            else
+            {
+                var (ctorTypeInfo, owningClass) = FindInheritedConstructor(classType);
+                ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, ComposeInheritedClassSubs(owningClass, []));
+            }
 
             return new TypeInfo.Instance(classType);
         }
@@ -808,7 +822,8 @@ public partial class TypeChecker
         TypeInfo? ctorTypeInfo,
         Expr.New newExpr,
         string qualifiedName,
-        Dictionary<string, TypeInfo>? subs = null)
+        Dictionary<string, TypeInfo>? subs = null,
+        bool contextualArguments = false)
     {
         if (ctorTypeInfo == null)
         {
@@ -820,7 +835,13 @@ public partial class TypeChecker
 
         if (ctorTypeInfo is TypeInfo.OverloadedFunction overloadedCtor)
         {
-            List<TypeInfo> argTypes = newExpr.Arguments.Select(CheckExpr).ToList();
+            // A projected native Promise constructor supplies the executor's callback
+            // types. Select its overload using the other arguments before checking
+            // that callback, so its parameters are never first checked as implicit any.
+            List<TypeInfo> argTypes = newExpr.Arguments.Select(argument =>
+                contextualArguments && IsContextualConstructorArrow(argument)
+                    ? TypeInfo.Any.Shared
+                    : CheckExpr(argument)).ToList();
             bool matched = false;
             foreach (var sig in overloadedCtor.Signatures)
             {
@@ -829,15 +850,39 @@ public partial class TypeChecker
                     : sig.ParamTypes.Select(ResolveConstructorParameter).ToList();
                 RecordEditorConstructorInstantiation(sig, paramTypes, sig.MinArity, sig.HasRestParam,
                     sig.ThisType, sig.ParamNames);
+                if (contextualArguments && newExpr.Arguments.Where((argument, index) =>
+                        index < paramTypes.Count &&
+                        !ContextualConstructorArrowMatches(argument, paramTypes[index])).Any())
+                    continue;
                 if (TryMatchConstructorArgs(argTypes, paramTypes, sig.MinArity, sig.HasRestParam))
                 {
+                    if (contextualArguments)
+                    {
+                        ValidateConstructorCall(sig, newExpr, qualifiedName, subs, contextualArguments: true);
+                    }
                     RecordEditorInvocationSelection(sig);
                     matched = true;
                     break;
                 }
             }
             if (!matched)
+            {
+                if (contextualArguments)
+                {
+                    var arityMatches = overloadedCtor.Signatures.Where(signature =>
+                        newExpr.Arguments.Count >= signature.MinArity &&
+                        (signature.HasRestParam || newExpr.Arguments.Count <= signature.ParamTypes.Count)).ToList();
+                    if (arityMatches.Count == 1)
+                    {
+                        ValidateConstructorCall(arityMatches[0], newExpr, qualifiedName, subs, contextualArguments: true);
+                        return;
+                    }
+                    else if (arityMatches.Count == 0)
+                        throw new TypeCheckException(
+                            $"No constructor overload for '{qualifiedName}' accepts {newExpr.Arguments.Count} arguments.", tsCode: "TS2554");
+                }
                 throw new TypeCheckException($" No constructor overload matches the call for '{qualifiedName}'.", tsCode: "TS2769");
+            }
         }
         else if (ctorTypeInfo is TypeInfo.Function ctorType)
         {
@@ -854,7 +899,9 @@ public partial class TypeChecker
 
             for (int i = 0; i < newExpr.Arguments.Count; i++)
             {
-                TypeInfo argType = CheckExpr(newExpr.Arguments[i]);
+                TypeInfo argType = contextualArguments && i < paramTypes.Count
+                    ? CheckExprWithContext(newExpr.Arguments[i], paramTypes[i])
+                    : CheckExpr(newExpr.Arguments[i]);
                 // Rest arguments are validated by their enclosing call shape; the
                 // stored final parameter is the rest-array type, not an element slot.
                 if (ctorType.HasRestParam && i >= paramTypes.Count - 1)
@@ -868,6 +915,35 @@ public partial class TypeChecker
             }
             RecordEditorInvocationSelection(ctorType);
         }
+    }
+
+    private static bool IsContextualConstructorArrow(Expr expression) => expression switch
+    {
+        Expr.ArrowFunction => true,
+        Expr.Grouping grouping => IsContextualConstructorArrow(grouping.Expression),
+        _ => false
+    };
+
+    private bool ContextualConstructorArrowMatches(Expr expression, TypeInfo contextualType)
+    {
+        if (expression is Expr.Grouping grouping)
+            return ContextualConstructorArrowMatches(grouping.Expression, contextualType);
+        if (expression is not Expr.ArrowFunction { TypeParams: null or { Count: 0 } } arrow ||
+            GetContextualFunctionType(contextualType) is not { } function)
+            return true;
+
+        // Explicit executor parameter annotations can select a later overload.
+        // Leave unannotated parameters for the selected signature's contextual
+        // check, without checking the callback body against an earlier candidate.
+        for (int index = 0; index < arrow.Parameters.Count && index < function.ParamTypes.Count; index++)
+        {
+            var parameter = arrow.Parameters[index];
+            if (parameter.Type is not null &&
+                !IsCompatible(ResolveAnnotation(parameter.Type, parameter.TypeAnnotationNode, parameter)!,
+                    function.ParamTypes[index]))
+                return false;
+        }
+        return true;
     }
 
     private TypeInfo ResolveConstructorParameter(TypeInfo type) =>

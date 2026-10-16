@@ -929,10 +929,16 @@ public partial class TypeChecker
         if (objType is TypeInfo.Instance instance)
         {
              string memberName = set.Name.Lexeme;
+             bool promiseHeritage = TryGetDefaultLibraryPromiseType(instance, out _);
+             var promiseGeneric = promiseHeritage && instance.ResolvedClassType is TypeInfo.InstantiatedGeneric
+                 { GenericDefinition: TypeInfo.GenericClass } projected ? projected : null;
+             Dictionary<string, TypeInfo> promiseSubstitutions = promiseGeneric is not null
+                 ? GenericClassSubs((TypeInfo.GenericClass)promiseGeneric.GenericDefinition, promiseGeneric.TypeArguments)
+                 : [];
 
              // Handle InstantiatedGeneric
              if (instance.ClassType is TypeInfo.InstantiatedGeneric ig &&
-                 ig.GenericDefinition is TypeInfo.GenericClass gc)
+                 ig.GenericDefinition is TypeInfo.GenericClass gc && !promiseHeritage)
              {
                  // Build substitution map
                  Dictionary<string, TypeInfo> subs = [];
@@ -971,18 +977,25 @@ public partial class TypeChecker
              }
 
              // Handle regular Class
-             if (instance.ResolvedClassType is not TypeInfo.Class startClass)
+             var startClass = instance.ResolvedClassType as TypeInfo.Class
+                 ?? (promiseGeneric is not null ? new TypeInfo.Class(((TypeInfo.GenericClass)promiseGeneric.GenericDefinition).Core) : null);
+             if (startClass is null)
                  return CheckExpr(set.Value);
 
              TypeInfo? current = startClass;
+             var substitutions = promiseSubstitutions;
 
              // Check for setter first
              while (current != null)
              {
+                 if (promiseHeritage)
+                     substitutions = ComposePromiseHeritageSubstitutions(current, substitutions);
                  var setters = GetSetters(current);
                  var getters = GetGetters(current);
                  if (setters != null && setters.TryGetValue(memberName, out var setterType))
                  {
+                     if (promiseHeritage)
+                         setterType = SubstituteConstructorMember(setterType, substitutions);
                      ObserveSourceMemberSelection(set.Name, current, MemberFacet.Instance);
                      TypeInfo valueType = CheckExpr(set.Value);
                      if (!IsCompatible(setterType, valueType))
@@ -1039,6 +1052,14 @@ public partial class TypeChecker
                      }
                  }
 
+                 // A nearer mutable declaration shadows the projected native
+                 // member's readonly/access flags. Keep the ordinary path intact.
+                 if (promiseHeritage && (GetFieldTypes(current)?.ContainsKey(memberName) == true ||
+                     GetMethods(current)?.ContainsKey(memberName) == true ||
+                     GetGetters(current)?.ContainsKey(memberName) == true ||
+                     GetSetters(current)?.ContainsKey(memberName) == true))
+                     break;
+
                  current = GetSuperclass(current);
              }
 
@@ -1046,11 +1067,16 @@ public partial class TypeChecker
              // (non-setter) instance fields were previously assigned without a compatibility check.
              TypeInfo fieldValueType = CheckExpr(set.Value);
              current = startClass;
+             substitutions = promiseSubstitutions;
              while (current != null)
              {
+                 if (promiseHeritage)
+                     substitutions = ComposePromiseHeritageSubstitutions(current, substitutions);
                  var fieldTypes = GetFieldTypes(current);
                  if (fieldTypes != null && fieldTypes.TryGetValue(memberName, out var fieldDeclType))
                  {
+                     if (promiseHeritage)
+                         fieldDeclType = SubstituteConstructorMember(fieldDeclType, substitutions);
                      ObserveSourceMemberSelection(set.Name, current, MemberFacet.Instance);
                      if (fieldDeclType is not (TypeInfo.Inferred or TypeInfo.Any)
                          && !IsCompatible(fieldDeclType, fieldValueType))

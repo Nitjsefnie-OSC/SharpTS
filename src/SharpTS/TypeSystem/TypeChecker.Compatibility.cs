@@ -892,6 +892,9 @@ public partial class TypeChecker
         {
             return IsCompatible(expPromise.ValueType, actPromise.ValueType);
         }
+        if (expected is TypeInfo.Promise expectedPromise && actual is TypeInfo.Instance promiseInstance &&
+            TryGetDefaultLibraryPromiseType(promiseInstance, out var inheritedPromise))
+            return IsCompatible(expectedPromise.ValueType, inheritedPromise.ValueType);
 
         // Map type compatibility - Map<K1, V1> is compatible with Map<K2, V2> if K1=K2 and V1=V2
         if (expected is TypeInfo.Map expMap && actual is TypeInfo.Map actMap)

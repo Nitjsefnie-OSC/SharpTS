@@ -1371,6 +1371,7 @@ public partial class TypeChecker
         _excessivelyRecursiveVariables.Clear();
         _intersectionDeclaredVariables.Clear();
         ResetInterfaceDeclarationTracking();
+        ResetDefaultLibraryPromiseHeritage();
         ResetFunctionDeclarationTracking();
         _standaloneSourceDocument = sourceDocument;
         if (sourceDocument is not null) RegisterEditorScope(sourceDocument, _environment, EditorScopeKind.Source);
@@ -1463,6 +1464,7 @@ public partial class TypeChecker
         _excessivelyRecursiveVariables.Clear();
         _intersectionDeclaredVariables.Clear();
         ResetInterfaceDeclarationTracking();
+        ResetDefaultLibraryPromiseHeritage();
         ResetFunctionDeclarationTracking();
         _standaloneSourceDocument = sourceDocument;
         if (sourceDocument is not null) RegisterEditorScope(sourceDocument, _environment, EditorScopeKind.Source);
@@ -1741,6 +1743,7 @@ public partial class TypeChecker
     /// <returns>A TypeMap containing resolved types for all expressions across all modules</returns>
     public TypeMap CheckModules(List<ParsedModule> modules, ModuleResolver resolver)
     {
+        _diagnostics.Clear();
         IndexNewTargetContexts(modules.SelectMany(module => module.Statements));
         Bindings.Clear();
         _ordinaryConstructorOptionalMembers.Clear();
@@ -1760,6 +1763,7 @@ public partial class TypeChecker
         _intersectionDeclaredVariables.Clear();
         _synthesizedJsxUses.Clear();
         ResetInterfaceDeclarationTracking();
+        ResetDefaultLibraryPromiseHeritage();
         ResetFunctionDeclarationTracking();
         _standaloneSourceDocument = null;
 
@@ -1861,6 +1865,7 @@ public partial class TypeChecker
             foreach (var module in modules.Where(module => module.IsDefaultLibrary))
                 PrepareModule(module);
             _defaultLibraryArrayBinding = scriptEnv.GetValueBinding("Array");
+            _defaultLibraryPromiseBinding = scriptEnv.GetValueBinding("Promise");
             CaptureDefaultLibraryErrorBindings(scriptEnv);
             foreach (var module in modules.Where(module => !module.IsDefaultLibrary && module.IsScript))
                 PrepareModule(module);

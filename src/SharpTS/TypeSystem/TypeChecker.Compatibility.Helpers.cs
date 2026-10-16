@@ -438,6 +438,20 @@ public partial class TypeChecker
         if (target is TypeInfo.Union || source is TypeInfo.Union)
             return "TS2322";
 
+        // A projected Promise base contributes instance members as well as
+        // constructor statics. A typeof assignment compares the static facet;
+        // inherited instance members must not produce a missing-property code.
+        if (target is TypeInfo.Class or TypeInfo.GenericClass && source is TypeInfo.Class or TypeInfo.GenericClass &&
+            TryGetDefaultLibraryPromiseType(target, out _) && TryGetDefaultLibraryPromiseType(source, out _) &&
+            TryGetOrdinaryConstructorHierarchy(target, out var targetLevels) &&
+            TryGetOrdinaryConstructorHierarchy(source, out var sourceLevels))
+        {
+            var targetMembers = OrdinaryConstructorMembers(targetLevels, isStatic: true);
+            var sourceMembers = OrdinaryConstructorMembers(sourceLevels, isStatic: true);
+            int missingStatics = targetMembers.Count(member => !member.Value.IsOptional && !sourceMembers.ContainsKey(member.Key));
+            return missingStatics == 0 ? "TS2322" : missingStatics == 1 ? "TS2741" : "TS2739";
+        }
+
         // Weak-type failures report tsc's dedicated code.
         if (FailsWeakTypeCheck(target, source))
             return "TS2559";

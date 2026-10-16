@@ -492,6 +492,8 @@ public partial class TypeChecker
     private TypeInfo ResolveAwaitedType(TypeInfo type) => type switch
     {
         TypeInfo.Promise p => ResolveAwaitedType(p.ValueType),
+        TypeInfo.Instance instance when TryGetDefaultLibraryPromiseType(instance, out var promise) =>
+            ResolveAwaitedType(promise.ValueType),
         TypeInfo.Union u => new TypeInfo.Union(
             u.FlattenedTypes.Select(ResolveAwaitedType).ToList()),
         _ => type
@@ -2484,6 +2486,18 @@ public partial class TypeChecker
         TypeInfo.Class? previousClass = _typeMap.GetClassExprType(classExpr);
         string className = previousClass?.Name ?? classExpr.Name?.Lexeme ?? $"$ClassExpr_{++_classExprCounter}";
 
+        // Make the expression's own type parameters available to Promise heritage
+        // arguments, while resolving the superclass value in its enclosing scope.
+        List<TypeInfo.TypeParameter>? classTypeParams = null;
+        TypeEnvironment classTypeEnv = new(_environment);
+        MarkEditorBodyEntered(classExpr);
+        RegisterEditorScope(classExpr, classTypeEnv, EditorScopeKind.Class, EditorSyntaxRole.Whole);
+        if (classExpr.TypeParams != null && classExpr.TypeParams.Count > 0)
+        {
+            using (new EnvironmentScope(this, classTypeEnv))
+                classTypeParams = BuildGenericTypeParameters(classExpr.TypeParams, classTypeEnv);
+        }
+
         // Resolve superclass if present. Stored as TypeInfo so a MutableClass
         // placeholder (for `any`-typed supers like CJS-imported classes) can
         // also sit in this slot — CheckSuper special-cases MutableClass.
@@ -2492,15 +2506,28 @@ public partial class TypeChecker
         {
             TypeInfo superType = CheckExpr(classExpr.SuperclassExpr);
             superType = ProjectDefaultLibraryErrorHeritage(classExpr.SuperclassExpr, superType);
-            if (classExpr.SuperclassTypeArgs is { Count: > 0 })
+            TypeInfo.Class? promiseBase;
+            using (new EnvironmentScope(this, classTypeEnv))
+                promiseBase = ProjectDefaultLibraryPromiseHeritage(classExpr.SuperclassExpr, superType,
+                    classExpr.SuperclassTypeArgs, classExpr.SuperclassTypeArgNodes);
+            if (promiseBase is not null)
+                superType = promiseBase;
+            else if (classExpr.SuperclassTypeArgs is { Count: > 0 })
             {
                 if (superType is TypeInfo.GenericClass genericSuperclass)
                 {
-                    List<TypeInfo> arguments = classExpr.SuperclassTypeArgs
-                        .Select((_, index) => ResolveTypeArg(
-                            classExpr.SuperclassTypeArgs, classExpr.SuperclassTypeArgNodes, index))
-                        .ToList();
-                    superType = InstantiateGenericClass(genericSuperclass, arguments);
+                    // The ordinary constructor chain retains its existing type
+                    // argument policy; full ancestry substitution is scoped to
+                    // the tracked native Promise projection here.
+                    using (new EnvironmentScope(this,
+                               TryGetDefaultLibraryPromiseType(genericSuperclass, out _) ? classTypeEnv : _environment))
+                    {
+                        List<TypeInfo> arguments = classExpr.SuperclassTypeArgs
+                            .Select((_, index) => ResolveTypeArg(
+                                classExpr.SuperclassTypeArgs, classExpr.SuperclassTypeArgNodes, index))
+                            .ToList();
+                        superType = InstantiateGenericClass(genericSuperclass, arguments);
+                    }
                 }
                 else if (superType is not TypeInfo.Any)
                 {
@@ -2527,19 +2554,6 @@ public partial class TypeChecker
             }
             else
                 throw new TypeCheckException("Superclass must be a class", tsCode: "TS2507");
-        }
-
-        // Handle generic type parameters
-        List<TypeInfo.TypeParameter>? classTypeParams = null;
-        TypeEnvironment classTypeEnv = new(_environment);
-        MarkEditorBodyEntered(classExpr);
-        RegisterEditorScope(classExpr, classTypeEnv, EditorScopeKind.Class, EditorSyntaxRole.Whole);
-        if (classExpr.TypeParams != null && classExpr.TypeParams.Count > 0)
-        {
-            // Multi-pass under classTypeEnv so a constraint referencing a later parameter resolves
-            // (`class<T extends U, U>`). Mirrors the class-declaration path.
-            using (new EnvironmentScope(this, classTypeEnv))
-                classTypeParams = BuildGenericTypeParameters(classExpr.TypeParams, classTypeEnv);
         }
 
         // Create mutable class early so self-references work

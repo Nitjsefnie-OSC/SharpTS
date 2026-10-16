@@ -753,6 +753,7 @@ public partial class RuntimeEmitter
                 runtime.NumericCoercion,
                 runtime.RegExps,
                 runtime.StringCoercion,
+                runtime.ArrayOperations.Constructor,
                 runtime.Sentinels.UndefinedInstance,
                 runtime.Sentinels.UndefinedType
             )

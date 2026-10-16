@@ -1016,6 +1016,7 @@ public partial class TypeChecker
                 // Save and set context - accessor bodies are isolated from outer loop/switch/label context
                 TypeEnvironment previousEnvAcc = _environment;
                 TypeInfo? previousReturnAcc = _currentFunctionReturnType;
+                TypeInfo? previousThisTypeAcc = _currentFunctionThisType;
                 var previousInferredAcc = _inferredReturnTypes;
                 int previousLoopDepthAcc = _loopDepth;
                 int previousSwitchDepthAcc = _switchDepth;
@@ -1025,6 +1026,7 @@ public partial class TypeChecker
                 _environment = accessorEnv;
                 MarkEditorBodyEntered(accessor);
                 _currentFunctionReturnType = accessorReturnType;
+                _currentFunctionThisType = null;
                 bool inferringGetter = accessor.Kind.Type == TokenType.GET
                     && accessorReturnType is TypeInfo.Inferred;
                 if (inferringGetter)
@@ -1078,6 +1080,7 @@ public partial class TypeChecker
                     PopNarrowingScope();
                     _environment = previousEnvAcc;
                     _currentFunctionReturnType = previousReturnAcc;
+                    _currentFunctionThisType = previousThisTypeAcc;
                     _inferredReturnTypes = previousInferredAcc;
                     _loopDepth = previousLoopDepthAcc;
                     _switchDepth = previousSwitchDepthAcc;

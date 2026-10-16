@@ -2913,6 +2913,7 @@ public partial class TypeChecker
 
                 TypeEnvironment previousEnvFunc = _environment;
                 TypeInfo? previousReturnFunc = _currentFunctionReturnType;
+                TypeInfo? previousThisTypeFunc = _currentFunctionThisType;
                 var previousInferredFunc = _inferredReturnTypes;
                 var previousInferredYieldFunc = _inferredYieldTypes;
                 bool previousInStatic = _inStaticMethod;
@@ -2936,6 +2937,7 @@ public partial class TypeChecker
                 }
                 // Collect yield operand types only while inferring a generator method's type (#548).
                 _inferredYieldTypes = inferringMethodReturn && method.IsGenerator ? new List<TypeInfo>() : null;
+                _currentFunctionThisType = methodType.ThisType;
                 _inStaticMethod = method.IsStatic;
                 _inAsyncFunction = method.IsAsync;
                 _inGeneratorFunction = method.IsGenerator;
@@ -3018,6 +3020,7 @@ public partial class TypeChecker
                     PopDefiniteAssignmentScope();
                     _environment = previousEnvFunc;
                     _currentFunctionReturnType = previousReturnFunc;
+                    _currentFunctionThisType = previousThisTypeFunc;
                     _inferredReturnTypes = previousInferredFunc;
                     _inferredYieldTypes = previousInferredYieldFunc;
                     _inStaticMethod = previousInStatic;

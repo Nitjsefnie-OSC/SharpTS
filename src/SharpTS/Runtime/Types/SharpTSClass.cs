@@ -689,7 +689,7 @@ public partial class SharpTSClass(
             BindPrivateMemberOwner(method);
     }
 
-    private void BindPrivateMemberOwner(ISharpTSCallable method)
+    internal void BindPrivateMemberOwner(ISharpTSCallable method)
     {
         switch (method)
         {

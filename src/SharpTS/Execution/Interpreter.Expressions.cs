@@ -2228,6 +2228,7 @@ public partial class Interpreter
 
             // Symbol-keyed computed methods (`[Symbol.iterator]() {...}`) attach to the class after construction.
             List<(SharpTSSymbol Symbol, ISharpTSCallable Func, bool IsStatic)>? symbolMethods = null;
+            List<(int Position, ISharpTSCallable Function, bool? IsGetter)>? constructorProperties = null;
 
             // Process methods (skip overload signatures with no body)
             foreach (Stmt.Function method in classExpr.Methods.Where(m => m.Body != null))
@@ -2255,6 +2256,11 @@ public partial class Interpreter
                     }
                     string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
                     SharpTSClass.SetComputedMethodName(func, keyStr);
+                    if (!method.IsStatic && keyStr == "constructor")
+                    {
+                        (constructorProperties ??= []).Add((method.Name.Start, func, null));
+                        continue;
+                    }
                     (method.IsStatic ? staticMethods : methods)[keyStr] = func;
                     continue;
                 }
@@ -2306,6 +2312,9 @@ public partial class Interpreter
                         }
                         nameKey = PropertyKeyConverter.ToPropertyKeyString(key);
                     }
+
+                    if (!accessor.IsStatic && nameKey == "constructor")
+                        (constructorProperties ??= []).Add((accessor.Name.Start, func, isGetter));
 
                     if (isGetter)
                     {
@@ -2377,6 +2386,7 @@ public partial class Interpreter
             klass.OrderedInstanceFields = classExpr.Fields.Where(field => !field.IsStatic)
                 .SelectMany(field => (field.IsPrivate ? instancePrivateFields : instanceFields)
                     .Where(captured => captured.Name == field.Name)).ToList();
+            InstallInstanceConstructorProperties(klass, constructorProperties);
 
             if (symbolAccessors != null)
             {

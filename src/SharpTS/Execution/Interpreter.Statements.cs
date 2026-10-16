@@ -2171,6 +2171,7 @@ public partial class Interpreter
         // Symbol-keyed computed methods (`[Symbol.iterator]() {...}`) can't go into the string
         // dictionaries; collected here and attached to the class after construction.
         List<(SharpTSSymbol Symbol, ISharpTSCallable Func, bool IsStatic)>? symbolMethods = null;
+        List<(int Position, ISharpTSCallable Function, bool? IsGetter)>? constructorProperties = null;
 
         // Separate static and instance methods (skip overload signatures with no body)
         foreach (Stmt.Function method in classStmt.Methods.Where(m => m.Body != null))
@@ -2199,6 +2200,11 @@ public partial class Interpreter
                 }
                 string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
                 SharpTSClass.SetComputedMethodName(func, keyStr);
+                if (!method.IsStatic && keyStr == "constructor")
+                {
+                    (constructorProperties ??= []).Add((method.Name.Start, func, null));
+                    continue;
+                }
                 (method.IsStatic ? staticMethods : methods)[keyStr] = func;
                 continue;
             }
@@ -2263,6 +2269,8 @@ public partial class Interpreter
                         continue;
                     }
                     string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
+                    if (!accessor.IsStatic && keyStr == "constructor")
+                        (constructorProperties ??= []).Add((accessor.Name.Start, func, isGetter));
                     if (isGetter) (accessor.IsStatic ? staticGetters : getters)[keyStr] = func;
                     else (accessor.IsStatic ? staticSetters : setters)[keyStr] = func;
                     continue;
@@ -2270,6 +2278,8 @@ public partial class Interpreter
 
                 var targetGet = accessor.IsStatic ? staticGetters : getters;
                 var targetSet = accessor.IsStatic ? staticSetters : setters;
+                if (!accessor.IsStatic && accessor.Name.Lexeme == "constructor")
+                    (constructorProperties ??= []).Add((accessor.Name.Start, func, isGetter));
 
                 if (isGetter)
                 {
@@ -2392,6 +2402,7 @@ public partial class Interpreter
         klass.OrderedInstanceFields = classStmt.Fields.Where(field => !field.IsStatic)
             .SelectMany(field => (field.IsPrivate ? instancePrivateFields : instanceFields)
                 .Where(captured => captured.Name == field.Name)).ToList();
+        InstallInstanceConstructorProperties(klass, constructorProperties);
 
         if (symbolAccessors != null)
         {
@@ -2484,6 +2495,39 @@ public partial class Interpreter
     internal ExecutionResult VisitTypeAlias(Stmt.TypeAlias typeAlias) =>
         // Type-only declarations - compile-time only, no runtime effect
         ExecutionResult.Success();
+
+    private static void InstallInstanceConstructorProperties(SharpTSClass klass,
+        List<(int Position, ISharpTSCallable Function, bool? IsGetter)>? members)
+    {
+        if (members == null) return;
+        foreach (var (_, function, isGetter) in members.OrderBy(member => member.Position))
+        {
+            klass.BindPrivateMemberOwner(function);
+            if (isGetter == null)
+            {
+                klass.Prototype.DefineExtraProperty("constructor", SharpTSPropertyDescriptor.ForMethod(function));
+                continue;
+            }
+            if (function is SharpTSFunction accessor)
+                accessor.DefineProperty("name", new SharpTSPropertyDescriptor(
+                    isGetter.Value ? "get constructor" : "set constructor",
+                    writable: false, enumerable: false, configurable: true) { HasValue = true });
+            var descriptor = new SharpTSPropertyDescriptor
+            {
+                Enumerable = false, HasEnumerable = true,
+                Configurable = true, HasConfigurable = true,
+            };
+            if (isGetter.Value)
+            {
+                descriptor.Get = function; descriptor.RawGet = function; descriptor.HasGet = true;
+            }
+            else
+            {
+                descriptor.Set = function; descriptor.RawSet = function; descriptor.HasSet = true;
+            }
+            klass.Prototype.DefineExtraProperty("constructor", descriptor);
+        }
+    }
 
     internal ExecutionResult VisitInterface(Stmt.Interface iface) =>
         // Type-only declarations - compile-time only, no runtime effect

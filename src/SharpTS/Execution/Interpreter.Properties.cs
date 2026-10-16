@@ -901,6 +901,11 @@ public partial class Interpreter
                 obj = GetRecordPrototype(so);
                 continue;
             }
+            if (obj is SharpTSInstance constructorInstance && name == "constructor")
+            {
+                constructorInstance.SetInterpreter(this);
+                return constructorInstance.HasProperty(name);
+            }
             if (obj is SharpTSInstance { UsesDynamicPrototypeChain: true } instance)
             {
                 if (instance.GetOwnPropertyDescriptor(name) is not null) return true;

@@ -877,6 +877,18 @@ public partial class ILCompiler
         EmitInheritedGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: false);
 
         EmitInheritedClassExpressionFieldReads(il, classExpr);
+        var notLiveConstructor = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.StringOpEquality); il.Emit(OpCodes.Brfalse, notLiveConstructor);
+        // Evaluated class expressions own the back-reference on their live
+        // prototype. A computed method/accessor can replace it, and a missing
+        // property must not restore the template CLR constructor token.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, _runtime.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _runtime.ClassDefinitions.ReadPrototypeProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notLiveConstructor);
         EmitClassPrototypeFieldFallback(il);
 
         if (_classExprs.Getters.TryGetValue(classExpr, out var instanceGetters))

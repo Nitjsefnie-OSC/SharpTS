@@ -140,7 +140,7 @@ public class TypedArrayIterationParityTests
 
     /// <summary>
     /// <c>Array.from</c> picks the iterator protocol over the array-like (length + indices)
-    /// path via <c>IsIterableSource</c>, which is documented to agree with
+    /// path via <c>TryGetIterableElements</c>, retaining the same native adapters used by
     /// <c>GetIterableElements</c>. It had fallen behind: typed arrays and Buffers took the
     /// array-like path, whose property reader does not understand them, so <c>length</c> came
     /// back undefined and <c>ToLength(undefined)</c> made the result empty — a silent

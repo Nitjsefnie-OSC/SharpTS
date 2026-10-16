@@ -46,7 +46,7 @@ public static class ArrayStaticBuiltIns
                 // ECMA-262 23.1.2.1: prefer the iterator protocol; a source without a usable
                 // iterator (e.g. an array-like { length: n }) is read via its length +
                 // indexed elements rather than throwing "not iterable".
-                bool isIterable = interpreter.IsIterableSource(iterable);
+                bool isIterable = interpreter.TryGetIterableElements(iterable, out var iterableElements);
 
                 if (mapFn != null)
                 {
@@ -60,14 +60,14 @@ public static class ArrayStaticBuiltIns
                     // must surface that throw immediately (materialize-first would
                     // spin forever); and the throw must trigger IteratorClose. The
                     // lazy iteration here gives both — when mapfn throws, the C#
-                    // enumerator over GetIterableElements is disposed, which runs
+                    // enumerator over the retained elements is disposed, which runs
                     // EnumerateWithIteratorProtocol's finally → the iterator's
                     // return(). Array-likes (ReadArrayLikeElements) have no iterator
                     // to close, matching the spec.
                     var result = new List<object?>();
                     var callbackArgs = new List<object?>(2) { null, null };
                     var source = isIterable
-                        ? interpreter.GetIterableElements(iterable)
+                        ? iterableElements!
                         : interpreter.ReadArrayLikeElements(iterable);
                     int i = 0;
                     var enumerator = source.GetEnumerator();
@@ -105,7 +105,7 @@ public static class ArrayStaticBuiltIns
                 }
 
                 var elements = isIterable
-                    ? interpreter.GetIterableElements(iterable).ToList()
+                    ? iterableElements!.ToList()
                     : interpreter.ReadArrayLikeElements(iterable);
                 return RuntimeValue.FromObject(new SharpTSArray(elements));
             })

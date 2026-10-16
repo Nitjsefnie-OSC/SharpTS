@@ -12,6 +12,7 @@ using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
 using SharpTS.TypeSystem;
 using System.Collections.Frozen;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
@@ -1204,15 +1205,27 @@ public partial class Interpreter
     /// <exception cref="Exception">Thrown if the value is not iterable.</exception>
     internal IEnumerable<object?> GetIterableElements(object? value)
     {
-        // First, check for Symbol.iterator protocol on objects/instances
-        IEnumerable<object?>? customIterator = TryGetSymbolIterator(value);
-        if (customIterator != null)
-        {
-            return customIterator;
-        }
+        if (TryGetIterableElements(value, out var elements))
+            return elements;
+
+        throw new ThrowException(new SharpTSTypeError(value == null
+            ? "Cannot spread null or undefined."
+            : $"Value of type '{value.GetType().Name}' is not iterable. Expected an array, string, Map, Set, generator, or object with [Symbol.iterator]."));
+    }
+
+    /// <summary>
+    /// Acquires iterable elements once, retaining any selected Symbol.iterator method.
+    /// Returns false for noniterable sources so Array.from can use its array-like fallback.
+    /// </summary>
+    internal bool TryGetIterableElements(object? value, [NotNullWhen(true)] out IEnumerable<object?>? elements)
+    {
+        // Prefer the guest protocol before falling back to known native carriers.
+        elements = TryGetSymbolIterator(value);
+        if (elements != null)
+            return true;
 
         // Fall back to known iterable types
-        return value switch
+        elements = value switch
         {
             SharpTSArray array => array,
             SharpTSMap map => map.Entries().Elements,      // yields [key, value] arrays
@@ -1228,22 +1241,10 @@ public partial class Interpreter
             string s => StringBuiltIns.IterateCodePoints(s),
             List<object?> list => list,                    // plain List<object?>
             IEnumerable<object?> enumerable => enumerable, // IEnumerable<object?> (e.g., SharpTSIntlSegments)
-            null => throw new ThrowException(new SharpTSTypeError("Cannot spread null or undefined.")),
-            _ => throw new ThrowException(new SharpTSTypeError(
-                $"Value of type '{value.GetType().Name}' is not iterable. Expected an array, string, Map, Set, generator, or object with [Symbol.iterator]."))
+            _ => null
         };
+        return elements != null;
     }
-
-    /// <summary>
-    /// True when <paramref name="value"/> is iterable via <see cref="GetIterableElements"/>
-    /// (a known iterable type or carrying a Symbol.iterator). Lets Array.from choose the
-    /// iterator protocol vs the array-like (length + indices) path without catching a throw.
-    /// </summary>
-    internal bool IsIterableSource(object? value) =>
-        value is SharpTSArray or SharpTSMap or SharpTSSet or SharpTSIterator or SharpTSGenerator
-            or SharpTSTypedArray or SharpTSBuffer
-            or string or List<object?> or IEnumerable<object?>
-        || TryGetSymbolIterator(value) != null;
 
     /// <summary>
     /// ECMA-262 array-like read (Array.from on a non-iterable): ToLength(Get(src,"length")),

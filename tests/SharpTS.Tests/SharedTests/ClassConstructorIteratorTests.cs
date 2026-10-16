@@ -473,10 +473,9 @@ public sealed class ClassConstructorIteratorTests
         Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 
-    // Interpreter Array.from's duplicate getter acquisition is tracked in #2136.
-    [Fact]
-    public void CompiledArrayFromAcquiresConstructorIteratorGettersOnce()
-        => Assert.Equal("true 1 1\n", TestHarness.RunCompiled(GetterArrayFromSource));
+    [Theory, ModeData]
+    public void ArrayFromAcquiresConstructorIteratorGettersOnce(ExecutionMode mode)
+        => Assert.Equal("true 1 1\n", TestHarness.Run(GetterArrayFromSource, mode));
 
     [Theory]
     [InlineData("iterator")]

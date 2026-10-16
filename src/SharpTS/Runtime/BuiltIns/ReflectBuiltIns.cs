@@ -257,6 +257,12 @@ public static class ReflectBuiltIns
                 }
                 if (args[1].ToObject() is SharpTSSymbol inheritedSymbol)
                 {
+                    if (Interpreter.GetOwnFunctionSymbolAccessorDescriptor(target, inheritedSymbol) is { } ownAccessor)
+                    {
+                        object? accessorReceiver = args.Length > 3 ? args[3].ToObject() : target;
+                        return RuntimeValue.FromBoolean(SetSymbolProperty(interpreter, ownAccessor,
+                            inheritedSymbol, args[2].ToObject(), accessorReceiver));
+                    }
                     // Legacy user functions keep raw own Symbol dictionaries.
                     // Only an own miss can consult inherited descriptors here;
                     // their separate own-Symbol reflection surface is unchanged.

@@ -1657,8 +1657,10 @@ public partial class Interpreter
             // reads.
             if (index is SharpTSSymbol fnSym)
             {
+                if (TryAssignThroughDescriptor(GetOwnFunctionSymbolAccessorDescriptor(fn, fnSym),
+                        fn, fnSym.ToString(), value, strictMode))
+                    return RuntimeValue.FromBoxed(value);
                 if (!fn.TryGetSymbolProperty(fnSym, out _)
-                    && !fn.TryGetSymbolAccessor(fnSym, out _, out _)
                     && TryAssignThroughDescriptor(FindInheritedSymbolDescriptor(fn, fnSym),
                         fn, fnSym.ToString(), value, strictMode))
                     return RuntimeValue.FromBoxed(value);
@@ -1672,8 +1674,10 @@ public partial class Interpreter
         {
             if (index is SharpTSSymbol arrSym)
             {
+                if (TryAssignThroughDescriptor(GetOwnFunctionSymbolAccessorDescriptor(afn, arrSym),
+                        afn, arrSym.ToString(), value, strictMode))
+                    return RuntimeValue.FromBoxed(value);
                 if (!afn.TryGetSymbolProperty(arrSym, out _)
-                    && !afn.TryGetSymbolAccessor(arrSym, out _, out _)
                     && TryAssignThroughDescriptor(FindInheritedSymbolDescriptor(afn, arrSym),
                         afn, arrSym.ToString(), value, strictMode))
                     return RuntimeValue.FromBoxed(value);

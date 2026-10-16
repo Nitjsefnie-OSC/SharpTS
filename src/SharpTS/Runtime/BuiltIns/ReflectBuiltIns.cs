@@ -124,6 +124,14 @@ public static class ReflectBuiltIns
             "deleteProperty" => BuiltInMethod.CreateV2("deleteProperty", 2, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.deleteProperty requires a target object.");
+                if (target is SharpTSObjectNamespace objectNamespace)
+                {
+                    var key = interpreter.ToPropertyKey(args[1].ToObject());
+                    // This namespace has no Symbol storage. Absent Symbols must
+                    // remain distinct from same-spelled string properties.
+                    return RuntimeValue.FromBoolean(key is SharpTSSymbol
+                        || objectNamespace.DeleteProperty((string)key));
+                }
                 if (args[1].ToObject() is SharpTSSymbol symbol)
                 {
                     if (target is SharpTSClass klassBySymbol)

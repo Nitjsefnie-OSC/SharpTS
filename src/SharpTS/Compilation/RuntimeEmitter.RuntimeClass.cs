@@ -1878,7 +1878,7 @@ public partial class RuntimeEmitter
             typeBuilder,
             runtime.ObjectOperations,
             new ObjectFromEntriesInputs(runtime.Errors, runtime.Reflect.Get,
-                runtime.IteratorCollection.ToList, runtime.Symbols, runtime.Sentinels.UndefinedType)
+                GetCollectionConsumerInputs(runtime), runtime.Symbols, runtime.Sentinels.UndefinedType)
         );
         EmitObjectHasOwn(
             typeBuilder,
@@ -2141,13 +2141,9 @@ public partial class RuntimeEmitter
                 runtime.ArrayStorage,
                 runtime.DescriptorStorage,
                 runtime.Errors,
-                runtime.IteratorProtocol.Function,
                 runtime.Invocation.Value,
-                runtime.IteratorCollection.ToList,
-                runtime.RuntimeClass.Type,
-                runtime.Symbols,
-                runtime.FunctionValues.Type,
-                runtime.Sentinels.UndefinedType
+                GetCollectionConsumerInputs(runtime),
+                runtime.FunctionValues.Type
             )
         );
         // Reflect.set / setPrototypeOf / defineProperty / ownKeys / apply /

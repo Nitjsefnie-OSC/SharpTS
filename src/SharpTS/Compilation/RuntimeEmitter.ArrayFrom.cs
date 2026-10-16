@@ -25,17 +25,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Locals
-        var resultLocal = il.DeclareLocal(_types.ListOfObject);     // The result list from IterateToList or the mapped result
-        var indexLocal = il.DeclareLocal(_types.Int32);             // Loop counter
-        var mappedResultLocal = il.DeclareLocal(_types.ListOfObject); // Mapped result when mapFn is provided
-        var iteratorFnLocal = il.DeclareLocal(_types.Object);
-
-        // Labels
-        var noMapFnLabel = il.DefineLabel();
-        var loopStartLabel = il.DefineLabel();
-        var loopEndLabel = il.DefineLabel();
-        var returnLabel = il.DefineLabel();
+        var resultLocal = il.DeclareLocal(_types.ListOfObject);
 
         // ECMA-262 23.1.2.1 Array.from step 1: ToObject(items). Throws TypeError
         // for null / undefined receivers. Pre-fix tolerated these silently
@@ -93,304 +83,90 @@ public partial class RuntimeEmitter
         GuestErrorEmitter.ThrowTypeError(il, runtime, "Array.from: mapfn argument must be callable");
         il.MarkLabel(mapFnOkLabel);
 
-        // ECMA-262 Array.from: objects represented as property dictionaries
-        // and ArrayBuffer objects need the explicit @@iterator-or-array-like
-        // split. Other emitted iterable carriers (generators, typed arrays,
-        // Map/Set and iterator helpers) are recognized directly by
-        // IterateToList even when GetIteratorFunction has no registry entry.
-        var iterablePathLabel = il.DefineLabel();
+        // Stream iterable values and keep the actual iterator until each mapper
+        // call completes. In particular a native generator must not be exhausted
+        // before its first mapper invocation.
         var arrayLikePathLabel = il.DefineLabel();
-        var inspectIteratorLabel = il.DefineLabel();
-        var inspectArrayIteratorLabel = il.DefineLabel();
-        var afterListInit = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.ArrayStorage.Type);
-        il.Emit(OpCodes.Brtrue, inspectArrayIteratorLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.ListOfObject);
-        il.Emit(OpCodes.Brtrue, inspectArrayIteratorLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Brtrue, inspectIteratorLabel);
-        if (runtime.ArrayBuffer is not null)
-        {
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Isinst, runtime.RequireArrayBuffer().Type);
-            il.Emit(OpCodes.Brtrue, inspectIteratorLabel);
-        }
-        if (runtime.SharedArrayBuffer is { } sharedArrayBuffer)
-        {
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Isinst, sharedArrayBuffer.Type);
-            il.Emit(OpCodes.Brtrue, inspectIteratorLabel);
-        }
-        il.Emit(OpCodes.Br, iterablePathLabel);
-
-        // Arrays inherit @@iterator from Array.prototype. Resolve it through
-        // ordinary symbol Get and map each yielded value before advancing the
-        // live iterator; snapshotting first hides mapper-driven mutations.
-        il.MarkLabel(inspectArrayIteratorLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, runtime.ObjectRead.Index);
-        il.Emit(OpCodes.Stloc, iteratorFnLocal);
-        var iteratorInspectedLabel = il.DefineLabel();
-        il.Emit(OpCodes.Br, iteratorInspectedLabel);
-
-        il.MarkLabel(inspectIteratorLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, runtime.IteratorProtocol.Function);
-        il.Emit(OpCodes.Stloc, iteratorFnLocal);
-        il.MarkLabel(iteratorInspectedLabel);
-        il.Emit(OpCodes.Ldloc, iteratorFnLocal);
-        il.Emit(OpCodes.Brfalse, arrayLikePathLabel);
-        il.Emit(OpCodes.Ldloc, iteratorFnLocal);
-        il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
-        il.Emit(OpCodes.Brfalse, iterablePathLabel);
-
-        il.MarkLabel(arrayLikePathLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.ArrayOperations.Materialize);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObject));
         il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, afterListInit);
-
-        il.MarkLabel(iterablePathLabel);
-
-        // Consume a resolved iterator incrementally. Reuse that method value
-        // even without mapping so an observable @@iterator getter runs once.
-        // Native iterable carriers without a resolved method retain the
-        // established IterateToList fast path below.
-        var eagerIterablePathLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, iteratorFnLocal);
-        il.Emit(OpCodes.Brfalse, eagerIterablePathLabel);
-
-        var iteratorLocal = il.DeclareLocal(_types.Object);
-        var wrapperLocal = il.DeclareLocal(_types.IEnumeratorOfObject);
-        var mappedValueLocal = il.DeclareLocal(_types.Object);
-        var mapperArgsLocal = il.DeclareLocal(_types.ObjectArray);
-
-        // iterator = Call(items[@@iterator], items)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, iteratorFnLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Call, runtime.Invocation.Method);
-        il.Emit(OpCodes.Stloc, iteratorLocal);
-        var guestIteratorLabel = il.DefineLabel();
-        var iteratorReadyLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, iteratorLocal);
-        il.Emit(OpCodes.Isinst, _types.IEnumeratorOfObject);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Brfalse, guestIteratorLabel);
-        il.Emit(OpCodes.Stloc, wrapperLocal);
-        il.Emit(OpCodes.Br, iteratorReadyLabel);
-        il.MarkLabel(guestIteratorLabel);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ldloc, iteratorLocal);
-        il.Emit(OpCodes.Ldarg_3);
-        il.Emit(OpCodes.Newobj, runtime.IteratorWrappers.Ctor);
-        il.Emit(OpCodes.Stloc, wrapperLocal);
-        il.MarkLabel(iteratorReadyLabel);
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.EmptyTypes));
-        il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, indexLocal);
-
-        var streamingLoopLabel = il.DefineLabel();
-        var streamingDoneLabel = il.DefineLabel();
-        il.MarkLabel(streamingLoopLabel);
-        il.Emit(OpCodes.Ldloc, wrapperLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IEnumerator, "MoveNext")!);
-        il.Emit(OpCodes.Brfalse, streamingDoneLabel);
-
-        // Read the current value directly when no mapper is supplied. Only
-        // mapped calls need an argument array and a boxed index.
-        var invokeMapperLabel = il.DefineLabel();
-        var mappedValueReadyLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, wrapperLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.IEnumeratorOfObject, "Current")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, mappedValueLocal);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
-        il.Emit(OpCodes.Brfalse, invokeMapperLabel);
-        il.Emit(OpCodes.Br, mappedValueReadyLabel);
-        il.MarkLabel(invokeMapperLabel);
-
-        // mapperArgs = [current, index]
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldloc, mappedValueLocal);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Stloc, mapperArgsLocal);
-
-        // mappedValue = Call(mapfn, thisArg, mapperArgs). If this throws,
-        // perform IteratorClose and then rethrow the original completion.
-        il.BeginExceptionBlock();
-        il.Emit(OpCodes.Ldarg, (short)4);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloc, mapperArgsLocal);
-        il.Emit(OpCodes.Call, runtime.Invocation.Method);
-        il.Emit(OpCodes.Stloc, mappedValueLocal);
-        il.BeginCatchBlock(_types.Exception);
-        il.Emit(OpCodes.Pop);
-
-        // The shared close primitive handles generated generators and native
-        // adapters as well as guest return methods. Preserve the mapper throw
-        // if retrieving or invoking return produces another exception.
-        il.Emit(OpCodes.Ldloc, iteratorLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Call, runtime.IteratorProtocol.Close);
-        il.Emit(OpCodes.Rethrow);
-        il.EndExceptionBlock();
-        il.MarkLabel(mappedValueReadyLabel);
-
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldloc, mappedValueLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, indexLocal);
-        il.Emit(OpCodes.Br, streamingLoopLabel);
-
-        il.MarkLabel(streamingDoneLabel);
+        EmitCollectionConsumerLoop(il, GetCollectionConsumerInputs(runtime),
+            () => il.Emit(OpCodes.Ldarg_0), EmitAppendValue, arrayLikePathLabel);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Newobj, runtime.ArrayStorage.Ctor);
         il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(eagerIterablePathLabel);
-
-        // Call IterateToList(iterable, iteratorSymbol, runtimeType) to get the initial list
-        il.Emit(OpCodes.Ldarg_0);  // iterable
-        il.Emit(OpCodes.Ldarg_2);  // iteratorSymbol
-        il.Emit(OpCodes.Ldarg_3);  // runtimeType
-        il.Emit(OpCodes.Call, runtime.IteratorCollection.ToList);
-        il.Emit(OpCodes.Stloc, resultLocal);
-        il.MarkLabel(afterListInit);
-
-        // Array.from defines every result index. The shared array-like
-        // materializer represents absent source properties with ArrayHole so
-        // hole-skipping methods can reuse it; replace those placeholders with
-        // actual undefined values before mapping or returning.
-        var normalizeIndexLocal = il.DeclareLocal(_types.Int32);
-        var normalizeLoopLabel = il.DefineLabel();
-        var normalizeNextLabel = il.DefineLabel();
-        var normalizeDoneLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, normalizeIndexLocal);
-        il.MarkLabel(normalizeLoopLabel);
-        il.Emit(OpCodes.Ldloc, normalizeIndexLocal);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, normalizeDoneLabel);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldloc, normalizeIndexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Isinst, runtime.ArrayStorage.HoleType);
-        il.Emit(OpCodes.Brfalse, normalizeNextLabel);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldloc, normalizeIndexLocal);
-        il.Emit(OpCodes.Ldsfld, runtime.Sentinels.UndefinedInstance);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetSetMethod()!);
-        il.MarkLabel(normalizeNextLabel);
-        il.Emit(OpCodes.Ldloc, normalizeIndexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, normalizeIndexLocal);
-        il.Emit(OpCodes.Br, normalizeLoopLabel);
-        il.MarkLabel(normalizeDoneLabel);
-
-        // if (mapFn is $Undefined) return result. Callers now pass $Undefined
-        // for absent mapfn, so the prior null-check is replaced by Isinst.
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
-        il.Emit(OpCodes.Brtrue, noMapFnLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, noMapFnLabel);
-
-        // Create mapped result list
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.EmptyTypes));
-        il.Emit(OpCodes.Stloc, mappedResultLocal);
-
-        // int i = 0
-        il.Emit(OpCodes.Ldc_I4_0);
+        // Without an iterator, snapshot LengthOfArrayLike once and Get each
+        // property immediately before mapping it. Reads therefore observe prior
+        // mapper mutations, while missing indices become actual undefined values.
+        // No iterator was acquired, so this path has no IteratorClose obligation.
+        il.MarkLabel(arrayLikePathLabel);
+        var (receiver, length) = EmitGenericArrayReceiverAndLength(il, runtime);
+        var validArrayLength = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, length);
+        il.Emit(OpCodes.Ldc_R8, (double)uint.MaxValue);
+        il.Emit(OpCodes.Ble, validArrayLength);
+        GuestErrorEmitter.ThrowError(il, runtime.Errors.CreateException,
+            runtime.Errors.RangeErrorConstructor, "Invalid array length");
+        il.MarkLabel(validArrayLength);
+        var indexLocal = il.DeclareLocal(_types.Double);
+        var valueLocal = il.DeclareLocal(_types.Object);
+        var loopStartLabel = il.DefineLabel();
+        var loopEndLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldc_R8, 0.0);
         il.Emit(OpCodes.Stloc, indexLocal);
-
-        // Loop: for (int i = 0; i < result.Count; i++)
         il.MarkLabel(loopStartLabel);
         il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, length);
         il.Emit(OpCodes.Bge, loopEndLabel);
-
-        // Create args array: [result[i], (double)i]
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Newarr, _types.Object);
-
-        // args[0] = result[i]
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, receiver);
         il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // args[1] = (double)i
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-
-        // Store args array
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Stloc, argsLocal);
-
-        // Call mapFn with thisArg via Invocation.Method(thisArg, fn, args).
-        // Pre-fix Invocation.Value passed no this binding, so Array.from(items, fn,
-        // thisArg) ignored the thisArg per ECMA-262 23.1.2.1 step 5.b.
-        il.Emit(OpCodes.Ldarg, (short)4);  // thisArg
-        il.Emit(OpCodes.Ldarg_1);  // mapFn
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, runtime.Invocation.Method);
-
-        // Add result to mappedResult
-        var callResultLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, callResultLocal);
-        il.Emit(OpCodes.Ldloc, mappedResultLocal);
-        il.Emit(OpCodes.Ldloc, callResultLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
-
-        // i++
+        il.Emit(OpCodes.Call, runtime.ObjectRead.Index);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        EmitAppendValue(valueLocal, indexLocal);
         il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldc_R8, 1.0);
         il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Stloc, indexLocal);
         il.Emit(OpCodes.Br, loopStartLabel);
-
         il.MarkLabel(loopEndLabel);
-        // Return mapped result
-        il.Emit(OpCodes.Ldloc, mappedResultLocal);
-        il.Emit(OpCodes.Br, returnLabel);
-
-        // No map function - return the original result from IterateToList
-        il.MarkLabel(noMapFnLabel);
         il.Emit(OpCodes.Ldloc, resultLocal);
-
-        il.MarkLabel(returnLabel);
-        // Wrap the List<object?> in $Array on the way out.
         il.Emit(OpCodes.Newobj, runtime.ArrayStorage.Ctor);
         il.Emit(OpCodes.Ret);
+
+        void EmitAppendValue(LocalBuilder value, LocalBuilder index)
+        {
+            var mapped = il.DeclareLocal(_types.Object);
+            var noMapper = il.DefineLabel();
+            var ready = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
+            il.Emit(OpCodes.Brtrue, noMapper);
+            il.Emit(OpCodes.Ldarg, (short)4);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldloc, value);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldloc, index);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Call, runtime.Invocation.Method);
+            il.Emit(OpCodes.Stloc, mapped);
+            il.Emit(OpCodes.Br, ready);
+            il.MarkLabel(noMapper);
+            il.Emit(OpCodes.Ldloc, value);
+            il.Emit(OpCodes.Stloc, mapped);
+            il.MarkLabel(ready);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, mapped);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+        }
     }
 
     /// <summary>

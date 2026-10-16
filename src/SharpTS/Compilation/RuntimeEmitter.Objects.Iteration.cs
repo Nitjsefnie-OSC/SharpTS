@@ -40,7 +40,7 @@ public partial class RuntimeEmitter
     private readonly record struct ObjectFromEntriesInputs(
         EmittedErrorRuntime Errors,
         MethodBuilder GetWithReceiver,
-        MethodBuilder IterateToList,
+        CollectionConsumerInputs Iteration,
         EmittedSymbolRuntime Symbols,
         Type UndefinedType
     );
@@ -1633,126 +1633,68 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var dictType = _types.DictionaryStringObject;
-        var listType = _types.ListOfObject;
-
-        // Locals
         var resultLocal = il.DeclareLocal(dictType);
-        var iterableLocal = il.DeclareLocal(listType);
-        var indexLocal = il.DeclareLocal(_types.Int32);
-        var entryLocal = il.DeclareLocal(_types.Object);
         var keyValueLocal = il.DeclareLocal(_types.Object);
         var keyLocal = il.DeclareLocal(_types.String);
         var valueLocal = il.DeclareLocal(_types.Object);
-
-        var loopStartLabel = il.DefineLabel();
-        var loopEndLabel = il.DefineLabel();
-        var notNullLabel = il.DefineLabel();
-        var throwLabel = il.DefineLabel();
-
-        // ECMA-262 §20.1.2.7 Object.fromEntries step 1:
-        // RequireObjectCoercible — throws TypeError on null/undefined.
-        // Use TSTypeError + CreateException so the exact value carries through to
-        // catch/then handlers as a real TypeError instance.
-        var requireOcThrowLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, requireOcThrowLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
-        il.Emit(OpCodes.Brtrue, requireOcThrowLabel);
-        il.Emit(OpCodes.Br, notNullLabel);
-
-        il.MarkLabel(requireOcThrowLabel);
-        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor, "Object.fromEntries: argument must not be null or undefined");
-
-        il.MarkLabel(notNullLabel);
-
-        // Convert input to list using IterateToList(entries, iteratorSymbol, runtimeType)
-        il.Emit(OpCodes.Ldarg_0);  // entries
-        il.Emit(OpCodes.Ldarg_1);  // iteratorSymbol
-        il.Emit(OpCodes.Ldarg_2);  // runtimeType
-        il.Emit(OpCodes.Call, inputs.IterateToList);
-        il.Emit(OpCodes.Stloc, iterableLocal);
-
-        // Create result dictionary
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(dictType));
         il.Emit(OpCodes.Stloc, resultLocal);
 
-        // Initialize loop counter
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, indexLocal);
+        EmitCollectionConsumerLoop(il, inputs.Iteration,
+            () => il.Emit(OpCodes.Ldarg_0), (entryLocal, _) =>
+            {
+                var throwLabel = il.DefineLabel();
+                var validEntry = il.DefineLabel();
+                // Entries must be objects, but need not be arrays or have a length.
+                il.Emit(OpCodes.Ldloc, entryLocal);
+                il.Emit(OpCodes.Brfalse, throwLabel);
+                foreach (var primitive in new[] { _types.Boolean, _types.Double, _types.String,
+                             _types.BigInteger, inputs.Symbols.Type, inputs.UndefinedType })
+                {
+                    il.Emit(OpCodes.Ldloc, entryLocal);
+                    il.Emit(OpCodes.Isinst, primitive);
+                    il.Emit(OpCodes.Brtrue, throwLabel);
+                }
 
-        // Loop start
-        il.MarkLabel(loopStartLabel);
+                // Ordinary Get invokes indexed/inherited accessors with the entry receiver.
+                // Read both slots before coercing the key.
+                il.Emit(OpCodes.Ldloc, entryLocal);
+                il.Emit(OpCodes.Ldstr, "0");
+                il.Emit(OpCodes.Ldloc, entryLocal);
+                il.Emit(OpCodes.Call, inputs.GetWithReceiver);
+                il.Emit(OpCodes.Stloc, keyValueLocal);
+                il.Emit(OpCodes.Ldloc, entryLocal);
+                il.Emit(OpCodes.Ldstr, "1");
+                il.Emit(OpCodes.Ldloc, entryLocal);
+                il.Emit(OpCodes.Call, inputs.GetWithReceiver);
+                il.Emit(OpCodes.Stloc, valueLocal);
 
-        // Check if index < iterable.Count
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldloc, iterableLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Count")!.GetGetMethod()!);
-        il.Emit(OpCodes.Bge, loopEndLabel);
+                il.Emit(OpCodes.Ldloc, keyValueLocal);
+                var keyNullLabel = il.DefineLabel();
+                var keyDoneLabel = il.DefineLabel();
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Brfalse, keyNullLabel);
+                il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+                il.Emit(OpCodes.Br, keyDoneLabel);
+                il.MarkLabel(keyNullLabel);
+                il.Emit(OpCodes.Pop);
+                il.Emit(OpCodes.Ldstr, "");
+                il.MarkLabel(keyDoneLabel);
+                il.Emit(OpCodes.Stloc, keyLocal);
 
-        // Get entry = iterable[index]
-        il.Emit(OpCodes.Ldloc, iterableLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Item")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, entryLocal);
+                // result[key] = value
+                il.Emit(OpCodes.Ldloc, resultLocal);
+                il.Emit(OpCodes.Ldloc, keyLocal);
+                il.Emit(OpCodes.Ldloc, valueLocal);
+                il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
 
-        // Entries must be objects, but need not be arrays or have a length.
-        il.Emit(OpCodes.Ldloc, entryLocal);
-        il.Emit(OpCodes.Brfalse, throwLabel);
-        foreach (var primitive in new[] { _types.Boolean, _types.Double, _types.String,
-                     _types.BigInteger, inputs.Symbols.Type, inputs.UndefinedType })
-        {
-            il.Emit(OpCodes.Ldloc, entryLocal);
-            il.Emit(OpCodes.Isinst, primitive);
-            il.Emit(OpCodes.Brtrue, throwLabel);
-        }
+                il.Emit(OpCodes.Br, validEntry);
+                il.MarkLabel(throwLabel);
+                GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
+                    "Object.fromEntries() requires entry objects");
+                il.MarkLabel(validEntry);
+            });
 
-        // Ordinary Get invokes indexed/inherited accessors with the entry receiver.
-        // Read both slots before coercing the key.
-        il.Emit(OpCodes.Ldloc, entryLocal);
-        il.Emit(OpCodes.Ldstr, "0");
-        il.Emit(OpCodes.Ldloc, entryLocal);
-        il.Emit(OpCodes.Call, inputs.GetWithReceiver);
-        il.Emit(OpCodes.Stloc, keyValueLocal);
-        il.Emit(OpCodes.Ldloc, entryLocal);
-        il.Emit(OpCodes.Ldstr, "1");
-        il.Emit(OpCodes.Ldloc, entryLocal);
-        il.Emit(OpCodes.Call, inputs.GetWithReceiver);
-        il.Emit(OpCodes.Stloc, valueLocal);
-
-        il.Emit(OpCodes.Ldloc, keyValueLocal);
-        var keyNullLabel = il.DefineLabel();
-        var keyDoneLabel = il.DefineLabel();
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Brfalse, keyNullLabel);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-        il.Emit(OpCodes.Br, keyDoneLabel);
-        il.MarkLabel(keyNullLabel);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ldstr, "");
-        il.MarkLabel(keyDoneLabel);
-        il.Emit(OpCodes.Stloc, keyLocal);
-
-        // result[key] = value
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(dictType, "set_Item", _types.String, _types.Object));
-
-        // Increment index
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, indexLocal);
-        il.Emit(OpCodes.Br, loopStartLabel);
-
-        // Throw error for invalid entry
-        il.MarkLabel(throwLabel);
-        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
-            "Object.fromEntries() requires entry objects");
-
-        // Return result
-        il.MarkLabel(loopEndLabel);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
     }

@@ -116,8 +116,7 @@ public sealed class ObjectFromEntriesTests
         Assert.Equal("true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n", TestHarness.Run(source, mode));
     }
 
-    // Compiled consumers materialize the source before processing entries (#2123).
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void EntryGetterFailure_ClosesIteratorAndPreservesOriginalThrow(ExecutionMode mode)
     {
         const string source = """

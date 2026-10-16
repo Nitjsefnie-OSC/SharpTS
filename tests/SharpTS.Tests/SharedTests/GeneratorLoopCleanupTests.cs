@@ -122,8 +122,7 @@ public class GeneratorLoopCleanupTests
         Assert.Equal("step true\ntrue close\n", TestHarness.Run(source, mode));
     }
 
-    // Compiled consumer close failures retain a separate boundary (#2123).
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void CollectionCallbacks_CloseGeneratorAndPreserveTheirThrow(ExecutionMode mode)
     {
         const string source = """

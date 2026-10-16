@@ -906,8 +906,8 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
     ///   slow path).
     /// - Argument is <c>Expr.ArrowFunction</c> (literal, not a variable
     ///   binding).
-    /// - Arity 0 or 1 (Map's callback gets element + index + receiver, but
-    ///   arrows can ignore any of those).
+    /// - Exactly one parameter: the direct helper's delegate accepts the
+    ///   element. Zero-parameter arrows use reflective argument adaptation.
     /// - Not async, not generator, no <c>__this</c> param.
     /// - No type annotations on params — <see cref="ParameterTypeResolver"/>
     ///   falls back to <c>object</c> when annotation is null, guaranteeing
@@ -1060,7 +1060,7 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         var af = ResolveCallbackArrow(emitter, arguments[0]);
         if (af is null) return false;
         if (af.HasOwnThis || af.IsAsync || af.IsGenerator) return false;
-        if (af.Parameters.Count > 1) return false;
+        if (af.Parameters.Count != 1) return false;
         foreach (var p in af.Parameters)
         {
             // Annotated params (p.Type != null) are now supported via a boxed

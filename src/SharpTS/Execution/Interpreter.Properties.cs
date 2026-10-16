@@ -533,6 +533,10 @@ public partial class Interpreter
                     receiver, out var functionObjectValue))
                 return functionObjectValue;
 
+            if (current is BuiltInMethod { OwnProperties: { } ownProperties }
+                && ownProperties.TryGetValue(name, out var builtInOwnValue))
+                return builtInOwnValue;
+
             if (current is SharpTSFunction function
                 && function.GetOwnPropertyDescriptor(name) is { } functionDescriptor)
             {
@@ -588,7 +592,7 @@ public partial class Interpreter
                 // is stored outside the ordinary function property bag.
                 if (callable is IBuiltInFunctionMetadata
                     && name is "name" or "length"
-                    && FunctionBuiltIns.GetMember(callable, name) is { } metadataValue)
+                    && FunctionBuiltIns.GetMember(callable, name, this) is { } metadataValue)
                     return metadataValue;
 
                 // Ordinary callables inherit from the realm's mutable
@@ -620,7 +624,7 @@ public partial class Interpreter
                     return objectDescriptor.Value;
                 }
                 return objectPrototype.GetMember(name)
-                    ?? (callable is ISharpTSPrimitiveConstructor ? null : FunctionBuiltIns.GetMember(callable, name))
+                    ?? (callable is ISharpTSPrimitiveConstructor ? null : FunctionBuiltIns.GetMember(callable, name, this))
                     ?? SharpTSUndefined.Instance;
             }
 
@@ -1325,6 +1329,11 @@ public partial class Interpreter
         }
         if (obj is ISharpTSCallable && memberName == "constructor")
             return RuntimeValue.FromBoxed(GetFunctionPrototype().GetMember(memberName));
+        // The process-wide built-in registry has no realm context. Resolve
+        // these inherited methods here so every callable exposes this realm's
+        // canonical intrinsics, with own properties and accessors still first.
+        if (obj is ISharpTSCallable && memberName is "bind" or "call" or "apply")
+            return RuntimeValue.FromBoxed(GetPropertyValue(obj, memberName));
 
         // Date instances are ordinary extensible objects. Their built-in
         // methods remain registry-backed, while guest-defined own fields live
@@ -1689,7 +1698,7 @@ public partial class Interpreter
         if (memberName == "name") return klass.Name;
         if (memberName == "length") return (double)klass.Arity();
         if (memberName is "bind" or "call" or "apply")
-            return FunctionBuiltIns.GetMember(klass, memberName);
+            return FunctionBuiltIns.GetMember(klass, memberName, this);
 
         // Class constructors are function objects and therefore inherit the
         // ordinary Object.prototype methods through Function.prototype.
@@ -2271,7 +2280,7 @@ public partial class Interpreter
                 return FunctionBuiltIns.CallWithThis(this, getter, boundFunction, []);
             if (boundFunction.TryGetProperty(memberName, out var ownValue))
                 return ownValue;
-            if (FunctionBuiltIns.GetMember(boundFunction, memberName) is { } functionMember)
+            if (FunctionBuiltIns.GetMember(boundFunction, memberName, this) is { } functionMember)
                 return functionMember;
             if (GetFunctionPrototype().GetExtraGetter(memberName) is { } prototypeGetter)
                 return BindAccessorToObject(prototypeGetter, boundFunction).CallBoxed(this, []);
@@ -2357,7 +2366,7 @@ public partial class Interpreter
         if (obj is SharpTSArrayUnboundMethod unbound)
         {
             // call/apply/bind on unbound prototype methods go through FunctionBuiltIns.
-            var fnMember = FunctionBuiltIns.GetMember(unbound, memberName);
+            var fnMember = FunctionBuiltIns.GetMember(unbound, memberName, this);
             if (fnMember != null) return fnMember;
             return SharpTSUndefined.Instance;
         }
@@ -2373,13 +2382,13 @@ public partial class Interpreter
         }
         if (obj is SharpTSFunctionProtoToString fnToStr)
         {
-            var fnMember = FunctionBuiltIns.GetMember(fnToStr, memberName);
+            var fnMember = FunctionBuiltIns.GetMember(fnToStr, memberName, this);
             if (fnMember != null) return fnMember;
             return SharpTSUndefined.Instance;
         }
         if (obj is SharpTSObjectUnboundMethod objUnbound)
         {
-            var fnMember = FunctionBuiltIns.GetMember(objUnbound, memberName);
+            var fnMember = FunctionBuiltIns.GetMember(objUnbound, memberName, this);
             if (fnMember != null) return fnMember;
             return SharpTSUndefined.Instance;
         }
@@ -2419,7 +2428,7 @@ public partial class Interpreter
             if (functionPrototype.HasExtra(memberName))
                 return functionPrototype.TryGetExtra(memberName);
             return ctorMember
-                ?? FunctionBuiltIns.GetMember(ctor, memberName)
+                ?? FunctionBuiltIns.GetMember(ctor, memberName, this)
                 ?? SharpTSUndefined.Instance;
         }
 
@@ -2511,6 +2520,8 @@ public partial class Interpreter
         // Function.prototype. Resolve that layer before the registry: registered
         // callable types otherwise report "known type, missing member" and return
         // undefined before the generic callable fallback can see the prototype.
+        if (obj is ISharpTSCallable && memberName is "bind" or "call" or "apply")
+            return GetPropertyValue(obj, memberName);
         if (obj is ISharpTSCallable
             && memberName is not ("name" or "length" or "prototype"))
         {
@@ -2563,11 +2574,11 @@ public partial class Interpreter
                 return GetFunctionPrototype().GetMember(memberName);
             if (callable is IBuiltInFunctionMetadata
                 && memberName is "name" or "length"
-                && FunctionBuiltIns.GetMember(callable, memberName) is { } metadataValue)
+                && FunctionBuiltIns.GetMember(callable, memberName, this) is { } metadataValue)
                 return metadataValue;
             if (GetFunctionPrototype().HasExtra(memberName))
                 return GetFunctionPrototype().TryGetExtra(memberName);
-            var fnMember = FunctionBuiltIns.GetMember(callable, memberName);
+            var fnMember = FunctionBuiltIns.GetMember(callable, memberName, this);
             if (fnMember != null) return fnMember;
             var protoMember = GetObjectPrototype().GetMember(memberName);
             if (protoMember is Runtime.Types.SharpTSObjectUnboundMethod ub)

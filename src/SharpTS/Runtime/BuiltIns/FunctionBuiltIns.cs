@@ -10,11 +10,6 @@ namespace SharpTS.Runtime.BuiltIns;
 /// </summary>
 public static class FunctionBuiltIns
 {
-    // Spec lengths per ECMA-262 §20.2.3: bind=1, call=1, apply=2.
-    private static readonly BuiltInMethod _bind = BuiltInMethod.CreateV2("bind", 0, int.MaxValue, Bind).WithSpecLength(1).AsNonConstructor();
-    private static readonly BuiltInMethod _call = BuiltInMethod.CreateV2("call", 0, int.MaxValue, Call).WithSpecLength(1).AsNonConstructor();
-    private static readonly BuiltInMethod _apply = BuiltInMethod.CreateV2("apply", 0, 2, Apply).WithSpecLength(2).AsNonConstructor();
-
     internal static BuiltInMethod CreateHasInstanceMethod()
         => BuiltInMethod.CreateV2("[Symbol.hasInstance]", 0, int.MaxValue,
             static (interpreter, receiver, args) => RuntimeValue.FromBoolean(
@@ -24,23 +19,43 @@ public static class FunctionBuiltIns
             .WithSpecLength(1).AsNonConstructor();
 
     /// <summary>
-    /// Returns the unbound singleton callable for a Function.prototype method
-    /// (call/apply/bind), or null. Lets <c>Function.prototype.call</c> and
-    /// <c>fn.call</c> share one BuiltInMethod instance, so reference equality
-    /// holds across both access paths and bound variants compose correctly.
+    /// Creates an unbound Function.prototype method for one realm. The owning
+    /// prototype retains it so mutable function metadata stays realm-local and
+    /// repeated reads preserve identity.
     /// </summary>
-    public static BuiltInMethod? GetPrototypeMethod(string name) => name switch
+    internal static BuiltInMethod? CreatePrototypeMethod(string name) => name switch
     {
-        "call" => _call,
-        "apply" => _apply,
-        "bind" => _bind,
+        // Spec lengths per ECMA-262 §20.2.3: bind=1, call=1, apply=2.
+        "bind" => new PrototypeMethod("bind", int.MaxValue, Bind, 1),
+        "call" => new PrototypeMethod("call", int.MaxValue, Call, 1),
+        "apply" => new PrototypeMethod("apply", 2, Apply, 2),
         _ => null,
     };
+
+    /// <summary>Creates a fresh intrinsic; interpreter reads use their realm's cached copy.</summary>
+    public static BuiltInMethod? GetPrototypeMethod(string name) => CreatePrototypeMethod(name);
+
+    private sealed class PrototypeMethod : BuiltInMethod, ISharpTSFunctionObject
+    {
+        private readonly SharpTSObject _properties;
+
+        internal PrototypeMethod(string name, int maxArity,
+            Func<Interpreter, RuntimeValue, ReadOnlySpan<RuntimeValue>, RuntimeValue> implementation,
+            int specLength)
+            : base(name, 0, maxArity, null, implementation, null)
+        {
+            WithSpecLength(specLength);
+            AsNonConstructor();
+            _properties = FunctionObjectProperties.Create(name, specLength);
+        }
+
+        SharpTSObject ISharpTSFunctionObject.OwnProperties => _properties;
+    }
 
     /// <summary>
     /// Gets a member from a function (bind, call, apply, length, name).
     /// </summary>
-    public static object? GetMember(ISharpTSCallable receiver, string name)
+    public static object? GetMember(ISharpTSCallable receiver, string name, Interpreter? interpreter = null)
     {
         if (receiver is ISharpTSFunctionObject functionObject && name is "name" or "length")
         {
@@ -68,9 +83,12 @@ public static class FunctionBuiltIns
 
         switch (name)
         {
-            case "bind": return _bind.Bind(receiver);
-            case "call": return _call.Bind(receiver);
-            case "apply": return _apply.Bind(receiver);
+            case "bind":
+            case "call":
+            case "apply":
+                return interpreter is not null
+                    ? interpreter.GetFunctionPrototype().GetMember(name)
+                    : CreatePrototypeMethod(name)!.Bind(receiver);
             // BuiltInMethod carries an explicit ECMA-262 spec length distinct
             // from MinArity (variadic methods like Array.prototype.slice have
             // MinArity 0 but spec length 2). Other callables fall back to
@@ -98,9 +116,9 @@ public static class FunctionBuiltIns
         {
             // Built-in wrappers know their own spec name; without this they fell through
             // to "" and every `<method>/name.js` test failed.
-            IBuiltInFunctionMetadata builtIn => builtIn.FunctionName,
             ISharpTSFunctionObject function =>
                 function.OwnProperties.GetOwnPropertyDescriptor("name")?.Value as string ?? "",
+            IBuiltInFunctionMetadata builtIn => builtIn.FunctionName,
             SharpTSFunction fn => fn.TryGetProperty("name", out var name) ? name as string ?? "" : "",
             SharpTSAsyncFunction fn => fn.TryGetProperty("name", out var name) ? name as string ?? "" : "",
             SharpTSArrowFunction arrow => arrow.ToString().Contains("<fn ")

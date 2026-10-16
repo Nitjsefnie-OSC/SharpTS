@@ -526,7 +526,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Brfalse, notTypeForDescLabel);
-        EmitGetOwnDescriptorConstructorMetadata(il, inputs.GetProperty, propNameLocal, resultDictLocal, endLabel);
+        EmitGetOwnDescriptorConstructorMetadata(il, inputs.GetProperty, inputs.ObjectState.IsBuiltinDeleted,
+            propNameLocal, resultDictLocal, returnNullLabel, endLabel);
 
         EmitGetOwnDescriptorRegExpConstructor(
             il,
@@ -597,12 +598,15 @@ public partial class RuntimeEmitter
     }
 
     // Called only for Type receivers. Handles prototype/name/length; entry/fallthrough
-    // are empty, and matches branch to the caller-owned endLabel with one result object.
+    // are empty. Matches branch to endLabel with one result object, or to
+    // returnNullLabel with an empty stack for deleted configurable metadata.
     private void EmitGetOwnDescriptorConstructorMetadata(
         ILGenerator il,
         MethodBuilder getProperty,
+        MethodBuilder isBuiltinDeleted,
         LocalBuilder propNameLocal,
         LocalBuilder resultDictLocal,
+        Label returnNullLabel,
         Label endLabel
     )
     {
@@ -632,6 +636,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "name");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, typeIsNameLabel);
+        // Explicit descriptors were checked by the caller before synthesis.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Call, isBuiltinDeleted);
+        il.Emit(OpCodes.Brtrue, returnNullLabel);
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultDictLocal);
         il.Emit(OpCodes.Ldloc, resultDictLocal);
@@ -652,6 +661,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "length");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, typeIsLengthLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, isBuiltinDeleted);
+        il.Emit(OpCodes.Brtrue, returnNullLabel);
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultDictLocal);
         il.Emit(OpCodes.Ldloc, resultDictLocal);

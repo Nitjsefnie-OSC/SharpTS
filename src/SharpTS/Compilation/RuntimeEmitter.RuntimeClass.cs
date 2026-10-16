@@ -1507,6 +1507,7 @@ public partial class RuntimeEmitter
                 runtime.ObjectDescriptors,
                 runtime.ObjectPrototypes,
                 runtime.ObjectStorage,
+                runtime.Reflect.Get,
                 runtime.RegExps,
                 runtime.StringCoercion,
                 runtime.Strings,

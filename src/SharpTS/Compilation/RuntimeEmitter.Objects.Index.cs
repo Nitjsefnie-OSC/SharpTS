@@ -51,6 +51,7 @@ public partial class RuntimeEmitter
         EmittedObjectDescriptorRuntime ObjectDescriptors,
         EmittedObjectPrototypeRuntime ObjectPrototypes,
         EmittedObjectStorageRuntime ObjectStorage,
+        MethodInfo ReflectGet,
         EmittedRegExpRuntime RegExps,
         EmittedStringCoercionRuntime StringCoercion,
         EmittedStringRuntime Strings,
@@ -312,6 +313,23 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brtrue, symbolMethodFound);
             il.MarkLabel(next);
         }
+
+        void EmitInheritedProxyGet(LocalBuilder currentPrototype)
+        {
+            var proxy = il.DefineLabel();
+            var notProxy = il.DefineLabel();
+            EmitProxyTypeCheck(il, () => il.Emit(OpCodes.Ldloc, currentPrototype), proxy, notProxy);
+            il.MarkLabel(proxy);
+            // Proxy [[Get]] receives the original Symbol and receiver. The
+            // Reflect bridge also retains that receiver when no trap is present.
+            il.Emit(OpCodes.Ldloc, currentPrototype);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, inputs.ReflectGet);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notProxy);
+        }
+
         // Generic constructor identities share their source-owned descriptors.
         // Resolve that own slot before entering the inherited Function prototype.
         var ownConstructor = il.DeclareLocal(_types.Type);
@@ -350,6 +368,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(prototypeLoop);
         il.Emit(OpCodes.Ldloc, prototype);
         il.Emit(OpCodes.Brfalse, noPrototype);
+        EmitInheritedProxyGet(prototype);
         il.Emit(OpCodes.Ldloc, prototype);
         il.Emit(OpCodes.Call, inputs.Symbols.GetStorage);
         il.Emit(OpCodes.Ldarg_1);
@@ -571,6 +590,7 @@ public partial class RuntimeEmitter
             il.MarkLabel(symbolProtoLoopLabel);
             il.Emit(OpCodes.Ldloc, symbolProtoLocal);
             il.Emit(OpCodes.Brfalse, symbolProtoDoneLabel);
+            EmitInheritedProxyGet(symbolProtoLocal);
             il.Emit(OpCodes.Ldloc, symbolProtoLocal);
             il.Emit(OpCodes.Call, inputs.Symbols.GetStorage);
             il.Emit(OpCodes.Stloc, symbolProtoDictLocal);

@@ -553,6 +553,7 @@ public partial class RuntimeEmitter
             ),
             propNameLocal,
             resultDictLocal,
+            returnNullLabel,
             endLabel
         );
 
@@ -703,13 +704,15 @@ public partial class RuntimeEmitter
     }
 
     // Type receiver stage. Entry/fallthrough are empty; a matched static method
-    // branches to the caller-owned endLabel with one result object. Owns dispatch labels.
+    // branches to the caller-owned endLabel with one result object, or returnNullLabel
+    // for a deleted intrinsic. Owns dispatch labels.
     private void EmitGetOwnDescriptorObjectConstructor(
         ILGenerator il,
         EmittedObjectDescriptorRuntime descriptors,
         GetOwnDescriptorObjectConstructorInputs inputs,
         LocalBuilder propNameLocal,
         LocalBuilder resultDictLocal,
+        Label returnNullLabel,
         Label endLabel
     )
     {
@@ -724,6 +727,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldtoken, _types.Object);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle")!);
         il.Emit(OpCodes.Bne_Un, objTypeNotObjectLabel);
+        // User-defined descriptors were checked before constructor synthesis.
+        // A deleted intrinsic must not acquire a synthetic descriptor again.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+        il.Emit(OpCodes.Brtrue, returnNullLabel);
         void EmitObjectMethodValueDescCheck(string n, MethodBuilder targetMethod, int specLength)
         {
             var skipLabel = il.DefineLabel();

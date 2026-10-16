@@ -155,6 +155,10 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         _symbolProperties[key] = value;
     }
 
+    /// <summary>Applies an explicit Symbol definition without invoking assignment setters.</summary>
+    internal void DefineSymbolProperty(SharpTSSymbol key, SharpTSPropertyDescriptor descriptor)
+        => FunctionSymbolProperties.Define(ref _symbolProperties, ref _symbolAccessors, key, descriptor);
+
     /// <summary>Reads a symbol-keyed property; returns true and the value
     /// when one is registered. Used by SpeciesConstructor lookup, etc.</summary>
     public bool TryGetSymbolProperty(SharpTSSymbol key, out object? value)
@@ -606,6 +610,10 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
         _symbolProperties ??= [];
         _symbolProperties[key] = value;
     }
+
+    /// <summary>Applies an explicit Symbol definition without invoking assignment setters.</summary>
+    internal void DefineSymbolProperty(SharpTSSymbol key, SharpTSPropertyDescriptor descriptor)
+        => FunctionSymbolProperties.Define(ref _symbolProperties, ref _symbolAccessors, key, descriptor);
 
     /// <summary>Reads a symbol-keyed property; returns true and the value
     /// when one is registered.</summary>

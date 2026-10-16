@@ -656,16 +656,10 @@ public static partial class ObjectBuiltIns
                         throw new ThrowException(new SharpTSTypeError("Cannot redefine symbol property"));
                     return target;
                 case SharpTSFunction symFn:
-                    if (isAccessor)
-                        symFn.DefineSymbolAccessor(symKey, descriptor.Get, descriptor.Set);
-                    else if (descriptorHasValue)
-                        symFn.SetBySymbol(symKey, descriptor.Value);
+                    symFn.DefineSymbolProperty(symKey, descriptor);
                     return target;
                 case SharpTSArrowFunction symArrow:
-                    if (isAccessor)
-                        symArrow.DefineSymbolAccessor(symKey, descriptor.Get, descriptor.Set);
-                    else if (descriptorHasValue)
-                        symArrow.SetBySymbol(symKey, descriptor.Value);
+                    symArrow.DefineSymbolProperty(symKey, descriptor);
                     return target;
                 case SharpTSRegExp symRegex:
                     if (isAccessor)

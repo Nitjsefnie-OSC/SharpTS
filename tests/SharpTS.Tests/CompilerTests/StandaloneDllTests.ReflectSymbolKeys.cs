@@ -53,6 +53,7 @@ public partial class StandaloneDllTests
     [InlineData("coercion-errors")]
     [InlineData("class-methods")]
     [InlineData("coercion-order")]
+    [InlineData("number-key-coercion")]
     public void Isolated_Issue2067ReflectSymbolKeys_VerifyBeforeExecution(string name)
     {
         var row = ReflectSymbolKeyTests.Cases().Single(row => (string)row[0] == name);

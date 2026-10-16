@@ -13,6 +13,13 @@ public sealed class ReflectSymbolKeyTests
             console.log(Reflect.get(object, key));
             console.log(Reflect.set(object, key, 4), object[key], object["Symbol(key)"]);
             """, "3\ntrue 4 undefined\n"];
+        // #2161 preserves the exact Number-constructor Symbol-producing key coercion source.
+        yield return ["number-key-coercion", """
+            const key = Symbol("key"), constructor: any = Number;
+            Object.defineProperty(constructor, key, { value: 3, configurable: true });
+            const propertyKey: any = { [Symbol.toPrimitive](hint: any) { console.log(hint); return key; } };
+            console.log(Reflect.get(constructor, propertyKey));
+            """, "string\n3\n"];
         yield return ["data", """
             const key = Symbol("key"), other = Symbol("key"), constructor: any = Number;
             for (const target of [{}, constructor]) {
@@ -224,7 +231,7 @@ public sealed class ReflectSymbolKeyTests
         {
             // Interpreter Symbol-producing key coercion is tracked in #2354.
             // Class method lookup retains its existing compiler-only coverage.
-            if ((string)row[0] is not ("coercion" or "coercion-errors" or "coercion-order" or "class-methods"))
+            if ((string)row[0] is not ("coercion" or "coercion-errors" or "coercion-order" or "class-methods" or "number-key-coercion"))
                 yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             // Compiled null data receivers fail in descriptor lookup (#2356).
             if ((string)row[0] != "receiver-data-presence")

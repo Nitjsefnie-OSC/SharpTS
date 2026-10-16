@@ -735,7 +735,8 @@ public partial class Interpreter
             string s => StringBuiltIns.IterateCodePoints(s),
             List<object?> list => list,                    // plain List<object?>
             IEnumerable<object?> enumerable => enumerable, // IEnumerable<object?> (e.g., SharpTSIntlSegments)
-            _ => throw new InterpreterException("for...of requires an iterable (array, Map, Set, or iterator).")
+            _ => throw new ThrowException(new SharpTSTypeError(
+                "for...of requires an iterable (array, Map, Set, or iterator)."))
         };
 
         return IterateWithBreakContinue(elements, forOf.Variable.Lexeme, forOf.Body, labels);
@@ -1227,8 +1228,9 @@ public partial class Interpreter
             string s => StringBuiltIns.IterateCodePoints(s),
             List<object?> list => list,                    // plain List<object?>
             IEnumerable<object?> enumerable => enumerable, // IEnumerable<object?> (e.g., SharpTSIntlSegments)
-            null => throw new InterpreterException("Cannot spread null or undefined."),
-            _ => throw new InterpreterException($"Value of type '{value.GetType().Name}' is not iterable. Expected an array, string, Map, Set, generator, or object with [Symbol.iterator].")
+            null => throw new ThrowException(new SharpTSTypeError("Cannot spread null or undefined.")),
+            _ => throw new ThrowException(new SharpTSTypeError(
+                $"Value of type '{value.GetType().Name}' is not iterable. Expected an array, string, Map, Set, generator, or object with [Symbol.iterator]."))
         };
     }
 

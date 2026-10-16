@@ -139,7 +139,8 @@ public partial class Interpreter
             SharpTSIterator iter => iter.Elements,
             SharpTSGenerator gen => gen,
             string s => StringBuiltIns.IterateCodePoints(s),
-            _ => throw new InterpreterException("for...of requires an iterable (array, Map, Set, or iterator).")
+            _ => throw new ThrowException(new SharpTSTypeError(
+                "for...of requires an iterable (array, Map, Set, or iterator)."))
         });
 
         var iterator = items.GetEnumerator();

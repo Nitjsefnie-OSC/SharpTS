@@ -277,6 +277,8 @@ public partial class TypeChecker
                     : member.Value;
             }
         }
+        if (ResolveApparentFunctionMember(itf, memberName.Lexeme) is { } functionMember)
+            return functionMember;
         if (ResolveObjectPrototypeMember(memberName.Lexeme) is { } protoMember)
         {
             return protoMember;
@@ -309,6 +311,8 @@ public partial class TypeChecker
                 ? CreateUnion(fieldType, TypeInfo.Undefined.Shared)
                 : fieldType;
         }
+        if (ResolveApparentFunctionMember(record, memberName.Lexeme) is { } functionMember)
+            return functionMember;
         if (record.StringIndexType != null)
         {
             return WithUncheckedUndefined(record.StringIndexType);

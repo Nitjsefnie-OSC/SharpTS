@@ -353,6 +353,10 @@ public partial class TypeChecker
             if (objType is TypeInfo.Interface { StringIndexType: { } itfIdxType }) return WithUncheckedUndefined(itfIdxType);
         }
 
+        if (getIndex.Index is Expr.Literal { Value: string functionMemberName } &&
+            ResolveFunctionShapeMember(objType, functionMemberName) is { } apparentNamedMember)
+            return apparentNamedMember;
+
         // Exclude<keyof T, symbol> remains a deferred conditional while T is open, but every
         // possible result is a string-or-number property key. Such a domain can safely read a
         // string index signature without inventing an implicit-any TS7053.
@@ -1250,6 +1254,9 @@ public partial class TypeChecker
             return GetFunctionHasInstanceReadType(objType, getIndex.Index)
                 ?? GetMemberType(objType, "@@hasInstance");
 
+        if (getIndex.Index is Expr.Literal { Value: string functionMemberName } &&
+            ResolveFunctionShapeMember(objType, functionMemberName) is { } apparentNamedMember)
+            return apparentNamedMember;
         if (IsStringOrNumberIndexDomain(indexType) && StringIndexOf(objType) is { } domainIndex)
             return WithUncheckedUndefined(domainIndex);
 

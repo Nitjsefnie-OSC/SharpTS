@@ -414,8 +414,8 @@ public sealed class StaticPrivateMethodCallBrandTests
         Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void InterpretedInstancePrivateCallsRetainCapturedScopeAndSuperReceiver()
+    [Theory, ModeData]
+    public void InstancePrivateCallsRetainCapturedScopeAndSuperReceiver(ExecutionMode mode)
     {
         const string source = """
             function make(prefix: string) {
@@ -428,7 +428,7 @@ public sealed class StaticPrivateMethodCallBrandTests
             }
             console.log(make("outer").read());
             """;
-        Assert.Equal("outer:base\n", TestHarness.RunInterpreted(source));
+        Assert.Equal("outer:base\n", TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

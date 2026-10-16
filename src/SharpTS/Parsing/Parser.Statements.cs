@@ -228,7 +228,7 @@ public partial class Parser
 
     private Stmt ParseDestructuringAssignmentForOf(Expr pattern, bool isAsync, int line)
     {
-        ValidateForOfAssignmentRest(pattern);
+        ValidateAssignmentRest(pattern, forOfHead: true);
         Expr iterable = Expression();
         Consume(TokenType.RIGHT_PAREN, "Expect ')' after for...of expression.");
         Stmt originalBody = Statement();
@@ -241,9 +241,11 @@ public partial class Parser
         return new Stmt.ForOf(tempVar, null, iterable, body, isAsync);
     }
 
-    private void ValidateForOfAssignmentRest(Expr pattern)
+    // Visit only assignment-pattern targets. Defaults, computed keys and target
+    // receivers remain value expressions and retain ordinary literal-spread rules.
+    private void ValidateAssignmentRest(Expr pattern, bool forOfHead = false)
     {
-        if (pattern is Expr.Grouping && (Unwrap(pattern) is Expr.ArrayLiteral or Expr.ObjectLiteral))
+        if (forOfHead && pattern is Expr.Grouping && (Unwrap(pattern) is Expr.ArrayLiteral or Expr.ObjectLiteral))
             throw new Exception("Destructuring assignment patterns cannot be parenthesized in a for...of head.");
 
         switch (Unwrap(pattern))
@@ -259,7 +261,7 @@ public partial class Parser
                             throw new Exception("Rest element must be last in a destructuring assignment.");
                         element = rest.Expression;
                     }
-                    ValidateForOfAssignmentRest(element);
+                    ValidateAssignmentRest(element, forOfHead);
                 }
                 break;
             case Expr.ObjectLiteral obj:
@@ -273,11 +275,11 @@ public partial class Parser
                         if (Unwrap(property.Value) is Expr.ArrayLiteral or Expr.ObjectLiteral)
                             throw new Exception("Object rest must have an assignment target, not a destructuring pattern.");
                     }
-                    ValidateForOfAssignmentRest(property.Value);
+                    ValidateAssignmentRest(property.Value, forOfHead);
                 }
                 break;
             case Expr.DestructuringAssign { RawTarget: { } target }:
-                ValidateForOfAssignmentRest(target);
+                ValidateAssignmentRest(target, forOfHead);
                 break;
         }
     }

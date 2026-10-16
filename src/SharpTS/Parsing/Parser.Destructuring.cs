@@ -365,6 +365,7 @@ public partial class Parser
 
     private Expr BuildDestructuringAssignment(Expr pattern, Expr value, int line)
     {
+        ValidateAssignmentRest(pattern);
         var stmts = new List<Stmt>();
         // _destN = rhs — evaluate the source exactly once; it is also the expression's result value.
         // Carry the target pattern's shape as a contextual type so a mixed array-literal rhs infers as

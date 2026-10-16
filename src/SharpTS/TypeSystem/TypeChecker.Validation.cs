@@ -681,15 +681,20 @@ public partial class TypeChecker
     /// <summary>
     /// Validates that methods/accessors marked with 'override' actually override a member in the superclass chain.
     /// </summary>
-    private void ValidateOverrideMembers(Stmt.Class classStmt, TypeInfo.Class classType)
+    private void ValidateOverrideMembers(Stmt.Class classStmt, TypeInfo.Class classType, bool staticOnly = false)
     {
         // Check methods marked with override
         foreach (var method in classStmt.Methods)
         {
-            if (method.IsOverride)
+            if (method.IsOverride && (!staticOnly || method.IsStatic))
             {
-                string methodName = method.Name.Lexeme;
-                if (!HasParentMethod(classType.Superclass, methodName))
+                string? methodName = method.IsStatic && method.ComputedKey != null
+                    ? TryGetWellKnownSymbolMemberName(method.ComputedKey) : method.Name.Lexeme;
+                if (methodName == null) continue;
+                bool hasParent = method.IsStatic
+                    ? FindStaticOverrideMember(classType.Superclass, methodName) != null
+                    : HasParentMethod(classType.Superclass, methodName);
+                if (!hasParent)
                 {
                     throw new TypeCheckException($" Method '{methodName}' is marked as override but does not override any method in a base class.", tsCode: "TS4113");
                 }
@@ -707,12 +712,17 @@ public partial class TypeChecker
                     continue;
                 }
 
-                if (accessor.IsOverride)
+                if (accessor.IsOverride && (!staticOnly || accessor.IsStatic))
                 {
                     string propertyName = accessor.Name.Lexeme;
                     bool isGetter = accessor.Kind.Type == Parsing.TokenType.GET;
 
-                    if (isGetter)
+                    if (accessor.IsStatic)
+                    {
+                        if (FindStaticOverrideMember(classType.Superclass, propertyName) == null)
+                            throw new TypeCheckException($" Static accessor '{propertyName}' is marked as override but does not override any static member in a base class.", tsCode: "TS4113");
+                    }
+                    else if (isGetter)
                     {
                         if (!HasParentGetter(classType.Superclass, propertyName))
                         {
@@ -728,6 +738,43 @@ public partial class TypeChecker
                     }
                 }
             }
+        }
+    }
+
+    private TypeInfo? FindStaticOverrideMember(TypeInfo? superclass, string name)
+    {
+        for (var current = superclass; current != null; current = GetSuperclass(current))
+        {
+            if (GetStaticMethods(current)?.TryGetValue(name, out var method) == true) return method;
+            if (GetStaticProperties(current)?.TryGetValue(name, out var property) == true) return property;
+        }
+        return null;
+    }
+
+    private void ValidateStaticOverrideCompatibility(Stmt.Class declaration, TypeInfo.Class classType)
+    {
+        void Check(string name, TypeInfo actual, int line, bool method)
+        {
+            var expected = FindStaticOverrideMember(classType.Superclass, name);
+            if (expected == null) return;
+            if (!IsMemberCompatible(expected, actual, method))
+                throw new TypeCheckException(
+                    $" Static override '{name}' in class '{declaration.Name.Lexeme}' is not compatible with the static member in its base class.",
+                    line: line, tsCode: "TS2417");
+        }
+
+        foreach (var method in declaration.Methods.Where(method => method.IsStatic && method.IsOverride))
+        {
+            string? name = method.ComputedKey == null ? method.Name.Lexeme
+                : TryGetWellKnownSymbolMemberName(method.ComputedKey);
+            if (name != null && classType.StaticMethods.TryGetValue(name, out var actual))
+                Check(name, actual, method.Name.Line, method: true);
+        }
+        foreach (var accessor in declaration.Accessors ?? [])
+        {
+            if (accessor.IsStatic && accessor.IsOverride && accessor.ComputedKey == null
+                && classType.StaticProperties.TryGetValue(accessor.Name.Lexeme, out var actual))
+                Check(accessor.Name.Lexeme, actual, accessor.Name.Line, method: false);
         }
     }
 

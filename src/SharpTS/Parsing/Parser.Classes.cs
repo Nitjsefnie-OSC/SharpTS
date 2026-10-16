@@ -90,7 +90,11 @@ public partial class Parser
                     case TokenType.PUBLIC: access = AccessModifier.Public; hasExplicitAccessModifier = true; break;
                     case TokenType.PRIVATE: access = AccessModifier.Private; hasExplicitAccessModifier = true; break;
                     case TokenType.PROTECTED: access = AccessModifier.Protected; hasExplicitAccessModifier = true; break;
-                    case TokenType.STATIC: isStatic = true; break;
+                    case TokenType.STATIC:
+                        if (isOverride)
+                            throw new Exception("Parse Error: 'static' modifier must precede 'override' modifier.");
+                        isStatic = true;
+                        break;
                     case TokenType.READONLY: isReadonly = true; break;
                     case TokenType.ABSTRACT: isMemberAbstract = true; break;
                     case TokenType.OVERRIDE: isOverride = true; break;
@@ -109,12 +113,6 @@ public partial class Parser
             if (isMemberAbstract && isStatic)
             {
                 throw new Exception($"Parse Error: A method cannot be both abstract and static.");
-            }
-
-            // Validate: override and static are mutually exclusive
-            if (isOverride && isStatic)
-            {
-                throw new Exception($"Parse Error: Static methods cannot use the 'override' modifier.");
             }
 
             // Validate: override requires the class to have a superclass

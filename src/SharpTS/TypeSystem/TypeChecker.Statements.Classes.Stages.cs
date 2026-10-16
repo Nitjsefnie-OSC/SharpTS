@@ -205,12 +205,9 @@ public partial class TypeChecker
             ValidateAbstractMemberImplementation(classTypeForBody, classStmt.Name.Lexeme);
         }
 
-        // The 'override' keyword check (TS4113) is skipped for generic classes (validated at
-        // instantiation); it isn't needed for the generic member-compatibility cases below.
-        if (classTypeParams == null)
-        {
-            ValidateOverrideMembers(classStmt, classTypeForBody);
-        }
+        // Static members belong to the constructor side and must be checked
+        // even when instance override validation is deferred for a generic class.
+        ValidateOverrideMembers(classStmt, classTypeForBody, staticOnly: classTypeParams != null);
 
         // Member-override compatibility (TS2416) runs for generic classes too: a base member typed
         // as an open type parameter can't be satisfied by a concrete (or differently-constrained)

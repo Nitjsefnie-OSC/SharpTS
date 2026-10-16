@@ -5,8 +5,41 @@ namespace SharpTS.Tests.SharedTests;
 
 public sealed class ObjectConstructorAccessorReadTests
 {
+    public const string SetterOnlySource = """
+        const O: any = Object;
+        let writes = 0;
+        Object.defineProperty(O, "keys", { set: () => { writes++; }, configurable: true });
+        console.log("intrinsic", O.keys === undefined, O["keys"] === undefined,
+            Reflect.get(O, "keys") === undefined, typeof O.keys);
+        Object.defineProperty(O, "custom", { set: () => { writes++; }, configurable: true });
+        console.log("custom", O.custom === undefined, O["custom"] === undefined,
+            Reflect.get(O, "custom") === undefined, O.custom === null, O["custom"] === null);
+        console.log("writes", writes);
+        """;
+
+    public const string UndefinedGetterSource = """
+        const O: any = Object, state = { writes: 0, gets: 0, valid: true };
+        Object.defineProperty(O, "keys", {
+            get: undefined, set: () => { state.writes++; }, configurable: true
+        });
+        Object.defineProperty(O, "custom", { get: undefined, configurable: true });
+        console.log(O.keys === undefined, O["keys"] === undefined,
+            Reflect.get(O, "keys") === undefined, Object.getOwnPropertyDescriptor(O, "keys")!.get === undefined);
+        console.log(O.custom === undefined, O["custom"] === undefined,
+            Reflect.get(O, "custom") === undefined, O.custom === null, state.writes);
+        Object.defineProperty(O, "custom", {
+            get() { state.gets++; state.valid = state.valid && this === O; return null; }, configurable: true
+        });
+        console.log(O.custom === null, O["custom"] === null, Reflect.get(O, "custom") === null,
+            state.gets, state.valid, state.writes);
+        """;
+
     public static IEnumerable<object[]> Cases()
     {
+        yield return ["getterless-issue", SetterOnlySource,
+            "intrinsic true true true undefined\ncustom true true true false false\nwrites 0\n"];
+        yield return ["undefined-getter", UndefinedGetterSource,
+            "true true true true\ntrue true true false 0\ntrue true true 3 true 0\n"];
         yield return ["issue", """
             const O: any = Object;
             Object.defineProperty(O, "keys", { get: () => () => ["changed"], configurable: true });
@@ -16,7 +49,7 @@ public sealed class ObjectConstructorAccessorReadTests
         yield return ["receivers", """
             const O: any = Object, alternate: any = {};
             let count = 0;
-            const getter = function() { "use strict"; count++; return this; };
+            const getter = function(this: any) { "use strict"; count++; return this; };
             Object.defineProperty(O, "custom", { get: getter, configurable: true });
             console.log(O.custom === O, O["custom"] === O, Reflect.get(O, "custom") === O, count);
             console.log(Reflect.get(O, "custom", alternate) === alternate,
@@ -56,23 +89,6 @@ public sealed class ObjectConstructorAccessorReadTests
     {
         Assert.NotEmpty(name);
         Assert.Equal(expected, TestHarness.Run(source, mode));
-    }
-
-    [Fact]
-    public void InterpretedSetterOnlyDescriptorsShadowIntrinsicAndCustomMembers()
-    {
-        // Compiled getterless accessors have a separate native-constructor fallback defect.
-        const string source = """
-            const O: any = Object;
-            let writes = 0;
-            Object.defineProperty(O, "keys", { set: () => { writes++; }, configurable: true });
-            console.log(O.keys === undefined, O["keys"] === undefined,
-                Reflect.get(O, "keys") === undefined, writes);
-            Object.defineProperty(O, "custom", { set: () => { writes++; }, configurable: true });
-            console.log(O.custom === undefined, O["custom"] === undefined,
-                Reflect.get(O, "custom") === undefined, writes);
-            """;
-        Assert.Equal("true true true 0\ntrue true true 0\n", TestHarness.RunInterpreted(source));
     }
 
     [Fact]

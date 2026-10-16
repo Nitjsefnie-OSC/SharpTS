@@ -323,6 +323,9 @@ public partial class AsyncMoveNextEmitter
                 EnsureBoxed();
                 _il.Emit(OpCodes.Stloc, objLocal);
 
+                var invalidLabel = _il.DefineLabel();
+                _il.Emit(OpCodes.Ldloc, objLocal);
+                _il.Emit(OpCodes.Brfalse, invalidLabel);
                 _il.Emit(OpCodes.Ldsfld, storageField);
                 _il.Emit(OpCodes.Ldloc, objLocal);
                 _il.Emit(OpCodes.Ldloca, dictLocal);
@@ -331,6 +334,7 @@ public partial class AsyncMoveNextEmitter
 
                 var validLabel = _il.DefineLabel();
                 _il.Emit(OpCodes.Brtrue, validLabel);
+                _il.MarkLabel(invalidLabel);
                 GuestErrorEmitter.ThrowTypeError(_il, _ctx.Runtime!,
                     $"Cannot call private method #{methodName} on an object whose class did not declare it");
                 _il.MarkLabel(validLabel);

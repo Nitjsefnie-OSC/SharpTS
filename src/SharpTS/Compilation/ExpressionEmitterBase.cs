@@ -1235,6 +1235,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 EnsureBoxed();
                 IL.Emit(OpCodes.Stloc, objLocal);
 
+                var invalidLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Brfalse, invalidLabel);
                 IL.Emit(OpCodes.Ldsfld, storageField);
                 IL.Emit(OpCodes.Ldloc, objLocal);
                 IL.Emit(OpCodes.Ldloca, dictLocal);
@@ -1243,6 +1246,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
                 var validLabel = IL.DefineLabel();
                 IL.Emit(OpCodes.Brtrue, validLabel);
+                IL.MarkLabel(invalidLabel);
                 GuestErrorEmitter.ThrowTypeError(IL, Ctx.Runtime!,
                     $"Cannot call private method #{methodName} on an object whose class did not declare it");
                 IL.MarkLabel(validLabel);

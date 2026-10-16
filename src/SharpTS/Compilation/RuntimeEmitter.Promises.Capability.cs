@@ -6,8 +6,8 @@ namespace SharpTS.Compilation;
 /// <summary>
 /// Emits the general NewPromiseCapability support (#349): the result of
 /// <c>then</c>/<c>catch</c>/<c>finally</c> when <c>SpeciesConstructor</c> resolves
-/// to a constructor that is <em>not</em> <c>%Promise%</c> or a guest
-/// <c>class … extends Promise</c> (ECMA-262 §27.2.4.5 + §27.2.5.4 step 7). The
+/// to a constructor other than intrinsic <c>%Promise%</c>, including guest
+/// Promise subclasses (ECMA-262 §27.2.4.5 + §27.2.5.4 step 7). The
 /// result is <c>new S((resolve, reject) =&gt; …)</c> with the captured capability
 /// adopting the settled source task; <c>S</c> may be any guest class and the
 /// returned object need not be a $Promise.

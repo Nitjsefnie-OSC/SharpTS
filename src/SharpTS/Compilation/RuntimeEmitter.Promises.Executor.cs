@@ -36,6 +36,7 @@ public partial class RuntimeEmitter
         // is filled by EmitPromiseCapabilitySupport after ConstructDynamicValue.
 
         EmitObservePromiseConstructorMethod(runtimeType, runtime);
+        EmitPrepareDerivedPromiseCapabilityMethod(runtime);
         EmitWrapDerivedPromiseResultMethod(runtimeType, runtime);
     }
 
@@ -1017,47 +1018,23 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits WrapDerivedPromiseResult(Task&lt;object?&gt; result, object receiver) -> object:
-    /// the then/catch/finally result construction after
-    /// ObservePromiseConstructor has performed SpeciesConstructor's observable
-    /// own-constructor access (ECMA-262 §27.2.5.4, §7.3.22).
-    /// When the receiver is a $Promise SUBCLASS instance (#242), reads
-    /// <c>receiver.constructor[Symbol.species]</c> — the subclass's static
-    /// <c>@@species</c> getter, or, absent that, the expando assigned via
-    /// <c>(C as any)[Symbol.species] = …</c> (#262/#349), defaulting to the
-    /// subclass itself when neither is present — and constructs the result
-    /// through it: <c>%Promise%</c> (or a
-    /// <c>@@species</c> yielding <c>Promise</c>/<c>undefined</c>/<c>null</c>)
-    /// returns the raw task; a guest Promise SUBCLASS is built by invoking its
-    /// single-object (executor) constructor reflectively (PromiseFromExecutor
-    /// adopts a raw task, so the new instance wraps <c>result</c>); a general
-    /// non-Promise species is built through NewPromiseCapabilityResult (#349, see
-    /// below).
+    /// Emits PrepareDerivedPromiseCapability(object receiver) -> object.
+    /// Observes the constructor and resolves species before a reaction is
+    /// registered, returning null for the intrinsic path or an already-validated
+    /// capability holder for every other constructor, including Promise subclasses.
     /// </summary>
     /// <remarks>
     /// Generic Promise subclasses (#351): static <c>@@species</c> descriptors are
     /// stored under the open generic definition (MyP`1) while the receiver's
     /// runtime type is closed (MyP&lt;object&gt;). SymbolRegistryKey reconciles the
     /// storage owner; accessors receive the actual closed constructor. A species
-    /// naming a generic subclass is closed via SymbolClosedOwner before construction.
-    /// A species that is NOT a $Promise subclass (a general guest constructor)
-    /// is routed to <see cref="EmittedPromiseRuntime.NewPromiseCapabilityResultMethod"/>
-    /// (#349): the (object)→PromiseFromExecutor task-adoption path below only
-    /// works for $Promise subclasses, so a general class is constructed with a
-    /// real capturing executor and the result task adopted into its capability.
+    /// naming a generic subclass is closed via SymbolClosedOwner before the
+    /// shared capability protocol constructs it and validates its callbacks.
     /// </remarks>
-    private void EmitWrapDerivedPromiseResultMethod(TypeBuilder runtimeType, EmittedRuntime runtime)
+    private void EmitPrepareDerivedPromiseCapabilityMethod(EmittedRuntime runtime)
     {
-        var method = runtimeType.DefineMethod(
-            "WrapDerivedPromiseResult",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            [_types.TaskOfObject, _types.Object]
-        );
-        runtime.RequirePromise().WrapDerivedPromiseResultMethod = method;
-
-        var il = method.GetILGenerator();
-        var returnResultLabel = il.DefineLabel();
+        var il = runtime.RequirePromise().PrepareDerivedPromiseCapabilityMethod.GetILGenerator();
+        var returnIntrinsicLabel = il.DefineLabel();
         var haveSpeciesLabel = il.DefineLabel();
         var expandoLookupLabel = il.DefineLabel();
         // #390: a resolved @@species value that is NOT a Type (a function-valued
@@ -1068,23 +1045,25 @@ public partial class RuntimeEmitter
         var speciesTypeLocal = il.DeclareLocal(_types.Type);   // resolved SpeciesConstructor
         var speciesValLocal = il.DeclareLocal(_types.Object);  // raw @@species value (#390)
         var getterLocal = il.DeclareLocal(_types.Object);
-        var ctorLocal = il.DeclareLocal(typeof(ConstructorInfo));
         var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
 
-        // if (receiver is not $Promise) return result;
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.RequirePromise().ObservePromiseConstructorMethod);
+
+        // A null holder denotes the existing intrinsic result-task path.
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.RequirePromise().Type);
-        il.Emit(OpCodes.Brfalse, returnResultLabel);
+        il.Emit(OpCodes.Brfalse, returnIntrinsicLabel);
 
         // var recvType = receiver.GetType();
-        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
         il.Emit(OpCodes.Stloc, typeLocal);
-        // if (recvType == typeof($Promise)) return result;
+        // if (recvType == typeof($Promise)) use the intrinsic path;
         il.Emit(OpCodes.Ldloc, typeLocal);
         il.Emit(OpCodes.Ldtoken, runtime.RequirePromise().Type);
         il.Emit(OpCodes.Call, getTypeFromHandle);
-        il.Emit(OpCodes.Beq, returnResultLabel);
+        il.Emit(OpCodes.Beq, returnIntrinsicLabel);
 
         // SpeciesConstructor(receiver, %Promise%): C = recvType; species default = C.
         il.Emit(OpCodes.Ldloc, typeLocal);
@@ -1117,7 +1096,7 @@ public partial class RuntimeEmitter
         // Non-Type: undefined/null → %Promise% (§7.3.22 steps 6-7); any other
         // value (a function-valued species, or a non-constructor) → general path,
         // which constructs it or throws TypeError (§7.3.22 step 5, #390).
-        EmitSpeciesValueRouting(il, runtime, speciesValLocal, returnResultLabel, generalFromValueLabel);
+        EmitSpeciesValueRouting(il, runtime, speciesValLocal, returnIntrinsicLabel, generalFromValueLabel);
 
         // #349: consult live declared descriptors and the expando
         // assigned via `(C as any)[Symbol.species] = …` (#262), which the
@@ -1220,81 +1199,62 @@ public partial class RuntimeEmitter
         // exactly like a non-Type getter return (#390).
         il.Emit(OpCodes.Ldloc, speciesTypeLocal);
         il.Emit(OpCodes.Brtrue, haveSpeciesLabel);
-        EmitSpeciesValueRouting(il, runtime, speciesValLocal, returnResultLabel, generalFromValueLabel);
+        EmitSpeciesValueRouting(il, runtime, speciesValLocal, returnIntrinsicLabel, generalFromValueLabel);
 
         il.MarkLabel(haveSpeciesLabel);
         // #351: a species naming a generic Promise subclass resolves to the OPEN
         // generic definition (MyP`1) — uninstantiable. Close it on `object` so the
-        // GetConstructor/Invoke below target a constructable type. Closed and
+        // capability construction below targets a constructable type. Closed and
         // non-generic species (incl. the default species = receiver's closed type)
         // pass through unchanged.
         il.Emit(OpCodes.Ldloc, speciesTypeLocal);
         il.Emit(OpCodes.Call, runtime.SymbolAccessors.ClosedOwner);
         il.Emit(OpCodes.Stloc, speciesTypeLocal);
-        // if (speciesType == typeof(Task<object?>)) return result;  // %Promise%
+        // if (speciesType == typeof(Task<object?>)) use the intrinsic path;
         il.Emit(OpCodes.Ldloc, speciesTypeLocal);
         il.Emit(OpCodes.Ldtoken, _types.TaskOfObject);
         il.Emit(OpCodes.Call, getTypeFromHandle);
-        il.Emit(OpCodes.Beq, returnResultLabel);
+        il.Emit(OpCodes.Beq, returnIntrinsicLabel);
 
-        // #349 general NewPromiseCapability: a species that is NOT a $Promise
-        // subclass cannot be settled by the (object)→PromiseFromExecutor task-
-        // adoption path below — its (object) executor ctor would receive the raw
-        // task and throw "object is not a function". Route it through
-        // NewPromiseCapabilityResult, which constructs new S(executor) with a
-        // capturing capability and adopts the result task into it.
-        // if (!typeof($Promise).IsAssignableFrom(speciesType))
-        //     return NewPromiseCapabilityResult(speciesType, result);
-        var promiseSubclassLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldtoken, runtime.RequirePromise().Type);
-        il.Emit(OpCodes.Call, getTypeFromHandle);
+        // Construct and validate once before any reaction is scheduled. The
+        // general protocol preserves guest constructor replacement objects.
         il.Emit(OpCodes.Ldloc, speciesTypeLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
-        il.Emit(OpCodes.Brtrue, promiseSubclassLabel);
-        il.Emit(OpCodes.Ldloc, speciesTypeLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.RequirePromise().NewPromiseCapabilityResultMethod);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(promiseSubclassLabel);
-
-        // var ctor = speciesType.GetConstructor(new[] { typeof(object) });
-        il.Emit(OpCodes.Ldloc, speciesTypeLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Type);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldtoken, _types.Object);
-        il.Emit(OpCodes.Call, getTypeFromHandle);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetConstructor", [typeof(Type[])])!);
-        il.Emit(OpCodes.Stloc, ctorLocal);
-
-        // if (ctor == null) return result;
-        il.Emit(OpCodes.Ldloc, ctorLocal);
-        il.Emit(OpCodes.Brfalse, returnResultLabel);
-
-        // return ctor.Invoke(new object[] { result });
-        il.Emit(OpCodes.Ldloc, ctorLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Callvirt, typeof(ConstructorInfo).GetMethod("Invoke", [typeof(object[])])!);
+        il.Emit(OpCodes.Call, runtime.RequirePromise().PreparePromiseCapabilityMethod);
         il.Emit(OpCodes.Ret);
 
         // #390 general path for a non-Type species value (a function, or a
-        // non-constructor): NewPromiseCapabilityResult → ConstructDynamicValue,
+        // non-constructor): PreparePromiseCapability → ConstructDynamicValue,
         // which constructs new S(executor) for a callable or throws TypeError
         // (§7.3.22 step 5) for a non-constructor.
         il.MarkLabel(generalFromValueLabel);
         il.Emit(OpCodes.Ldloc, speciesValLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.RequirePromise().NewPromiseCapabilityResultMethod);
+        il.Emit(OpCodes.Call, runtime.RequirePromise().PreparePromiseCapabilityMethod);
         il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(returnResultLabel);
+        il.MarkLabel(returnIntrinsicLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>Adopts a reaction task into the capability prepared before registration.</summary>
+    private void EmitWrapDerivedPromiseResultMethod(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "WrapDerivedPromiseResult",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.TaskOfObject, _types.Object]);
+        runtime.RequirePromise().WrapDerivedPromiseResultMethod = method;
+
+        var il = method.GetILGenerator();
+        var intrinsicLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, intrinsicLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.RequirePromise().AdoptPromiseCapabilityMethod);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(intrinsicLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
     }

@@ -276,8 +276,16 @@ public sealed class EmittedPromiseRuntime
         internal set => Set(ref _normalizePromiseListMethod, value);
     }
 
+    private MethodBuilder? _prepareDerivedPromiseCapabilityMethod;
+    /// <summary>$Runtime.PrepareDerivedPromiseCapability(object receiver) -> object — observes the constructor and resolves species once, then synchronously constructs and validates a non-intrinsic capability. Returns null only for the intrinsic task path; otherwise returns the opaque prepared capability holder.</summary>
+    public MethodBuilder PrepareDerivedPromiseCapabilityMethod
+    {
+        get => Require(_prepareDerivedPromiseCapabilityMethod);
+        internal set => Set(ref _prepareDerivedPromiseCapabilityMethod, value);
+    }
+
     private MethodBuilder? _wrapDerivedPromiseResultMethod;
-    /// <summary>$Runtime.WrapDerivedPromiseResult(Task&lt;object?&gt; result, object receiver) -> object — completes species-based result construction for subclass then/catch/finally results after ObservePromiseConstructor has performed the synchronous own-constructor access (#242). For a $Promise SUBCLASS species, constructs a receiver-typed promise around the result task via the subclass's (object executor) constructor (PromiseFromExecutor adopts the task); for a general non-Promise species, routes to NewPromiseCapabilityResult (#349); for %Promise% (or no subclass receiver) returns the task unchanged.</summary>
+    /// <summary>$Runtime.WrapDerivedPromiseResult(Task&lt;object?&gt; result, object preparedCapability) -> object — returns the intrinsic result task when the prepared capability is null, or adopts the task into that already-validated capability and returns its constructed promise object.</summary>
     public MethodBuilder WrapDerivedPromiseResultMethod
     {
         get => Require(_wrapDerivedPromiseResultMethod);
@@ -285,7 +293,7 @@ public sealed class EmittedPromiseRuntime
     }
 
     private MethodBuilder? _observePromiseConstructorMethod;
-    /// <summary>$Runtime.ObservePromiseConstructor(object receiver) -> void — synchronously performs the observable own <c>constructor</c> getter step before a then/catch/finally reaction is scheduled. WrapDerivedPromiseResult handles the remaining species/result construction after the reaction task exists.</summary>
+    /// <summary>$Runtime.ObservePromiseConstructor(object receiver) -> void — performs the observable own <c>constructor</c> getter step used once by PrepareDerivedPromiseCapability before a then/catch/finally reaction is scheduled.</summary>
     public MethodBuilder ObservePromiseConstructorMethod
     {
         get => Require(_observePromiseConstructorMethod);
@@ -293,7 +301,7 @@ public sealed class EmittedPromiseRuntime
     }
 
     private MethodBuilder? _newPromiseCapabilityResultMethod;
-    /// <summary>$Runtime.NewPromiseCapabilityResult(object species, Task&lt;object?&gt; result) -> object — the general NewPromiseCapability (#349/#390): constructs <c>new species(executor)</c> through ConstructDynamicValue (a Type class species → Activator, a function-valued species → the JS new protocol, a non-constructor → TypeError per §7.3.22 step 5), capturing the resolve/reject the executor is handed via a <see cref="CapabilityType"/> holder, then adopts <c>result</c> into that capability (settlement scheduled on the event-loop SynchronizationContext) and returns the constructed (non-Promise) object. Body emitted late (after ConstructDynamicValue); the stub is pre-declared so WrapDerivedPromiseResult can call it.</summary>
+    /// <summary>$Runtime.NewPromiseCapabilityResult(object species, Task&lt;object?&gt; result) -> object — constructs and validates a capability through PreparePromiseCapability, then adopts the task into it and returns its constructed promise object. Body emitted late after ConstructDynamicValue; earlier Promise wrappers can reference its predeclared shell.</summary>
     public MethodBuilder NewPromiseCapabilityResultMethod
     {
         get => Require(_newPromiseCapabilityResultMethod);
@@ -643,6 +651,7 @@ public sealed class EmittedPromiseRuntime
         _ = WithResolvers;
         _ = UnwrapPromiseReceiverMethod;
         _ = NormalizePromiseListMethod;
+        _ = PrepareDerivedPromiseCapabilityMethod;
         _ = WrapDerivedPromiseResultMethod;
         _ = ObservePromiseConstructorMethod;
         _ = NewPromiseCapabilityResultMethod;

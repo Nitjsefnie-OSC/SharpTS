@@ -1436,8 +1436,8 @@ public abstract partial class ExpressionEmitterBase
     /// Emits <c>Class.staticMethod()</c> (with generic class support) and the
     /// inherited Promise statics on Promise subclasses (#242/#309:
     /// MyP.resolve / reject / all / … are not user-declared statics, so the
-    /// static-method lookup misses them — emit the base Promise static and
-    /// wrap the result in the subclass). Shared by
+    /// static-method lookup misses them — retain the subclass constructor
+    /// through the receiver-aware Promise static wrapper). Shared by
     /// <see cref="TryEmitGetCalleeViaBaseClass"/> and ILEmitter's EmitCall;
     /// the ILEmitter copy of this block had previously drifted and omitted
     /// the Promise-subclass arm, so MyP.resolve(1) threw. Extra-arg boxing
@@ -1488,15 +1488,12 @@ public abstract partial class ExpressionEmitterBase
             return true;
         }
 
-        // Promise subclasses (#242) inherit the Promise static side:
-        // emit the base Promise static (leaves Task<object?> on the
-        // stack), then construct the subclass around it via its executor
-        // constructor — PromiseFromExecutor adopts a raw task, so the
-        // result is a subclass-typed promise (NewPromiseCapability-lite).
+        // Promise subclasses inherit the receiver-aware static capability
+        // operations, including constructor replacement and callback validation.
         if (methodGet.Name.Lexeme is "resolve" or "reject" or "all" or "allKeyed"
             or "race" or "allSettled" or "allSettledKeyed" or "any" or "withResolvers"
             && Ctx.ClassRegistry.IsPromiseSubclass(resolvedClassName)
-            && TryEmitDerivedPromiseStatic(resolvedClassName, classBuilder, methodGet.Name.Lexeme, c.Arguments))
+            && TryEmitDerivedPromiseStatic(classBuilder, methodGet.Name.Lexeme, c.Arguments))
         {
             return true;
         }
@@ -2382,52 +2379,53 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
-    /// Emits an inherited Promise static called off a Promise subclass (#242):
-    /// `MyPromise.resolve(v)` → base Promise static produces the Task&lt;object?&gt;,
-    /// then `newobj MyPromise(task)` — the subclass's executor constructor —
-    /// yields the subclass-typed promise (PromiseFromExecutor adopts a raw
-    /// task in place of an executor). Returns false (emitting nothing) when
-    /// the subclass constructor can't accept the task as its first argument.
+    /// Emits an inherited Promise static through its receiver-aware capability
+    /// wrapper, retaining the guest constructor's selected result and validation.
     /// </summary>
-    protected bool TryEmitDerivedPromiseStatic(string resolvedClassName, Type classBuilder, string methodName, List<Expr> arguments)
+    protected bool TryEmitDerivedPromiseStatic(Type classBuilder, string methodName, List<Expr> arguments)
     {
-        if (Ctx.TypeEmitterRegistry?.GetStaticStrategy("Promise") is not { } promiseStatics)
-            return false;
-
         // withResolvers returns a {promise, resolve, reject} object, not a
         // task — delegate to the base emitter without subclass wrapping.
         if (methodName == "withResolvers")
         {
+            if (Ctx.TypeEmitterRegistry?.GetStaticStrategy("Promise") is not { } promiseStatics)
+                return false;
             if (!promiseStatics.TryEmitStaticCall(this, methodName, arguments))
                 return false;
             SetStackUnknown();
             return true;
         }
 
-        var subclassCtor = Ctx.ClassRegistry!.GetConstructorByQualifiedName(resolvedClassName);
-        if (subclassCtor == null)
-            return false;
-        var ctorParams = subclassCtor.GetParameters();
-        if (ctorParams.Length == 0 || ctorParams[0].ParameterType != typeof(object))
-            return false;
+        var promise = Ctx.Runtime!.RequirePromise();
+        MethodInfo? wrapper = methodName switch
+        {
+            "resolve" => promise.ResolveStatic,
+            "reject" => promise.RejectStatic,
+            "all" => promise.AllStatic,
+            "allKeyed" => promise.AllKeyedStatic,
+            "race" => promise.RaceStatic,
+            "allSettled" => promise.AllSettledStatic,
+            "allSettledKeyed" => promise.AllSettledKeyedStatic,
+            "any" => promise.AnyStatic,
+            _ => null
+        };
+        if (wrapper is null) return false;
 
-        if (!promiseStatics.TryEmitStaticCall(this, methodName, arguments))
-            return false;
-
-        // Stack: Task<object?> — the constructor's first (executor) argument.
-        // Generic subclasses (MyPromise<T>) need the constructor token bound
-        // to a constructed instantiation; type args are erased to object.
-        System.Reflection.ConstructorInfo ctorToCall = subclassCtor;
+        // The synthetic receiver is not a guest argument. Lower the original
+        // list first so spreads, surplus effects and suspension retain normal
+        // call order before the static wrapper constructs its capability.
+        EmitStaticCallArguments(arguments, wrapper, wrapper.GetParameters()[1..]);
+        var value = _helpers.SpillStoreObject();
+        Type constructorType = classBuilder;
         if (classBuilder.IsGenericTypeDefinition)
         {
-            var typeArgs = classBuilder.GetGenericArguments().Select(_ => typeof(object)).ToArray();
-            ctorToCall = TypeBuilder.GetConstructor(EmitGenerics.MakeGenericType(classBuilder, typeArgs), subclassCtor);
+            var typeArgs = classBuilder.GetGenericArguments().Select(_ => Types.Object).ToArray();
+            constructorType = EmitGenerics.MakeGenericType(classBuilder, typeArgs);
         }
-
-        for (int i = 1; i < ctorParams.Length; i++)
-            EmitOmittedArgument(ctorParams[i].ParameterType);
-
-        IL.Emit(OpCodes.Newobj, ctorToCall);
+        IL.Emit(OpCodes.Ldtoken, constructorType);
+        IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Ldloc, value);
+        IL.Emit(OpCodes.Call, wrapper);
         SetStackUnknown();
         return true;
     }
@@ -2588,34 +2586,38 @@ public abstract partial class ExpressionEmitterBase
         // state machines.
         EmitExpression(promise);
         EnsureBoxed();
-        var promiseReceiverLocal = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, promiseReceiverLocal);
+        var promiseReceiverLocal = _helpers.SpillStoreObject();
         // Promise.prototype.catch/finally are specified in terms of an
         // observable Get(promise, "then") followed by Invoke. Keep compiled
         // instance calls on their prototype-helper paths so own accessors or
         // replacements are not bypassed by the Task fast path.
         if (methodName is "catch" or "finally")
         {
-            IL.Emit(OpCodes.Ldloc, promiseReceiverLocal);
-            EmitBoxedArgOrNull(arguments, 0);
-            IL.Emit(OpCodes.Call, methodName == "catch"
+            var helper = methodName == "catch"
                 ? Ctx.Runtime!.RequirePromise().CatchHelperMethod
-                : Ctx.Runtime!.RequirePromise().FinallyHelperMethod);
+                : Ctx.Runtime!.RequirePromise().FinallyHelperMethod;
+            EmitStaticCallArguments(arguments, helper, helper.GetParameters()[1..]);
+            var handler = _helpers.SpillStoreObject();
+            IL.Emit(OpCodes.Ldloc, promiseReceiverLocal);
+            IL.Emit(OpCodes.Ldloc, handler);
+            IL.Emit(OpCodes.Call, helper);
             SetStackUnknown();
             return;
         }
 
+        var preparedCapability = IL.DeclareLocal(Types.Object);
         switch (methodName)
         {
             case "then":
                 var onFulfilledLocal = IL.DeclareLocal(typeof(object));
-                EmitBoxedArgOrNull(arguments, 0);
-                IL.Emit(OpCodes.Stloc, onFulfilledLocal);
                 var onRejectedLocal = IL.DeclareLocal(typeof(object));
-                EmitBoxedArgOrNull(arguments, 1);
+                var thenHelper = Ctx.Runtime!.RequirePromise().ThenHelperMethod;
+                EmitStaticCallArguments(arguments, thenHelper, thenHelper.GetParameters()[1..]);
                 IL.Emit(OpCodes.Stloc, onRejectedLocal);
+                IL.Emit(OpCodes.Stloc, onFulfilledLocal);
                 IL.Emit(OpCodes.Ldloc, promiseReceiverLocal);
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.RequirePromise().ObservePromiseConstructorMethod);
+                IL.Emit(OpCodes.Call, Ctx.Runtime.RequirePromise().PrepareDerivedPromiseCapabilityMethod);
+                IL.Emit(OpCodes.Stloc, preparedCapability);
                 IL.Emit(OpCodes.Ldloc, promiseReceiverLocal);
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.RequirePromise().UnwrapPromiseReceiverMethod);
                 IL.Emit(OpCodes.Ldloc, onFulfilledLocal);
@@ -2624,8 +2626,7 @@ public abstract partial class ExpressionEmitterBase
                 break;
         }
 
-        // Subclass receivers get subclass-typed results (species-lite, #242).
-        IL.Emit(OpCodes.Ldloc, promiseReceiverLocal);
+        IL.Emit(OpCodes.Ldloc, preparedCapability);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.RequirePromise().WrapDerivedPromiseResultMethod);
         SetStackUnknown();
     }

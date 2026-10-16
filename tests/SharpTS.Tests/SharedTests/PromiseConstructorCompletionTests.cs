@@ -5,8 +5,8 @@ namespace SharpTS.Tests.SharedTests;
 
 public sealed class PromiseConstructorCompletionTests
 {
-    [Fact]
-    public void InterpretedSpeciesPreservesValidConstructorReplacement()
+    [Theory, ModeData]
+    public void SpeciesPreservesValidConstructorReplacement(ExecutionMode mode)
     {
         const string source = """
             const replacement: any = { value: 43 };
@@ -19,17 +19,16 @@ public sealed class PromiseConstructorCompletionTests
             const source: any = new Source(resolve => resolve(1));
             console.log(source.then() === replacement, Returned.resolve(1) === replacement);
             """;
-        // #2156 tracks the compiled static/species factory boundary. This
-        // regression covers the interpreter's former unchecked Promise cast.
-        Assert.Equal("true true\n", TestHarness.RunInterpreted(source));
+        Assert.Equal("true true\n", TestHarness.Run(source, mode));
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void InterpretedSpeciesRejectsAbsentOrNoncallableCapabilityCallbacks(bool invokeWithNoncallable)
+    [InlineData(false, ExecutionMode.Interpreted)]
+    [InlineData(false, ExecutionMode.Compiled)]
+    [InlineData(true, ExecutionMode.Interpreted)]
+    [InlineData(true, ExecutionMode.Compiled)]
+    public void SpeciesRejectsAbsentOrNoncallableCapabilityCallbacks(bool invokeWithNoncallable, ExecutionMode mode)
     {
-        // The corresponding compiled capability validation is tracked in #2156.
         string source = """
             class Returned extends Promise<any> {
                 constructor(executor: any) {
@@ -45,6 +44,6 @@ public sealed class PromiseConstructorCompletionTests
             try { source.then(); console.log("no error"); }
             catch (error) { console.log(error instanceof TypeError); }
             """;
-        Assert.Equal("true\n", TestHarness.RunInterpreted(source));
+        Assert.Equal("true\n", TestHarness.Run(source, mode));
     }
 }

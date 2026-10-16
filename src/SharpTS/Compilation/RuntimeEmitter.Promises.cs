@@ -214,6 +214,11 @@ public partial class RuntimeEmitter
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Object,
             [_types.Object]);
+        runtime.RequirePromise().PrepareDerivedPromiseCapabilityMethod = typeBuilder.DefineMethod(
+            "PrepareDerivedPromiseCapability",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
         runtime.RequirePromise().AdoptPromiseCapabilityMethod = typeBuilder.DefineMethod(
             "AdoptPromiseCapability",
             MethodAttributes.Public | MethodAttributes.Static,

@@ -17,7 +17,7 @@ public partial class AsyncArrowMoveNextEmitter
     protected override Label AwaitExitLabel => _exitLabel;
     protected override int NextAwaitState() => _currentState++;
 
-    protected override void MarkAwaitResumeLabel(int stateNumber)
+    protected override void MarkAwaitResumeLabelCore(int stateNumber)
     {
         if (stateNumber < _stateLabels.Count)
             _il.MarkLabel(_stateLabels[stateNumber]);

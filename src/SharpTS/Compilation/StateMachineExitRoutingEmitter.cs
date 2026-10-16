@@ -46,6 +46,8 @@ public abstract partial class StateMachineExitRoutingEmitter : StatementEmitterB
     /// </summary>
     protected virtual int ProtectedRegionDepth => Ctx.ExceptionBlockDepth;
 
+    protected virtual void EmitPendingExitBranch(Label target) => IL.Emit(OpCodes.Br, target);
+
     protected interface IExitScope;
 
     /// <summary>A loop (or switch / labeled statement) that <c>break</c>/<c>continue</c> can target.</summary>
@@ -161,7 +163,7 @@ public abstract partial class StateMachineExitRoutingEmitter : StatementEmitterB
         {
             // Flag-based finally(s) lie between the break and its loop; run them before jumping out.
             int code = loop.BreakCode ??= _nextExitCode++;
-            _exitTerminals.TryAdd(code, () => IL.Emit(OpCodes.Br, loop.BreakLabel));
+            _exitTerminals.TryAdd(code, () => EmitPendingExitBranch(loop.BreakLabel));
             RouteThroughFinallys(chain, code, ProtectedRegionDepth > 0 ? OpCodes.Leave : OpCodes.Br);
             return;
         }
@@ -182,7 +184,7 @@ public abstract partial class StateMachineExitRoutingEmitter : StatementEmitterB
         if (chain.Count > 0)
         {
             int code = loop.ContinueCode ??= _nextExitCode++;
-            _exitTerminals.TryAdd(code, () => IL.Emit(OpCodes.Br, loop.ContinueLabel));
+            _exitTerminals.TryAdd(code, () => EmitPendingExitBranch(loop.ContinueLabel));
             RouteThroughFinallys(chain, code, ProtectedRegionDepth > 0 ? OpCodes.Leave : OpCodes.Br);
             return;
         }
@@ -256,8 +258,8 @@ public abstract partial class StateMachineExitRoutingEmitter : StatementEmitterB
     /// <c>Br</c> when the exit is at the top level, or <c>Leave</c> when it is emitted inside a real IL
     /// exception block (EmitSimpleTryCatch) nested in the flag-based finally(s): the <c>Leave</c> exits
     /// that block — running its no-suspension finally — straight to the innermost flag cleanup label,
-    /// then the flag machinery runs the remaining (outer) finally(s). A real try never encloses a flag
-    /// try, so every real finally is innermore than every flag one and this ordering is correct.
+    /// then the flag machinery runs the remaining finally(s). Later cleanup
+    /// dispatch chooses its branch using the protected regions still open there.
     /// </param>
     protected void RouteThroughFinallys(List<FinallyScope> chain, int code, OpCode branch)
     {
@@ -292,7 +294,7 @@ public abstract partial class StateMachineExitRoutingEmitter : StatementEmitterB
             if (next.HasValue)
             {
                 // Not terminal here — keep the pending code and run the next outer finally.
-                IL.Emit(OpCodes.Br, next.Value);
+                EmitPendingExitBranch(next.Value);
             }
             else
             {

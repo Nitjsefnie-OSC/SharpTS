@@ -56,7 +56,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter : StateMachineExitRou
     /// </summary>
     protected void EmitAwaitGetResult(Action emitRawGetResultCall)
     {
-        if (_currentTryCatchExceptionLocal != null)
+        if (_currentTryCatchExceptionLocal != null && _throwRoutingGuardDepth == 0)
         {
             var getResultDoneLabel = IL.DefineLabel();
             var exceptionCaughtLabel = IL.DefineLabel();

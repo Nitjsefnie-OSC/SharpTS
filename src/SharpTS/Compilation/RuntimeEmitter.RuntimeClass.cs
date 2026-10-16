@@ -1877,7 +1877,8 @@ public partial class RuntimeEmitter
         EmitObjectFromEntries(
             typeBuilder,
             runtime.ObjectOperations,
-            new ObjectFromEntriesInputs(runtime.Errors, runtime.IteratorCollection.ToList, runtime.Symbols, runtime.Sentinels.UndefinedType)
+            new ObjectFromEntriesInputs(runtime.Errors, runtime.Reflect.Get,
+                runtime.IteratorCollection.ToList, runtime.Symbols, runtime.Sentinels.UndefinedType)
         );
         EmitObjectHasOwn(
             typeBuilder,

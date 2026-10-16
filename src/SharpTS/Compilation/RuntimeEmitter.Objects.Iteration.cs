@@ -39,6 +39,7 @@ public partial class RuntimeEmitter
 
     private readonly record struct ObjectFromEntriesInputs(
         EmittedErrorRuntime Errors,
+        MethodBuilder GetWithReceiver,
         MethodBuilder IterateToList,
         EmittedSymbolRuntime Symbols,
         Type UndefinedType
@@ -1639,7 +1640,7 @@ public partial class RuntimeEmitter
         var iterableLocal = il.DeclareLocal(listType);
         var indexLocal = il.DeclareLocal(_types.Int32);
         var entryLocal = il.DeclareLocal(_types.Object);
-        var entryListLocal = il.DeclareLocal(listType);
+        var keyValueLocal = il.DeclareLocal(_types.Object);
         var keyLocal = il.DeclareLocal(_types.String);
         var valueLocal = il.DeclareLocal(_types.Object);
 
@@ -1695,25 +1696,31 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Item")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, entryLocal);
 
-        // Cast entry to List<object>
+        // Entries must be objects, but need not be arrays or have a length.
         il.Emit(OpCodes.Ldloc, entryLocal);
-        il.Emit(OpCodes.Isinst, listType);
-        il.Emit(OpCodes.Stloc, entryListLocal);
-
-        // If not a list, throw
-        il.Emit(OpCodes.Ldloc, entryListLocal);
         il.Emit(OpCodes.Brfalse, throwLabel);
+        foreach (var primitive in new[] { _types.Boolean, _types.Double, _types.String,
+                     _types.BigInteger, inputs.Symbols.Type, inputs.UndefinedType })
+        {
+            il.Emit(OpCodes.Ldloc, entryLocal);
+            il.Emit(OpCodes.Isinst, primitive);
+            il.Emit(OpCodes.Brtrue, throwLabel);
+        }
 
-        // Check if list has at least 2 elements
-        il.Emit(OpCodes.Ldloc, entryListLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Count")!.GetGetMethod()!);
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Blt, throwLabel);
+        // Ordinary Get invokes indexed/inherited accessors with the entry receiver.
+        // Read both slots before coercing the key.
+        il.Emit(OpCodes.Ldloc, entryLocal);
+        il.Emit(OpCodes.Ldstr, "0");
+        il.Emit(OpCodes.Ldloc, entryLocal);
+        il.Emit(OpCodes.Call, inputs.GetWithReceiver);
+        il.Emit(OpCodes.Stloc, keyValueLocal);
+        il.Emit(OpCodes.Ldloc, entryLocal);
+        il.Emit(OpCodes.Ldstr, "1");
+        il.Emit(OpCodes.Ldloc, entryLocal);
+        il.Emit(OpCodes.Call, inputs.GetWithReceiver);
+        il.Emit(OpCodes.Stloc, valueLocal);
 
-        // Get key = entryList[0]?.ToString() ?? ""
-        il.Emit(OpCodes.Ldloc, entryListLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Item")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, keyValueLocal);
         var keyNullLabel = il.DefineLabel();
         var keyDoneLabel = il.DefineLabel();
         il.Emit(OpCodes.Dup);
@@ -1725,12 +1732,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "");
         il.MarkLabel(keyDoneLabel);
         il.Emit(OpCodes.Stloc, keyLocal);
-
-        // Get value = entryList[1]
-        il.Emit(OpCodes.Ldloc, entryListLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Item")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, valueLocal);
 
         // result[key] = value
         il.Emit(OpCodes.Ldloc, resultLocal);
@@ -1747,9 +1748,8 @@ public partial class RuntimeEmitter
 
         // Throw error for invalid entry
         il.MarkLabel(throwLabel);
-        il.Emit(OpCodes.Ldstr, "Runtime Error: Object.fromEntries() requires [key, value] pairs");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
-        il.Emit(OpCodes.Throw);
+        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
+            "Object.fromEntries() requires entry objects");
 
         // Return result
         il.MarkLabel(loopEndLabel);

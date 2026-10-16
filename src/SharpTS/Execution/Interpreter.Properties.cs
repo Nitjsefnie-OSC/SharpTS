@@ -459,6 +459,10 @@ public partial class Interpreter
                         System.Globalization.CultureInfo.InvariantCulture, out long index)
                     && index >= 0 && array.HasIndex(index))
                 {
+                    if (array.TryGetIndexAccessor(index, out var indexGetter, out _))
+                        return indexGetter is null
+                            ? SharpTSUndefined.Instance
+                            : BindAccessorToObject(indexGetter, receiver!).CallBoxed(this, []);
                     return GetArrayIndexValue(array, index).ToObject();
                 }
                 if (array.HasNamedProperty(name))

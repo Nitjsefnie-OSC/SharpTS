@@ -1865,6 +1865,22 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Isinst, inputs.IHasFieldsInterface);
             il.Emit(OpCodes.Brfalse, notPromiseSubclassLabel);
+
+            // Compiler-created class prototypes also use the subclass carrier.
+            // Their own descriptors (including the canonical constructor) must
+            // win before the generated member lookup follows their base chain.
+            var subclassOwnDescriptor = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
+            var noSubclassOwnDescriptor = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, subclassOwnDescriptor);
+            il.Emit(OpCodes.Ldloc, subclassOwnDescriptor);
+            il.Emit(OpCodes.Brfalse, noSubclassOwnDescriptor);
+            EmitDescriptorReadAndReturn(il, inputs.DescriptorStorage, subclassOwnDescriptor,
+                () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
+            il.MarkLabel(noSubclassOwnDescriptor);
+
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Castclass, inputs.IHasFieldsInterface);
             il.Emit(OpCodes.Ldarg_1);

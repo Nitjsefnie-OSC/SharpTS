@@ -395,8 +395,7 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldstr, "constructor");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, notCtorLabel);
-        il.Emit(OpCodes.Ldtoken, classType);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        EmitCanonicalClassConstructorValue(il, classType);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notCtorLabel);
     }

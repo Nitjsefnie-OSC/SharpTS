@@ -34,8 +34,7 @@ public partial class Parser
             name = ConsumeIdentifierName($"Expect {kind} name.");
         }
 
-        if (kind == "method" && isDeclare)
-            Match(TokenType.QUESTION);
+        bool isOptionalMethod = kind == "method" && isDeclare && Match(TokenType.QUESTION);
 
         // Parse type parameters (e.g., <T, U extends Base>)
         List<TypeParam>? typeParams = ParseTypeParameters();
@@ -152,7 +151,8 @@ public partial class Parser
         if (hasSignatureTerminator || (isDeclare && !Check(TokenType.LEFT_BRACE)))
         {
             // Overload signature - no body, just declaration
-            var signature = new Stmt.Function(name, typeParams, thisType, parameters, null, returnType, IsAsync: isAsync, IsGenerator: isGenerator, IsDeclare: isDeclare, ComputedKey: computedKey, ThisTypeNode: thisTypeNode, ReturnTypeNode: returnTypeNode);
+            var signature = new Stmt.Function(name, typeParams, thisType, parameters, null, returnType, IsAsync: isAsync, IsGenerator: isGenerator, IsDeclare: isDeclare, ComputedKey: computedKey, ThisTypeNode: thisTypeNode, ReturnTypeNode: returnTypeNode)
+            { IsOptional = isOptionalMethod };
             RecordFunctionSyntax(signature, headerStart, parametersOpen, parametersClose,
                 ConsumedSourceEnd, null);
             return signature;

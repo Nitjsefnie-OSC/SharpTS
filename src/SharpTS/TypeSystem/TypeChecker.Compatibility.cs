@@ -89,6 +89,10 @@ public partial class TypeChecker
     private int _compatibilityCheckDepth;
     private const int MaxCompatibilityCheckDepth = 50;
 
+    // Parent record/function keys may display nested classes by name alone.
+    // A constructor comparison makes every enclosing result unsuitable for those caches.
+    private ulong _ordinaryConstructorComparisonEpoch;
+
     /// <summary>
     /// Argument/parameter assignability that additionally honors parameter optionality.
     /// An optional (<c>x?: T</c>) or default-valued (<c>x: T = …</c>) parameter has a call-site
@@ -113,7 +117,8 @@ public partial class TypeChecker
     /// Level 2: Structural equality cache for different instances with same structure
     /// Co-induction: If checking the same type pair (by identity) that's already in progress,
     /// assume compatible to break infinite recursion with recursive types.
-    /// Depth limit: At max depth, assume compatible as a fallback for deeply nested checks.
+    /// Depth limit: Assume compatible as a fallback, except for the ordinary constructor
+    /// relation whose separately checked structural facets must all be established.
     /// </summary>
     private bool IsCompatible(TypeInfo expected, TypeInfo actual)
     {
@@ -128,8 +133,17 @@ public partial class TypeChecker
         // type parameter that is in scope during real checking but not during speculation relates
         // differently (naked vs its constraint). Its verdicts are therefore non-authoritative and
         // must neither be written to nor served from the shared cache, or they poison the real pass.
+        bool ordinaryConstructorPair = IsOrdinaryConstructorPair(expected, actual);
+        // Count identity comparisons too: their early success must not seed a
+        // parent cache entry that could later match a different same-named class.
+        if (ordinaryConstructorPair) unchecked { _ordinaryConstructorComparisonEpoch++; }
+        bool ordinaryConstructorContext = _ordinaryConstructorRelationDepth > 0 || ordinaryConstructorPair;
+        // Mutable self types and recursive constructor facets are compared against
+        // their current view. Neither provisional success nor a name-based key is
+        // authoritative for another constructor comparison.
         bool uncacheable = (_strictFunctionTypes && _methodBivarianceDepth > 0)
-            || _varianceMeasurementDepth > 0 || _suppressDiagnostics > 0;
+            || _varianceMeasurementDepth > 0 || _suppressDiagnostics > 0
+            || ordinaryConstructorContext;
 
         // Level 1: Fast identity-based cache (reference equality)
         _identityCompatibilityCache ??= new(IdentityCacheKeyComparer.Instance);
@@ -153,28 +167,35 @@ public partial class TypeChecker
         // assume compatible to break cycle. This is safe because if the types were
         // incompatible, we would have found that incompatibility before recursing back.
         _compatibilityInProgress ??= new(IdentityCacheKeyComparer.Instance);
-        if (!_compatibilityInProgress.Add(identityKey))
+        var ordinaryKey = new OrdinaryCompatibilityPair(expected, actual, _methodBivarianceDepth > 0, _inCallbackComparison);
+        bool entered = ordinaryConstructorContext
+            ? _ordinaryCompatibilityPairs.Add(ordinaryKey)
+            : _compatibilityInProgress.Add(identityKey);
+        if (!entered)
         {
             // Already checking this pair - assume compatible (co-induction)
             return true;
         }
 
-        // Depth limit: at max depth, assume compatible as fallback
+        // Depth limit: retain the historic fallback outside the constructor relation.
         // This handles cases where co-induction doesn't catch the cycle (different actual values)
         if (_compatibilityCheckDepth >= MaxCompatibilityCheckDepth)
         {
-            _compatibilityInProgress.Remove(identityKey);
-            return true;
+            if (ordinaryConstructorContext) _ordinaryCompatibilityPairs.Remove(ordinaryKey);
+            else _compatibilityInProgress.Remove(identityKey);
+            return !ordinaryConstructorContext;
         }
 
         _compatibilityCheckDepth++;
         try
         {
+            ulong constructorEpoch = _ordinaryConstructorComparisonEpoch;
             // Cache miss - compute result
             var result = IsCompatibleCore(expected, actual);
 
-            // Store in both caches (bivariant-context results are context-dependent — skip)
-            if (!uncacheable)
+            // A nested constructor relation also invalidates the enclosing comparison's
+            // name-based cache key, even after the constructor depth has unwound.
+            if (!uncacheable && constructorEpoch == _ordinaryConstructorComparisonEpoch)
             {
                 _compatibilityCache[structuralKey] = result;
                 _identityCompatibilityCache[identityKey] = result;
@@ -185,7 +206,8 @@ public partial class TypeChecker
         finally
         {
             _compatibilityCheckDepth--;
-            _compatibilityInProgress.Remove(identityKey);
+            if (ordinaryConstructorContext) _ordinaryCompatibilityPairs.Remove(ordinaryKey);
+            else _compatibilityInProgress.Remove(identityKey);
         }
     }
 
@@ -445,6 +467,9 @@ public partial class TypeChecker
 
         if (expected is TypeInfo.GenericClass targetClass && actual is TypeInfo.GenericClass sourceClass)
             return GenericConstructorsRelated(targetClass, sourceClass);
+
+        if (IsOrdinaryConstructorPair(expected, actual))
+            return OrdinaryConstructorsRelated(expected, actual);
 
         // Namespace/module types (typeof someNamespace / typeof import(...)) have no dedicated
         // relation anywhere below, so two structurally-identical namespaces — even the exact same
@@ -1010,6 +1035,12 @@ public partial class TypeChecker
         {
             return IsCompatible(expFinReg.TargetType, actFinReg.TargetType);
         }
+
+        // Nested instances use the constructor relation's directional origin rules,
+        // including a derived public member satisfying an inherited protected one.
+        if (_ordinaryConstructorRelationDepth > 0 &&
+            expected is TypeInfo.Instance ordinaryTarget && actual is TypeInfo.Instance ordinarySource)
+            return OrdinaryInstancesRelated(ordinaryTarget, ordinarySource);
 
         // Member accessibility (TypeScript private/protected): two object types are unrelated when a
         // member they share has a conflicting accessibility origin — a public member cannot satisfy a

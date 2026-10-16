@@ -38,6 +38,7 @@ public partial class TypeChecker
         IReadOnlyList<Stmt.Function> methods, IReadOnlyList<Stmt.Accessor>? accessors,
         IReadOnlyList<Stmt.AutoAccessor>? autoAccessors)
     {
+        RegisterOrdinaryConstructorOptionalMembers(declarationId, fields, methods);
         if (!Members.IsEnabled || declarationId == 0 || CurrentSourceDocument is not { IsVirtual: false } document)
             return;
         ThrowIfCancellationRequested();

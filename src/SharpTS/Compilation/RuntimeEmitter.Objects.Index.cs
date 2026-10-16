@@ -492,12 +492,19 @@ public partial class RuntimeEmitter
         // doesn't carry the key, walk up to Array.prototype's symbol dict.
         // Required for `arr[Symbol.iterator]` to resolve to Array.prototype.
         // values (ECMA-262 §23.1.3.34). Covers List<object> and $TSArray.
-        void EmitProtoSymbolFallback(Type receiverType, FieldBuilder protoField, MethodBuilder populate)
+        void EmitProtoSymbolFallback(Type receiverType, FieldBuilder protoField, MethodBuilder populate,
+            bool respectExplicitPrototype = false)
         {
             var notThisRcvLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Isinst, receiverType);
             il.Emit(OpCodes.Brfalse, notThisRcvLabel);
+            if (respectExplicitPrototype)
+            {
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Call, inputs.DescriptorStorage.HasPrototypeEntry);
+                il.Emit(OpCodes.Brtrue, notThisRcvLabel);
+            }
             il.Emit(OpCodes.Call, populate);
             var protoSymDict = il.DeclareLocal(_types.DictionaryObjectObject);
             var protoSymVal = il.DeclareLocal(_types.Object);
@@ -513,11 +520,13 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notThisRcvLabel);
         }
-        EmitProtoSymbolFallback(_types.ListOfObject, inputs.ArrayOperations.PrototypeField, inputs.ArrayOperations.PrototypePopulateMethod);
+        EmitProtoSymbolFallback(_types.ListOfObject, inputs.ArrayOperations.PrototypeField, inputs.ArrayOperations.PrototypePopulateMethod,
+            respectExplicitPrototype: true);
         // TSArrayType is non-null here by contract: the dispatch above (Isinst TSArrayType)
         // already passed it to il.Emit, which throws on null. A redundant != null guard here
         // would only poison nullable flow analysis for the unconditional casts further down.
-        EmitProtoSymbolFallback(inputs.ArrayStorage.Type, inputs.ArrayOperations.PrototypeField, inputs.ArrayOperations.PrototypePopulateMethod);
+        EmitProtoSymbolFallback(inputs.ArrayStorage.Type, inputs.ArrayOperations.PrototypeField, inputs.ArrayOperations.PrototypePopulateMethod,
+            respectExplicitPrototype: true);
         // Functions inherit symbol-keyed properties from Function.prototype,
         // including Symbol.isConcatSpreadable. The own symbol dictionary was
         // already checked above; only a miss reaches this fallback. Bound

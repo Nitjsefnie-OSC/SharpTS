@@ -55,6 +55,7 @@ public partial class RuntimeEmitter
     );
 
     private readonly record struct ObjectSetPrototypeOfInputs(
+        EmittedArrayStorageRuntime ArrayStorage,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
         MethodBuilder GetProperty,
@@ -1302,6 +1303,11 @@ public partial class RuntimeEmitter
         }
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.ObjectStorage.Type);
+        il.Emit(OpCodes.Brtrue, notClassInstanceLabel);
+        // Array subclass instances retain their exotic storage while their
+        // ordinary prototype can change.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.ArrayStorage.Type);
         il.Emit(OpCodes.Brtrue, notClassInstanceLabel);
         // It's a class instance - throw TypeError
         GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor, "Cannot set prototype of class instance");

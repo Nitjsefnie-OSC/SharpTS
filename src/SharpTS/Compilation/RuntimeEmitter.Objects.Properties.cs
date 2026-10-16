@@ -1607,6 +1607,47 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.IHasFieldsInterface);
         il.Emit(OpCodes.Brfalse, notArraySubclassLabel);
+
+        // Own Array exotic slots take precedence over inherited class members.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, notArraySubclassLabel);
+        var subclassIndex = il.DeclareLocal(_types.UInt32);
+        var subclassNamedProperty = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, subclassIndex);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.UInt32, "TryParse", _types.String, _types.UInt32.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, subclassNamedProperty);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, subclassIndex);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.UInt32, "ToString"));
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brfalse, subclassNamedProperty);
+        il.Emit(OpCodes.Ldloc, subclassIndex);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Conv_U4);
+        il.Emit(OpCodes.Beq, subclassNamedProperty);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, inputs.ArrayStorage.Type);
+        il.Emit(OpCodes.Ldloc, subclassIndex);
+        il.Emit(OpCodes.Conv_U8);
+        il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.HasIndex);
+        il.Emit(OpCodes.Brtrue, notArraySubclassLabel);
+        il.MarkLabel(subclassNamedProperty);
+
+        var arraySubclassOwnDescriptor = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
+        var noArraySubclassOwnDescriptor = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, arraySubclassOwnDescriptor);
+        il.Emit(OpCodes.Ldloc, arraySubclassOwnDescriptor);
+        il.Emit(OpCodes.Brfalse, noArraySubclassOwnDescriptor);
+        EmitDescriptorReadAndReturn(il, inputs.DescriptorStorage, arraySubclassOwnDescriptor,
+            () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
+        il.MarkLabel(noArraySubclassOwnDescriptor);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, inputs.IHasFieldsInterface);
         il.Emit(OpCodes.Ldarg_1);
@@ -1631,6 +1672,7 @@ public partial class RuntimeEmitter
                 inputs.DescriptorStorage,
                 inputs.InvokeMethodValue,
                 inputs.ObjectPrototypes,
+                inputs.Reflect,
                 inputs.UndefinedInstance,
                 inputs.UndefinedType
             ),

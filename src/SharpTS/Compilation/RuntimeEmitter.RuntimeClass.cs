@@ -1534,6 +1534,7 @@ public partial class RuntimeEmitter
             typeBuilder,
             runtime.Operators,
             new InstanceOfInputs(
+                runtime.ArrayOperations,
                 runtime.ClassDefinitions,
                 runtime.ClassPrototypes,
                 runtime.Abort,
@@ -2091,6 +2092,7 @@ public partial class RuntimeEmitter
             typeBuilder,
             runtime.ObjectPrototypes,
             new ObjectSetPrototypeOfInputs(
+                runtime.ArrayStorage,
                 runtime.DescriptorStorage,
                 runtime.Errors,
                 runtime.ObjectRead.Property,

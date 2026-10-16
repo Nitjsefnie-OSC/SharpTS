@@ -189,6 +189,16 @@ public partial class ILCompiler
         var prototypeLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Stloc, prototypeLocal);
 
+        // The native Array base does not have a compiler-only prototype
+        // constructor, but remains the actual base of the guest class chain.
+        if (baseType == _runtime.ArrayStorage.Type)
+        {
+            il.Emit(OpCodes.Call, _runtime.ArrayOperations.PrototypePopulateMethod);
+            il.Emit(OpCodes.Ldloc, prototypeLocal);
+            il.Emit(OpCodes.Ldsfld, _runtime.ArrayOperations.PrototypeField);
+            il.Emit(OpCodes.Call, _runtime.DescriptorStorage.SetPrototype);
+        }
+
         void EmitPrototypeDataDescriptor(string propertyName, Action emitValue)
         {
             var descriptorLocal = il.DeclareLocal(_runtime.DescriptorStorage.DescriptorType);

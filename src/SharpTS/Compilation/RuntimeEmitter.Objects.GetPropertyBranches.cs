@@ -31,6 +31,7 @@ public partial class RuntimeEmitter
         EmittedDescriptorStorageRuntime DescriptorStorage,
         MethodBuilder InvokeMethodValue,
         EmittedObjectPrototypeRuntime ObjectPrototypes,
+        EmittedReflectRuntime Reflect,
         FieldInfo UndefinedInstance,
         Type UndefinedType
     );
@@ -353,22 +354,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notSharpTSArrayLengthLabel);
-        // ECMA-262: `[].constructor === Array`. Mirror the list branch.
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "constructor");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        var notTSArrayCtorLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, notTSArrayCtorLabel);
-        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notTSArrayCtorLabel);
         // Numeric-string index — same purpose as the list branch above:
         // proto-chain walks (`f.__proto__ === [1,2,3]; f[0]`) bottom out here
         // when the prototype is a $Array. Without this, GetListProperty returns
         // null for any digit-string name and the array element is invisible.
         var tsArrIdxLocal = il.DeclareLocal(_types.Int32);
         var tsArrayPrototypeFallback = il.DefineLabel();
+        var readArrayPrototype = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloca, tsArrIdxLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
@@ -400,14 +392,45 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetGetMethod()!);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(tsArrayNoDescriptorFallback);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, objectRead.Property);
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Br, readArrayPrototype);
         il.MarkLabel(tsArrayIndexPresent);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(tsArrNotIndexLabel);
+
+        // An explicit prototype replaces the inherited Array surface while
+        // leaving the own exotic length/index slots above intact.
+        var defaultArrayPrototype = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.HasPrototypeEntry);
+        il.Emit(OpCodes.Brfalse, defaultArrayPrototype);
+        il.MarkLabel(readArrayPrototype);
+        var selectedPrototype = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, selectedPrototype);
+        var hasSelectedPrototype = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, selectedPrototype);
+        il.Emit(OpCodes.Brtrue, hasSelectedPrototype);
+        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(hasSelectedPrototype);
+        il.Emit(OpCodes.Ldloc, selectedPrototype);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.Reflect.Get);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(defaultArrayPrototype);
+
+        // ECMA-262: `[].constructor === Array`. Mirror the list branch.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        var notTSArrayCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notTSArrayCtorLabel);
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSArrayCtorLabel);
         // For other properties on $Array (method names like push/pop/sort/etc.),
         // reuse GetListProperty — it returns the $BoundArrayMethod wrapper, and
         // $Array IS a List<object?> by inheritance, so the cast works.

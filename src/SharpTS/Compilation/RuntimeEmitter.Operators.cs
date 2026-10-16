@@ -27,6 +27,7 @@ public partial class RuntimeEmitter
     );
 
     private readonly record struct InstanceOfInputs(
+        EmittedArrayOperationsRuntime ArrayOperations,
         EmittedClassDefinitionRuntime ClassDefinitions,
         EmittedClassPrototypeRuntime ClassPrototypes,
         EmittedAbortRuntime? Abort,
@@ -979,6 +980,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, targetProtoLocal);
         il.Emit(OpCodes.Br, validPrototypeLabel);
         il.MarkLabel(notFunctionClassLabel);
+
+        // Array exotic storage does not imply Array.prototype membership
+        // after an explicit instance prototype change.
+        var notArrayClassLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Bne_Un, notArrayClassLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.HasPrototypeEntry);
+        il.Emit(OpCodes.Brfalse, notArrayClassLabel);
+        il.Emit(OpCodes.Call, inputs.ArrayOperations.PrototypePopulateMethod);
+        il.Emit(OpCodes.Ldsfld, inputs.ArrayOperations.PrototypeField);
+        il.Emit(OpCodes.Stloc, targetProtoLocal);
+        il.Emit(OpCodes.Br, validPrototypeLabel);
+        il.MarkLabel(notArrayClassLabel);
 
         // A class instance allocated for another newTarget keeps its CLR
         // storage type, but instanceof follows the explicit guest prototype

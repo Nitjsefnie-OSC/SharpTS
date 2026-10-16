@@ -298,7 +298,12 @@ public class ClosureAnalyzer : AstVisitorBase
     {
         foreach (var stmt in statements)
         {
-            if (stmt is Stmt.Function f && f.Body != null)
+            // Comma-separated declarations are a scope-transparent Sequence.
+            // Hoisted closures must see every binding before their bodies are
+            // analyzed, just as they do for separate declaration statements.
+            if (stmt is Stmt.Sequence sequence)
+                HoistFunctionDeclarations(sequence.Statements);
+            else if (stmt is Stmt.Function f && f.Body != null)
                 DeclareVariable(f.Name.Lexeme);
             else if (stmt is Stmt.Export export && export.Declaration is Stmt.Function ef && ef.Body != null)
                 DeclareVariable(ef.Name.Lexeme);

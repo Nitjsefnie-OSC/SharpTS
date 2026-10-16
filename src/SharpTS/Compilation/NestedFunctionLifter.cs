@@ -183,7 +183,7 @@ internal sealed class NestedFunctionLifter
 
         var lifter = new NestedFunctionLifter(analyzer, safe, lambdaForwards, hoistedForwards) { _spans = spans };
         var rewritten = lifter.ProcessTopLevel(module);
-        if (lifter._lifted.Count == 0) return module;
+        if (lifter._lifted.Count == 0) return rewritten;
 
         // Append lifted declarations (they hoist, so trailing position is runtime-equivalent and
         // lets the source-order type checker see any module-level bindings the body reads first).
@@ -670,6 +670,17 @@ internal sealed class NestedFunctionLifter
                 }
                 if (_lambdaForwards.TryGetValue(f, out var forwarded))
                 {
+                    // A plain nested function can use the ordinary closure
+                    // emitter. Captures must keep shared lexical storage even
+                    // when their writes occur in a descendant closure: lifting
+                    // them as scalar parameters would discard those writes.
+                    if (enclosingIsAsyncFunction && !f.IsAsync && !f.IsGenerator)
+                    {
+                        result ??= new List<Stmt>(body.GetRange(0, i));
+                        (aliases ??= new List<Stmt>()).Add(MakeLiveFunctionClosure(f));
+                        continue;
+                    }
+
                     // Capturing relocation: replace the declaration with a forwarding arrow.
                     //
                     // Function-scope captures (#534/#583 §1) whose enclosing function is a PLAIN
@@ -750,6 +761,31 @@ internal sealed class NestedFunctionLifter
         var alias = new Stmt.Var(original, TypeAnnotation: null, Initializer: new Expr.Variable(fresh), IsVar: true);
         _spans?.MarkHidden(alias);
         return alias;
+    }
+
+    /// <summary>
+    /// Hoists a capturing synchronous declaration as an ordinary function expression,
+    /// whose captured bindings use the async function's shared display class.
+    /// </summary>
+    private Stmt MakeLiveFunctionClosure(Stmt.Function function)
+    {
+        var body = ProcessBody(function.Body!, enclosingIsStateMachine: false,
+            enclosingIsAsyncFunction: false, enclosingIsGeneratorClassMethod: false);
+        var closure = new Expr.ArrowFunction(
+            Name: function.Name,
+            TypeParams: function.TypeParams,
+            ThisType: function.ThisType,
+            Parameters: function.Parameters,
+            ExpressionBody: null,
+            BlockBody: body,
+            ReturnType: function.ReturnType,
+            HasOwnThis: true,
+            ThisTypeNode: function.ThisTypeNode,
+            ReturnTypeNode: function.ReturnTypeNode);
+        _spans?.CopySpan(function, closure);
+        var binding = new Stmt.Var(function.Name, TypeAnnotation: null, Initializer: closure, IsVar: true);
+        _spans?.MarkHidden(binding);
+        return binding;
     }
 
     /// <summary>

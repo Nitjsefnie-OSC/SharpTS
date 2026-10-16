@@ -24,7 +24,7 @@ public partial class TypeChecker
             {
                 CheckElement(type, optionalElement: false);
             }
-            else
+            else if (looseVariadic || !CheckInlineArray(((Expr.Spread)argument).Expression))
             {
                 CheckIterable(type);
             }
@@ -55,6 +55,35 @@ public partial class TypeChecker
             parameterIndex++;
             if (!optionalElement) guaranteedCount++;
         }
+
+        bool CheckInlineArray(Expr expression)
+        {
+            while (expression is Expr.Grouping grouping) expression = grouping.Expression;
+            if (expression is not Expr.ArrayLiteral literal) return false;
+
+            // CheckExpr above visited every child, including nested spread operands.
+            // Retain their positional types without checking the initializer twice or
+            // treating an asserted array as if it had a fixed tuple length.
+            foreach (var element in literal.Elements)
+            {
+                if (element is Expr.Spread spread)
+                {
+                    // Only the outer literal receives positional call context.
+                    // Nested spread operands keep their tuple or unknown-length type.
+                    CheckIterable(CheckedType(spread.Expression));
+                }
+                else
+                {
+                    // Elisions are represented by checked undefined literals and
+                    // consume an argument just like an explicit undefined element.
+                    CheckElement(CheckedType(element), optionalElement: false);
+                }
+            }
+            return true;
+        }
+
+        TypeInfo CheckedType(Expr expression) => _typeMap.Get(expression)
+            ?? throw new InvalidOperationException("Private call spread element was not checked.");
 
         void CheckIterable(TypeInfo type)
         {

@@ -87,7 +87,7 @@ public sealed class PrivateTypedSpreadTests
     [InlineData("...[] as const", "TS2554")]
     [InlineData("...[1, 'two', 3] as const", "TS2554")]
     [InlineData("...['bad'] as const", "TS2345")]
-    [InlineData("...[1, 'two']", "TS2556")]
+    [InlineData("...([1, 'two'] as (number | string)[])", "TS2556")]
     [InlineData("...([] as any as [number?])", "TS2345")]
     public void FixedParametersRetainTupleArityAndTypeChecks(string arguments, string code)
     {

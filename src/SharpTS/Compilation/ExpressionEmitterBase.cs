@@ -2270,6 +2270,20 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected bool TryEmitNamespaceSingleton(string name)
     {
+        if (name == "Math")
+        {
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Math.SingletonField);
+            SetStackUnknown();
+            return true;
+        }
+
+        if (name == "JSON")
+        {
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Json.SingletonField);
+            SetStackUnknown();
+            return true;
+        }
+
         if (name == "AbortController" && Ctx.Runtime!.Abort is not null)
         {
             IL.Emit(OpCodes.Call, Ctx.Runtime.RequireAbort().GetControllerConstructor);

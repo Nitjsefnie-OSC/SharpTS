@@ -235,6 +235,8 @@ public partial class AsyncArrowMoveNextEmitter
         if (_ctx?.OuterFunctionDCField != null &&
             _builder.OuterStateMachineField != null &&
             _builder.OuterStateMachineType != null &&
+            _builder.CapturedFieldMap.TryGetValue(name, out var capturedField) &&
+            capturedField.DeclaringType == _ctx.OuterFunctionDCField.DeclaringType &&
             _ctx.FunctionDisplayClassFields?.TryGetValue(name, out var outerField) == true)
             return AsyncArrowStorageAccess.OuterDisplayClassField(_builder, _ctx.OuterFunctionDCField, outerField);
 

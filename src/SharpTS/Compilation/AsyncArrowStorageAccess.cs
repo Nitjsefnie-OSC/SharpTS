@@ -35,7 +35,9 @@ internal sealed class AsyncArrowStorageAccess
 
     public static AsyncArrowStorageAccess OuterDisplayClassField(
         AsyncArrowStateMachineBuilder builder, FieldInfo displayClassField, FieldInfo field)
-        => new(null, field, [.. OuterReceiverPath(builder, transitive: false), new(displayClassField)]);
+        => new(null, field,
+            [.. OuterReceiverPath(builder, displayClassField.DeclaringType == builder.GrandparentStateMachineType),
+                new(displayClassField)]);
 
     private static ReceiverStep[] OuterReceiverPath(AsyncArrowStateMachineBuilder builder, bool transitive)
     {

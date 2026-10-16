@@ -193,6 +193,22 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
+        // With no guest classes there are no registered class prototype
+        // carriers to normalize, mutate or inspect. Keep the metadata handles
+        // available to shared helpers without retaining their class-only work.
+        // Hosted runtimes can receive guest class values from their host.
+        if (!_emitHosted && !_features.UsesUserClasses)
+        {
+            var normalizeIL = normalizePrototype.GetILGenerator();
+            normalizeIL.Emit(OpCodes.Ldarg_0);
+            normalizeIL.Emit(OpCodes.Ret);
+            updateParent.GetILGenerator().Emit(OpCodes.Ret);
+            var modifiedIL = hasModifiedChain.GetILGenerator();
+            modifiedIL.Emit(OpCodes.Ldc_I4_0);
+            modifiedIL.Emit(OpCodes.Ret);
+            return;
+        }
+
         // Generic prototype carriers retain their CLR storage identities, but
         // cycle checks must recognize the one source-level prototype home.
         {

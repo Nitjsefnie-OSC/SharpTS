@@ -1058,30 +1058,54 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, nativeType);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "FullName").GetGetMethod()!);
         il.Emit(OpCodes.Stloc, nativeName);
-        foreach (var nativeTypeName in new[]
-        {
-            "SharpTS.Runtime.Types.SharpTSIntlFormatterBase", "SharpTS.Runtime.Types.SharpTSIntlSegments",
-            "$ReadableStream", "$ReadableStreamDefaultController", "$ReadableStreamDefaultReader",
-            "$WritableStream", "$WritableStreamDefaultController", "$WritableStreamDefaultWriter",
-            "$TransformStream", "$TransformSinkHolder", "$CountQueuingStrategy", "$ByteLengthQueuingStrategy",
-            "SharpTS.Runtime.Types.SharpTSReadableStream", "SharpTS.Runtime.Types.SharpTSReadableStreamDefaultController",
-            "SharpTS.Runtime.Types.SharpTSReadableStreamDefaultReader", "SharpTS.Runtime.Types.SharpTSWritableStream",
-            "SharpTS.Runtime.Types.SharpTSWritableStreamDefaultController", "SharpTS.Runtime.Types.SharpTSWritableStreamDefaultWriter",
-            "SharpTS.Runtime.Types.SharpTSTransformStream", "SharpTS.Runtime.Types.SharpTSTransformStreamDefaultController",
-            "SharpTS.Runtime.Types.SharpTSQueuingStrategy", "$Headers", "$Request", "$Response", "$FetchResponse",
-            "SharpTS.Runtime.Types.SharpTSHeaders", "SharpTS.Runtime.Types.SharpTSRequest",
-            "SharpTS.Runtime.Types.SharpTSResponse", "SharpTS.Runtime.Types.SharpTSFetchResponse",
-            "SharpTS.Runtime.Types.SharpTSBlob", "$AsyncLocalStorage", "$BlockList", "$MessageChannel",
-            "SharpTS.Runtime.Types.SharpTSAsyncLocalStorage", "SharpTS.Runtime.Types.SharpTSBlockList",
-            "SharpTS.Runtime.Types.SharpTSMessageChannel", "$Hash", "$Hmac", "$Cipher", "$Decipher", "$DiffieHellman", "$ECDH",
-            "$Sign", "$Verify", "$KeyObject", "$CryptoKey", "$X509Certificate", "$WebCrypto", "$SubtleCrypto",
-            "SharpTS.Runtime.Types.SharpTSHash", "SharpTS.Runtime.Types.SharpTSHmac", "SharpTS.Runtime.Types.SharpTSAesBase",
-            "SharpTS.Runtime.Types.SharpTSDiffieHellman", "SharpTS.Runtime.Types.SharpTSECDH", "SharpTS.Runtime.Types.SharpTSSign",
-            "SharpTS.Runtime.Types.SharpTSVerify", "SharpTS.Runtime.Types.SharpTSKeyObject", "SharpTS.Runtime.Types.SharpTSCryptoKey",
-            "SharpTS.Runtime.Types.SharpTSX509Certificate", "SharpTS.Runtime.Types.SharpTSWebCrypto", "SharpTS.Runtime.Types.SharpTSSubtleCrypto",
-            "$Dir", "$Dirent", "SharpTS.Runtime.Types.SharpTSDir", "SharpTS.Runtime.Types.SharpTSCookieJar",
+        // Mirror the families that emit these carriers. Hosted programs can
+        // also receive native values from their host, so retain every family.
+        List<string> nativeTypeNames =
+        [
+            "$MessageChannel", "SharpTS.Runtime.Types.SharpTSMessageChannel",
+            "SharpTS.Runtime.Types.SharpTSBlob",
             "SharpTS.Runtime.Types.SharpTSEnum", "SharpTS.Runtime.Types.SharpTSConstEnumValues"
-        })
+        ];
+        if (_emitHosted || _features.UsesIntl)
+            nativeTypeNames.AddRange([
+                "SharpTS.Runtime.Types.SharpTSIntlFormatterBase", "SharpTS.Runtime.Types.SharpTSIntlSegments"
+            ]);
+        if (_emitHosted || _features.UsesWebStreams)
+            nativeTypeNames.AddRange([
+                "$ReadableStream", "$ReadableStreamDefaultController", "$ReadableStreamDefaultReader",
+                "$WritableStream", "$WritableStreamDefaultController", "$WritableStreamDefaultWriter",
+                "$TransformStream", "$TransformSinkHolder", "$CountQueuingStrategy", "$ByteLengthQueuingStrategy",
+                "SharpTS.Runtime.Types.SharpTSReadableStream", "SharpTS.Runtime.Types.SharpTSReadableStreamDefaultController",
+                "SharpTS.Runtime.Types.SharpTSReadableStreamDefaultReader", "SharpTS.Runtime.Types.SharpTSWritableStream",
+                "SharpTS.Runtime.Types.SharpTSWritableStreamDefaultController", "SharpTS.Runtime.Types.SharpTSWritableStreamDefaultWriter",
+                "SharpTS.Runtime.Types.SharpTSTransformStream", "SharpTS.Runtime.Types.SharpTSTransformStreamDefaultController",
+                "SharpTS.Runtime.Types.SharpTSQueuingStrategy"
+            ]);
+        if (_emitHosted || _features.UsesHttp)
+            nativeTypeNames.AddRange([
+                "$Headers", "$Request", "$Response", "$FetchResponse",
+                "SharpTS.Runtime.Types.SharpTSHeaders", "SharpTS.Runtime.Types.SharpTSRequest",
+                "SharpTS.Runtime.Types.SharpTSResponse", "SharpTS.Runtime.Types.SharpTSFetchResponse",
+                "SharpTS.Runtime.Types.SharpTSCookieJar"
+            ]);
+        if (_emitHosted || _features.UsesAsyncLocalStorage)
+            nativeTypeNames.AddRange([
+                "$AsyncLocalStorage", "SharpTS.Runtime.Types.SharpTSAsyncLocalStorage"
+            ]);
+        if (_emitHosted || _features.UsesNet)
+            nativeTypeNames.AddRange(["$BlockList", "SharpTS.Runtime.Types.SharpTSBlockList"]);
+        if (_emitHosted || _features.UsesCrypto)
+            nativeTypeNames.AddRange([
+                "$Hash", "$Hmac", "$Cipher", "$Decipher", "$DiffieHellman", "$ECDH",
+                "$Sign", "$Verify", "$KeyObject", "$CryptoKey", "$X509Certificate", "$WebCrypto", "$SubtleCrypto",
+                "SharpTS.Runtime.Types.SharpTSHash", "SharpTS.Runtime.Types.SharpTSHmac", "SharpTS.Runtime.Types.SharpTSAesBase",
+                "SharpTS.Runtime.Types.SharpTSDiffieHellman", "SharpTS.Runtime.Types.SharpTSECDH", "SharpTS.Runtime.Types.SharpTSSign",
+                "SharpTS.Runtime.Types.SharpTSVerify", "SharpTS.Runtime.Types.SharpTSKeyObject", "SharpTS.Runtime.Types.SharpTSCryptoKey",
+                "SharpTS.Runtime.Types.SharpTSX509Certificate", "SharpTS.Runtime.Types.SharpTSWebCrypto", "SharpTS.Runtime.Types.SharpTSSubtleCrypto"
+            ]);
+        if (_emitHosted || _features.UsesFs)
+            nativeTypeNames.AddRange(["$Dir", "$Dirent", "SharpTS.Runtime.Types.SharpTSDir"]);
+        foreach (var nativeTypeName in nativeTypeNames)
         {
             il.Emit(OpCodes.Ldloc, nativeName);
             il.Emit(OpCodes.Ldstr, nativeTypeName);

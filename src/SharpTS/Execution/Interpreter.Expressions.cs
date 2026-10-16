@@ -1190,21 +1190,8 @@ public partial class Interpreter
                 : GetPropertyValue(obj, ToPropertyKeyString(index)));
         if (obj is SharpTSFunction fn)
         {
-            // Symbol-keyed bracket access (`fn[Symbol.species]`) routes
-            // through the per-instance symbol map. Set via the matching
-            // symbol-keyed branch in EvaluateSetIndex. Symbol-keyed
-            // accessors (`Object.defineProperty(fn, sym, {get, set})`)
-            // win over data values — test262's
-            // species-ctor-species-get-err.js installs a throwing getter
-            // here that SpeciesConstructor must propagate.
             if (index is SharpTSSymbol fnSym)
-            {
-                if (fn.TryGetSymbolAccessor(fnSym, out var symGetter, out _) && symGetter != null)
-                    return RuntimeValue.FromBoxed(symGetter.Call(this, []));
-                if (fn.TryGetSymbolProperty(fnSym, out var symVal))
-                    return RuntimeValue.FromBoxed(symVal ?? SharpTSUndefined.Instance);
                 return RuntimeValue.FromBoxed(GetSymbolPropertyValue(fn, fnSym));
-            }
             string fnKey = index?.ToString() ?? "";
             if (fn.TryGetProperty(fnKey, out var propVal))
                 return RuntimeValue.FromBoxed(propVal);
@@ -1214,13 +1201,7 @@ public partial class Interpreter
         if (obj is SharpTSArrowFunction afn)
         {
             if (index is SharpTSSymbol arrSym)
-            {
-                if (afn.TryGetSymbolAccessor(arrSym, out var arrGetter, out _) && arrGetter != null)
-                    return RuntimeValue.FromBoxed(arrGetter.Call(this, []));
-                if (afn.TryGetSymbolProperty(arrSym, out var arrSymVal))
-                    return RuntimeValue.FromBoxed(arrSymVal ?? SharpTSUndefined.Instance);
                 return RuntimeValue.FromBoxed(GetSymbolPropertyValue(afn, arrSym));
-            }
             string arrKey = index?.ToString() ?? "";
             if (afn.TryGetProperty(arrKey, out var arrPropVal))
                 return RuntimeValue.FromBoxed(arrPropVal);
@@ -1648,42 +1629,22 @@ public partial class Interpreter
             }
             return RuntimeValue.FromBoxed(value);
         }
+        if (obj is SharpTSFunction or SharpTSArrowFunction && index is SharpTSSymbol ordinarySymbol
+            && FunctionObjectProperties.TryGetStorage(obj, this, out var ordinaryProperties))
+        {
+            if (!TryAssignThroughDescriptor(ordinaryProperties.GetOwnPropertyDescriptor(ordinarySymbol)
+                    ?? FindInheritedSymbolDescriptor(obj, ordinarySymbol),
+                    obj, ordinarySymbol.ToString(), value, strictMode))
+                ordinaryProperties.SetBySymbolStrict(ordinarySymbol, value, strictMode);
+            return RuntimeValue.FromBoxed(value);
+        }
         if (obj is SharpTSFunction fn)
         {
-            // Symbol-keyed assignment (`fn[Symbol.species] = ...`) routes to
-            // the per-instance symbol map so SpeciesConstructor lookups
-            // round-trip. Without this branch the key gets stringified to
-            // "Symbol(...)" via ToString and is invisible to symbol-keyed
-            // reads.
-            if (index is SharpTSSymbol fnSym)
-            {
-                if (TryAssignThroughDescriptor(GetOwnFunctionSymbolAccessorDescriptor(fn, fnSym),
-                        fn, fnSym.ToString(), value, strictMode))
-                    return RuntimeValue.FromBoxed(value);
-                if (!fn.TryGetSymbolProperty(fnSym, out _)
-                    && TryAssignThroughDescriptor(FindInheritedSymbolDescriptor(fn, fnSym),
-                        fn, fnSym.ToString(), value, strictMode))
-                    return RuntimeValue.FromBoxed(value);
-                fn.SetBySymbol(fnSym, value);
-                return RuntimeValue.FromBoxed(value);
-            }
             fn.SetProperty(index?.ToString() ?? "", value);
             return RuntimeValue.FromBoxed(value);
         }
         if (obj is SharpTSArrowFunction afn)
         {
-            if (index is SharpTSSymbol arrSym)
-            {
-                if (TryAssignThroughDescriptor(GetOwnFunctionSymbolAccessorDescriptor(afn, arrSym),
-                        afn, arrSym.ToString(), value, strictMode))
-                    return RuntimeValue.FromBoxed(value);
-                if (!afn.TryGetSymbolProperty(arrSym, out _)
-                    && TryAssignThroughDescriptor(FindInheritedSymbolDescriptor(afn, arrSym),
-                        afn, arrSym.ToString(), value, strictMode))
-                    return RuntimeValue.FromBoxed(value);
-                afn.SetBySymbol(arrSym, value);
-                return RuntimeValue.FromBoxed(value);
-            }
             afn.SetProperty(index?.ToString() ?? "", value);
             return RuntimeValue.FromBoxed(value);
         }

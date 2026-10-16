@@ -1154,16 +1154,13 @@ public partial class Interpreter
         // Handle symbol keys
         if (key is SharpTSSymbol symbol)
         {
-            if (obj is ISharpTSFunctionObject function)
+            if (FunctionObjectProperties.TryGetStorage(obj, this, out var properties))
             {
-                var properties = FunctionObjectProperties.GetProperties(function, this);
                 return !properties.HasSymbolProperty(symbol)
                     || properties.DeleteBySymbolStrict(symbol, strictMode);
             }
             return obj switch
             {
-                BoundFunction bound => !bound.OwnPropertyStorage.HasSymbolProperty(symbol)
-                    || bound.OwnPropertyStorage.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSObject tsObj => tsObj.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSInstance tsInst => tsInst.DeleteBySymbolStrict(symbol, strictMode),
                 SharpTSClass klass => klass.DeleteStaticSymbolProperty(symbol, strictMode),

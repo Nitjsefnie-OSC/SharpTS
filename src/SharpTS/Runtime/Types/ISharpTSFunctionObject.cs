@@ -1,5 +1,6 @@
 using SharpTS.Execution;
 using SharpTS.Runtime.BuiltIns;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 
 namespace SharpTS.Runtime.Types;
@@ -21,7 +22,7 @@ internal static class FunctionObjectProperties
     // Keep internal prototype state separate from that object's visible keys.
     private static readonly ConditionalWeakTable<SharpTSObject, PrototypeState> Prototypes = new();
 
-    internal static bool TryGetStorage(object? function, Interpreter? interpreter, out SharpTSObject storage)
+    internal static bool TryGetStorage([NotNullWhen(true)] object? function, Interpreter? interpreter, out SharpTSObject storage)
     {
         storage = function switch
         {

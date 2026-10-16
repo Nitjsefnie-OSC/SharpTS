@@ -2188,23 +2188,6 @@ public partial class Interpreter
         return false;
     }
 
-    /// <summary>Reads the legacy own accessor maps for the assignment protocol.</summary>
-    internal static SharpTSPropertyDescriptor? GetOwnFunctionSymbolAccessorDescriptor(
-        object target, SharpTSSymbol symbol)
-    {
-        ISharpTSCallable? getter = null, setter = null;
-        bool found = target switch
-        {
-            SharpTSFunction declaration => declaration.TryGetSymbolAccessor(symbol, out getter, out setter),
-            SharpTSArrowFunction expression => expression.TryGetSymbolAccessor(symbol, out getter, out setter),
-            _ => false
-        };
-        return found ? new SharpTSPropertyDescriptor
-        {
-            Get = getter, Set = setter, HasGet = true, HasSet = true
-        } : null;
-    }
-
     // Inspect actual prototypes rather than assuming every callable immediately
     // inherits Function.prototype (generator functions have another level).
     internal SharpTSPropertyDescriptor? FindInheritedSymbolDescriptor(object target, SharpTSSymbol symbol)

@@ -573,6 +573,9 @@ public partial class Interpreter
                     receiver, out var objectConstructorValue))
                 return objectConstructorValue;
 
+            if (current is SharpTSFunctionGlobal && name == "prototype")
+                return GetFunctionPrototype();
+
             if (FunctionObjectProperties.TryGetExplicitPrototype(current, this, out var explicitPrototype))
             {
                 current = explicitPrototype;

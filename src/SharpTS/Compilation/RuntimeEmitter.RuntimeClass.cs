@@ -1542,6 +1542,7 @@ public partial class RuntimeEmitter
                 runtime.DescriptorStorage,
                 runtime.Errors,
                 runtime.FunctionBindings,
+                runtime.FunctionPrototypes,
                 runtime.FunctionIntrospection.GetProperty,
                 runtime.Invocation.Method,
                 runtime.ObjectFields.Interface,
@@ -2053,6 +2054,27 @@ public partial class RuntimeEmitter
                 runtime.ObjectRead.Property,
                 runtime.ObjectFields.Interface,
                 runtime.ReflectedMethods.InvokeUnwrapped,
+                new Type?[]
+                {
+                    _types.DictionaryObjectObject, _types.HashSetOfObject,
+                    _types.ConditionalWeakTableObjectObject, _types.WeakReferenceObject,
+                    _types.ObjectArray, runtime.ArrayBuffer?.Type,
+                    runtime.SharedArrayBuffer?.Type, runtime.DataView?.Type,
+                    runtime.TypedArrays.Implementation?.BaseType, runtime.Buffer?.Type,
+                    runtime.TextEncoding?.EncoderType, runtime.TextEncoding?.DecoderType,
+                    runtime.EventEmitter.Type, runtime.Timers.TimeoutType,
+                    runtime.Timers.VirtualTimerType, runtime.Generators.Type,
+                    runtime.Generators.NumericType, runtime.AsyncGenerators?.Type,
+                    runtime.IteratorWrappers.Type, runtime.Namespaces.Type
+                }.OfType<Type>().ToArray(),
+                new Type?[]
+                {
+                    runtime.FunctionBindings.BindType, runtime.FunctionBindings.CallType,
+                    runtime.FunctionBindings.ApplyType, runtime.ArrayOperations.BoundMethodType,
+                    runtime.Map?.BoundMethodType, runtime.Set?.BoundMethodType,
+                    runtime.TypedArrays.Implementation?.BoundMethodType,
+                    runtime.ReflectedMethods.CallableType, runtime.TextEncoding?.DecodeMethodType
+                }.OfType<Type>().ToArray(),
                 runtime.Numbers,
                 runtime.ObjectState,
                 runtime.ObjectStorage,

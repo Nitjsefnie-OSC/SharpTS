@@ -41,6 +41,8 @@ public partial class RuntimeEmitter
         MethodBuilder GetProperty,
         Type IHasFieldsInterface,
         MethodBuilder InvokeMethodUnwrapped,
+        IReadOnlyList<Type> NativeObjectTypes,
+        IReadOnlyList<Type> NativeFunctionTypes,
         EmittedNumberRuntime Numbers,
         EmittedObjectStateRuntime ObjectState,
         EmittedObjectStorageRuntime ObjectStorage,
@@ -1011,7 +1013,89 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notStrForProtoLabel);
 
-        // Not found in either: return null
+        // These native carriers have not materialized their intermediate
+        // intrinsic prototype objects yet. Preserve their known Object or
+        // Function ancestry without treating every missing prototype as an
+        // Object link. Explicit entries and Proxy trap results returned above.
+        void EmitNativePrototypeFallback(IReadOnlyList<Type> carriers,
+            MethodBuilder? populate, FieldBuilder prototype)
+        {
+            foreach (var carrier in carriers)
+            {
+                var next = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Isinst, carrier);
+                il.Emit(OpCodes.Brfalse, next);
+                if (populate is not null)
+                    il.Emit(OpCodes.Call, populate);
+                il.Emit(OpCodes.Ldsfld, prototype);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(next);
+            }
+        }
+        EmitNativePrototypeFallback(inputs.NativeFunctionTypes,
+            inputs.FunctionPrototypePopulateMethod, inputs.FunctionPrototypeField);
+        EmitNativePrototypeFallback(inputs.NativeObjectTypes,
+            null, objectPrototypes.Prototype);
+
+        // Some optional carriers are defined after this body, or are supplied
+        // through the soft SharpTS runtime boundary (Intl). Match only those
+        // known native classes, including their subclasses, without embedding
+        // a SharpTS.dll type reference in an otherwise standalone assembly.
+        var nativeType = il.DeclareLocal(_types.Type);
+        var nativeName = il.DeclareLocal(_types.String);
+        var nativeTypeLoop = il.DefineLabel();
+        var nativeObjectFound = il.DefineLabel();
+        var noNativeObject = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, nativeType);
+        il.MarkLabel(nativeTypeLoop);
+        il.Emit(OpCodes.Ldloc, nativeType);
+        il.Emit(OpCodes.Brfalse, noNativeObject);
+        il.Emit(OpCodes.Ldloc, nativeType);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "FullName").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, nativeName);
+        foreach (var nativeTypeName in new[]
+        {
+            "SharpTS.Runtime.Types.SharpTSIntlFormatterBase", "SharpTS.Runtime.Types.SharpTSIntlSegments",
+            "$ReadableStream", "$ReadableStreamDefaultController", "$ReadableStreamDefaultReader",
+            "$WritableStream", "$WritableStreamDefaultController", "$WritableStreamDefaultWriter",
+            "$TransformStream", "$TransformSinkHolder", "$CountQueuingStrategy", "$ByteLengthQueuingStrategy",
+            "SharpTS.Runtime.Types.SharpTSReadableStream", "SharpTS.Runtime.Types.SharpTSReadableStreamDefaultController",
+            "SharpTS.Runtime.Types.SharpTSReadableStreamDefaultReader", "SharpTS.Runtime.Types.SharpTSWritableStream",
+            "SharpTS.Runtime.Types.SharpTSWritableStreamDefaultController", "SharpTS.Runtime.Types.SharpTSWritableStreamDefaultWriter",
+            "SharpTS.Runtime.Types.SharpTSTransformStream", "SharpTS.Runtime.Types.SharpTSTransformStreamDefaultController",
+            "SharpTS.Runtime.Types.SharpTSQueuingStrategy", "$Headers", "$Request", "$Response", "$FetchResponse",
+            "SharpTS.Runtime.Types.SharpTSHeaders", "SharpTS.Runtime.Types.SharpTSRequest",
+            "SharpTS.Runtime.Types.SharpTSResponse", "SharpTS.Runtime.Types.SharpTSFetchResponse",
+            "SharpTS.Runtime.Types.SharpTSBlob", "$AsyncLocalStorage", "$BlockList", "$MessageChannel",
+            "SharpTS.Runtime.Types.SharpTSAsyncLocalStorage", "SharpTS.Runtime.Types.SharpTSBlockList",
+            "SharpTS.Runtime.Types.SharpTSMessageChannel", "$Hash", "$Hmac", "$Cipher", "$Decipher", "$DiffieHellman", "$ECDH",
+            "$Sign", "$Verify", "$KeyObject", "$CryptoKey", "$X509Certificate", "$WebCrypto", "$SubtleCrypto",
+            "SharpTS.Runtime.Types.SharpTSHash", "SharpTS.Runtime.Types.SharpTSHmac", "SharpTS.Runtime.Types.SharpTSAesBase",
+            "SharpTS.Runtime.Types.SharpTSDiffieHellman", "SharpTS.Runtime.Types.SharpTSECDH", "SharpTS.Runtime.Types.SharpTSSign",
+            "SharpTS.Runtime.Types.SharpTSVerify", "SharpTS.Runtime.Types.SharpTSKeyObject", "SharpTS.Runtime.Types.SharpTSCryptoKey",
+            "SharpTS.Runtime.Types.SharpTSX509Certificate", "SharpTS.Runtime.Types.SharpTSWebCrypto", "SharpTS.Runtime.Types.SharpTSSubtleCrypto",
+            "$Dir", "$Dirent", "SharpTS.Runtime.Types.SharpTSDir", "SharpTS.Runtime.Types.SharpTSCookieJar",
+            "SharpTS.Runtime.Types.SharpTSEnum", "SharpTS.Runtime.Types.SharpTSConstEnumValues"
+        })
+        {
+            il.Emit(OpCodes.Ldloc, nativeName);
+            il.Emit(OpCodes.Ldstr, nativeTypeName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, nativeObjectFound);
+        }
+        il.Emit(OpCodes.Ldloc, nativeType);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, nativeType);
+        il.Emit(OpCodes.Br, nativeTypeLoop);
+        il.MarkLabel(nativeObjectFound);
+        il.Emit(OpCodes.Ldsfld, objectPrototypes.Prototype);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(noNativeObject);
+
+        // No known default: return null.
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 

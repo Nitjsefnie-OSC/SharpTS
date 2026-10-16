@@ -35,6 +35,7 @@ public partial class RuntimeEmitter
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
         EmittedFunctionBindingRuntime FunctionBindings,
+        EmittedFunctionPrototypeRuntime FunctionPrototypes,
         MethodBuilder GetFunctionMethod,
         MethodBuilder InvokeMethodValue,
         Type IHasFieldsInterface,
@@ -954,6 +955,31 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, _types.Type);
         il.Emit(OpCodes.Stloc, classTypeLocal);
 
+        // Intrinsic constructors use their actual prototype objects, not CLR
+        // carrier assignability. Reuse the ordinary chain walk above so null
+        // roots, explicit overrides and Proxy [[GetPrototypeOf]] participate.
+        var notObjectClassLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Bne_Un, notObjectClassLabel);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.Populate);
+        il.Emit(OpCodes.Ldsfld, inputs.ObjectPrototypes.Prototype);
+        il.Emit(OpCodes.Stloc, targetProtoLocal);
+        il.Emit(OpCodes.Br, validPrototypeLabel);
+        il.MarkLabel(notObjectClassLabel);
+
+        var notFunctionClassLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Ldtoken, inputs.TSFunctionType);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Bne_Un, notFunctionClassLabel);
+        il.Emit(OpCodes.Call, inputs.FunctionPrototypes.Populate);
+        il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypes.Prototype);
+        il.Emit(OpCodes.Stloc, targetProtoLocal);
+        il.Emit(OpCodes.Br, validPrototypeLabel);
+        il.MarkLabel(notFunctionClassLabel);
+
         // A class instance allocated for another newTarget keeps its CLR
         // storage type, but instanceof follows the explicit guest prototype
         // chain. Failure to find the prototype is terminal for user classes.
@@ -1006,36 +1032,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, selectedWalk);
         il.MarkLabel(staticReceiver);
 
-        // `x instanceof Object` — the bare `Object` identifier resolves to the
-        // System.Object Type token (see RuntimeEmitter.GlobalThis.cs), so apply
-        // JS Object semantics rather than the IsAssignableFrom fallback below:
-        // every .NET type is assignable to System.Object, so that fallback would
-        // wrongly say true for boxed primitives (double/bool/string), BigInteger,
-        // $TSSymbol, and the undefined sentinel. Per ECMA-262 OrdinaryHasInstance
-        // a primitive O short-circuits to false — so a guest value is an Object
-        // iff it is non-primitive (mirrors interp's IsJsObject, #342). Boxed
-        // primitive wrappers (`new Number(5)`) are $Object instances, not boxed
-        // doubles, so they correctly fall through to true.
-        var notObjectClassLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, classTypeLocal);
-        il.Emit(OpCodes.Ldtoken, _types.Object);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
-        il.Emit(OpCodes.Bne_Un, notObjectClassLabel);
-        void PrimitiveToFalse(Type primType)
-        {
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Isinst, primType);
-            il.Emit(OpCodes.Brtrue, falseLabel);
-        }
-        PrimitiveToFalse(_types.Boolean);
-        PrimitiveToFalse(_types.Double);
-        PrimitiveToFalse(_types.String);
-        PrimitiveToFalse(_types.BigInteger);
-        PrimitiveToFalse(inputs.Symbols.Type);
-        PrimitiveToFalse(inputs.UndefinedType);
-        il.Emit(OpCodes.Br, trueLabel);
-        il.MarkLabel(notObjectClassLabel);
-
         // When classType is one of the primitive wrapper types (Number/String/
         // Boolean, which lower to the System.Double/String/Boolean Type tokens),
         // the decision is TERMINAL: per ECMA-262 OrdinaryHasInstance only a boxed
@@ -1044,7 +1040,7 @@ public partial class RuntimeEmitter
         // marker, else to false. Falling through to the IsAssignableFrom fallback
         // below would wrongly match a bare boxed double/string/bool, since e.g.
         // IsAssignableFrom(double, double) is true (#375). Mirrors the terminal
-        // `Object` branch above.
+        // intrinsic prototype-chain branches above.
         void CheckBoxed(Type primType, string typeTag)
         {
             var skip = il.DefineLabel();

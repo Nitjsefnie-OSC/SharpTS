@@ -1919,6 +1919,7 @@ public static partial class ObjectBuiltIns
         // per-realm RegExp.prototype object, so `Object.getPrototypeOf(/x/)
         // === RegExp.prototype` (the from-regexp-like tests assert this).
         SharpTSRegExp => interp?.GetRegExpPrototype(),
+        SharpTSDate { IsPrototype: true } => interp?.GetObjectPrototype(),
         SharpTSDate => interp?.GetDatePrototype(),
         SharpTSMath => interp?.GetObjectPrototype(),
         SharpTSJSON => interp?.GetObjectPrototype(),
@@ -1943,6 +1944,30 @@ public static partial class ObjectBuiltIns
         SharpTSBooleanPrototype => interp?.GetObjectPrototype(),
         SharpTSBigIntPrototype => interp?.GetObjectPrototype(),
         SharpTSSymbolPrototype => interp?.GetObjectPrototype(),
+        // These native carriers do not yet materialize their individual
+        // prototype objects. Their conceptual chains still reach Object.prototype.
+        // Keep this fallback limited to native types without an explicit prototype
+        // carrier: ordinary null roots and Proxy trap results remain authoritative.
+        SharpTSMap or SharpTSSet or SharpTSWeakMap or SharpTSWeakSet
+            or SharpTSWeakRef or SharpTSFinalizationRegistry
+            or SharpTSArrayBuffer or SharpTSSharedArrayBuffer or SharpTSDataView
+            or SharpTSTypedArray or SharpTSBuffer
+            or SharpTSAbortController or SharpTSAbortSignal
+            or SharpTSIterator or SharpTSTextEncoder or SharpTSTextDecoder
+            or SharpTSEventEmitter or SharpTSTimeout
+            or SharpTSIntlFormatterBase or SharpTSIntlSegments
+            or SharpTSReadableStream or SharpTSWritableStream or SharpTSTransformStream
+            or SharpTSReadableStreamDefaultController or SharpTSReadableStreamDefaultReader
+            or SharpTSWritableStreamDefaultController or SharpTSWritableStreamDefaultWriter
+            or SharpTSTransformStreamDefaultController or SharpTSQueuingStrategy
+            or SharpTSHeaders or SharpTSRequest or SharpTSResponse or SharpTSFetchResponse
+            or SharpTSBlob or SharpTSAsyncLocalStorage or SharpTSBlockList or SharpTSMessageChannel
+            or SharpTSHash or SharpTSHmac or SharpTSAesBase or SharpTSDiffieHellman
+            or SharpTSECDH or SharpTSSign or SharpTSVerify or SharpTSKeyObject
+            or SharpTSCryptoKey or SharpTSX509Certificate or SharpTSWebCrypto or SharpTSSubtleCrypto
+            or SharpTSDir or SharpTSCookieJar
+            or SharpTSNamespace or SharpTSEnum or ConstEnumValues or SharpTSGlobalThis
+            => interp?.GetObjectPrototype(),
         // §10.2.5: a derived constructor's [[Prototype]] is its base constructor, so
         // `Object.getPrototypeOf(RangeError) === Error`. A base class falls back to
         // Function.prototype like any other function object.

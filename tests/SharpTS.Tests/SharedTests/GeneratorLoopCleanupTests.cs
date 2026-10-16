@@ -179,8 +179,7 @@ public class GeneratorLoopCleanupTests
             TestHarness.Run(source, mode));
     }
 
-    // Compiled Math.sumPrecise independently omits generator close (#2124).
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void SumPrecise_CloseFailurePreservesNonNumberError(ExecutionMode mode)
     {
         // Compare the invalid-element error with the same error during failing close.

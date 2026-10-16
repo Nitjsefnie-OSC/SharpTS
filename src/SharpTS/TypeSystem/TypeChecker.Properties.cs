@@ -1399,14 +1399,14 @@ public partial class TypeChecker
         if (owner.StaticPrivateMethodTypes.TryGetValue(fieldName, out var staticMethodType))
         {
             ObservePrivateSourceMemberSelection(get.Name, objType, owner, MemberFacet.PrivateStatic);
-            return staticMethodType;
+            return objType is TypeInfo.Any ? TypeInfo.Any.Shared : staticMethodType;
         }
 
         // Check static private fields if accessing on the class itself
         if (IsStaticPrivateConstructor(objType, owner) && owner.StaticPrivateFieldTypes.TryGetValue(fieldName, out var staticFieldType))
         {
             ObservePrivateSourceMemberSelection(get.Name, objType, owner, MemberFacet.PrivateStatic);
-            return staticFieldType;
+            return objType is TypeInfo.Any ? TypeInfo.Any.Shared : staticFieldType;
         }
 
         throw new TypeCheckException($" Private field '{fieldName}' does not exist on class '{_currentClass.Name}'.", tsCode: "TS2339");
@@ -1448,7 +1448,7 @@ public partial class TypeChecker
         else if (IsStaticPrivateConstructor(objType, owner) && owner.StaticPrivateFieldTypes.TryGetValue(fieldName, out var spf))
         {
             ObservePrivateSourceMemberSelection(set.Name, objType, owner, MemberFacet.PrivateStatic);
-            fieldType = spf;
+            fieldType = objType is TypeInfo.Any ? TypeInfo.Any.Shared : spf;
         }
 
         if (fieldType == null)
@@ -1515,7 +1515,7 @@ public partial class TypeChecker
         }
 
         RecordPrivateSourceMemberRead(call, call.Name, objType, owner, selectedFacet);
-        if (methodType is TypeInfo.Any)
+        if (methodType is TypeInfo.Any || selectedFacet == MemberFacet.PrivateStatic && objType is TypeInfo.Any)
         {
             foreach (var argument in call.Arguments) CheckExpr(argument);
             return TypeInfo.Any.Shared;
@@ -1537,11 +1537,12 @@ public partial class TypeChecker
         return funcType.ReturnType;
     }
 
+    // Any receivers still require a lexical declaration; runtime branding checks their value.
     // Generic constructor aliases retain their declaration identity. Accepting
     // every generic class here would expose another declaration's same-spelled
     // private member through the current class's metadata.
     private bool IsStaticPrivateConstructor(TypeInfo type, TypeInfo.Class owner) =>
-        type is TypeInfo.Class ||
+        type is TypeInfo.Any or TypeInfo.Class ||
         type is TypeInfo.MutableClass mutable && mutable.DeclarationId != 0 &&
         mutable.DeclarationId == owner.Core.DeclarationId ||
         type is TypeInfo.GenericClass generic &&

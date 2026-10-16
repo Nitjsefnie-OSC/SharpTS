@@ -235,6 +235,28 @@ public sealed class SourceMemberOccurrenceTests
     }
 
     [Fact]
+    public void AnyStaticPrivateAccessKeepsLexicalTypesWithoutClaimingSourceReceiverIdentity()
+    {
+        const string source = """
+            class C {
+                static #value: number = 1;
+                static #method(value: number): number { return value; }
+                static inspect(loose: any): number {
+                    loose./*write*/#value = 2;
+                    loose./*call*/#method(3);
+                    return loose./*read*/#value;
+                }
+            }
+            """;
+        var captured = Check(source);
+        var baseline = Check(source, capture: false);
+        AssertClean(captured);
+        AssertClean(baseline);
+        foreach (string marker in new[] { "read", "write", "call" })
+            Assert.False(captured.Members.FindResolution(captured.Document, Offset(captured, marker)).IsResolved);
+    }
+
+    [Fact]
     public void AnyAndUnrelatedSameNamedPrivateReceiversCannotAcquireLexicalClassOrigin()
     {
         var value = Check("""

@@ -45,7 +45,10 @@ public abstract partial class ExpressionEmitterBase
 
     protected bool TryEmitGuestStaticPrivateField(Expr receiverExpression, Token token, Expr? assignedValue = null)
     {
-        if ((Ctx.GuestThisVariableName == null && assignedValue == null) || Ctx.CurrentClassName is not { } current) return false;
+        // Dynamic reads must evaluate and brand the receiver before loading the lexical field.
+        bool dynamicRead = Ctx.TypeMap?.Get(receiverExpression) is SharpTS.TypeSystem.TypeInfo.Any;
+        if ((Ctx.GuestThisVariableName == null && assignedValue == null && !dynamicRead)
+            || Ctx.CurrentClassName is not { } current) return false;
         string name = token.Lexeme.TrimStart('#');
         string owner = Ctx.ResolvePrivateFieldOwner(current, name);
         var declaration = Ctx.ClassRegistry?.GetPrivateElements(owner);
@@ -55,10 +58,10 @@ public abstract partial class ExpressionEmitterBase
         EmitOrdinaryStaticPrivateBrandCheck(owner, receiver, name);
         if (!Ctx.ClassRegistry!.TryGetCallableStaticPrivateField(owner, name, out var field))
             throw new InvalidOperationException("Static private field has no callable owner.");
-        if (value == null) IL.Emit(OpCodes.Ldsfld, field!);
-        else
+        if (value != null || dynamicRead)
         {
             // A successful receiver brand check does not install a later field.
+            // Dynamic reads must also reject fields whose initializer has not run.
             var presence = field!.DeclaringType!.IsConstructedGenericType
                 ? EmitterTypeHelpers.ResolveField(field.DeclaringType, declaration.StaticPresence!)
                 : declaration.StaticPresence!;
@@ -69,7 +72,11 @@ public abstract partial class ExpressionEmitterBase
             IL.Emit(OpCodes.Brtrue, installed);
             GuestErrorEmitter.ThrowTypeError(IL, Ctx.Runtime!, $"Cannot access private member #{name} before initialization");
             IL.MarkLabel(installed);
-            IL.Emit(OpCodes.Ldloc, value); IL.Emit(OpCodes.Stsfld, field); IL.Emit(OpCodes.Ldloc, value);
+        }
+        if (value == null) IL.Emit(OpCodes.Ldsfld, field!);
+        else
+        {
+            IL.Emit(OpCodes.Ldloc, value); IL.Emit(OpCodes.Stsfld, field!); IL.Emit(OpCodes.Ldloc, value);
         }
         SetStackUnknown();
         return true;

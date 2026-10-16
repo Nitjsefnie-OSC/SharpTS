@@ -3337,6 +3337,8 @@ public partial class Interpreter
         if (owner?.HasStaticPrivateField(fieldName) == true)
         {
             if (!ReferenceEquals(obj, owner)) throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it"));
+            if (!owner.HasInstalledStaticPrivateField(fieldName))
+                throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} before initialization"));
             return owner.GetStaticPrivateFieldRV(fieldName);
         }
         if (owner?.GetPrivateMethod(fieldName) is { } privateMethod)
@@ -3404,6 +3406,8 @@ public partial class Interpreter
         if (owner is not null && owner.HasStaticPrivateField(fieldName))
         {
             if (!ReferenceEquals(obj, owner)) throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it"));
+            if (!owner.HasInstalledStaticPrivateField(fieldName))
+                throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} before initialization"));
             owner.SetStaticPrivateField(fieldName, value.ToObject());
             return value;
         }

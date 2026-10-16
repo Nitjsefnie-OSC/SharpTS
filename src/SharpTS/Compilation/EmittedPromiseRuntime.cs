@@ -388,11 +388,19 @@ public sealed class EmittedPromiseRuntime
     }
 
     private MethodBuilder? _coerceAwaitableToTaskMethod;
-    /// <summary>$Runtime.CoerceAwaitableToTask(object value) -> Task&lt;object?&gt; — the await coercion for a value that is neither a $Promise nor a Task&lt;object?&gt;: an ordinary thenable (a value whose <c>then</c> member is callable) is adopted by invoking <c>then(resolve, reject)</c> into a fresh capability (#349); anything else becomes Task.FromResult(value). Called at every state-machine await's wrap-value site.</summary>
+    /// <summary>Shared value coercion: native promises/tasks unwrap without an Await constructor test; ordinary thenables invoke then(resolve, reject) into a fresh capability; other values become Task.FromResult(value).</summary>
     public MethodBuilder CoerceAwaitableToTaskMethod
     {
         get => Require(_coerceAwaitableToTaskMethod);
         internal set => Set(ref _coerceAwaitableToTaskMethod, value);
+    }
+
+    private MethodBuilder? _awaitValueToTaskMethod;
+    /// <summary>Normalizes an Await value: native promises observe their live constructor and use the backing task only for intrinsic Promise identity; other native promises use queued thenable assimilation.</summary>
+    public MethodBuilder AwaitValueToTaskMethod
+    {
+        get => Require(_awaitValueToTaskMethod);
+        internal set => Set(ref _awaitValueToTaskMethod, value);
     }
 
     private TypeBuilder? _capabilityType;
@@ -667,6 +675,7 @@ public sealed class EmittedPromiseRuntime
         _ = MarkNonAutoAwaitPromiseMethod;
         _ = ShouldAutoAwaitPromiseMethod;
         _ = CoerceAwaitableToTaskMethod;
+        _ = AwaitValueToTaskMethod;
         _ = CapabilityType;
         _ = CapabilityCtor;
         _ = CapabilityResolveField;

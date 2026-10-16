@@ -1463,8 +1463,10 @@ public partial class Interpreter
         // (PromiseBuiltIns wraps their results per SpeciesConstructor).
         if (obj is SharpTSPromise promise)
         {
-            if (promise.TryGetAccessor(memberName, out var ownGetter, out _) && ownGetter != null)
-                return RuntimeValue.FromBoxed(ownGetter.CallBoxed(this, []));
+            if (promise.TryGetAccessor(memberName, out var ownGetter, out _))
+                return RuntimeValue.FromBoxed(ownGetter != null
+                    ? FunctionBuiltIns.CallWithThis(this, ownGetter, promise, [])
+                    : SharpTSUndefined.Instance);
             if (promise.TryGetOwnProperty(memberName, out var ownProp))
                 return RuntimeValue.FromBoxed(ownProp);
             if (promise is SharpTSPromiseSubclassInstance promiseSub)
@@ -2533,8 +2535,10 @@ public partial class Interpreter
         // fields/getters/methods, all before the built-in Promise members.
         if (obj is SharpTSPromise promise)
         {
-            if (promise.TryGetAccessor(memberName, out var ownGetter, out _) && ownGetter != null)
-                return ownGetter.CallBoxed(this, []);
+            if (promise.TryGetAccessor(memberName, out var ownGetter, out _))
+                return ownGetter != null
+                    ? FunctionBuiltIns.CallWithThis(this, ownGetter, promise, [])
+                    : SharpTSUndefined.Instance;
             if (promise.TryGetOwnProperty(memberName, out var promiseOwnProp))
                 return promiseOwnProp;
             if (promise is SharpTSPromiseSubclassInstance promiseSub)

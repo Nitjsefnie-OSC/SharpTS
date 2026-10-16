@@ -112,7 +112,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter : StateMachineExitRou
             {
                 int returnState = NextAwaitState();
                 if (PrivateCallNeedsReturnAdoption(privateCall))
-                    EmitAwaitFromValueOnStack(returnState);
+                    EmitAwaitFromValueOnStack(returnState, isReturnAdoption: true);
                 else
                 {
                     // Analysis conservatively reserves a synthetic state for every private call.

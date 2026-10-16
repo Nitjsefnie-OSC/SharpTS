@@ -115,7 +115,7 @@ public partial class AsyncGeneratorMoveNextEmitter
 
     /// <summary>
     /// Emits the await of a value already on the evaluation stack (boxed): coerces it to
-    /// <c>Task&lt;object&gt;</c> (unwrapping $Promise / adopting thenables / wrapping plain values),
+    /// <c>Task&lt;object&gt;</c> using Await's intrinsic PromiseResolve policy,
     /// suspends the async-generator state machine until it settles (via
     /// <see cref="EmitAwaitSuspensionReturn"/> and the emitted AsyncGeneratorAwaitContinue), then leaves
     /// the awaited result on the stack. Shared by <see cref="EmitAwait"/>, the <c>for await…of</c> loop's
@@ -129,47 +129,10 @@ public partial class AsyncGeneratorMoveNextEmitter
         var resumeLabel = _stateLabels[stateNumber];
         var continueLabel = _il.DefineLabel();
 
-        // 2. Convert to Task<object> - handle $Promise, Task<object>, or non-Task values
-        // If it's a $Promise, extract its Task property
-        // If it's already a Task<object>, use it directly
-        // Otherwise, wrap in Task.FromResult (for non-promise values like numbers, strings, etc.)
+        // 2. Native promises use their backing task only when their live
+        // constructor has intrinsic Promise identity; other promises assimilate.
         var taskLocal = _il.DeclareLocal(typeof(Task<object>));
-        var isPromiseLabel = _il.DefineLabel();
-        var isTaskLabel = _il.DefineLabel();
-        var wrapValueLabel = _il.DefineLabel();
-        var haveTaskLabel = _il.DefineLabel();
-
-        _il.Emit(OpCodes.Dup);
-        _il.Emit(OpCodes.Isinst, _ctx!.Runtime!.RequirePromise().Type);
-        _il.Emit(OpCodes.Brtrue, isPromiseLabel);
-
-        // Not a $Promise - check if it's a Task<object>
-        _il.Emit(OpCodes.Dup);
-        _il.Emit(OpCodes.Isinst, typeof(Task<object>));
-        _il.Emit(OpCodes.Brtrue, isTaskLabel);
-
-        // Not a Promise or Task - adopt an ordinary thenable (e.g. a general
-        // non-Promise then/catch/finally species result, #349); non-thenables
-        // become Task.FromResult(value).
-        _il.MarkLabel(wrapValueLabel);
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.RequirePromise().CoerceAwaitableToTaskMethod);
-        _il.Emit(OpCodes.Stloc, taskLocal);
-        _il.Emit(OpCodes.Br, haveTaskLabel);
-
-        // Is a Task<object> - use directly
-        _il.MarkLabel(isTaskLabel);
-        _il.Emit(OpCodes.Castclass, typeof(Task<object>));
-        _il.Emit(OpCodes.Stloc, taskLocal);
-        _il.Emit(OpCodes.Br, haveTaskLabel);
-
-        // Is a $Promise - extract its Task property
-        _il.MarkLabel(isPromiseLabel);
-        _il.Emit(OpCodes.Castclass, _ctx.Runtime.RequirePromise().Type);
-        _il.Emit(OpCodes.Callvirt, _ctx.Runtime.RequirePromise().TaskGetter);
-        _il.Emit(OpCodes.Stloc, taskLocal);
-
-        _il.MarkLabel(haveTaskLabel);
-        _il.Emit(OpCodes.Ldloc, taskLocal);
+        _il.Emit(OpCodes.Call, _ctx!.Runtime!.RequirePromise().AwaitValueToTaskMethod);
         if (_ctx.Runtime.EventLoop.Hosted is { } hostedEventLoop)
             _il.Emit(OpCodes.Call, hostedEventLoop.PrepareAwait);
         _il.Emit(OpCodes.Stloc, taskLocal);

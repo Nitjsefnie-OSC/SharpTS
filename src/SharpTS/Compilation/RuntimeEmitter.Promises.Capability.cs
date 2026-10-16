@@ -32,12 +32,14 @@ public partial class RuntimeEmitter
         EmitPromiseCapabilitySlotGetterBodies(runtime.RequirePromise());
         EmitNewPromiseCapabilityResultBody(runtime.RequirePromise());
         EmitCoerceAwaitableToTask(runtime);
+        EmitAwaitValueToTask(runtime);
     }
 
     /// <summary>
     /// Emits <c>CoerceAwaitableToTask(object value) -> Task&lt;object&gt;</c>: the
-    /// await coercion for a value that reached the state machine's wrap-value
-    /// path (already known not to be a $Promise or Task). An ordinary thenable
+    /// shared coercion used by resolving functions and ordinary await values.
+    /// Native promises/tasks unwrap without Await's constructor identity test.
+    /// An ordinary thenable
     /// (a value whose <c>then</c> member is callable, by <c>typeof</c>) is
     /// adopted — <c>then(resolve, reject)</c> settles a fresh capability whose
     /// task is awaited (ECMA-262 await → PromiseResolve, §27.2.1.3.2); anything

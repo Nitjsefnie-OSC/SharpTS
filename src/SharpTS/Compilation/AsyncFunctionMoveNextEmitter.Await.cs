@@ -208,50 +208,24 @@ public abstract partial class AsyncFunctionMoveNextEmitter
 
     /// <summary>
     /// Emits the await of a value already on the evaluation stack (boxed): coerces it to
-    /// <c>Task&lt;object&gt;</c> (unwrapping $Promise / adopting thenables / wrapping plain values),
+    /// <c>Task&lt;object&gt;</c> using Await's intrinsic PromiseResolve policy,
     /// suspends the state machine until it settles, and leaves the awaited result on the stack. Shared by
     /// <see cref="EmitAwait"/> and the <c>for await…of</c> loop's implicit next()/return() awaits (#631);
     /// <paramref name="stateNumber"/> is the reserved suspension state for this await.
+    /// Private-call return adoption selects the existing coercion policy instead.
     /// </summary>
-    internal void EmitAwaitFromValueOnStack(int stateNumber)
+    internal void EmitAwaitFromValueOnStack(int stateNumber, bool isReturnAdoption = false)
     {
         var continueLabel = IL.DefineLabel();
         var awaiterField = AwaiterFieldForState(stateNumber);
 
-        // 2. Convert to Task<object> - handle $Promise, Task<object>, or non-Task values
+        // 2. Actual awaits observe native Promise constructor identity. The
+        // private-call return path retains resolving-function coercion instead.
         var taskLocal = IL.DeclareLocal(typeof(Task<object>));
-        var isPromiseLabel = IL.DefineLabel();
-        var isTaskLabel = IL.DefineLabel();
-        var wrapValueLabel = IL.DefineLabel();
-        var haveTaskLabel = IL.DefineLabel();
-
-        IL.Emit(OpCodes.Dup);
-        IL.Emit(OpCodes.Isinst, Ctx.Runtime!.RequirePromise().Type);
-        IL.Emit(OpCodes.Brtrue, isPromiseLabel);
-
-        IL.Emit(OpCodes.Dup);
-        IL.Emit(OpCodes.Isinst, typeof(Task<object>));
-        IL.Emit(OpCodes.Brtrue, isTaskLabel);
-
-        IL.MarkLabel(wrapValueLabel);
-        // Adopt an ordinary thenable (e.g. a general non-Promise then/catch/finally
-        // species result, #349); non-thenables become Task.FromResult(value).
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.RequirePromise().CoerceAwaitableToTaskMethod);
-        IL.Emit(OpCodes.Stloc, taskLocal);
-        IL.Emit(OpCodes.Br, haveTaskLabel);
-
-        IL.MarkLabel(isTaskLabel);
-        IL.Emit(OpCodes.Castclass, typeof(Task<object>));
-        IL.Emit(OpCodes.Stloc, taskLocal);
-        IL.Emit(OpCodes.Br, haveTaskLabel);
-
-        IL.MarkLabel(isPromiseLabel);
-        IL.Emit(OpCodes.Castclass, Ctx.Runtime.RequirePromise().Type);
-        IL.Emit(OpCodes.Callvirt, Ctx.Runtime.RequirePromise().TaskGetter);
-        IL.Emit(OpCodes.Stloc, taskLocal);
-
-        IL.MarkLabel(haveTaskLabel);
-        IL.Emit(OpCodes.Ldloc, taskLocal);
+        var promise = Ctx.Runtime!.RequirePromise();
+        IL.Emit(OpCodes.Call, isReturnAdoption
+            ? promise.CoerceAwaitableToTaskMethod
+            : promise.AwaitValueToTaskMethod);
         if (Ctx.Runtime.EventLoop.Hosted is { } hostedEventLoop)
             IL.Emit(OpCodes.Call, hostedEventLoop.PrepareAwait);
         IL.Emit(OpCodes.Stloc, taskLocal);

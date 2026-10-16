@@ -252,10 +252,11 @@ public partial class Interpreter
     {
         object? value = (await EvaluateAsync(awaitExpr.Expression)).ToObject();
 
-        // Unwrap Promise
+        // Await reuses a native Promise only when its live constructor has
+        // intrinsic Promise identity; subclass promises otherwise assimilate.
         if (value is SharpTSPromise promise)
         {
-            return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(promise.GetValueAsync()));
+            return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(NormalizePromiseForAwait(promise)));
         }
 
         // Raw Task<object?> — returned by runtime methods (e.g., Web Streams

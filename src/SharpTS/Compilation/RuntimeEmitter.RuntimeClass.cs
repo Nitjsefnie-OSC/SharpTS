@@ -757,6 +757,11 @@ public partial class RuntimeEmitter
                 MethodAttributes.Public | MethodAttributes.Static,
                 _types.TaskOfObject,
                 [_types.Object]);
+            runtime.RequirePromise().AwaitValueToTaskMethod = typeBuilder.DefineMethod(
+                "AwaitValueToTask",
+                MethodAttributes.Public | MethodAttributes.Static,
+                _types.TaskOfObject,
+                [_types.Object]);
             runtime.RequirePromise().ResolveValueMethod = typeBuilder.DefineMethod(
                 "PromiseResolveValue",
                 MethodAttributes.Public | MethodAttributes.Static,

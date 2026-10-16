@@ -1915,9 +1915,9 @@ public partial class Interpreter
             if (!asyncFunction.HasBoundReceiver)
                 callee = asyncFunction.BindThisValue(receiver);
         }
-        else if (callee is SharpTSGeneratorFunction { PrivateOwner: not null } generatorMethod)
+        else if (callee is SharpTSGeneratorFunction generatorMethod)
             callee = generatorMethod.BindToReceiver(receiver);
-        else if (callee is SharpTSAsyncGeneratorFunction { PrivateOwner: not null } asyncGeneratorMethod)
+        else if (callee is SharpTSAsyncGeneratorFunction asyncGeneratorMethod)
             callee = asyncGeneratorMethod.BindToReceiver(receiver);
         else if (callee is ISharpTSCallable callable)
             callee = FunctionBuiltIns.BindStaticReceiver(callable, receiver) ?? callee;

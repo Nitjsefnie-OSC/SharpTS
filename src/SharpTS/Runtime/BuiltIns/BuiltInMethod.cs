@@ -201,7 +201,7 @@ public class BuiltInMethod : ISharpTSCallable, IBuiltInFunctionMetadata
     }
 
     // Private constructor for creating bound instances (no cache needed on bound instances)
-    private BuiltInMethod(string name, int minArity, int maxArity,
+    private protected BuiltInMethod(string name, int minArity, int maxArity,
         Func<Interpreter, object?, List<object?>, object?>? implementation,
         Func<Interpreter, RuntimeValue, ReadOnlySpan<RuntimeValue>, RuntimeValue>? implementationV2,
         object? receiver)

@@ -26,7 +26,8 @@ public partial class RuntimeEmitter
 
     private readonly record struct ReflectDeletePropertyInputs(MethodInfo InvokeMethodUnwrapped,
         MethodInfo ObjectGetOwnPropertyDescriptor, MethodInfo ToJsString, MethodInfo ObjectIsExtensible,
-        MethodInfo DeleteProperty, Type UndefinedType, MethodInfo GetProperty);
+        MethodInfo DeleteProperty, Type UndefinedType, MethodInfo GetProperty,
+        EmittedFunctionBindingRuntime FunctionBindings);
 
     private readonly record struct ReflectPreventExtensionsInputs(MethodInfo InvokeMethodUnwrapped,
         MethodInfo ObjectPreventExtensions, MethodInfo ObjectIsExtensible, MethodInfo GetProperty);
@@ -368,6 +369,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notProxyLabel);
+        // Bound name/length can be synthesized own properties without a PDS
+        // descriptor. Preserve their actual [[Delete]] result instead of
+        // turning false into true when the descriptor fallback misses them.
+        var boundMetadataTarget = il.DefineLabel();
+        var boundMetadataDelete = il.DefineLabel();
+        var ordinaryDelete = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.FunctionBindings.BoundType);
+        il.Emit(OpCodes.Brtrue, boundMetadataTarget);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.FunctionBindings.AnyType);
+        il.Emit(OpCodes.Brfalse, ordinaryDelete);
+        il.MarkLabel(boundMetadataTarget);
+        foreach (var metadata in new[] { "name", "length" })
+        {
+            il.Emit(OpCodes.Ldloc, keyLocal);
+            il.Emit(OpCodes.Ldstr, metadata);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, boundMetadataDelete);
+        }
+        il.Emit(OpCodes.Br, ordinaryDelete);
+        il.MarkLabel(boundMetadataDelete);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Call, inputs.DeleteProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(ordinaryDelete);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Call, inputs.DeleteProperty);

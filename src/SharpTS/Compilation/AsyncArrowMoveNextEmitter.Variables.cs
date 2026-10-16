@@ -99,10 +99,11 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
-        if (TryEmitWorkerGlobal(name))
-            return;
-
-        if (TryEmitIndirectEvalValue(name))
+        // A built-in can require value lookup when descriptor observation
+        // disables its static-call strategy. Resolve it after every lexical
+        // capture so globals such as Promise remain available without hiding
+        // a same-named enclosing binding.
+        if (TryEmitGlobalVariable(name))
             return;
 
         // Not found - push null
@@ -235,6 +236,8 @@ public partial class AsyncArrowMoveNextEmitter
         if (_ctx?.OuterFunctionDCField != null &&
             _builder.OuterStateMachineField != null &&
             _builder.OuterStateMachineType != null &&
+            _builder.CapturedFieldMap.TryGetValue(name, out var capturedField) &&
+            capturedField.DeclaringType == _ctx.OuterFunctionDCField.DeclaringType &&
             _ctx.FunctionDisplayClassFields?.TryGetValue(name, out var outerField) == true)
             return AsyncArrowStorageAccess.OuterDisplayClassField(_builder, _ctx.OuterFunctionDCField, outerField);
 

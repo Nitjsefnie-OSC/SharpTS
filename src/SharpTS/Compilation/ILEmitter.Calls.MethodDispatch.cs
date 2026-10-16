@@ -825,9 +825,23 @@ public partial class ILEmitter
         if (!hasRestParam && arguments.Any(a => a is Expr.Spread))
             return false;
 
+        if (GuardClassMethodPrototype && AnyContainsSuspension(arguments))
+        {
+            EmitDynamicMethodCallPreservingThis(receiver, methodName, arguments);
+            return true;
+        }
+
+        var guardedReceiver = EmitAlternateClassMethodCallGuard(
+            receiver, methodName, arguments, out var prototypeCallCompleted);
+
         // Emit: ((ClassName)receiver).method(args)
-        EmitExpression(receiver);
-        EmitBoxIfNeeded(receiver);
+        if (guardedReceiver != null)
+            IL.Emit(OpCodes.Ldloc, guardedReceiver);
+        else
+        {
+            EmitExpression(receiver);
+            EmitBoxIfNeeded(receiver);
+        }
         IL.Emit(OpCodes.Castclass, castType);
 
         // Emit leading regular arguments with type conversion.
@@ -926,7 +940,16 @@ public partial class ILEmitter
         }
 
         IL.Emit(useTypedCore ? OpCodes.Call : OpCodes.Callvirt, callTarget);
-        if (useTypedCore && _ctx.Types.IsDouble(dispatchBuilder.ReturnType))
+        if (guardedReceiver != null)
+        {
+            if (dispatchBuilder.ReturnType == _ctx.Types.Void)
+                EmitUndefinedConstant();
+            else if (dispatchBuilder.ReturnType.IsValueType || dispatchBuilder.ReturnType.IsGenericParameter)
+                IL.Emit(OpCodes.Box, dispatchBuilder.ReturnType);
+            IL.MarkLabel(prototypeCallCompleted);
+            SetStackUnknown();
+        }
+        else if (useTypedCore && _ctx.Types.IsDouble(dispatchBuilder.ReturnType))
             SetStackType(StackType.Double);
         else if (useTypedCore && _ctx.Types.IsBoolean(dispatchBuilder.ReturnType))
             SetStackType(StackType.Boolean);

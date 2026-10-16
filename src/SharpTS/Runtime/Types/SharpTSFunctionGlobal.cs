@@ -48,8 +48,8 @@ public sealed class SharpTSFunctionGlobal : ISharpTSCallable
 
 /// <summary>
 /// <c>Function.prototype</c> accessor. Returns the unbound <c>call</c>/
-/// <c>apply</c>/<c>bind</c> singletons that <see cref="BuiltIns.FunctionBuiltIns"/>
-/// also exposes for instance-level dispatch — so
+/// <c>apply</c>/<c>bind</c> functions owned by this prototype. Interpreter
+/// instance-level dispatch exposes those same functions — so
 /// <c>Function.prototype.call</c> and <c>fn.call</c> resolve to the same
 /// callable, and <c>Function.prototype.call.bind(hasOwn)</c> composes with
 /// the BuiltInMethod rebind path that real-world test262 harness code (e.g.
@@ -57,6 +57,12 @@ public sealed class SharpTSFunctionGlobal : ISharpTSCallable
 /// </summary>
 public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSSymbolPropertyBag
 {
+    private readonly Dictionary<string, BuiltIns.BuiltInMethod> _methods = new(StringComparer.Ordinal)
+    {
+        ["bind"] = BuiltIns.FunctionBuiltIns.CreatePrototypeMethod("bind")!,
+        ["call"] = BuiltIns.FunctionBuiltIns.CreatePrototypeMethod("call")!,
+        ["apply"] = BuiltIns.FunctionBuiltIns.CreatePrototypeMethod("apply")!,
+    };
     private readonly PrototypePropertyOverlay _overlay = new(IsBuiltIn,
         initialStringKeys: ["length", "name", "constructor", "apply", "bind", "call", "toString"]);
 
@@ -101,8 +107,7 @@ public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSS
         => _overlay.SetBySymbolStrict(symbol, value, strictMode);
 
     private static bool IsBuiltIn(string name)
-        => BuiltIns.FunctionBuiltIns.GetPrototypeMethod(name) != null
-            || name is "toString" or "constructor";
+        => name is "bind" or "call" or "apply" or "toString" or "constructor";
 
     public bool HasOwnProperty(string name) => _overlay.HasOwnProperty(name);
 
@@ -115,8 +120,7 @@ public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSS
     public object? GetMember(string name)
     {
         if (_overlay.TryGetOverride(name, out var value)) return value;
-        var method = BuiltIns.FunctionBuiltIns.GetPrototypeMethod(name);
-        if (method != null) return method;
+        if (_methods.TryGetValue(name, out var method)) return method;
         if (name == "toString") return SharpTSFunctionProtoToString.Instance;
         if (name == "constructor") return SharpTSFunctionGlobal.Instance;
         return null;

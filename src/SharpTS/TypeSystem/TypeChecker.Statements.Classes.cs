@@ -695,7 +695,9 @@ public partial class TypeChecker
             // `[Symbol.x]()` method carries its inferred return type rather than the <inferred> placeholder
             // it held at the string-index check earlier (ValidateClassPropertiesAgainstIndex).
             mutableClass.ResetFrozenCache();
-            ValidateClassMembersAgainstSymbolIndex(classStmt, mutableClass.Freeze());
+            var resolvedClass = mutableClass.Freeze();
+            ValidateClassMembersAgainstSymbolIndex(classStmt, resolvedClass);
+            ValidateStaticOverrideCompatibility(classStmt, resolvedClass);
         }
         finally
         {

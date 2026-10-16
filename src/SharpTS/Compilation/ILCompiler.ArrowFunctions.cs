@@ -548,6 +548,14 @@ public partial class ILCompiler
                 // Skip overload signatures (no body)
                 if (f.Body != null)
                 {
+                    // Sync arrows are emitted before the guest method adapter. Its
+                    // async body shares these arrows, so mark their lexical receiver
+                    // now rather than compiling this.property as a nominal CLR cast.
+                    if (isClassMember && f.IsAsync && !f.IsStatic)
+                    {
+                        var receiverArrows = new GuestReceiverArrowCollector(_guestReceiverArrows);
+                        foreach (var statement in f.Body) receiverArrows.Visit(statement);
+                    }
                     // Class members already have class-owned builders, even inside a function.
                     if (!isClassMember && (_functionNestingDepth > 0 || _topLevelBlockDepth > 0))
                     {

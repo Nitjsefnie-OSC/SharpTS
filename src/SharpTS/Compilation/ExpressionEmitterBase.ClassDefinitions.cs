@@ -142,6 +142,7 @@ public abstract partial class ExpressionEmitterBase
         MethodBuilder method, IReadOnlyList<Expr> arguments)
     {
         if (Ctx.IsStaticSuperContext || Ctx.CurrentClassExpr != null
+            || Ctx.HasGuestReceiver || Ctx.GuestThisVariableName != null
             || Ctx.RuntimeFeatures is not
                 { UsesClassPrototypeMutation: false, UsesDynamicPropertyDescriptors: false, UsesObjectIntegrityMutation: false }
             || arguments.Any(argument => argument is Expr.Spread) || AnyContainsSuspension(arguments)
@@ -350,6 +351,7 @@ public abstract partial class ExpressionEmitterBase
             EmitThis();
             EnsureBoxed();
         }
+        EmitThrowIfUndefinedReceiverOnStack(get.Name.Lexeme);
         IL.Emit(OpCodes.Ldstr, get.Name.Lexeme);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Property);
         SetStackUnknown();

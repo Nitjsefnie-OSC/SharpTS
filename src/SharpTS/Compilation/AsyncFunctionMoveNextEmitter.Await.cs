@@ -27,7 +27,20 @@ public abstract partial class AsyncFunctionMoveNextEmitter
     protected abstract int NextAwaitState();
 
     /// <summary>Marks the resume label for <paramref name="stateNumber"/> (the state-switch jumps here).</summary>
-    protected abstract void MarkAwaitResumeLabel(int stateNumber);
+    protected abstract void MarkAwaitResumeLabelCore(int stateNumber);
+
+    protected void MarkAwaitResumeLabel(int stateNumber)
+    {
+        if (_awaitCatchRegion == null)
+        {
+            MarkAwaitResumeLabelCore(stateNumber);
+            return;
+        }
+
+        var target = IL.DefineLabel();
+        _awaitCatchRegion.Resumes.Add((stateNumber, target));
+        IL.MarkLabel(target);
+    }
 
     /// <summary>The awaiter field reserved for <paramref name="stateNumber"/>.</summary>
     protected abstract FieldBuilder AwaiterFieldForState(int stateNumber);

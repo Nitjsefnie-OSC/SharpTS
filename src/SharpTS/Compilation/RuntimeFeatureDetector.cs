@@ -935,7 +935,7 @@ public sealed class RuntimeFeatureDetector
                     _set.UsesDate = true;
                 if (g.Name.Lexeme is "Object" or "Reflect")
                     _set.UsesObjectIntegrityMutation = true;
-                if (g.Name.Lexeme is "prototype" or "__proto__")
+                if (g.Name.Lexeme is "prototype" or "__proto__" or "setPrototypeOf")
                     _set.UsesClassPrototypeMutation = true;
                 if (IsArrayPrototype(g) || g.Name.Lexeme == "__proto__")
                     _set.UsesArrayPrototypeMutation = true;
@@ -959,7 +959,10 @@ public sealed class RuntimeFeatureDetector
                     HandleMemberAccess(ov.Name.Lexeme, g.Name.Lexeme);
                     if (ov.Name.Lexeme is "Object" or "Reflect"
                         && g.Name.Lexeme == "setPrototypeOf")
+                    {
                         _set.UsesArrayPrototypeMutation = true;
+                        _set.UsesClassPrototypeMutation = true;
+                    }
                     if ((ov.Name.Lexeme == "Object" && g.Name.Lexeme == "assign")
                         || (ov.Name.Lexeme == "Reflect"
                             && g.Name.Lexeme is "set" or "deleteProperty"))
@@ -1074,6 +1077,8 @@ public sealed class RuntimeFeatureDetector
                 break;
 
             case Expr.GetIndex gi:
+                if (gi.Index is Expr.Literal { Value: "prototype" or "__proto__" or "setPrototypeOf" })
+                    _set.UsesClassPrototypeMutation = true;
                 if (gi.Index is Expr.Literal { Value: string scopedArrayMember }
                         ? UsesArrayReceiverScope(scopedArrayMember)
                         : gi.Index is not Expr.Literal)
@@ -1109,6 +1114,7 @@ public sealed class RuntimeFeatureDetector
                     && gi.Index is Expr.Literal { Value: "setPrototypeOf" })
                 {
                     _set.UsesArrayPrototypeMutation = true;
+                    _set.UsesClassPrototypeMutation = true;
                 }
                 VisitExpr(gi.Object);
                 VisitExpr(gi.Index);
@@ -1189,6 +1195,7 @@ public sealed class RuntimeFeatureDetector
                     // attempted here. Any explicit prototype-chain mutation API
                     // disables the direct append path for the whole program.
                     _set.UsesArrayPrototypeMutation = true;
+                    _set.UsesClassPrototypeMutation = true;
                 }
                 if (c.Callee is Expr.Get
                     {

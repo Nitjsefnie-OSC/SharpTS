@@ -213,6 +213,21 @@ public class OverrideKeywordTests
         Assert.Equal("woof\nwoof 3\n", output);
     }
 
+    [Theory, ModeData]
+    public void Override_StaticMethod_Works(ExecutionMode mode)
+    {
+        var source = """
+            class Animal {
+                static speak(): string { return "..."; }
+            }
+            class Dog extends Animal {
+                static override speak(): string { return "Woof"; }
+            }
+            console.log(Dog.speak());
+            """;
+        Assert.Equal("Woof\n", TestHarness.Run(source, mode));
+    }
+
     // Error cases
 
     [Theory, ModeData]
@@ -242,22 +257,6 @@ public class OverrideKeywordTests
         var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
         Assert.Contains("Parse Error", ex.Message);
         Assert.Contains("override", ex.Message);
-    }
-
-    [Theory, ModeData]
-    public void Override_StaticMethod_Errors(ExecutionMode mode)
-    {
-        var source = """
-            class Animal {
-                static speak(): string { return "..."; }
-            }
-            class Dog extends Animal {
-                static override speak(): string { return "Woof"; }
-            }
-            """;
-        var ex = Assert.Throws<Exception>(() => TestHarness.Run(source, mode));
-        Assert.Contains("Parse Error", ex.Message);
-        Assert.Contains("Static", ex.Message);
     }
 
     [Theory, ModeData]

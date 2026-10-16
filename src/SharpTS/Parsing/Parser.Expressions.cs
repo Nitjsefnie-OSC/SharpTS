@@ -161,6 +161,10 @@ public partial class Parser
         Func<Expr.GetIndex, Expr, Expr> onGetIndex,
         Func<Expr.GetPrivate, Expr, Expr>? onGetPrivate = null)
     {
+        // Destructuring defaults are parsed as ordinary assignments first.
+        // Reject an optional target before Get/GetIndex loses its Optional
+        // flag when it becomes Set/SetIndex.
+        ValidateOptionalAssignmentTarget(target);
         switch (target)
         {
             // Parens don't change whether an expression is a valid reference — `(a.b) = v`,

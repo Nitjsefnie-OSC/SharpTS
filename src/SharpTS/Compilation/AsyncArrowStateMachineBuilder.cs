@@ -46,6 +46,8 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
     // the thread-local — not in a lexical capture field. Null for true arrows.
     public FieldBuilder? OwnThisField { get; private set; }
 
+    internal AsyncArrowStorageAccess? LexicalThisStorage { get; set; }
+
     // Core state machine fields
     public FieldBuilder StateField { get; private set; } = null!;
     public FieldBuilder BuilderField { get; private set; } = null!;

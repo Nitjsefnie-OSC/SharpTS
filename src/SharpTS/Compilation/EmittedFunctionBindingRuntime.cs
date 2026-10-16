@@ -16,6 +16,13 @@ public sealed class EmittedFunctionBindingRuntime
         internal set => SetHandle(ref _captureName, value);
     }
 
+    private MethodBuilder? _capturePrototype;
+    public MethodBuilder CapturePrototype
+    {
+        get => Require(_capturePrototype);
+        internal set => SetHandle(ref _capturePrototype, value);
+    }
+
     private TypeBuilder? _boundType;
     public TypeBuilder BoundType
     {
@@ -192,6 +199,7 @@ public sealed class EmittedFunctionBindingRuntime
     {
         EnsureMutable();
         _ = CaptureName;
+        _ = CapturePrototype;
         _ = BoundType;
         _ = BoundCtor;
         _ = BoundInvoke;

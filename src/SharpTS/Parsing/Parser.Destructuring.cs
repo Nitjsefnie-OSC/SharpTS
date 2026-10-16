@@ -497,13 +497,39 @@ public partial class Parser
         return new Expr.Ternary(isUndefined, defaultValue, new Expr.Variable(valueTemp));
     }
 
-    private static Expr MakeAssignmentExpr(Expr target, Expr value) => Unwrap(target) switch
+    private static Expr MakeAssignmentExpr(Expr target, Expr value)
     {
-        Expr.Variable v => new Expr.Assign(v.Name, value),
-        Expr.Get g => new Expr.Set(g.Object, g.Name, value),
-        Expr.GetIndex gi => new Expr.SetIndex(gi.Object, gi.Index, value),
-        Expr.GetPrivate gp => new Expr.SetPrivate(gp.Object, gp.Name, value),
-        _ => throw new Exception("Invalid assignment target.")
+        ValidateOptionalAssignmentTarget(target);
+        return Unwrap(target) switch
+        {
+            Expr.Variable v => new Expr.Assign(v.Name, value),
+            Expr.Get g => new Expr.Set(g.Object, g.Name, value),
+            Expr.GetIndex gi => new Expr.SetIndex(gi.Object, gi.Index, value),
+            Expr.GetPrivate gp => new Expr.SetPrivate(gp.Object, gp.Name, value),
+            _ => throw new Exception("Invalid assignment target.")
+        };
+    }
+
+    private static void ValidateOptionalAssignmentTarget(Expr target)
+    {
+        if (ContainsOptionalAssignmentChain(Unwrap(target)))
+            throw new Exception("Invalid assignment target: optional chaining is not allowed.");
+    }
+
+    // Only the target's receiver chain matters. Index expressions and call
+    // arguments are reads, and grouping ends an optional chain: `(a?.b).c`
+    // is a valid target even though `(a?.b)` itself is not.
+    private static bool ContainsOptionalAssignmentChain(Expr expression) => expression switch
+    {
+        Expr.Get get => get.Optional || ContainsOptionalAssignmentChain(get.Object),
+        Expr.GetIndex get => get.Optional || ContainsOptionalAssignmentChain(get.Object),
+        Expr.GetPrivate get => ContainsOptionalAssignmentChain(get.Object),
+        Expr.Call call => call.Optional || ContainsOptionalAssignmentChain(call.Callee),
+        Expr.CallPrivate call => ContainsOptionalAssignmentChain(call.Object),
+        Expr.TypeAssertion assertion => ContainsOptionalAssignmentChain(assertion.Expression),
+        Expr.NonNullAssertion assertion => ContainsOptionalAssignmentChain(assertion.Expression),
+        Expr.Satisfies assertion => ContainsOptionalAssignmentChain(assertion.Expression),
+        _ => false
     };
 
     private Expr MakePropertyAccess(Expr src, Expr.PropertyKey key, List<Expr> usedKeys, bool underDefault = false)

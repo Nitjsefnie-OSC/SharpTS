@@ -124,14 +124,15 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
     {
         // Bound async methods already carry the resolver's class `this` scope.
         // Canonical methods invoked without a receiver need the same scope depth.
-        RuntimeEnvironment closure = _declaration.IsStatic && !_receiverBound
+        bool isClassMethod = PrivateOwner is not null || _declaration.IsStatic;
+        RuntimeEnvironment closure = isClassMethod && !_receiverBound
             ? new RuntimeEnvironment(_closure, strictMode: true) : _closure;
         RuntimeEnvironment environment = new(closure,
-            strictMode: _declaration.IsPrivate || _declaration.IsStatic ? true : null)
+            strictMode: isClassMethod || _declaration.IsPrivate ? true : null)
             { PrivateClass = PrivateOwner, StaticSuper = _declaration.IsStatic };
         environment.NewTarget = RuntimeValue.Undefined;
         environment.ConstructionFrame = null;
-        if (_declaration.IsPrivate || _declaration.IsStatic)
+        if (isClassMethod || _declaration.IsPrivate)
         {
             environment.Define("this", _receiverBound && _closure.TryGet("this", out var receiver)
                 ? receiver.ToObject() : SharpTSUndefined.Instance);
@@ -195,7 +196,8 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
     /// </summary>
     public SharpTSAsyncFunction BindThisValue(object? thisObject)
     {
-        RuntimeEnvironment environment = new(_closure);
+        RuntimeEnvironment closure = _receiverBound ? _closure.Enclosing! : _closure;
+        RuntimeEnvironment environment = new(closure);
         environment.Define("this", thisObject);
         return ShareObjectState(new SharpTSAsyncFunction(_declaration, environment, receiverBound: true));
     }

@@ -242,13 +242,19 @@ public partial class RuntimeEmitter
             "_classPrototypeCache",
             classPrototypeCacheType,
             FieldAttributes.Private | FieldAttributes.Static | FieldAttributes.InitOnly);
+        var classPrototypeParentsField = typeBuilder.DefineField(
+            "_classPrototypeParents", classPrototypeCacheType,
+            FieldAttributes.Private | FieldAttributes.Static | FieldAttributes.InitOnly);
         EmitClassPrototypeSupport(
             typeBuilder,
             runtime.ClassPrototypes,
             runtime.ObjectPrototypes,
             runtime.DescriptorStorage,
             runtime.ObjectFields.Interface,
-            classPrototypeCacheField
+            classPrototypeCacheField,
+            classPrototypeParentsField,
+            runtime.ArrayStorage.Type,
+            runtime.ArrayOperations.PrototypeField
         );
 
         EmitCancellationCheck(typeBuilder, runtime.Cancellation);
@@ -573,6 +579,8 @@ public partial class RuntimeEmitter
 
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(classPrototypeCacheType));
         cctorIL.Emit(OpCodes.Stsfld, classPrototypeCacheField);
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(classPrototypeCacheType));
+        cctorIL.Emit(OpCodes.Stsfld, classPrototypeParentsField);
 
         // Initialize _symbolStorage = new ConditionalWeakTable<object, Dictionary<object, object?>>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(symbolStorageType));
@@ -891,6 +899,11 @@ public partial class RuntimeEmitter
         );
         // ObjectPrototypePopulate / ArrayPrototypePopulate shells already
         // defined above (before cctor) so the cctor can call them eagerly.
+        runtime.Reflect.Get = typeBuilder.DefineMethod(
+            "ReflectGet",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]);
         EmitGetFunctionMethod(
             typeBuilder,
             runtime.FunctionIntrospection,
@@ -905,11 +918,14 @@ public partial class RuntimeEmitter
                 runtime.ObjectPrototypes,
                 runtime.ObjectState,
                 runtime.ObjectStorage,
+                runtime.Reflect.Get,
                 runtime.Sentinels.UndefinedInstance,
                 runtime.Sentinels.UndefinedType
             )
         );  // For bind/call/apply on functions
         EmitBoundFunctionName(runtime.FunctionBindings.CaptureName, runtime.FunctionIntrospection.GetProperty);
+        EmitBoundFunctionPrototype(runtime.FunctionBindings.CapturePrototype,
+            runtime.ObjectPrototypes, runtime.DescriptorStorage);
         // Pre-define IsBoxedPrimitiveOfType shell so InstanceOf can reference
         // it. Body emitted later (after the prototype singletons are defined).
         DefineIsBoxedPrimitiveOfTypeShell(typeBuilder, runtime.BoxedPrimitives);
@@ -943,11 +959,6 @@ public partial class RuntimeEmitter
         // their normalization path consumes arbitrary iterables. Reserve the
         // method token now and fill its body in EmitIteratorMethodsAdvanced.
         DeclareIterateToList(typeBuilder, runtime.IteratorCollection, runtime.Symbols.Type);
-        runtime.Reflect.Get = typeBuilder.DefineMethod(
-            "ReflectGet",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            [_types.Object, _types.Object, _types.Object]);
         runtime.Reflect.ToPropertyKey = typeBuilder.DefineMethod(
             "ToPropertyKey",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -1394,6 +1405,7 @@ public partial class RuntimeEmitter
                 runtime.Booleans,
                 runtime.DescriptorStorage,
                 runtime.Errors,
+                runtime.FunctionBindings,
                 runtime.ObjectRead.Property,
                 runtime.GlobalObject.Properties,
                 runtime.GlobalObject.SingletonField,
@@ -1417,6 +1429,7 @@ public partial class RuntimeEmitter
                 runtime.Booleans,
                 runtime.DescriptorStorage,
                 runtime.Errors,
+                runtime.FunctionBindings,
                 runtime.ObjectRead.Property,
                 runtime.GlobalObject.Properties,
                 runtime.GlobalObject.SingletonField,
@@ -1529,15 +1542,19 @@ public partial class RuntimeEmitter
             typeBuilder,
             runtime.Operators,
             new InstanceOfInputs(
+                runtime.ArrayOperations,
                 runtime.ClassDefinitions,
                 runtime.ClassPrototypes,
                 runtime.Abort,
                 runtime.Booleans,
                 runtime.BoxedPrimitives,
+                runtime.DescriptorStorage,
                 runtime.Errors,
                 runtime.FunctionBindings,
+                runtime.FunctionPrototypes,
                 runtime.FunctionIntrospection.GetProperty,
                 runtime.Invocation.Method,
+                runtime.ObjectFields.Interface,
                 runtime.ObjectPrototypes,
                 runtime.ObjectRead,
                 runtime.Promise,
@@ -2046,6 +2063,27 @@ public partial class RuntimeEmitter
                 runtime.ObjectRead.Property,
                 runtime.ObjectFields.Interface,
                 runtime.ReflectedMethods.InvokeUnwrapped,
+                new Type?[]
+                {
+                    _types.DictionaryObjectObject, _types.HashSetOfObject,
+                    _types.ConditionalWeakTableObjectObject, _types.WeakReferenceObject,
+                    _types.ObjectArray, runtime.ArrayBuffer?.Type,
+                    runtime.SharedArrayBuffer?.Type, runtime.DataView?.Type,
+                    runtime.TypedArrays.Implementation?.BaseType, runtime.Buffer?.Type,
+                    runtime.TextEncoding?.EncoderType, runtime.TextEncoding?.DecoderType,
+                    runtime.EventEmitter.Type, runtime.Timers.TimeoutType,
+                    runtime.Timers.VirtualTimerType, runtime.Generators.Type,
+                    runtime.Generators.NumericType, runtime.AsyncGenerators?.Type,
+                    runtime.IteratorWrappers.Type, runtime.Namespaces.Type
+                }.OfType<Type>().ToArray(),
+                new Type?[]
+                {
+                    runtime.FunctionBindings.BindType, runtime.FunctionBindings.CallType,
+                    runtime.FunctionBindings.ApplyType, runtime.ArrayOperations.BoundMethodType,
+                    runtime.Map?.BoundMethodType, runtime.Set?.BoundMethodType,
+                    runtime.TypedArrays.Implementation?.BoundMethodType,
+                    runtime.ReflectedMethods.CallableType, runtime.TextEncoding?.DecodeMethodType
+                }.OfType<Type>().ToArray(),
                 runtime.Numbers,
                 runtime.ObjectState,
                 runtime.ObjectStorage,
@@ -2062,6 +2100,8 @@ public partial class RuntimeEmitter
             typeBuilder,
             runtime.ObjectPrototypes,
             new ObjectSetPrototypeOfInputs(
+                runtime.ArrayStorage,
+                runtime.ClassPrototypes,
                 runtime.DescriptorStorage,
                 runtime.Errors,
                 runtime.ObjectRead.Property,
@@ -2193,7 +2233,8 @@ public partial class RuntimeEmitter
                     runtime.ObjectState.IsExtensible,
                     runtime.ObjectDeletion.Property,
                     runtime.Sentinels.UndefinedType,
-                    runtime.ObjectRead.Property
+                    runtime.ObjectRead.Property,
+                    runtime.FunctionBindings
                 )
             );
             EmitReflectPreventExtensions(

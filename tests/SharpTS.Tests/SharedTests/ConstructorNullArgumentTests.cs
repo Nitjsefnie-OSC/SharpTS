@@ -72,6 +72,45 @@ public sealed class ConstructorNullArgumentTests
             new Alias(undefined, undefined);
             new C(43, true);
             """, "null null object object 2 null null\nnull null object object 2 null null\nnull null object object 2 null null\nundefined undefined undefined undefined 2 undefined undefined\n43 true number boolean 2 43 true\n"];
+        yield return ["empty-typed-arguments", """
+            class C {
+                constructor(value: number, flag: boolean) {
+                    console.log(arguments.length, arguments[0], arguments[1]);
+                }
+            }
+            const Alias: any = C;
+            new Alias();
+            new Alias(1, true);
+            new Alias();
+            """, "0 undefined undefined\n2 1 true\n0 undefined undefined\n"];
+        yield return ["snapshot-isolation", """
+            class C {
+                constructor(value: any, flag: any) {
+                    console.log(value, flag, arguments.length, arguments[0], arguments[1]);
+                }
+            }
+            const Alias: any = C;
+            const Bound: any = C.bind({}, null);
+            const Nested: any = Bound.bind({}, null);
+            new Nested();
+            new Alias(undefined, undefined);
+            """, "null null 2 null null\nundefined undefined 2 undefined undefined\n"];
+        yield return ["actual-argument-list", """
+            class C {
+                value: any;
+                constructor(value: any, flag: any) {
+                    console.log(arguments.length, arguments[0], arguments[1], arguments[2]);
+                    this.value = value;
+                    if (value === 'throw') throw value;
+                }
+            }
+            const Alias: any = C;
+            new Alias();
+            new Alias(undefined, undefined);
+            try { new Alias('throw', null, 7); } catch (error) { console.log(error); }
+            console.log('nested', new Alias(43, true, 9).value);
+            new Alias();
+            """, "0 undefined undefined undefined\n2 undefined undefined undefined\n3 throw null 7\nthrow\n3 43 true 9\nnested 43\n0 undefined undefined undefined\n"];
         yield return ["derived", """
             class Base {
                 constructor(value: number, flag: boolean) {

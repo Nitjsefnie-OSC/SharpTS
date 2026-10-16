@@ -2270,6 +2270,27 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected bool TryEmitNamespaceSingleton(string name)
     {
+        if (name == "Math")
+        {
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Math.SingletonField);
+            SetStackUnknown();
+            return true;
+        }
+
+        if (name == "JSON")
+        {
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Json.SingletonField);
+            SetStackUnknown();
+            return true;
+        }
+
+        if (name == "AbortController" && Ctx.Runtime!.Abort is not null)
+        {
+            IL.Emit(OpCodes.Call, Ctx.Runtime.RequireAbort().GetControllerConstructor);
+            SetStackUnknown();
+            return true;
+        }
+
         if (name == "AbortSignal" && Ctx.Runtime!.Abort is not null)
         {
             IL.Emit(OpCodes.Call, Ctx.Runtime!.RequireAbort().NamespacePopulate);
@@ -2793,7 +2814,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // these names resolve fine everywhere else via TryEmitBuiltInClassType.
         if (name is "Array" or "Date" or "RegExp" or "Map" or "Set"
             or "WeakMap" or "WeakSet" or "WeakRef" or "FinalizationRegistry"
-            or "Promise" or "Buffer" or "Function"
+            or "Promise" or "Buffer" or "Function" or "AbortController"
             or "Object" or "String" or "Number" or "Boolean"
             or "TextEncoder" or "TextDecoder") return true;
         // Typed-array / buffer constructors as values (#331) — without this,

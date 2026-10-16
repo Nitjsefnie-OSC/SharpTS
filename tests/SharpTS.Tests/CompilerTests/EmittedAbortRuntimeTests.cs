@@ -110,6 +110,10 @@ public class EmittedAbortRuntimeTests
         Assert.False(abort.IsComplete);
         Emit("EmitNamespaceSingletons", type, abort, null!, getOrCreate);
         Assert.True(abort.NamespacePopulate.GetILGenerator().ILOffset > 0);
+        // The constructor value has a separate late emission stage; this probe
+        // isolates namespace/helper staging and supplies its declared stub.
+        abort.GetControllerConstructor.GetILGenerator().Emit(OpCodes.Ldnull);
+        abort.GetControllerConstructor.GetILGenerator().Emit(OpCodes.Ret);
         Assert.False(type.IsCreated());
         type.CreateType();
         abort.CompleteEmission();
@@ -146,7 +150,7 @@ public class EmittedAbortRuntimeTests
         if (enabled)
         {
             AssertFrozen(runtime.RequireAbort());
-            Assert.Equal(19, Handles.Count());
+            Assert.Equal(21, Handles.Count());
         }
         else Assert.Throws<InvalidOperationException>(runtime.RequireAbort);
         using var bytes = Save(runtime);
@@ -154,8 +158,9 @@ public class EmittedAbortRuntimeTests
         var reader = pe.GetMetadataReader();
         var fields = reader.FieldDefinitions.Select(handle => reader.GetString(reader.GetFieldDefinition(handle).Name));
         Assert.Equal(enabled, fields.Contains("_AbortSignalNamespace"));
+        Assert.Equal(enabled, fields.Contains("_AbortControllerConstructor"));
         var methods = reader.MethodDefinitions.Select(handle => reader.GetString(reader.GetMethodDefinition(handle).Name));
-        Assert.Equal(enabled ? 18 : 0, methods.Count(name => name == "FireAbortEvent" || name == "CreateAbortController" ||
+        Assert.Equal(enabled ? 19 : 0, methods.Count(name => name == "FireAbortEvent" || name == "CreateAbortController" ||
             name.StartsWith("AbortController", StringComparison.Ordinal) || name.StartsWith("AbortSignal", StringComparison.Ordinal) ||
             name == "_AbortSignalNamespacePopulate"));
         var references = reader.AssemblyReferences.Select(handle => reader.GetString(reader.GetAssemblyReference(handle).Name)).ToArray();

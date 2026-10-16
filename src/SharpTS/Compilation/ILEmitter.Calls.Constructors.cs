@@ -720,6 +720,23 @@ public partial class ILEmitter
             IL.MarkLabel(alreadyClosed);
         }
 
+        // Guest classes already have a source-aware factory that publishes the
+        // untrimmed caller list for `arguments`. The CLR reflection fallback
+        // otherwise lets a constructor consume a stale helper-call snapshot.
+        var useClrConstructor = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, typeLocal);
+        IL.Emit(OpCodes.Ldtoken, _ctx.Runtime.DynamicConstruction.FactoryAttributeType);
+        IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Ldc_I4_0);
+        IL.Emit(OpCodes.Callvirt, typeof(MemberInfo).GetMethod(nameof(MemberInfo.IsDefined),
+            [typeof(Type), typeof(bool)])!);
+        IL.Emit(OpCodes.Brfalse, useClrConstructor);
+        IL.Emit(OpCodes.Ldloc, typeLocal);
+        EmitArgsArray(n.Arguments, argTemps.ToArray());
+        IL.Emit(OpCodes.Call, _ctx.Runtime.DynamicConstruction.Value);
+        IL.Emit(OpCodes.Br, constructionDone);
+        IL.MarkLabel(useClrConstructor);
+
         // ctor = type.GetConstructors()[0]
         var getConstructorsMethod = _ctx.Types.GetMethod(
             typeof(Type),

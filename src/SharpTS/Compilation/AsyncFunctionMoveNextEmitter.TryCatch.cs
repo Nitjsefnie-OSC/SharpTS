@@ -5,23 +5,23 @@ namespace SharpTS.Compilation;
 
 public abstract partial class AsyncFunctionMoveNextEmitter
 {
-    // ---- Suspending-throw routing in a flag-based try body (#914) -------------------------------
-    // `throw <expr-with-await>` in a try body is a segment-breaker: it is emitted at the top level,
-    // outside the sync-segment mini try/catch that captures ordinary throws (EmitSegmentInTry). A raw
-    // CLR throw there escapes the guest try and faults the Task instead of reaching `catch`. We route it
-    // into the active flag-based try exactly as a captured await-rejection is (EmitAwaitGetResult /
-    // EmitGuardedSyncSegment): store the value into the try's exception local and branch to its catch
-    // dispatch, running any finally(s) strictly inside the try first. A non-suspending throw is captured
-    // by its mini try/catch and never reaches here; a handler-body throw is handled by the existing
-    // nested-catch wrap — both run with _throwRoutingGuardDepth > 0.
+    private sealed class AwaitCatchRegion
+    {
+        public List<(int State, Label Target)> Resumes { get; } = [];
+    }
 
-    // Count of real-IL guest exception blocks open around the current emission point (the sync-segment
-    // mini try/catch, the nested-catch wrap, the no-await / simple try blocks, and the for-await guarded
-    // sync segment). While > 0 a real-IL handler already owns any throw, so routing must defer. This is
-    // deliberately independent of CompilationContext.ExceptionBlockDepth — which the async functions key
-    // the break/continue Leave-vs-Br choice off (#727) and which the segment/wrap sites do not bump — and
-    // of the base ProtectedRegionDepth. Protected so the for-await loop emitter (a subclass partial) can
-    // bump it around its own guarded sync segment.
+    private AwaitCatchRegion? _awaitCatchRegion;
+    private int _finallyExceptionCount;
+
+    protected override void EmitPendingExitBranch(Label target) => EmitBranchToLabel(target);
+
+    // Resumable protected regions normally own throws from a try or catch body.
+    // Keep explicit routing for a guard-free span with an active logical handler:
+    // it must run intervening flag-based finally scopes before catch dispatch.
+
+    // A real guest handler already owns throws while this is positive. Kept
+    // separate from ExceptionBlockDepth, which selects Leave for non-local
+    // exits, because legacy suspension-free mini guards do not own loop exits.
     protected int _throwRoutingGuardDepth;
 
     // _exitScopes.Count captured at the start of the flag-based try body whose exception local is
@@ -170,10 +170,8 @@ public abstract partial class AsyncFunctionMoveNextEmitter
 
     private void EmitTryCatchWithAwaits(Stmt.TryCatch t, bool hasAwaitsInTry, bool hasAwaitsInCatch, bool hasAwaitsInFinally)
     {
-        // For try blocks with awaits, we need to use a flag-based approach:
-        // 1. Use a local to track if an exception was caught
-        // 2. Emit try body with special handling around each await
-        // 3. Check exception flag after try/await completion
+        // Real handlers capture try/catch failures, while explicit dispatch
+        // keeps catch and finally bodies resumable and routes pending exits.
 
         // Create locals for exception tracking
         var caughtExceptionLocal = IL.DeclareLocal(typeof(object));
@@ -200,7 +198,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
 
         if (hasAwaitsInTry)
         {
-            // Emit try body with segmented exception handling
+            // Resume gateways keep the complete try body protected.
             EmitTryBodyWithAwaits(t.TryBlock, caughtExceptionLocal);
         }
         else if (t.FinallyBlock != null)
@@ -271,29 +269,10 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             IL.Emit(OpCodes.Ldnull);
             IL.Emit(OpCodes.Stloc, caughtExceptionLocal);
 
-            // Emit catch block (may contain awaits)
-            // If we're inside an outer try context, wrap catch statements in try/catch
-            // so that throws propagate to the outer try's exception handling
-            var outerExceptionLocal = _currentTryCatchExceptionLocal;
-            if (outerExceptionLocal != null && outerExceptionLocal != caughtExceptionLocal)
-            {
-                // We're nested inside another try-with-awaits
-                // Wrap catch block in try/catch to propagate exceptions outward
-                IL.BeginExceptionBlock();
-                _throwRoutingGuardDepth++;
-                foreach (var stmt in t.CatchBlock)
-                    EmitStatement(stmt);
-                _throwRoutingGuardDepth--;
-                IL.BeginCatchBlock(typeof(Exception));
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.Errors.WrapException);
-                IL.Emit(OpCodes.Stloc, outerExceptionLocal);
-                IL.EndExceptionBlock();
-            }
-            else
-            {
-                foreach (var stmt in t.CatchBlock)
-                    EmitStatement(stmt);
-            }
+            // A catch-body failure must run this try's finally before it
+            // propagates, without re-entering this same catch. Resume gateways
+            // protect its operand evaluation just as they protect the try body.
+            EmitTryBodyWithAwaits(t.CatchBlock, caughtExceptionLocal);
 
             // Fall through to finally (don't skip it)
             IL.MarkLabel(skipCatchLabel);
@@ -326,130 +305,104 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             // or exception path <>pendingExit is 0 and this falls through unchanged.
             EmitFinallyDispatch(frame!);
 
-            // After finally, check if we need to rethrow a pending exception
-            // (but only if there was no catch block that handled it)
-            if (t.CatchBlock == null)
-            {
-                var noExceptionLabel = IL.DefineLabel();
-                IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                IL.Emit(OpCodes.Brfalse, noExceptionLabel);
-
-                // Rethrow the exception
-                IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.Errors.CreateException);
-                IL.Emit(OpCodes.Throw);
-
-                IL.MarkLabel(noExceptionLabel);
-            }
         }
+
+        // Entering a catch clears the original failure. A value remaining
+        // here is either an unhandled try failure or a new catch-body failure.
+        var noExceptionLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+        IL.Emit(OpCodes.Brfalse, noExceptionLabel);
+        IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.Errors.CreateException);
+        IL.Emit(OpCodes.Throw);
+        IL.MarkLabel(noExceptionLabel);
 
         IL.MarkLabel(afterTryCatchLabel);
     }
 
     private void EmitFinallyBodyWithAwaits(List<Stmt> finallyBody, LocalBuilder caughtExceptionLocal)
     {
-        // For finally with awaits, we use a similar strategy to try with awaits:
-        // - Segment the code around awaits
-        // - Each segment runs regardless of exception state
-        // - After all awaits complete, we can rethrow if needed
-
         // Unlike try, we don't wrap in try/catch - finally must run even if
-        // statements throw, but if finally itself throws, that replaces the original exception
+        // statements throw, but a finally failure replaces the original one.
+        // Preserve the pending failure across a genuine MoveNext resumption.
 
+        var pendingException = DefineStateMachineField(
+            $"<>finallyException{_finallyExceptionCount++}", typeof(object));
+        IL.Emit(OpCodes.Ldarg_0);
+        IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+        IL.Emit(OpCodes.Stfld, pendingException);
         foreach (var stmt in finallyBody)
         {
             EmitStatement(stmt);
         }
+        IL.Emit(OpCodes.Ldarg_0);
+        IL.Emit(OpCodes.Ldfld, pendingException);
+        IL.Emit(OpCodes.Stloc, caughtExceptionLocal);
     }
 
     private void EmitTryBodyWithAwaits(List<Stmt> tryBody, LocalBuilder caughtExceptionLocal)
     {
-        // Strategy:
-        // 1. Wrap synchronous segments in try blocks
-        // 2. For awaits, wrap the GetResult call in try/catch using context fields
-        // 3. After each await, check if an exception was caught
-
-        // Set context for await exception handling
         var previousExceptionLocal = _currentTryCatchExceptionLocal;
         var previousSkipLabel = _currentTryCatchSkipLabel;
         var previousScopeDepth = _currentTryCatchScopeDepth;
+        var previousRegion = _awaitCatchRegion;
+        var region = new AwaitCatchRegion();
+        var entry = IL.DefineLabel();
+        var initial = IL.DefineLabel();
+        var dispatch = IL.DefineLabel();
         var afterTryLabel = IL.DefineLabel();
         _currentTryCatchExceptionLocal = caughtExceptionLocal;
         _currentTryCatchSkipLabel = afterTryLabel;
-        // Finally(s) pushed after this point are strictly inside this try; a routed throw runs them
-        // before reaching its catch (the try's own finally, pushed just before the body, is excluded).
         _currentTryCatchScopeDepth = _exitScopes.Count;
 
-        List<Stmt> syncSegment = [];
-
-        void FlushSegment()
-        {
-            if (syncSegment.Count == 0)
-                return;
-            // Skip the segment if an earlier one already threw (its exception heads to the catch).
-            var skipSegmentLabel = IL.DefineLabel();
-            IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-            IL.Emit(OpCodes.Brtrue, skipSegmentLabel);
-            EmitSegmentInTry(syncSegment, caughtExceptionLocal);
-            IL.MarkLabel(skipSegmentLabel);
-            syncSegment.Clear();
-        }
-
-        foreach (var stmt in tryBody)
-        {
-            // A "segment breaker" must be emitted at the top level rather than inside a mini IL
-            // try/catch: a suspension point (await) whose resume label can't be branched into a
-            // protected region, or a non-local exit (break/continue/return) whose `Br`/`Leave` out of
-            // the try targets the enclosing loop — both illegal inside the segment's real IL block. An
-            // escaping break/continue branches with `Br` at this top level (ExceptionBlockDepth is 0),
-            // which is what makes it legal; previously it landed inside a segment and `Br`'d out of the
-            // mini try (BranchOutOfTry → invalid IL) (#727).
-            if (StmtContainsSuspension(stmt) || ContainsEscapingExit(stmt, insideLoop: false, insideSwitch: false))
-            {
-                FlushSegment();
-
-                // If an earlier segment threw, skip this suspension/exit and fall through to the catch.
-                var skipLabel = IL.DefineLabel();
-                IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                IL.Emit(OpCodes.Brtrue, skipLabel);
-
-                // EmitAwait checks _currentTryCatchExceptionLocal and wraps GetResult in try/catch; a
-                // break/continue/return emits its jump here, outside any real IL exception block.
-                EmitStatement(stmt);
-
-                IL.MarkLabel(skipLabel);
-            }
-            else
-            {
-                syncSegment.Add(stmt);
-            }
-        }
-
-        FlushSegment();
-
-        IL.MarkLabel(afterTryLabel);
-
-        // Restore context (the skip label must be restored alongside its
-        // exception local — nulling it left outer-try awaits after a nested
-        // try with no exit target).
-        _currentTryCatchExceptionLocal = previousExceptionLocal;
-        _currentTryCatchSkipLabel = previousSkipLabel;
-        _currentTryCatchScopeDepth = previousScopeDepth;
-    }
-
-    private void EmitSegmentInTry(List<Stmt> statements, LocalBuilder caughtExceptionLocal)
-    {
+        // The global state switch enters through an instruction outside this
+        // protected region. Dispatch to the actual resume point only after
+        // entering normally, so operand evaluation and GetResult share the
+        // guest handler without any branch into a CLR try.
+        IL.MarkLabel(entry);
+        IL.Emit(OpCodes.Nop);
         IL.BeginExceptionBlock();
+        Ctx.ExceptionBlockDepth++;
         _throwRoutingGuardDepth++;
-        foreach (var stmt in statements)
+        _awaitCatchRegion = region;
+        IL.Emit(OpCodes.Br, dispatch);
+        IL.MarkLabel(initial);
+        foreach (var stmt in tryBody)
             EmitStatement(stmt);
+        IL.Emit(OpCodes.Leave, afterTryLabel);
+
+        IL.MarkLabel(dispatch);
+        foreach (var (state, target) in region.Resumes)
+        {
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, AsyncStateField);
+            IL.Emit(OpCodes.Ldc_I4, state);
+            IL.Emit(OpCodes.Beq, target);
+        }
+        IL.Emit(OpCodes.Br, initial);
+
+        _awaitCatchRegion = previousRegion;
         _throwRoutingGuardDepth--;
+        Ctx.ExceptionBlockDepth--;
 
         IL.BeginCatchBlock(typeof(Exception));
         IL.Emit(OpCodes.Call, Ctx.Runtime!.Errors.WrapException);
         IL.Emit(OpCodes.Stloc, caughtExceptionLocal);
-
         IL.EndExceptionBlock();
+        IL.Emit(OpCodes.Br, afterTryLabel);
+
+        // A nested region registers these gateways in its enclosing region;
+        // only the outermost region marks the global switch's labels.
+        foreach (var (state, _) in region.Resumes)
+        {
+            MarkAwaitResumeLabel(state);
+            IL.Emit(OpCodes.Br, entry);
+        }
+        IL.MarkLabel(afterTryLabel);
+
+        _currentTryCatchExceptionLocal = previousExceptionLocal;
+        _currentTryCatchSkipLabel = previousSkipLabel;
+        _currentTryCatchScopeDepth = previousScopeDepth;
     }
 
     // The await-suspension statement/expression walkers now live in ExpressionEmitterBase as the single

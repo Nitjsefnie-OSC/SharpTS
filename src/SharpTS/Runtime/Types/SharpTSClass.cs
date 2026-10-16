@@ -76,6 +76,13 @@ public partial class SharpTSClass(
     /// TypeError.prototype</c> both depend on that identity holding.
     /// </summary>
     public SharpTSClassPrototype Prototype => _prototype ??= new SharpTSClassPrototype(this);
+
+    // Cached instance lookups remain valid until a prototype's parent changes.
+    // Constructor inheritance is fixed, so it can conservatively detect any
+    // modified home along the original instance chain without altering statics.
+    internal bool HasModifiedInstancePrototypeChain
+        => _prototype?.HasExplicitPrototype == true
+            || Superclass?.HasModifiedInstancePrototypeChain == true;
     private readonly Dictionary<string, ISharpTSCallable?> _staticMethodCache = [];
     private readonly HashSet<string> _deletedStaticMethods = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SharpTSFunction?> _getterCache = [];
@@ -118,6 +125,7 @@ public partial class SharpTSClass(
     internal virtual object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
     {
         SharpTSInstance instance = new(this);
+        instance.SetInterpreter(interpreter);
         return ExecuteConstructorLevel(interpreter, instance, arguments, newTarget);
     }
 
@@ -131,6 +139,13 @@ public partial class SharpTSClass(
         var constructor = FindOwnMethod("constructor");
         if (Superclass is null)
         {
+            // OrdinaryCreateFromConstructor belongs to the base constructor's
+            // entry, after any derived body code preceding super(). A derived
+            // constructor that returns an object without super never observes
+            // newTarget.prototype.
+            if (allocation is SharpTSInstance instance
+                && !ReferenceEquals(newTarget, instance.RuntimeClass))
+                instance.SetExplicitPrototype(interpreter.GetConstructorPrototype(newTarget));
             frame.InitializeOwnElements(interpreter);
             return constructor is null ? allocation
                 : ResolveOwnConstructorReturn(

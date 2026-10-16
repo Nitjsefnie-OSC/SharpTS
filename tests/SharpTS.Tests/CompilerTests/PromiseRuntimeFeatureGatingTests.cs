@@ -1,4 +1,7 @@
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
+using System.Reflection.PortableExecutable;
 using SharpTS.Compilation;
 using SharpTS.Parsing;
 using SharpTS.TypeSystem;
@@ -56,10 +59,24 @@ public class PromiseRuntimeFeatureGatingTests
         Assert.True(promiseOnlyMethods.Length == 0,
             $"Promise-only methods remained: {string.Join(", ", promiseOnlyMethods)}");
 
-        // Shared constructor/descriptor, instanceof and apply semantics plus CLR
-        // numeric return normalization measure 285,184 bytes on Windows. Promise
-        // types and methods remain absent; allow one extra 512-byte PE block on Linux.
-        Assert.True(assemblyBytes.Length <= 285_700,
+        // Optional native ancestry checks must follow the same feature gates
+        // as their carriers, including the names stored in the metadata heap.
+        string[] optionalPrototypeCarrierNames =
+        [
+            "SharpTS.Runtime.Types.SharpTSIntlFormatterBase", "$ReadableStream",
+            "$Request", "$AsyncLocalStorage", "$BlockList", "$CryptoKey", "$Dir"
+        ];
+        using var stream = new MemoryStream(assemblyBytes, writable: false);
+        using var pe = new PEReader(stream);
+        var metadata = pe.GetMetadataReader();
+        for (var handle = MetadataTokens.UserStringHandle(1); !handle.IsNil; handle = metadata.GetNextHandle(handle))
+            Assert.DoesNotContain(metadata.GetUserString(handle), optionalPrototypeCarrierNames);
+
+        // Shared bound-function, prototype-chain, descriptor and instanceof
+        // semantics measure 286,720 bytes on Windows after gating optional native
+        // fallbacks and class-only bodies. Allow one 512-byte PE block for platform
+        // layout differences; the structural absence guards remain strict.
+        Assert.True(assemblyBytes.Length <= 287_232,
             $"Promise-free assembly grew beyond its size ratchet: {assemblyBytes.Length:N0} bytes.");
     }
 

@@ -465,7 +465,7 @@ public partial class ILCompiler
     /// Registers the function-level display class ($functionDC) for an async free function OR async
     /// method, keyed by <paramref name="key"/>. Lifts the captured locals a nested SYNC arrow shares —
     /// minus the ones an async arrow captures (those use the boxed-outer hoisted-field path), keeping the
-    /// direct-child async-arrow WRITES that #625 promotes for verifiable mutation. Makes the DC
+    /// async-arrow WRITES that require reference storage for verifiable mutation. Makes the DC
     /// rename-aware for captured shadows via <c>DefineFunctionDisplayClass</c>, preserving shared
     /// storage when the enclosing body mutates a binding read by a closure. Records the
     /// AST node so the arrow-collection (<see cref="PropagateFunctionDCRequirements"/>) can resolve a
@@ -486,7 +486,7 @@ public partial class ILCompiler
                 asyncCapturedVars.Add(capture);
         }
 
-        // EXCEPTION: a captured variable that a direct-child async arrow WRITES is promoted into the
+        // EXCEPTION: a captured variable that an async arrow WRITES is promoted into the
         // function display class (a reference type) instead of staying on the boxed value-type state
         // machine. A boxed struct cannot be mutated in place by verifiable IL — `unbox` yields a
         // readonly managed pointer, so `stfld` through it fails verification and can drop the write in
@@ -557,37 +557,51 @@ public partial class ILCompiler
     }
 
     /// <summary>
-    /// Returns the captured variables that a DIRECT-CHILD async arrow WRITES (#625): these must be
+    /// Returns the captured variables that an async arrow WRITES: these must be
     /// promoted into the enclosing scope's reference-type function display class so the arrow can
     /// mutate them verifiably through <c>outer.functionDC.field</c> rather than <c>unbox</c>+<c>stfld</c>
     /// on the boxed value-type state machine (the latter is unverifiable and can drop the write).
-    /// A variable also captured by a NESTED (grandchild) async arrow is excluded — the grandchild's
-    /// DC-access path isn't wired (its outer reference points at the parent arrow, not the function),
-    /// so only direct-child writes are promoted. Shared by free async functions, async methods (#682),
-    /// each of which supplies its own <paramref name="asyncArrows"/> analysis.
+    /// Nested writes qualify only when each intervening arrow captures the binding too. A parent
+    /// local/parameter with the same name belongs to that arrow instead of this function's DC.
+    /// Shared by free async functions and async methods, each of which supplies its own analysis.
     /// </summary>
     private static HashSet<string> ComputeArrowWrittenCapturesToPromote(
         List<AsyncStateAnalyzer.AsyncArrowInfo> asyncArrows)
     {
-        var nestedAsyncArrowCaptures = new HashSet<string>();
-        foreach (var arrowInfo in asyncArrows)
-            if (arrowInfo.ParentArrow != null)
-                nestedAsyncArrowCaptures.UnionWith(arrowInfo.Captures);
-
+        var byArrow = new Dictionary<Expr.ArrowFunction, AsyncStateAnalyzer.AsyncArrowInfo>(
+            ReferenceEqualityComparer.Instance);
+        foreach (var info in asyncArrows)
+            byArrow.Add(info.Arrow, info);
+        // Receiver metadata currently represents two outer hops. Keep deeper
+        // captures on their previous path rather than treating an unsupported
+        // relay as a reference to this function's display class.
+        var deeperCaptures = new HashSet<string>();
+        foreach (var info in asyncArrows)
+            if (info.ParentArrow != null && byArrow[info.ParentArrow].ParentArrow != null)
+                deeperCaptures.UnionWith(info.Captures);
         var promoted = new HashSet<string>();
         foreach (var arrowInfo in asyncArrows)
         {
-            if (arrowInfo.ParentArrow != null) continue; // direct children only
             var written = CapturedWriteAnalysis.CollectImmediateWrites(arrowInfo.Arrow);
             written.IntersectWith(arrowInfo.Captures);
-            written.ExceptWith(nestedAsyncArrowCaptures);
+            for (var parent = arrowInfo.ParentArrow; parent != null && written.Count > 0;)
+            {
+                if (!byArrow.TryGetValue(parent, out var parentInfo))
+                {
+                    written.Clear();
+                    break;
+                }
+                written.IntersectWith(parentInfo.Captures);
+                parent = parentInfo.ParentArrow;
+            }
+            written.ExceptWith(deeperCaptures);
             promoted.UnionWith(written);
         }
         return promoted;
     }
 
     /// <summary>
-    /// #682: builds the method-scoped function display class holding the captures that a direct-child
+    /// #682: builds the method-scoped function display class holding the captures that an
     /// async arrow writes (<see cref="ComputeArrowWrittenCapturesToPromote"/>) and adds the DC field to
     /// the method's state machine. Async methods (instance and static) otherwise have no function-DC
     /// infrastructure, so a captured write would emit the unverifiable <c>unbox</c>+<c>stfld</c> on the
@@ -648,8 +662,10 @@ public partial class ILCompiler
 
     private void DefineAsyncArrowStateMachines(
         List<AsyncStateAnalyzer.AsyncArrowInfo> asyncArrows,
-        AsyncStateMachineBuilder outerBuilder)
+        AsyncStateMachineBuilder outerBuilder,
+        FieldBuilder? lexicalThisField = null)
     {
+        lexicalThisField ??= outerBuilder.ThisField;
         // Get all hoisted fields from the function's state machine
         Dictionary<string, FieldBuilder> functionHoistedFields = [];
         foreach (var (name, field) in outerBuilder.HoistedParameters)
@@ -762,6 +778,9 @@ public partial class ILCompiler
                     parentBuilder.OuterStateMachineType,
                     hasNestedChildren);
 
+                if (!arrowInfo.Arrow.HasOwnThis)
+                    arrowBuilder.LexicalThisStorage = parentBuilder.LexicalThisStorage?.ThroughOuterStateMachine(arrowBuilder);
+
                 // Define the stub method that will be called to invoke the async arrow
                 DefineAsyncArrowStub(arrowBuilder);
                 MarkPadsUndefined(arrowBuilder.StubMethod); // #640
@@ -785,6 +804,9 @@ public partial class ILCompiler
                 arrowInfo.Arrow.Parameters,
                 arrowAnalysis.HoistedLocals,
                 hasNestedAsyncArrows: hasNestedChildren);
+
+            if (!arrowInfo.Arrow.HasOwnThis && lexicalThisField != null)
+                arrowBuilder.LexicalThisStorage = AsyncArrowStorageAccess.OuterThis(arrowBuilder, lexicalThisField);
 
             // Define the stub method that will be called to invoke the async arrow
             DefineAsyncArrowStub(arrowBuilder);
@@ -1666,7 +1688,7 @@ public partial class ILCompiler
     }
 
     private void EmitAsyncMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo? fieldsField,
-        bool isInstanceMethod = true, string? currentClassName = null)
+        bool isInstanceMethod = true, string? currentClassName = null, string? lexicalThisParameterName = null)
     {
         // Analyze async function to determine await points and hoisted variables
         var analysis = _async.Analyzer.Analyze(method, preserveDebugBindings: EmitDebugSymbols);
@@ -1709,7 +1731,11 @@ public partial class ILCompiler
         string? methodDCKey = SetupAsyncMethodFunctionDC(smBuilder, method);
 
         // Build state machines for any async arrows found in this method
-        DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder);
+        // Guest method adapters carry the actual receiver in an explicit parameter;
+        // their CLR instance is only the callable's implementation holder.
+        var lexicalThisField = lexicalThisParameterName == null ? smBuilder.ThisField
+            : smBuilder.HoistedParameters[lexicalThisParameterName];
+        DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder, lexicalThisField);
 
         // Get lock fields if @lock decorator is present (instance vs static field sets)
         FieldBuilder? asyncLockField = null;

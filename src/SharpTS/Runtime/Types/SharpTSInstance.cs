@@ -39,10 +39,6 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     private readonly Dictionary<string, PropertyResolution> _lookupCache = [];
     private readonly Dictionary<string, SharpTSFunction?> _setterCache = [];
 
-    // Bound method cache to avoid repeated Bind() allocations
-    // Key is the method name (since we already resolved the method via _lookupCache)
-    private readonly Dictionary<string, ISharpTSCallable> _boundMethodCache = [];
-
     /// <summary>
     /// Whether this instance is frozen (no property additions, removals, or modifications).
     /// </summary>
@@ -59,10 +55,20 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public bool IsExtensible { get; private set; } = true;
 
     /// <summary>
-    /// The prototype of this class instance.
-    /// For class instances, this is null as SharpTS doesn't implement a full prototype chain for classes.
+    /// The instance's effective prototype. Construction may select another
+    /// constructor's prototype while retaining this instance's private brands.
     /// </summary>
-    public object? Prototype => null;
+    public object? Prototype => HasExplicitPrototype ? _explicitPrototype : _klass.Prototype;
+    private object? _explicitPrototype;
+    internal bool HasExplicitPrototype { get; private set; }
+    internal bool UsesDynamicPrototypeChain
+        => HasExplicitPrototype || _klass.HasModifiedInstancePrototypeChain;
+
+    internal void SetExplicitPrototype(object? prototype)
+    {
+        _explicitPrototype = prototype;
+        HasExplicitPrototype = true;
+    }
 
     /// <summary>
     /// Freezes this instance, preventing any property changes.
@@ -123,7 +129,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         Getter,      // Resolved to a getter (invoke on each access)
         OwnAccessor, // Accessor installed with Object.defineProperty
         Field,       // Resolved to an instance field (read from _fields)
-        Method,      // Resolved to a method (bind on access)
+        Method,      // Resolved to the canonical prototype method
         AutoAccessor,// Resolved to an auto-accessor (TypeScript 4.9+)
         ClassSelf,   // The special `constructor` property — returns the class
         NotFound     // Property doesn't exist (cache negative lookups)
@@ -195,6 +201,15 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public object? Get(Token name)
     {
         string propName = name.Lexeme;
+        if (UsesDynamicPrototypeChain)
+        {
+            if (_getters?.TryGetValue(propName, out var getter) == true)
+                return InvokeOwnAccessor(getter, []);
+            if (_setters?.ContainsKey(propName) == true)
+                return SharpTSUndefined.Instance;
+            if (_fields.TryGetValue(propName, out var value)) return value;
+            return _interpreter!.GetInstancePrototypeProperty(this, propName);
+        }
         if (!_fields.ContainsKey(propName) && _getters?.ContainsKey(propName) != true
             && _setters?.ContainsKey(propName) != true && _klass.HasInstanceAccessorDeclaration(propName))
         {
@@ -223,7 +238,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
                 ? InvokeOwnAccessor(ownGetter, [])
                 : SharpTSUndefined.Instance,
             ResolutionType.Field => _fields[propName],
-            ResolutionType.Method => GetOrCreateBoundMethod(propName, resolution.Function!),
+            ResolutionType.Method => resolution.Function,
             ResolutionType.ClassSelf => _klass,
             ResolutionType.NotFound => SharpTSUndefined.Instance, // JavaScript semantics: missing properties return undefined
             _ => throw new InvalidOperationException("Unknown resolution type")
@@ -240,24 +255,14 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             _ => callable.Call(_interpreter!, args),
         };
 
-    /// <summary>
-    /// Gets a cached bound method or creates and caches a new one.
-    /// Avoids repeated Bind() allocations for frequently accessed methods.
-    /// Handles both sync and async methods via SharpTSClass.BindMethod.
-    /// </summary>
-    private ISharpTSCallable GetOrCreateBoundMethod(string methodName, ISharpTSCallable method)
-    {
-        if (!_boundMethodCache.TryGetValue(methodName, out var boundMethod))
-        {
-            boundMethod = SharpTSClass.BindMethod(method, this);
-            _boundMethodCache[methodName] = boundMethod;
-        }
-        return boundMethod;
-    }
-
     public void Set(Token name, object? value)
     {
         string propName = name.Lexeme;
+        if (UsesDynamicPrototypeChain)
+        {
+            _interpreter!.SetInstancePropertyWithExplicitPrototype(this, propName, value, false);
+            return;
+        }
         if (TrySetClassAccessor(propName, value, false)) return;
 
         if (_setters?.TryGetValue(propName, out var ownSetter) == true)
@@ -321,6 +326,11 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public void SetStrict(Token name, object? value, bool strictMode)
     {
         string propName = name.Lexeme;
+        if (UsesDynamicPrototypeChain)
+        {
+            _interpreter!.SetInstancePropertyWithExplicitPrototype(this, propName, value, strictMode);
+            return;
+        }
         if (TrySetClassAccessor(propName, value, strictMode)) return;
 
         if (_setters?.TryGetValue(propName, out var ownSetter) == true)
@@ -404,6 +414,8 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
     public bool HasProperty(string name)
     {
+        if (UsesDynamicPrototypeChain)
+            return GetOwnPropertyDescriptor(name) is not null || _interpreter!.HasProperty(Prototype, name);
         if (!_lookupCache.TryGetValue(name, out PropertyResolution? resolution))
         {
             resolution = ResolveProperty(name);
@@ -829,9 +841,13 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         return new SharpTSPropertyDescriptor
         {
             Value = fieldValue,
+            HasValue = true,
             Writable = flags.Writable,
+            HasWritable = true,
             Enumerable = flags.Enumerable,
-            Configurable = flags.Configurable
+            HasEnumerable = true,
+            Configurable = flags.Configurable,
+            HasConfigurable = true,
         };
     }
 

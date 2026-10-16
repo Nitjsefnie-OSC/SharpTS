@@ -31,6 +31,7 @@ public partial class RuntimeEmitter
         EmittedDescriptorStorageRuntime DescriptorStorage,
         MethodBuilder InvokeMethodValue,
         EmittedObjectPrototypeRuntime ObjectPrototypes,
+        EmittedReflectRuntime Reflect,
         FieldInfo UndefinedInstance,
         Type UndefinedType
     );
@@ -353,22 +354,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notSharpTSArrayLengthLabel);
-        // ECMA-262: `[].constructor === Array`. Mirror the list branch.
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "constructor");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        var notTSArrayCtorLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, notTSArrayCtorLabel);
-        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(notTSArrayCtorLabel);
         // Numeric-string index — same purpose as the list branch above:
         // proto-chain walks (`f.__proto__ === [1,2,3]; f[0]`) bottom out here
         // when the prototype is a $Array. Without this, GetListProperty returns
         // null for any digit-string name and the array element is invisible.
         var tsArrIdxLocal = il.DeclareLocal(_types.Int32);
         var tsArrayPrototypeFallback = il.DefineLabel();
+        var readArrayPrototype = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloca, tsArrIdxLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
@@ -400,14 +392,45 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetGetMethod()!);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(tsArrayNoDescriptorFallback);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, objectRead.Property);
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Br, readArrayPrototype);
         il.MarkLabel(tsArrayIndexPresent);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(tsArrNotIndexLabel);
+
+        // An explicit prototype replaces the inherited Array surface while
+        // leaving the own exotic length/index slots above intact.
+        var defaultArrayPrototype = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.HasPrototypeEntry);
+        il.Emit(OpCodes.Brfalse, defaultArrayPrototype);
+        il.MarkLabel(readArrayPrototype);
+        var selectedPrototype = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, selectedPrototype);
+        var hasSelectedPrototype = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, selectedPrototype);
+        il.Emit(OpCodes.Brtrue, hasSelectedPrototype);
+        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(hasSelectedPrototype);
+        il.Emit(OpCodes.Ldloc, selectedPrototype);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.Reflect.Get);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(defaultArrayPrototype);
+
+        // ECMA-262: `[].constructor === Array`. Mirror the list branch.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        var notTSArrayCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notTSArrayCtorLabel);
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSArrayCtorLabel);
         // For other properties on $Array (method names like push/pop/sort/etc.),
         // reuse GetListProperty — it returns the $BoundArrayMethod wrapper, and
         // $Array IS a List<object?> by inheritance, so the cast works.
@@ -1335,6 +1358,43 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
         var foundLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, foundLabel);
+
+        // Alias/value construction returns the same native controller carrier
+        // as direct construction. Expose its computed surface for any-typed
+        // receivers, after ordinary own properties have had precedence.
+        if (inputs.Abort is not null)
+        {
+            var notControllerProperty = il.DefineLabel();
+            var controllerProperty = il.DefineLabel();
+            var controllerAbort = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "signal");
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, controllerProperty);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "abort");
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, notControllerProperty);
+            il.MarkLabel(controllerProperty);
+            il.Emit(OpCodes.Ldloc, dictLocal);
+            il.Emit(OpCodes.Ldstr, "_signal");
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
+            il.Emit(OpCodes.Brfalse, notControllerProperty);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "abort");
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, controllerAbort);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, inputs.Abort.ControllerGetSignal);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(controllerAbort);
+            _types.EmitLoadMethodInfo(il, inputs.Abort.ControllerAbort);
+            il.Emit(OpCodes.Ldstr, "abort");
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Call, inputs.TSFunctionGetOrCreate);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notControllerProperty);
+        }
 
         // $AbortSignal dict surface (#224, #985): the properties "aborted"/"reason"/
         // "onabort" AND the methods "addEventListener"/"removeEventListener"/

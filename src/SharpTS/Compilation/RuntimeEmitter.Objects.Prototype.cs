@@ -41,6 +41,8 @@ public partial class RuntimeEmitter
         MethodBuilder GetProperty,
         Type IHasFieldsInterface,
         MethodBuilder InvokeMethodUnwrapped,
+        IReadOnlyList<Type> NativeObjectTypes,
+        IReadOnlyList<Type> NativeFunctionTypes,
         EmittedNumberRuntime Numbers,
         EmittedObjectStateRuntime ObjectState,
         EmittedObjectStorageRuntime ObjectStorage,
@@ -53,6 +55,8 @@ public partial class RuntimeEmitter
     );
 
     private readonly record struct ObjectSetPrototypeOfInputs(
+        EmittedArrayStorageRuntime ArrayStorage,
+        EmittedClassPrototypeRuntime ClassPrototypes,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
         MethodBuilder GetProperty,
@@ -1011,7 +1015,113 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notStrForProtoLabel);
 
-        // Not found in either: return null
+        // These native carriers have not materialized their intermediate
+        // intrinsic prototype objects yet. Preserve their known Object or
+        // Function ancestry without treating every missing prototype as an
+        // Object link. Explicit entries and Proxy trap results returned above.
+        void EmitNativePrototypeFallback(IReadOnlyList<Type> carriers,
+            MethodBuilder? populate, FieldBuilder prototype)
+        {
+            foreach (var carrier in carriers)
+            {
+                var next = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Isinst, carrier);
+                il.Emit(OpCodes.Brfalse, next);
+                if (populate is not null)
+                    il.Emit(OpCodes.Call, populate);
+                il.Emit(OpCodes.Ldsfld, prototype);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(next);
+            }
+        }
+        EmitNativePrototypeFallback(inputs.NativeFunctionTypes,
+            inputs.FunctionPrototypePopulateMethod, inputs.FunctionPrototypeField);
+        EmitNativePrototypeFallback(inputs.NativeObjectTypes,
+            null, objectPrototypes.Prototype);
+
+        // Some optional carriers are defined after this body, or are supplied
+        // through the soft SharpTS runtime boundary (Intl). Match only those
+        // known native classes, including their subclasses, without embedding
+        // a SharpTS.dll type reference in an otherwise standalone assembly.
+        var nativeType = il.DeclareLocal(_types.Type);
+        var nativeName = il.DeclareLocal(_types.String);
+        var nativeTypeLoop = il.DefineLabel();
+        var nativeObjectFound = il.DefineLabel();
+        var noNativeObject = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, nativeType);
+        il.MarkLabel(nativeTypeLoop);
+        il.Emit(OpCodes.Ldloc, nativeType);
+        il.Emit(OpCodes.Brfalse, noNativeObject);
+        il.Emit(OpCodes.Ldloc, nativeType);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "FullName").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, nativeName);
+        // Mirror the families that emit these carriers. Hosted programs can
+        // also receive native values from their host, so retain every family.
+        List<string> nativeTypeNames =
+        [
+            "$MessageChannel", "SharpTS.Runtime.Types.SharpTSMessageChannel",
+            "SharpTS.Runtime.Types.SharpTSBlob",
+            "SharpTS.Runtime.Types.SharpTSEnum", "SharpTS.Runtime.Types.SharpTSConstEnumValues"
+        ];
+        if (_emitHosted || _features.UsesIntl)
+            nativeTypeNames.AddRange([
+                "SharpTS.Runtime.Types.SharpTSIntlFormatterBase", "SharpTS.Runtime.Types.SharpTSIntlSegments"
+            ]);
+        if (_emitHosted || _features.UsesWebStreams)
+            nativeTypeNames.AddRange([
+                "$ReadableStream", "$ReadableStreamDefaultController", "$ReadableStreamDefaultReader",
+                "$WritableStream", "$WritableStreamDefaultController", "$WritableStreamDefaultWriter",
+                "$TransformStream", "$TransformSinkHolder", "$CountQueuingStrategy", "$ByteLengthQueuingStrategy",
+                "SharpTS.Runtime.Types.SharpTSReadableStream", "SharpTS.Runtime.Types.SharpTSReadableStreamDefaultController",
+                "SharpTS.Runtime.Types.SharpTSReadableStreamDefaultReader", "SharpTS.Runtime.Types.SharpTSWritableStream",
+                "SharpTS.Runtime.Types.SharpTSWritableStreamDefaultController", "SharpTS.Runtime.Types.SharpTSWritableStreamDefaultWriter",
+                "SharpTS.Runtime.Types.SharpTSTransformStream", "SharpTS.Runtime.Types.SharpTSTransformStreamDefaultController",
+                "SharpTS.Runtime.Types.SharpTSQueuingStrategy"
+            ]);
+        if (_emitHosted || _features.UsesHttp)
+            nativeTypeNames.AddRange([
+                "$Headers", "$Request", "$Response", "$FetchResponse",
+                "SharpTS.Runtime.Types.SharpTSHeaders", "SharpTS.Runtime.Types.SharpTSRequest",
+                "SharpTS.Runtime.Types.SharpTSResponse", "SharpTS.Runtime.Types.SharpTSFetchResponse",
+                "SharpTS.Runtime.Types.SharpTSCookieJar"
+            ]);
+        if (_emitHosted || _features.UsesAsyncLocalStorage)
+            nativeTypeNames.AddRange([
+                "$AsyncLocalStorage", "SharpTS.Runtime.Types.SharpTSAsyncLocalStorage"
+            ]);
+        if (_emitHosted || _features.UsesNet)
+            nativeTypeNames.AddRange(["$BlockList", "SharpTS.Runtime.Types.SharpTSBlockList"]);
+        if (_emitHosted || _features.UsesCrypto)
+            nativeTypeNames.AddRange([
+                "$Hash", "$Hmac", "$Cipher", "$Decipher", "$DiffieHellman", "$ECDH",
+                "$Sign", "$Verify", "$KeyObject", "$CryptoKey", "$X509Certificate", "$WebCrypto", "$SubtleCrypto",
+                "SharpTS.Runtime.Types.SharpTSHash", "SharpTS.Runtime.Types.SharpTSHmac", "SharpTS.Runtime.Types.SharpTSAesBase",
+                "SharpTS.Runtime.Types.SharpTSDiffieHellman", "SharpTS.Runtime.Types.SharpTSECDH", "SharpTS.Runtime.Types.SharpTSSign",
+                "SharpTS.Runtime.Types.SharpTSVerify", "SharpTS.Runtime.Types.SharpTSKeyObject", "SharpTS.Runtime.Types.SharpTSCryptoKey",
+                "SharpTS.Runtime.Types.SharpTSX509Certificate", "SharpTS.Runtime.Types.SharpTSWebCrypto", "SharpTS.Runtime.Types.SharpTSSubtleCrypto"
+            ]);
+        if (_emitHosted || _features.UsesFs)
+            nativeTypeNames.AddRange(["$Dir", "$Dirent", "SharpTS.Runtime.Types.SharpTSDir"]);
+        foreach (var nativeTypeName in nativeTypeNames)
+        {
+            il.Emit(OpCodes.Ldloc, nativeName);
+            il.Emit(OpCodes.Ldstr, nativeTypeName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, nativeObjectFound);
+        }
+        il.Emit(OpCodes.Ldloc, nativeType);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, nativeType);
+        il.Emit(OpCodes.Br, nativeTypeLoop);
+        il.MarkLabel(nativeObjectFound);
+        il.Emit(OpCodes.Ldsfld, objectPrototypes.Prototype);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(noNativeObject);
+
+        // No known default: return null.
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
@@ -1219,6 +1329,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.ObjectStorage.Type);
         il.Emit(OpCodes.Brtrue, notClassInstanceLabel);
+        // Array subclass instances retain their exotic storage while their
+        // ordinary prototype can change.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.ArrayStorage.Type);
+        il.Emit(OpCodes.Brtrue, notClassInstanceLabel);
+        // A declaration's stable prototype uses the same CLR carrier as its
+        // instances, but has an ordinary mutable internal prototype of its own.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.Get);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Beq, notClassInstanceLabel);
         // It's a class instance - throw TypeError
         GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor, "Cannot set prototype of class instance");
         il.MarkLabel(notClassInstanceLabel);
@@ -1245,7 +1367,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, cycleCursor);
         il.Emit(OpCodes.Brfalse, cycleDone);
         il.Emit(OpCodes.Ldloc, cycleCursor);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.NormalizePrototype);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.NormalizePrototype);
         var noCycleAtCursor = il.DefineLabel();
         il.Emit(OpCodes.Bne_Un, noCycleAtCursor);
         GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
@@ -1280,6 +1404,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, inputs.DescriptorStorage.SetPrototype);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.UpdateParent);
 
         // Also store in local prototype table for backward compatibility
         il.Emit(OpCodes.Ldsfld, prototypeStoreField);

@@ -1129,8 +1129,8 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// True when <paramref name="value"/> is a guest Object (non-primitive) —
-    /// the test underlying <c>x instanceof Object</c>. The primitives (undefined,
+    /// True when <paramref name="value"/> is a guest Object (non-primitive).
+    /// The primitives (undefined,
     /// null, boolean, number, string, symbol, bigint) are the only values that
     /// are NOT objects; callables/arrays/typed-arrays/namespaces are all objects.
     /// </summary>
@@ -1138,7 +1138,7 @@ public partial class Interpreter
     {
         null => false,                                   // `null instanceof Object` === false
         SharpTSUndefined => false,
-        bool or double or string => false,
+        bool or double or int or long or float or decimal or string => false,
         SharpTSSymbol or SharpTSBigInt or System.Numerics.BigInteger => false,
         _ => true,
     };
@@ -1184,13 +1184,11 @@ public partial class Interpreter
 
         if (!IsJsObject(left)) return false;
 
-        // `x instanceof Object` — the `Object` global resolves to the namespace
-        // singleton (no SharpTSClass on the RHS), so brand-check structurally:
-        // every non-primitive guest value is an Object. Mirrors ECMA-262
-        // OrdinaryHasInstance reaching %Object.prototype% at the top of every
-        // ordinary object's prototype chain (#334).
-        if (right is SharpTSObjectNamespace)
-            return IsJsObject(left);
+        // Namespace-style constructors still require their prototype to occur
+        // in the candidate's actual chain. A null-rooted object or callable
+        // does not inherit Object.prototype or Function.prototype.
+        if (right is SharpTSObjectNamespace or SharpTSFunctionGlobal)
+            return InstanceOfByPrototype(left, (ISharpTSCallable)right);
 
         // `x instanceof Number/String/Boolean` — the RHS resolves to the namespace
         // singleton. A boxed wrapper produced by `new Number/String/Boolean` has
@@ -1204,13 +1202,6 @@ public partial class Interpreter
             return IsBoxedPrimitiveOfType(left, "Boolean");
         if (right is SharpTSGlobalFunction { Name: BuiltInNames.BigInt })
             return IsBoxedPrimitiveOfType(left, "BigInt");
-
-        // The Function global is represented by a namespace-style callable
-        // rather than SharpTSBuiltInConstructor. OrdinaryHasInstance for it
-        // accepts every callable guest value, including declarations,
-        // expressions/arrows, classes, and native built-ins.
-        if (right is SharpTSFunctionGlobal)
-            return left is ISharpTSCallable;
 
         // Bare-value constructors for the built-in binary types (ArrayBuffer,
         // SharedArrayBuffer, DataView, typed arrays) are plain ISharpTSCallables,
@@ -1292,6 +1283,8 @@ public partial class Interpreter
         // Standard path: SharpTSInstance — walk the class chain
         if (left is SharpTSInstance instance)
         {
+            if (instance.UsesDynamicPrototypeChain)
+                return InstanceOfByPrototype(left, targetClass);
             SharpTSClass? current = instance.GetClass();
             while (current != null)
             {

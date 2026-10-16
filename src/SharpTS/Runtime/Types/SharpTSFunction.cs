@@ -67,10 +67,12 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     // match the runtime chain and outer-variable captures would be off-by-one.
     private readonly object? _boundThis;
     private readonly bool _hasBoundThis;
+    private bool _hasInstanceReceiver;
     // Functions are ordinary objects for their user-defined string properties.
     // Reuse the descriptor-aware object store for assignment, accessors, and
     // Object.defineProperty invariants.
     private SharpTSObject _properties = new([]);
+    internal SharpTSObject OwnPropertyStorage => _properties;
 
     public SharpTSFunction(Stmt.Function declaration, RuntimeEnvironment closure)
         : this(declaration, closure, isConstructible: true)
@@ -139,56 +141,26 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     internal void PreventExtensions() => _properties.PreventExtensions();
     internal bool IsExtensible => _properties.IsExtensible;
 
-    // JS functions are objects — they accept symbol-keyed property
-    // assignment too (`fn[Symbol.species] = ...`). Without per-instance
-    // symbol storage, the spec patterns that install Symbol.species on
-    // a constructor function (test262 RegExp Symbol.split species-* tests)
-    // can't round-trip the value.
-    private Dictionary<SharpTSSymbol, object?>? _symbolProperties;
-
     /// <summary>Sets a symbol-keyed property on this function.</summary>
     public void SetBySymbol(SharpTSSymbol key, object? value)
-    {
-        _symbolProperties ??= [];
-        _symbolProperties[key] = value;
-    }
+        => _properties.SetBySymbol(key, value);
+
+    /// <summary>Applies an explicit Symbol definition without invoking assignment setters.</summary>
+    internal bool DefineSymbolProperty(SharpTSSymbol key, SharpTSPropertyDescriptor descriptor)
+        => _properties.DefineProperty(key, descriptor);
 
     /// <summary>Reads a symbol-keyed property; returns true and the value
     /// when one is registered. Used by SpeciesConstructor lookup, etc.</summary>
     public bool TryGetSymbolProperty(SharpTSSymbol key, out object? value)
-    {
-        if (_symbolProperties != null && _symbolProperties.TryGetValue(key, out value))
-            return true;
-        value = null;
-        return false;
-    }
-
-    // Symbol-keyed accessor pairs from `Object.defineProperty(fn, sym, {get, set})`.
-    // Test262 RegExp Symbol.split/.../species-ctor-species-get-err.js installs a
-    // throwing getter on Symbol.species via this path; the spec-driven
-    // SpeciesConstructor lookup must invoke that getter and propagate the throw.
-    private Dictionary<SharpTSSymbol, (ISharpTSCallable? Get, ISharpTSCallable? Set)>? _symbolAccessors;
+        => _properties.TryGetSymbolDataProperty(key, out value);
 
     /// <summary>Installs a symbol-keyed accessor pair from defineProperty.</summary>
     public void DefineSymbolAccessor(SharpTSSymbol key, ISharpTSCallable? getter, ISharpTSCallable? setter)
-    {
-        _symbolAccessors ??= [];
-        _symbolAccessors[key] = (getter, setter);
-    }
+        => _properties.DefineSymbolAccessor(key, getter, setter);
 
     /// <summary>Returns the accessor pair for the symbol if defined.</summary>
     public bool TryGetSymbolAccessor(SharpTSSymbol key, out ISharpTSCallable? getter, out ISharpTSCallable? setter)
-    {
-        if (_symbolAccessors != null && _symbolAccessors.TryGetValue(key, out var pair))
-        {
-            getter = pair.Get;
-            setter = pair.Set;
-            return true;
-        }
-        getter = null;
-        setter = null;
-        return false;
-    }
+        => _properties.TryGetSymbolAccessor(key, out getter, out setter);
 
     /// <summary>Removes a JS-object property from this function.</summary>
     public bool DeleteProperty(string name)
@@ -229,7 +201,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     public int Arity() => _arity;
 
     internal bool IsStrict
-        => _declaration.IsPrivate || _declaration.IsStatic || _closure.IsStrictMode
+        => PrivateOwner is not null || _declaration.IsPrivate || _declaration.IsStatic || _closure.IsStrictMode
             || (_declaration.Body is not null
                 && Parsing.DirectivePrologue.HasUseStrict(_declaration.Body));
 
@@ -243,6 +215,9 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     private object? CallCore(Interpreter interpreter, List<object?> arguments, RuntimeValue newTarget,
         ClassConstructionFrame? constructionFrame = null)
     {
+        if (PrivateOwner is not null && !_declaration.IsStatic && !_hasInstanceReceiver)
+            return BindInstanceReceiver(_hasBoundThis ? _boundThis : SharpTSUndefined.Instance)
+                .CallCore(interpreter, arguments, newTarget, constructionFrame);
         if (_declaration.Body == null)
         {
             throw new Exception($"Cannot invoke abstract method '{_declaration.Name.Lexeme}'.");
@@ -348,17 +323,20 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     internal SharpTSFunction BindInstanceReceiver(object? instance)
     {
         if (_declaration.IsStatic) return BindThis(instance);
-        RuntimeEnvironment environment = new(_closure);
+        RuntimeEnvironment closure = _hasInstanceReceiver ? _closure.Enclosing! : _closure;
+        RuntimeEnvironment environment = new(closure);
         environment.Define("this", instance);
 
         // Propagate 'super' from closure if present (needed for methods in derived classes)
         // Use TryGet to avoid exceptions - 'super' may not be in scope for non-derived classes
-        if (_closure.TryGet("super", out var superclass) && superclass != null)
+        if (closure.TryGet("super", out var superclass) && superclass != null)
         {
             environment.Define("super", superclass);
         }
 
-        return ShareObjectState(new SharpTSFunction(_declaration, environment, IsConstructible));
+        var bound = ShareObjectState(new SharpTSFunction(_declaration, environment, IsConstructible));
+        bound._hasInstanceReceiver = true;
+        return bound;
     }
 
     /// <summary>
@@ -389,12 +367,9 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
 
     private SharpTSFunction ShareObjectState(SharpTSFunction bound)
     {
-        _symbolProperties ??= [];
-        _symbolAccessors ??= [];
         bound._properties = _properties;
         bound.PrivateOwner = PrivateOwner;
-        bound._symbolProperties = _symbolProperties;
-        bound._symbolAccessors = _symbolAccessors;
+        bound._hasInstanceReceiver = _hasInstanceReceiver;
         return bound;
     }
 
@@ -403,6 +378,9 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     /// </summary>
     public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
+        if (PrivateOwner is not null && !_declaration.IsStatic && !_hasInstanceReceiver)
+            return BindInstanceReceiver(_hasBoundThis ? _boundThis : SharpTSUndefined.Instance)
+                .CallV2(interpreter, arguments);
         if (_declaration.Body == null)
         {
             throw new Exception($"Cannot invoke abstract method '{_declaration.Name.Lexeme}'.");
@@ -494,6 +472,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
     // Arrow/function expressions are ordinary objects for user-defined string
     // properties, including descriptor attributes and accessors.
     private SharpTSObject _properties;
+    internal SharpTSObject OwnPropertyStorage => _properties;
 
     /// <summary>
     /// Indicates whether this function has its own 'this' binding (function expressions)
@@ -535,8 +514,6 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
         _boundThis = receiver;
         _hasBoundThis = true;
         _properties = source._properties;
-        _symbolProperties = source._symbolProperties ??= [];
-        _symbolAccessors = source._symbolAccessors ??= [];
     }
 
     private void InitializeIntrinsicProperties(string name)
@@ -582,51 +559,26 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
     internal void PreventExtensions() => _properties.PreventExtensions();
     internal bool IsExtensible => _properties.IsExtensible;
 
-    // Symbol-keyed property storage — same rationale as SharpTSFunction
-    // above (test262 species-* patterns install Symbol.species on a
-    // constructor expression).
-    private Dictionary<SharpTSSymbol, object?>? _symbolProperties;
-
     /// <summary>Sets a symbol-keyed property on this arrow function.</summary>
     public void SetBySymbol(SharpTSSymbol key, object? value)
-    {
-        _symbolProperties ??= [];
-        _symbolProperties[key] = value;
-    }
+        => _properties.SetBySymbol(key, value);
+
+    /// <summary>Applies an explicit Symbol definition without invoking assignment setters.</summary>
+    internal bool DefineSymbolProperty(SharpTSSymbol key, SharpTSPropertyDescriptor descriptor)
+        => _properties.DefineProperty(key, descriptor);
 
     /// <summary>Reads a symbol-keyed property; returns true and the value
     /// when one is registered.</summary>
     public bool TryGetSymbolProperty(SharpTSSymbol key, out object? value)
-    {
-        if (_symbolProperties != null && _symbolProperties.TryGetValue(key, out value))
-            return true;
-        value = null;
-        return false;
-    }
-
-    // Symbol-keyed accessor pairs (mirrors SharpTSFunction).
-    private Dictionary<SharpTSSymbol, (ISharpTSCallable? Get, ISharpTSCallable? Set)>? _symbolAccessors;
+        => _properties.TryGetSymbolDataProperty(key, out value);
 
     /// <summary>Installs a symbol-keyed accessor pair from defineProperty.</summary>
     public void DefineSymbolAccessor(SharpTSSymbol key, ISharpTSCallable? getter, ISharpTSCallable? setter)
-    {
-        _symbolAccessors ??= [];
-        _symbolAccessors[key] = (getter, setter);
-    }
+        => _properties.DefineSymbolAccessor(key, getter, setter);
 
     /// <summary>Returns the accessor pair for the symbol if defined.</summary>
     public bool TryGetSymbolAccessor(SharpTSSymbol key, out ISharpTSCallable? getter, out ISharpTSCallable? setter)
-    {
-        if (_symbolAccessors != null && _symbolAccessors.TryGetValue(key, out var pair))
-        {
-            getter = pair.Get;
-            setter = pair.Set;
-            return true;
-        }
-        getter = null;
-        setter = null;
-        return false;
-    }
+        => _properties.TryGetSymbolAccessor(key, out getter, out setter);
 
     /// <summary>Removes a JS-object property from this arrow function.</summary>
     public bool DeleteProperty(string name)

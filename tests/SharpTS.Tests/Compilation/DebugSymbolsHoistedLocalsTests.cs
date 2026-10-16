@@ -286,7 +286,15 @@ public partial class DebugSymbolsTests
             """;
         CompilationArtifacts artifacts = CompileTypeScript(source, emitDebugSymbols: true);
         IReadOnlyList<HoistedStateMachineScopes> machines = ReadAndValidateHoistedScopes(artifacts);
-        Assert.Equal(4, machines.Count);
+        // Each declared method has a typed body and a canonical guest-receiver
+        // body. Both must map their state machine to its actual kickoff owner.
+        Assert.Equal(7, machines.Count);
+        using var pe = new PEReader(new MemoryStream(artifacts.Assembly, writable: false));
+        MetadataReader metadata = pe.GetMetadataReader();
+        string KickoffOwner(HoistedStateMachineScopes machine) => metadata.GetString(
+            metadata.GetTypeDefinition(metadata.GetMethodDefinition(machine.Kickoff).GetDeclaringType()).Name);
+        Assert.Equal(3, machines.Count(machine => KickoffOwner(machine) == "Processor"));
+        Assert.Equal(3, machines.Count(machine => KickoffOwner(machine).StartsWith("$MethodMember_Processor_")));
         foreach (HoistedStateMachineScopes machine in machines)
         {
             AssertStateMachineIdentity(artifacts, machine);

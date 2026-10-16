@@ -395,8 +395,7 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldstr, "constructor");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, notCtorLabel);
-        il.Emit(OpCodes.Ldtoken, classType);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        EmitCanonicalClassConstructorValue(il, classType);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notCtorLabel);
     }
@@ -543,6 +542,13 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Ldstr, methodName);
                 il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
                 il.Emit(OpCodes.Brfalse, nextLabel);
+
+                if (TryEmitDeclaredInstanceMethodValue(il, typeBuilder, methodBuilder))
+                {
+                    il.Emit(OpCodes.Ret);
+                    il.MarkLabel(nextLabel);
+                    continue;
+                }
 
                 // Load 'this' for target
                 il.Emit(OpCodes.Ldarg_0);
@@ -1147,6 +1153,38 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldloc, prototypeLocal);
         il.Emit(OpCodes.Ceq);
         il.Emit(OpCodes.Brtrue, skipLabel);
+        // An alternate allocation prototype replaces the nominal CLR method
+        // chain. Own fields were checked above; an inherited miss must remain
+        // a miss rather than falling back to methods from the allocated type.
+        var nominalPrototype = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _runtime.DescriptorStorage.HasPrototypeEntry);
+        il.Emit(OpCodes.Brfalse, nominalPrototype);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Call, _runtime.ClassPrototypes.Get);
+        il.Emit(OpCodes.Ldloc, prototypeLocal);
+        il.Emit(OpCodes.Beq, nominalPrototype);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, prototypeLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _runtime.ClassDefinitions.ReadPrototypeProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(nominalPrototype);
+        if (_features?.UsesClassPrototypeMutation != false)
+        {
+            var unchangedChain = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+            il.Emit(OpCodes.Call, _runtime.ClassPrototypes.HasModifiedChain);
+            il.Emit(OpCodes.Brfalse, unchangedChain);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, prototypeLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, _runtime.ClassDefinitions.ReadPrototypeProperty);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(unchangedChain);
+        }
         var noDescriptor = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _runtime.ClassDefinitions.InstanceInterface);

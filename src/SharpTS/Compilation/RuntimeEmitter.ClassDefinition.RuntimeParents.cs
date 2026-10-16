@@ -139,9 +139,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, definitions.GetParent); il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Call, runtime.Reflect.Get); il.Emit(OpCodes.Ret);
         il.MarkLabel(instanceSuper);
-        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldarg_0);
+        var superBase = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "prototype"); il.Emit(OpCodes.Call, runtime.ObjectRead.Property);
         il.Emit(OpCodes.Call, runtime.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, superBase);
+        var hasSuperBase = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, superBase); il.Emit(OpCodes.Brtrue, hasSuperBase);
+        GuestErrorEmitter.ThrowError(il, runtime.Errors.CreateException, runtime.Errors.TypeErrorConstructor,
+            "Cannot read properties of null super prototype");
+        il.MarkLabel(hasSuperBase);
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldloc, superBase);
         il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Call, definitions.ReadPrototypeProperty); il.Emit(OpCodes.Ret);
     }
 }

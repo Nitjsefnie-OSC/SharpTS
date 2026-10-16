@@ -204,13 +204,14 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
         // symbol-keyed dispatch instead of being stringified.
         if (args[0] is SharpTSSymbol sym)
         {
+            if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var properties))
+                return properties.HasSymbolProperty(sym);
             return target switch
             {
                 SharpTSProxy proxy when interpreter != null
                     => proxy.TrapGetOwnPropertyDescriptor(sym, interpreter)
                         is not (null or SharpTSUndefined),
                 SharpTSObject obj => obj.HasSymbolProperty(sym),
-                ISharpTSFunctionObject function => function.OwnProperties.GetOwnPropertyDescriptor(sym) is not null,
                 SharpTSInstance inst => inst.HasSymbolProperty(sym),
                 SharpTSClass klass => klass.GetOwnStaticSymbolPropertyDescriptor(sym) is not null,
                 SharpTSClassPrototype prototype => prototype.GetOwnPropertyDescriptor(sym) is not null,
@@ -438,6 +439,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
         if (args.Count == 0) return false;
         if (args[0] is SharpTSSymbol symbol)
         {
+            if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var properties))
+                return properties.GetOwnPropertyDescriptor(symbol) is { Enumerable: true };
             return target switch
             {
                 SharpTSProxy proxy when interpreter != null
@@ -447,8 +450,6 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                         && SharpTSPropertyDescriptor.FromAnyObject(descriptor).Enumerable,
                 SharpTSObject obj
                     => obj.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
-                ISharpTSFunctionObject function
-                    => function.OwnProperties.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
                 SharpTSInstance instance => instance.HasSymbolProperty(symbol),
                 SharpTSMath math
                     => math.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },

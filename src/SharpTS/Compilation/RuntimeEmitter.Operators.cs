@@ -27,15 +27,19 @@ public partial class RuntimeEmitter
     );
 
     private readonly record struct InstanceOfInputs(
+        EmittedArrayOperationsRuntime ArrayOperations,
         EmittedClassDefinitionRuntime ClassDefinitions,
         EmittedClassPrototypeRuntime ClassPrototypes,
         EmittedAbortRuntime? Abort,
         EmittedBooleanRuntime Booleans,
         EmittedBoxedPrimitiveRuntime BoxedPrimitives,
+        EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
         EmittedFunctionBindingRuntime FunctionBindings,
+        EmittedFunctionPrototypeRuntime FunctionPrototypes,
         MethodBuilder GetFunctionMethod,
         MethodBuilder InvokeMethodValue,
+        Type IHasFieldsInterface,
         EmittedObjectPrototypeRuntime ObjectPrototypes,
         EmittedObjectReadRuntime ObjectRead,
         EmittedPromiseRuntime? Promise,
@@ -952,6 +956,98 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, _types.Type);
         il.Emit(OpCodes.Stloc, classTypeLocal);
 
+        // Intrinsic constructors use their actual prototype objects, not CLR
+        // carrier assignability. Reuse the ordinary chain walk above so null
+        // roots, explicit overrides and Proxy [[GetPrototypeOf]] participate.
+        var notObjectClassLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Bne_Un, notObjectClassLabel);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.Populate);
+        il.Emit(OpCodes.Ldsfld, inputs.ObjectPrototypes.Prototype);
+        il.Emit(OpCodes.Stloc, targetProtoLocal);
+        il.Emit(OpCodes.Br, validPrototypeLabel);
+        il.MarkLabel(notObjectClassLabel);
+
+        var notFunctionClassLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Ldtoken, inputs.TSFunctionType);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Bne_Un, notFunctionClassLabel);
+        il.Emit(OpCodes.Call, inputs.FunctionPrototypes.Populate);
+        il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypes.Prototype);
+        il.Emit(OpCodes.Stloc, targetProtoLocal);
+        il.Emit(OpCodes.Br, validPrototypeLabel);
+        il.MarkLabel(notFunctionClassLabel);
+
+        // Array exotic storage does not imply Array.prototype membership
+        // after an explicit instance prototype change.
+        var notArrayClassLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Bne_Un, notArrayClassLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.HasPrototypeEntry);
+        il.Emit(OpCodes.Brfalse, notArrayClassLabel);
+        il.Emit(OpCodes.Call, inputs.ArrayOperations.PrototypePopulateMethod);
+        il.Emit(OpCodes.Ldsfld, inputs.ArrayOperations.PrototypeField);
+        il.Emit(OpCodes.Stloc, targetProtoLocal);
+        il.Emit(OpCodes.Br, validPrototypeLabel);
+        il.MarkLabel(notArrayClassLabel);
+
+        // User-class membership follows the guest chain, including changes to
+        // a class prototype's parent when the instance itself was not mutated.
+        // Failure to find the prototype is terminal for user classes.
+        var nominalClassInstance = il.DefineLabel();
+        il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+        il.Emit(OpCodes.Brfalse, nominalClassInstance);
+        var allocationPrototype = il.DeclareLocal(_types.Object);
+        var allocationCandidate = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.Get);
+        il.Emit(OpCodes.Stloc, allocationPrototype);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, allocationCandidate);
+        var allocationWalk = il.DefineLabel();
+        il.MarkLabel(allocationWalk);
+        il.Emit(OpCodes.Ldloc, allocationCandidate);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, allocationCandidate);
+        il.Emit(OpCodes.Ldloc, allocationCandidate);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldloc, allocationCandidate);
+        il.Emit(OpCodes.Ldloc, allocationPrototype);
+        il.Emit(OpCodes.Beq, trueLabel);
+        // Closed CLR generic instantiations have distinct storage prototypes,
+        // but each is the prototype of the same erased source constructor.
+        var nextAllocationPrototype = il.DefineLabel();
+        var candidateType = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsGenericTypeDefinition")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, nextAllocationPrototype);
+        il.Emit(OpCodes.Ldloc, allocationCandidate);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, candidateType);
+        il.Emit(OpCodes.Ldloc, candidateType);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsGenericType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, nextAllocationPrototype);
+        il.Emit(OpCodes.Ldloc, candidateType);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Bne_Un, nextAllocationPrototype);
+        il.Emit(OpCodes.Ldloc, candidateType);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.Get);
+        il.Emit(OpCodes.Ldloc, allocationCandidate);
+        il.Emit(OpCodes.Beq, trueLabel);
+        il.MarkLabel(nextAllocationPrototype);
+        il.Emit(OpCodes.Br, allocationWalk);
+        il.MarkLabel(nominalClassInstance);
+
         // A guest class-definition receiver can inherit a selected user template
         // without CLR assignability. Consult its ordinary prototype chain first.
         var staticReceiver = il.DefineLabel();
@@ -972,36 +1068,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, selectedWalk);
         il.MarkLabel(staticReceiver);
 
-        // `x instanceof Object` — the bare `Object` identifier resolves to the
-        // System.Object Type token (see RuntimeEmitter.GlobalThis.cs), so apply
-        // JS Object semantics rather than the IsAssignableFrom fallback below:
-        // every .NET type is assignable to System.Object, so that fallback would
-        // wrongly say true for boxed primitives (double/bool/string), BigInteger,
-        // $TSSymbol, and the undefined sentinel. Per ECMA-262 OrdinaryHasInstance
-        // a primitive O short-circuits to false — so a guest value is an Object
-        // iff it is non-primitive (mirrors interp's IsJsObject, #342). Boxed
-        // primitive wrappers (`new Number(5)`) are $Object instances, not boxed
-        // doubles, so they correctly fall through to true.
-        var notObjectClassLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, classTypeLocal);
-        il.Emit(OpCodes.Ldtoken, _types.Object);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
-        il.Emit(OpCodes.Bne_Un, notObjectClassLabel);
-        void PrimitiveToFalse(Type primType)
-        {
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Isinst, primType);
-            il.Emit(OpCodes.Brtrue, falseLabel);
-        }
-        PrimitiveToFalse(_types.Boolean);
-        PrimitiveToFalse(_types.Double);
-        PrimitiveToFalse(_types.String);
-        PrimitiveToFalse(_types.BigInteger);
-        PrimitiveToFalse(inputs.Symbols.Type);
-        PrimitiveToFalse(inputs.UndefinedType);
-        il.Emit(OpCodes.Br, trueLabel);
-        il.MarkLabel(notObjectClassLabel);
-
         // When classType is one of the primitive wrapper types (Number/String/
         // Boolean, which lower to the System.Double/String/Boolean Type tokens),
         // the decision is TERMINAL: per ECMA-262 OrdinaryHasInstance only a boxed
@@ -1010,7 +1076,7 @@ public partial class RuntimeEmitter
         // marker, else to false. Falling through to the IsAssignableFrom fallback
         // below would wrongly match a bare boxed double/string/bool, since e.g.
         // IsAssignableFrom(double, double) is true (#375). Mirrors the terminal
-        // `Object` branch above.
+        // intrinsic prototype-chain branches above.
         void CheckBoxed(Type primType, string typeTag)
         {
             var skip = il.DefineLabel();

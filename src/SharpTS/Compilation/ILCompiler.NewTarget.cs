@@ -75,7 +75,9 @@ public partial class ILCompiler
 
     private ConstructorBuilder DefineNewTargetConstructor(ConstructorBuilder entry, bool expression = false)
     {
-        if (_features?.UsesNewTarget != true) return entry;
+        // Reflect.construct supplies a distinct allocation constructor even
+        // when the source never reads the new.target meta-property.
+        if (_features?.UsesNewTarget != true && _features?.UsesReflect != true) return entry;
         if (_newTargetConstructors.TryGetValue(entry, out var existing)) return existing;
         var owner = (TypeBuilder)entry.DeclaringType!;
         var parameters = entry.GetParameters();
@@ -109,6 +111,47 @@ public partial class ILCompiler
     {
         if (context.NewTargetParameterIndex is { } index) context.IL.Emit(OpCodes.Ldarg, index);
         else context.IL.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
+    }
+
+    private void EmitConstructedClassPrototype(CompilationContext context)
+    {
+        if (_features?.UsesReflect != true || context.NewTargetParameterIndex is not { } argument)
+            return;
+
+        var il = context.IL;
+        var prototype = il.DeclareLocal(_types.Object);
+        var kind = il.DeclareLocal(_types.String);
+        var fallback = il.DefineLabel();
+        var install = il.DefineLabel();
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg, argument);
+        il.Emit(OpCodes.Isinst, _runtime.Sentinels.UndefinedType);
+        il.Emit(OpCodes.Brtrue, done);
+        il.Emit(OpCodes.Ldarg, argument);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, _runtime.ObjectRead.Property);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Brfalse, fallback);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Call, _runtime.Operators.TypeOf);
+        il.Emit(OpCodes.Stloc, kind);
+        foreach (var name in new[] { "object", "function" })
+        {
+            il.Emit(OpCodes.Ldloc, kind);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, install);
+        }
+        il.MarkLabel(fallback);
+        il.Emit(OpCodes.Call, _runtime.ObjectPrototypes.Populate);
+        il.Emit(OpCodes.Ldsfld, _runtime.ObjectPrototypes.Prototype);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.MarkLabel(install);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Call, _runtime.DescriptorStorage.SetPrototype);
+        il.MarkLabel(done);
     }
 
     private static bool ExpressionContainsLexicalNewTarget(Expr expression)

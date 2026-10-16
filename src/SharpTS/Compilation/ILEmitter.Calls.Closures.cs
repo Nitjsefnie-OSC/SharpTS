@@ -133,7 +133,7 @@ public partial class ILEmitter
                 }
                 else if (captureName == "this")
                 {
-                    IL.Emit(OpCodes.Ldarg_0);
+                    EmitThis();
                 }
                 else
                 {

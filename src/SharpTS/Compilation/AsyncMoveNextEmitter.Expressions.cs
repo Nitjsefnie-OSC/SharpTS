@@ -14,7 +14,7 @@ public partial class AsyncMoveNextEmitter
     protected override AsyncBuilderBase AsyncBuilder => _builder;
     protected override Label AwaitExitLabel => _endLabel;
     protected override int NextAwaitState() => _currentAwaitState++;
-    protected override void MarkAwaitResumeLabel(int stateNumber) => _il.MarkLabel(_stateLabels[stateNumber]);
+    protected override void MarkAwaitResumeLabelCore(int stateNumber) => _il.MarkLabel(_stateLabels[stateNumber]);
     protected override FieldBuilder AwaiterFieldForState(int stateNumber) => _builder.AwaiterFields[stateNumber];
     protected override FieldBuilder AsyncStateField => _builder.StateField;
     protected override FieldBuilder AsyncBuilderField => _builder.BuilderField;

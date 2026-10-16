@@ -20,6 +20,7 @@ public partial class RuntimeEmitter
         EmittedObjectPrototypeRuntime ObjectPrototypes,
         EmittedObjectStateRuntime ObjectState,
         EmittedObjectStorageRuntime ObjectStorage,
+        MethodBuilder ReflectGet,
         FieldInfo UndefinedInstance,
         Type UndefinedType
     );
@@ -75,11 +76,25 @@ public partial class RuntimeEmitter
         EmittedInvocationRuntime Invocation
     );
 
-    private void DefineBoundFunctionName(TypeBuilder runtimeType, EmittedFunctionBindingRuntime bindings)
+    private void DefineBoundFunctionMetadata(TypeBuilder runtimeType, EmittedFunctionBindingRuntime bindings)
     {
         bindings.CaptureName = runtimeType.DefineMethod(
             "CaptureBoundFunctionName", MethodAttributes.Assembly | MethodAttributes.Static,
             _types.String, [_types.Object]);
+        bindings.CapturePrototype = runtimeType.DefineMethod(
+            "CaptureBoundFunctionPrototype", MethodAttributes.Assembly | MethodAttributes.Static,
+            _types.Void, [_types.Object, _types.Object]);
+    }
+
+    private void EmitBoundFunctionPrototype(MethodBuilder capturePrototype,
+        EmittedObjectPrototypeRuntime prototypes, EmittedDescriptorStorageRuntime storage)
+    {
+        var il = capturePrototype.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, prototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Call, storage.SetPrototype);
+        il.Emit(OpCodes.Ret);
     }
 
     private void EmitBoundFunctionName(MethodBuilder captureName, MethodBuilder getFunctionProperty)
@@ -144,6 +159,9 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldarg_3);
         ctorIL.Emit(OpCodes.Stfld, boundArgsField);
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Call, functionBindings.CapturePrototype);
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldarg_1);
         ctorIL.Emit(OpCodes.Call, functionBindings.CaptureName);
@@ -328,6 +346,9 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldarg_3);
         ctorIL.Emit(OpCodes.Stfld, boundArgsField);
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldarg_1);
+        ctorIL.Emit(OpCodes.Call, functionBindings.CapturePrototype);
         ctorIL.Emit(OpCodes.Ldarg_0);
         ctorIL.Emit(OpCodes.Ldarg_1);
         ctorIL.Emit(OpCodes.Call, functionBindings.CaptureName);
@@ -825,6 +846,48 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(noOwnShadow);
+
+        // BoundFunctionCreate snapshots the target's actual internal prototype.
+        // Only name/length are synthesized own slots; every other property must
+        // follow that retained link, including an explicitly null prototype.
+        // Keep ordinary function lookup on its existing path (#2359).
+        var boundPrototypeLookup = il.DefineLabel();
+        var ordinaryFunctionLookup = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.FunctionBindings.BoundType);
+        il.Emit(OpCodes.Brtrue, boundPrototypeLookup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.FunctionBindings.AnyType);
+        il.Emit(OpCodes.Brfalse, ordinaryFunctionLookup);
+        il.MarkLabel(boundPrototypeLookup);
+        var boundMetadata = il.DefineLabel();
+        var inheritedBoundProperty = il.DefineLabel();
+        foreach (string metadata in new[] { "name", "length" })
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, metadata);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, boundMetadata);
+        }
+        il.Emit(OpCodes.Br, inheritedBoundProperty);
+        il.MarkLabel(boundMetadata);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+        il.Emit(OpCodes.Brfalse, ordinaryFunctionLookup);
+        il.MarkLabel(inheritedBoundProperty);
+        var boundPrototype = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, boundPrototype);
+        il.Emit(OpCodes.Ldloc, boundPrototype);
+        il.Emit(OpCodes.Brfalse, missLabel);
+        il.Emit(OpCodes.Ldloc, boundPrototype);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.ReflectGet);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(ordinaryFunctionLookup);
 
         // Check for "bind"
         il.Emit(OpCodes.Ldarg_1);

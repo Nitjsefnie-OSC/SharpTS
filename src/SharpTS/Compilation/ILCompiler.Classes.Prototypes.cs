@@ -6,6 +6,16 @@ namespace SharpTS.Compilation;
 
 public partial class ILCompiler
 {
+    private void EmitCanonicalClassConstructorValue(ILGenerator il, Type classType)
+    {
+        il.Emit(OpCodes.Ldtoken, classType);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        // CLR generic context can close an owner token even though TypeScript
+        // type arguments do not create a different guest constructor value.
+        if (classType.IsGenericType)
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
+    }
+
     private void DefineClassPrototypeConstructor(TypeBuilder typeBuilder)
     {
         if (_classes.PrototypeConstructors.ContainsKey(typeBuilder))
@@ -147,14 +157,20 @@ public partial class ILCompiler
             constructor = EmitterTypeHelpers.ResolveConstructor(selfType, constructor);
         }
 
+        Type? baseType = typeBuilder.BaseType;
+        // Populate the native base before registration selects its parent. This
+        // also lets registration preserve a generic family's explicit override.
+        if (baseType == _runtime.ArrayStorage.Type)
+            il.Emit(OpCodes.Call, _runtime.ArrayOperations.PrototypePopulateMethod);
+
         il.Emit(OpCodes.Ldtoken, selfType);
         il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Newobj, constructor);
 
         Type? basePrototypeType = null;
-        Type? baseType = typeBuilder.BaseType;
-        if (baseType != null && TryResolveClassPrototypeConstructor(baseType, out _))
+        if (baseType != null && (baseType == _runtime.ArrayStorage.Type
+            || TryResolveClassPrototypeConstructor(baseType, out _)))
             basePrototypeType = baseType;
 
         if (basePrototypeType == null)
@@ -205,8 +221,7 @@ public partial class ILCompiler
 
         EmitPrototypeDataDescriptor("constructor", () =>
         {
-            il.Emit(OpCodes.Ldtoken, selfType);
-            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            EmitCanonicalClassConstructorValue(il, selfType);
         });
 
         // Function `length` is an own, non-writable/non-enumerable,
@@ -269,6 +284,8 @@ public partial class ILCompiler
 
                 EmitPrototypeDataDescriptor(methodName, () =>
                 {
+                    if (TryEmitDeclaredInstanceMethodValue(il, typeBuilder, methodBuilder))
+                        return;
                     if (DefineDeclarationReceiverMethod(typeBuilder, methodBuilder) is { } adapter)
                     {
                         il.Emit(OpCodes.Newobj, adapter.Constructor);

@@ -279,6 +279,11 @@ public partial class ILCompiler
             il.Emit(OpCodes.Call, _types.ObjectDefaultCtor);
         }
 
+        // The base constructor owns allocation. Install newTarget's prototype
+        // before either instance fields or the guest constructor body can read it.
+        if (classStmt.SuperclassExpr == null)
+            EmitConstructedClassPrototype(ctx);
+
         if (constructor?.Body?.Any(ContainsSuperCall) != true)
         {
             InitializeClassConstructorReceiver(ctx, il);

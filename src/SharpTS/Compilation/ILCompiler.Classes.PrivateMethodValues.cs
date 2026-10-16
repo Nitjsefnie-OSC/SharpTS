@@ -163,12 +163,16 @@ public partial class ILCompiler
         if (_generatorMethodFunctionDCKeys.TryGetValue(source, out var generatorKey)) _generatorMethodFunctionDCKeys[lowered] = generatorKey;
         if (_asyncGeneratorMethodFunctionDCKeys.TryGetValue(source, out var asyncGeneratorKey)) _asyncGeneratorMethodFunctionDCKeys[lowered] = asyncGeneratorKey;
         if (source.IsAsync && source.IsGenerator) EmitAsyncGeneratorMethodBody(method, lowered, null, currentClassName: className);
-        else if (source.IsAsync) EmitAsyncMethodBody(method, lowered, null, currentClassName: className);
+        else if (source.IsAsync) EmitAsyncMethodBody(method, lowered, null, currentClassName: className,
+            lexicalThisParameterName: guestThis.Name.Lexeme);
         else if (source.IsGenerator) EmitGeneratorMethodBody(method, lowered, null, currentClassName: className);
         else
         {
             var il = method.GetILGenerator();
             var ctx = createContext();
+            ctx.AsyncArrowBuilders = _async.ArrowBuilders.Count > 0 ? _async.ArrowBuilders : null;
+            ctx.AsyncArrowOuterBuilders = _async.ArrowOuterBuilders;
+            ctx.AsyncArrowParentBuilders = _async.ArrowParentBuilders;
             ctx.DefineParameter("__this", 1, _types.Object);
             SetupSyncMethodFunctionDisplayClass(ctx, il, source);
             var parameterTypes = method.GetParameters().Skip(1).Select(parameter => parameter.ParameterType).ToArray();

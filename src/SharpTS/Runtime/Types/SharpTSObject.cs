@@ -516,6 +516,14 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             : null;
     }
 
+    internal bool TryGetSymbolDataProperty(SharpTSSymbol symbol, out object? value)
+    {
+        if (_symbolFields is not null)
+            return _symbolFields.TryGetValue(symbol, out value);
+        value = null;
+        return false;
+    }
+
     /// <summary>Installs a symbol-keyed accessor property.</summary>
     internal void DefineSymbolAccessor(
         SharpTSSymbol symbol, ISharpTSCallable? getter, ISharpTSCallable? setter)
@@ -724,7 +732,7 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             }
         }
 
-        if (IsFrozen || !IsExtensible && !hasExisting) return false;
+        if (!IsExtensible && !hasExisting) return false;
 
         // Descriptor/accessor storage can move a property out of the data
         // dictionary, so preserve its original creation position first.
@@ -732,7 +740,7 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
 
         bool writable = descriptor.HasWritable
             ? descriptor.Writable
-            : hasExisting ? existingFlags.Writable : false;
+            : hasExisting && !existingIsAccessor ? existingFlags.Writable : false;
         bool enumerable = descriptor.HasEnumerable
             ? descriptor.Enumerable
             : hasExisting ? existingFlags.Enumerable : false;
@@ -758,7 +766,7 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             _symbolAccessors?.Remove(symbol);
             if (descriptor.HasValue)
                 EnsureSymbolFields()[symbol] = descriptor.Value;
-            else if (!hasExisting)
+            else if (!hasExisting || existingIsAccessor)
                 EnsureSymbolFields()[symbol] = SharpTSUndefined.Instance;
         }
 

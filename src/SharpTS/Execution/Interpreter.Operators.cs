@@ -810,7 +810,7 @@ public partial class Interpreter
         result = "";
         var resolved = instance.Get(new Token(TokenType.IDENTIFIER, "toString", null, 0));
         if (resolved is not ISharpTSCallable toString) return false;
-        var coerced = toString.CallV2(this, ReadOnlySpan<RuntimeValue>.Empty).ToObject();
+        var coerced = FunctionBuiltIns.CallWithThis(this, toString, instance, []);
         if (IsObjectLike(coerced)) return false;
         result = coerced as string ?? Stringify(coerced);
         return true;
@@ -1094,6 +1094,7 @@ public partial class Interpreter
             SharpTSObject tsObj => tsObj.DeletePropertyStrict(name, strictMode),
             ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, this)
                 .DeletePropertyStrict(name, strictMode),
+            BoundFunction bound => bound.DeleteProperty(name, strictMode),
             SharpTSInstance tsInst => tsInst.DeleteFieldStrict(name, strictMode),
             SharpTSMath math => math.DeleteExtra(name),
             SharpTSJSON json => json.DeleteExtra(name),
@@ -1153,9 +1154,8 @@ public partial class Interpreter
         // Handle symbol keys
         if (key is SharpTSSymbol symbol)
         {
-            if (obj is ISharpTSFunctionObject function)
+            if (FunctionObjectProperties.TryGetStorage(obj, this, out var properties))
             {
-                var properties = FunctionObjectProperties.GetProperties(function, this);
                 return !properties.HasSymbolProperty(symbol)
                     || properties.DeleteBySymbolStrict(symbol, strictMode);
             }

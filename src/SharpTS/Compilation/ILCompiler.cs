@@ -1882,16 +1882,8 @@ public partial class ILCompiler
                 ? new DirectoryReferenceAssemblyIndex(_sdkPath)
                 : EmbeddedReferenceAssemblyIndex.Default;
 
-            tempStream.Position = 0;
-            using var rewriter = new AssemblyReferenceRewriter(
-                tempStream,
-                referenceIndex,
-                ReferencePolicy.DroppingReferences("SharpTS"));
-            rewriter.Rewrite();
-
-            using var outMem = new MemoryStream();
-            rewriter.Save(outMem);
-            image = outMem.ToArray();
+            image = AssemblyReferenceRewriteCompatibility.Rewrite(
+                tempStream.ToArray(), referenceIndex, ReferencePolicy.DroppingReferences("SharpTS"));
         }
         else
         {

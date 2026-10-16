@@ -221,7 +221,8 @@ public partial class AsyncMoveNextEmitter
         // Outside a try-with-awaits there is nothing to route a synchronous throw to: emit the body
         // plainly (a throw propagates out of MoveNext and rejects the async function's promise; a
         // break/continue branches directly and a return Leaves — all legal, no real IL try is open here).
-        if (_currentTryCatchExceptionLocal == null || _currentTryCatchSkipLabel == null)
+        if (_currentTryCatchExceptionLocal == null || _currentTryCatchSkipLabel == null
+            || _throwRoutingGuardDepth > 0)
         {
             EmitStatement(body);
             return;
@@ -287,7 +288,8 @@ public partial class AsyncMoveNextEmitter
     /// </summary>
     private void EmitGuardedSyncSegment(System.Action emit)
     {
-        if (_currentTryCatchExceptionLocal == null || _currentTryCatchSkipLabel == null)
+        if (_currentTryCatchExceptionLocal == null || _currentTryCatchSkipLabel == null
+            || _throwRoutingGuardDepth > 0)
         {
             emit();
             return;

@@ -581,7 +581,7 @@ public class SharpTSProxy : ISharpTSCallable
     }
 
     internal bool TrapSetProperty(
-        string prop, object? value, Interpreter? interp, object? receiver)
+        object prop, object? value, Interpreter? interp, object? receiver)
     {
         var trap = GetTrapCallable("set", interp);
         if (trap == null)
@@ -621,11 +621,13 @@ public class SharpTSProxy : ISharpTSCallable
     /// methods, which are observable when those operations are trapped.
     /// </summary>
     private bool ForwardOrdinarySet(
-        string prop, object? value, Interpreter? interpreter, object? receiver)
+        object prop, object? value, Interpreter? interpreter, object? receiver)
     {
         if (interpreter == null)
         {
-            ForwardSet(prop, value, interpreter);
+            // Legacy host-only forwarding supplies string keys. Interpreted
+            // Symbol dispatch always retains its interpreter and receiver.
+            ForwardSet((string)prop, value, interpreter);
             return true;
         }
 
@@ -635,7 +637,7 @@ public class SharpTSProxy : ISharpTSCallable
     internal static bool OrdinarySet(
         Interpreter interpreter,
         object target,
-        string prop,
+        object prop,
         object? value,
         object? receiver)
     {
@@ -643,7 +645,7 @@ public class SharpTSProxy : ISharpTSCallable
             return targetProxy.TrapSetProperty(prop, value, interpreter, receiver);
 
         SharpTSPropertyDescriptor? ownDescriptor =
-            ObjectBuiltIns.OwnPropertyDescriptorOf(interpreter, target, prop);
+            GetOwnPropertyDescriptorForSet(interpreter, target, prop);
         if (ownDescriptor == null)
         {
             object? parent = ObjectBuiltIns.PrototypeOf(interpreter, target);
@@ -675,14 +677,11 @@ public class SharpTSProxy : ISharpTSCallable
             if (!descriptor.Writable || !IsObjectValue(receiver))
                 return false;
 
-            object? existing = receiver is SharpTSProxy receiverProxy
-                ? receiverProxy.TrapGetOwnPropertyDescriptor(prop, interpreter)
-                : ObjectBuiltIns.OwnPropertyDescriptorOf(interpreter, receiver!, prop)?.ToObject();
-            bool receiverHasProperty = existing is not (null or SharpTSUndefined);
+            var existingDescriptor = GetOwnPropertyDescriptorForSet(interpreter, receiver!, prop);
+            bool receiverHasProperty = existingDescriptor != null;
             if (receiverHasProperty)
             {
-                var existingDescriptor = SharpTSPropertyDescriptor.FromAnyObject(existing!);
-                if (existingDescriptor.HasGet || existingDescriptor.HasSet
+                if (existingDescriptor!.HasGet || existingDescriptor.HasSet
                     || !existingDescriptor.Writable)
                     return false;
             }
@@ -697,8 +696,9 @@ public class SharpTSProxy : ISharpTSCallable
             }
 
             if (receiver is SharpTSProxy receiverProxyForDefine)
-                return receiverProxyForDefine.TrapDefineProperty(
-                    prop, valueDescriptor, interpreter);
+                return prop is SharpTSSymbol symbol
+                    ? receiverProxyForDefine.TrapDefineProperty(symbol, valueDescriptor, interpreter)
+                    : receiverProxyForDefine.TrapDefineProperty((string)prop, valueDescriptor, interpreter);
 
             try
             {
@@ -711,12 +711,47 @@ public class SharpTSProxy : ISharpTSCallable
             {
                 return false;
             }
+            catch (ThrowException error) when (prop is SharpTSSymbol
+                && error.Value is SharpTSTypeError { Message: "Cannot redefine symbol property" })
+            {
+                // Object.defineProperty translates a refused Symbol definition
+                // into TypeError; OrdinarySet reports that refusal as false.
+                return false;
+            }
         }
 
         if (descriptor.Set == null) return false;
         FunctionBuiltIns.CallWithThis(
             interpreter, descriptor.Set, receiver, [value]);
         return true;
+    }
+
+    private static SharpTSPropertyDescriptor? GetOwnPropertyDescriptorForSet(
+        Interpreter interpreter, object target, object prop)
+    {
+        object? descriptorObject;
+        if (target is SharpTSProxy proxy)
+        {
+            descriptorObject = prop is SharpTSSymbol symbol
+                ? proxy.TrapGetOwnPropertyDescriptor(symbol, interpreter)
+                : proxy.TrapGetOwnPropertyDescriptor((string)prop, interpreter);
+        }
+        else if (prop is string name)
+        {
+            return ObjectBuiltIns.OwnPropertyDescriptorOf(interpreter, target, name);
+        }
+        else if (target is ISharpTSFunctionObject function)
+        {
+            return FunctionObjectProperties.GetProperties(function, interpreter)
+                .GetOwnPropertyDescriptor((SharpTSSymbol)prop);
+        }
+        else
+        {
+            descriptorObject = ObjectBuiltIns.RuntimeGetOwnPropertyDescriptor(target, prop);
+        }
+        return descriptorObject is null or SharpTSUndefined
+            ? null
+            : SharpTSPropertyDescriptor.FromAnyObject(descriptorObject);
     }
 
     private static bool IsObjectValue(object? value)
@@ -1095,6 +1130,10 @@ public class SharpTSProxy : ISharpTSCallable
         string prop, object descriptor, Interpreter interpreter)
         => TrapDefinePropertyCore(prop, descriptor, interpreter, classField: false);
 
+    internal bool TrapDefineProperty(
+        SharpTSSymbol prop, object descriptor, Interpreter interpreter)
+        => TrapDefinePropertyCore(prop, descriptor, interpreter, classField: false);
+
     internal bool TrapDefineField(object prop, object descriptor, Interpreter interpreter)
         => TrapDefinePropertyCore(prop, descriptor, interpreter, classField: true);
 
@@ -1110,6 +1149,8 @@ public class SharpTSProxy : ISharpTSCallable
                     SharpTSPropertyDescriptor.FromAnyObject(descriptor).Value);
                 return true;
             }
+            if (prop is SharpTSSymbol symbol && _target is SharpTSProxy symbolProxy)
+                return symbolProxy.TrapDefineProperty(symbol, descriptor, interpreter);
             try
             {
                 return ObjectBuiltIns.DefinePropertyOnProxyTarget(
@@ -1123,6 +1164,11 @@ public class SharpTSProxy : ISharpTSCallable
                 // false. Object.defineProperty turns that false into a thrown
                 // TypeError, so translate only that wrapper error here while
                 // preserving abrupt descriptor evaluation.
+                return false;
+            }
+            catch (ThrowException error) when (prop is SharpTSSymbol
+                && error.Value is SharpTSTypeError { Message: "Cannot redefine symbol property" })
+            {
                 return false;
             }
         }

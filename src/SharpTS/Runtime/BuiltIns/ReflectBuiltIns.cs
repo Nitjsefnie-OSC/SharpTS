@@ -220,15 +220,13 @@ public static class ReflectBuiltIns
                         : interpreter.GetPropertyValue(primitiveConstructor,
                             interpreter.ToPropertyKeyString(args[1].ToObject()), primitiveReceiver));
                 }
-                var propertyKey = args[1].ToObject()?.ToString() ?? "";
-                object? receiver = args.Length > 2 && !args[2].IsUndefined
-                    ? args[2].ToObject()
-                    : target;
-                if (target is SharpTSProxy proxy)
+                object? receiver = args.Length > 2 ? args[2].ToObject() : target;
+                if (args[1].ToObject() is SharpTSSymbol propertySymbol)
                     return RuntimeValue.FromBoxed(
-                        proxy.TrapGet(propertyKey, interpreter, receiver));
+                        interpreter.GetSymbolPropertyValue(target, propertySymbol, receiver!));
+                var propertyKey = args[1].ToObject()?.ToString() ?? "";
                 return RuntimeValue.FromBoxed(
-                    interpreter.GetPropertyValue(target, propertyKey));
+                    interpreter.GetPropertyValue(target, propertyKey, receiver));
             }),
 
             "set" => BuiltInMethod.CreateV2("set", 3, 4, static (interpreter, unusedReceiver, args) =>
@@ -284,11 +282,11 @@ public static class ReflectBuiltIns
                             inheritedSymbol, args[2].ToObject(), inheritedReceiver));
                     }
                 }
-                var propertyKey = args[1].ToObject()?.ToString() ?? "";
+                object propertyKey = args[1].ToObject() is SharpTSSymbol propertySymbol
+                    ? propertySymbol
+                    : args[1].ToObject()?.ToString() ?? "";
                 var value = args[2].ToObject();
-                object? receiver = args.Length > 3 && !args[3].IsUndefined
-                    ? args[3].ToObject()
-                    : target;
+                object? receiver = args.Length > 3 ? args[3].ToObject() : target;
                 if (target is SharpTSProxy proxy)
                     return RuntimeValue.FromBoolean(proxy.TrapSetProperty(
                         propertyKey, value, interpreter, receiver));

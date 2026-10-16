@@ -1105,6 +1105,12 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     {
         EmitExpression(iterable);
         EnsureBoxed();
+        EmitSynchronousForOfEnumeratorFromStack();
+    }
+
+    /// <summary>Consumes a boxed iterable and leaves its acquired IEnumerator on the stack.</summary>
+    protected void EmitSynchronousForOfEnumeratorFromStack()
+    {
         var runtime = Ctx.Runtime!;
         var source = IL.DeclareLocal(Types.Object);
         var method = IL.DeclareLocal(Types.Object);

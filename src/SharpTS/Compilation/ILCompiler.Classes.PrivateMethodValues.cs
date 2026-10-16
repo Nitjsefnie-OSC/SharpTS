@@ -169,6 +169,9 @@ public partial class ILCompiler
         {
             var il = method.GetILGenerator();
             var ctx = createContext();
+            ctx.AsyncArrowBuilders = _async.ArrowBuilders.Count > 0 ? _async.ArrowBuilders : null;
+            ctx.AsyncArrowOuterBuilders = _async.ArrowOuterBuilders;
+            ctx.AsyncArrowParentBuilders = _async.ArrowParentBuilders;
             ctx.DefineParameter("__this", 1, _types.Object);
             SetupSyncMethodFunctionDisplayClass(ctx, il, source);
             var parameterTypes = method.GetParameters().Skip(1).Select(parameter => parameter.ParameterType).ToArray();

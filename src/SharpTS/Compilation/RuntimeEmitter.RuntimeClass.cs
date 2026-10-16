@@ -2239,11 +2239,16 @@ public partial class RuntimeEmitter
                 new ReflectDeletePropertyInputs(
                     runtime.ReflectedMethods.InvokeUnwrapped,
                     runtime.ObjectDescriptors.GetOwnPropertyDescriptor,
-                    runtime.StringCoercion.ToJsString,
+                    runtime.Reflect.ToPropertyKey,
                     runtime.ObjectState.IsExtensible,
                     runtime.ObjectDeletion.Property,
+                    runtime.ObjectDeletion.Index,
+                    runtime.Symbols.IsSymbol,
                     runtime.Sentinels.UndefinedType,
                     runtime.ObjectRead.Property,
+                    runtime.Operators.TypeOf,
+                    runtime.Errors.CreateException,
+                    runtime.Errors.TypeErrorConstructor,
                     runtime.FunctionBindings
                 )
             );

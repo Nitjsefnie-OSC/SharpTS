@@ -872,9 +872,22 @@ public class SharpTSProxy : ISharpTSCallable
         return true;
     }
 
+    // Named-property delete is emitted before the object-key deletion and
+    // optional Reflect helpers. Keep its existing callback contract while
+    // sharing the object-key Proxy protocol without reflection overloads.
     public bool TrapDeletePropertyCompiled(
         string prop,
         Func<object, string, bool> ordinaryDelete,
+        Func<object, object, object?> ordinaryGetOwnPropertyDescriptor,
+        Func<object, bool> ordinaryIsExtensible,
+        Func<object, string, object?> ordinaryGet)
+        => TrapDeletePropertyKeyCompiled(
+            prop, (target, key) => ordinaryDelete(target, (string)key),
+            ordinaryGetOwnPropertyDescriptor, ordinaryIsExtensible, ordinaryGet);
+
+    public bool TrapDeletePropertyKeyCompiled(
+        object prop,
+        Func<object, object, bool> ordinaryDelete,
         Func<object, object, object?> ordinaryGetOwnPropertyDescriptor,
         Func<object, bool> ordinaryIsExtensible,
         Func<object, string, object?> ordinaryGet)
@@ -883,7 +896,7 @@ public class SharpTSProxy : ISharpTSCallable
         if (trap == null)
         {
             return _target is SharpTSProxy proxy
-                ? proxy.TrapDeletePropertyCompiled(
+                ? proxy.TrapDeletePropertyKeyCompiled(
                     prop, ordinaryDelete, ordinaryGetOwnPropertyDescriptor,
                     ordinaryIsExtensible, ordinaryGet)
                 : ordinaryDelete(_target, prop);

@@ -840,6 +840,11 @@ public partial class RuntimeEmitter
         // EmitRuntimeClass — they wrap the AbortSignal*/CreateIntl* helpers
         // emitted there.
         EmitNamespaceSingletons(runtime.RuntimeClass.Type, runtime.Abort, runtime.Intl, runtime.FunctionConstruction.GetOrCreate);
+        if (runtime.Abort is not null)
+            EmitAbortControllerConstructor(runtime.RuntimeClass.Type, runtime.Abort,
+                new AbortControllerConstructorInputs(runtime.DescriptorStorage, runtime.Errors,
+                    runtime.FunctionAttributes, runtime.FunctionValues,
+                    runtime.FunctionConstruction.GetOrCreate, runtime.ObjectPrototypes));
 
         // Emit $BroadcastChannel — extends $EventEmitter, dispatches via $EventLoop,
         // and clones messages via $Runtime.StructuredClone (populated during EmitRuntimeClass

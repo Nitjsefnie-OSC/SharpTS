@@ -10,6 +10,20 @@ public sealed class EmittedAbortRuntime
 
     public bool IsComplete { get; private set; }
 
+    private FieldBuilder? _controllerConstructorField;
+    public FieldBuilder ControllerConstructorField
+    {
+        get => Require(_controllerConstructorField);
+        internal set => Set(ref _controllerConstructorField, value);
+    }
+
+    private MethodBuilder? _getControllerConstructor;
+    public MethodBuilder GetControllerConstructor
+    {
+        get => Require(_getControllerConstructor);
+        internal set => Set(ref _getControllerConstructor, value);
+    }
+
     private FieldBuilder? _namespaceField;
     public FieldBuilder NamespaceField
     {
@@ -162,6 +176,8 @@ public sealed class EmittedAbortRuntime
     internal void CompleteEmission()
     {
         EnsureMutable();
+        _ = ControllerConstructorField;
+        _ = GetControllerConstructor;
         _ = NamespaceField;
         _ = NamespacePopulate;
         _ = FireEvent;

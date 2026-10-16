@@ -31,7 +31,15 @@ public partial class RuntimeEmitter
     private void DefineNamespaceSingletonFields(TypeBuilder typeBuilder, EmittedAbortRuntime? abort, EmittedIntlRuntime? intl)
     {
         if (abort is not null)
+        {
             abort.NamespaceField = DefineNamespaceSingletonField(typeBuilder, "AbortSignal");
+            abort.ControllerConstructorField = typeBuilder.DefineField(
+                "_AbortControllerConstructor", _types.Object,
+                FieldAttributes.Public | FieldAttributes.Static);
+            abort.GetControllerConstructor = typeBuilder.DefineMethod(
+                "GetAbortControllerConstructor", MethodAttributes.Public | MethodAttributes.Static,
+                _types.Object, Type.EmptyTypes);
+        }
         if (intl is not null)
             intl.NamespaceField = DefineNamespaceSingletonField(typeBuilder, "Intl");
     }

@@ -194,7 +194,12 @@ public abstract partial class ExpressionEmitterBase
                 return true;
 
             case "AbortController":
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.RequireAbort().CreateController);
+                EmitArgsArrayWithSpread(arguments);
+                var controllerArguments = _helpers.SpillStoreObject();
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.RequireAbort().GetControllerConstructor);
+                IL.Emit(OpCodes.Ldloc, controllerArguments);
+                IL.Emit(OpCodes.Castclass, Ctx.Types.ObjectArray);
+                IL.Emit(OpCodes.Call, Ctx.Runtime.DynamicConstruction.Value);
                 SetStackUnknown();
                 return true;
 

@@ -49,7 +49,8 @@ public partial class RuntimeEmitter
             _features.UsesTextEncoding ? runtime.RequireTextEncoding().EncoderType : null,
             _features.UsesTextEncoding ? runtime.RequireTextEncoding().DecoderType : null,
             _features.UsesCrypto ? runtime.WebCrypto.GetObject : null,
-            _features.UsesFetch ? runtime.Fetch.RequireImplementation().Invoke : null);
+            _features.UsesFetch ? runtime.Fetch.RequireImplementation().Invoke : null,
+            runtime.Abort?.GetControllerConstructor);
         EmitGlobalThisGetProperty(runtime.GlobalObject,
             new GlobalPropertyReadInputs(runtime.DescriptorStorage, runtime.Invocation.Method,
                 runtime.ObjectState.IsBuiltinDeleted, runtime.Sentinels.UndefinedInstance,
@@ -69,7 +70,8 @@ public partial class RuntimeEmitter
     private readonly record struct GlobalPropertyOptionalInputs(
         Type? DateType, Type? RegExpType, FieldBuilder? ReflectSingleton,
         Type? BufferType, Type? EncoderType, Type? DecoderType,
-        MethodBuilder? GetCryptoObject, MethodBuilder? FetchInvoke);
+        MethodBuilder? GetCryptoObject, MethodBuilder? FetchInvoke,
+        MethodBuilder? GetAbortControllerConstructor);
 
     private readonly record struct GlobalPropertyReadInputs(
         EmittedDescriptorStorageRuntime Descriptors, MethodBuilder InvokeMethod,
@@ -420,6 +422,18 @@ public partial class RuntimeEmitter
         EmitSingletonBranch("JSON", inputs.JsonSingleton);
         if (inputs.Optional.ReflectSingleton is not null)
             EmitSingletonBranch("Reflect", inputs.Optional.ReflectSingleton);
+
+        if (inputs.Optional.GetAbortControllerConstructor is not null)
+        {
+            var notAbortController = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, "AbortController");
+            il.Emit(OpCodes.Call, strEquals);
+            il.Emit(OpCodes.Brfalse, notAbortController);
+            il.Emit(OpCodes.Call, inputs.Optional.GetAbortControllerConstructor);
+            il.Emit(OpCodes.Br, returnLabel);
+            il.MarkLabel(notAbortController);
+        }
 
         // globalThis.process → the live $Process singleton (epic #1078), same
         // object as the bare `process` identifier and the module facade's

@@ -142,6 +142,8 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]
         );
         abort.ControllerAbort = method;
+        method.DefineParameter(1, ParameterAttributes.None, "__this");
+        method.DefineParameter(2, ParameterAttributes.None, "reason");
 
         var il = method.GetILGenerator();
         var dictType = _types.DictionaryStringObject;

@@ -1336,6 +1336,43 @@ public partial class RuntimeEmitter
         var foundLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, foundLabel);
 
+        // Alias/value construction returns the same native controller carrier
+        // as direct construction. Expose its computed surface for any-typed
+        // receivers, after ordinary own properties have had precedence.
+        if (inputs.Abort is not null)
+        {
+            var notControllerProperty = il.DefineLabel();
+            var controllerProperty = il.DefineLabel();
+            var controllerAbort = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "signal");
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, controllerProperty);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "abort");
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, notControllerProperty);
+            il.MarkLabel(controllerProperty);
+            il.Emit(OpCodes.Ldloc, dictLocal);
+            il.Emit(OpCodes.Ldstr, "_signal");
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
+            il.Emit(OpCodes.Brfalse, notControllerProperty);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "abort");
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, controllerAbort);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, inputs.Abort.ControllerGetSignal);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(controllerAbort);
+            _types.EmitLoadMethodInfo(il, inputs.Abort.ControllerAbort);
+            il.Emit(OpCodes.Ldstr, "abort");
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Call, inputs.TSFunctionGetOrCreate);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notControllerProperty);
+        }
+
         // $AbortSignal dict surface (#224, #985): the properties "aborted"/"reason"/
         // "onabort" AND the methods "addEventListener"/"removeEventListener"/
         // "throwIfAborted" on a dynamically-typed (`any`) signal receiver. The typed

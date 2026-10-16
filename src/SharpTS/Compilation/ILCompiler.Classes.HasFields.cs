@@ -544,6 +544,13 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
                 il.Emit(OpCodes.Brfalse, nextLabel);
 
+                if (TryEmitDeclaredInstanceMethodValue(il, typeBuilder, methodBuilder))
+                {
+                    il.Emit(OpCodes.Ret);
+                    il.MarkLabel(nextLabel);
+                    continue;
+                }
+
                 // Load 'this' for target
                 il.Emit(OpCodes.Ldarg_0);
 

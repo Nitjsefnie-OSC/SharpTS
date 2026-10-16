@@ -244,9 +244,10 @@ public partial class ILCompiler
         bool isInstanceMethod, CompilationContext? context = null)
     {
         if (!ReferencesArgumentsIdentifier(function.Body, function.Parameters)) return null;
-        // Private value helpers have a compiler-owned guest receiver parameter.
+        // Method value helpers have a compiler-owned guest receiver parameter.
         // A real source parameter named __this does not affect this registry test.
-        int receiverSkip = _privateMethodValueOwners.ContainsKey(method) ? 1 : 0;
+        int receiverSkip = _privateMethodValueOwners.ContainsKey(method)
+            || _declarationMethodValueOwners.ContainsKey(method) ? 1 : 0;
         var parameters = function.Parameters.Skip(receiverSkip).ToList();
         var types = method.GetParameters().Skip(receiverSkip).Select(parameter => parameter.ParameterType).ToArray();
         var il = method.GetILGenerator();

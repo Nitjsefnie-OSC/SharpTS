@@ -7,16 +7,16 @@ namespace SharpTS.Compilation;
 public partial class ILCompiler
 {
     private readonly Dictionary<MethodBuilder, (TypeBuilder Type, ConstructorBuilder Constructor, MethodBuilder Method, FieldBuilder Value)>
-        _declarationSymbolMethodValues = new(ReferenceEqualityComparer.Instance);
+        _declarationMethodValues = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<MethodBuilder, (TypeBuilder Owner, Stmt.Function Source)>
-        _declarationSymbolMethodValueOwners = new(ReferenceEqualityComparer.Instance);
+        _declarationMethodValueOwners = new(ReferenceEqualityComparer.Instance);
 
     private (TypeBuilder Type, ConstructorBuilder Constructor, MethodBuilder Method, FieldBuilder Value)
-        DefineDeclarationSymbolMethodValue(TypeBuilder owner, Stmt.Function source, MethodBuilder original)
+        DefineDeclarationMethodValue(TypeBuilder owner, Stmt.Function source, MethodBuilder original)
     {
-        if (_declarationSymbolMethodValues.TryGetValue(original, out var existing)) return existing;
+        if (_declarationMethodValues.TryGetValue(original, out var existing)) return existing;
         var type = EmitTypeDefinitions.DefineType(_moduleBuilder,
-            $"$SymbolMember_{owner.FullName}_{original.Name}", TypeAttributes.Public | TypeAttributes.Sealed, _types.Object);
+            $"$MethodMember_{owner.FullName}_{original.Name}", TypeAttributes.Public | TypeAttributes.Sealed, _types.Object);
         var constructor = type.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
         var il = constructor.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, _types.ObjectDefaultCtor); il.Emit(OpCodes.Ret);
@@ -28,13 +28,13 @@ public partial class ILCompiler
         MarkExpectsThis(method); MarkPadsUndefined(method);
         MarkFunctionLength(method, source.Parameters); MarkFunctionName(method, original.Name);
         if (!source.IsGenerator) MarkNonConstructible(method);
-        _declarationSymbolMethodValueOwners.Add(method, (owner, source));
+        _declarationMethodValueOwners.Add(method, (owner, source));
         var collector = new GuestReceiverArrowCollector(_guestReceiverArrows);
         foreach (var statement in source.Body ?? []) collector.Visit(statement);
         EmitGuestMethodValueBody(method, source, () =>
         {
             var context = CreateModuleMemberContext(method.GetILGenerator(), method);
-            ApplyDeclarationSymbolMethodValueContext(context, method);
+            ApplyDeclarationMethodValueContext(context, method);
             context.EmittingTypeBuilder = type;
             return context;
         }, owner.FullName!);
@@ -42,13 +42,13 @@ public partial class ILCompiler
             FieldAttributes.Public | FieldAttributes.Static);
         type.CreateType();
         var result = (type, constructor, method, value);
-        _declarationSymbolMethodValues.Add(original, result);
+        _declarationMethodValues.Add(original, result);
         return result;
     }
 
-    private void ApplyDeclarationSymbolMethodValueContext(CompilationContext context, MethodBuilder method)
+    private void ApplyDeclarationMethodValueContext(CompilationContext context, MethodBuilder method)
     {
-        if (!_declarationSymbolMethodValueOwners.TryGetValue(method, out var owner)) return;
+        if (!_declarationMethodValueOwners.TryGetValue(method, out var owner)) return;
         context.CurrentClassBuilder = owner.Owner;
         context.CurrentClassName = owner.Owner.FullName;
         context.IsStrictMode = true;
@@ -57,8 +57,38 @@ public partial class ILCompiler
         context.HasGuestReceiver = true;
         context.UseNominalSuperCallBridge = true;
         context.GuestThisVariableName = "__this";
-        foreach (var parameter in _classes.GenericParameters.Require(owner.Owner))
-            context.GenericTypeParameters[parameter.Name] = _types.Object;
+        var genericParameters = _classes.GenericParameters.Require(owner.Owner);
+        var canonicalArguments = owner.Owner.IsGenericTypeDefinition
+            ? CanonicalGenericClassOwner(owner.Owner).GetGenericArguments() : Type.EmptyTypes;
+        for (int i = 0; i < genericParameters.Count; i++)
+            context.GenericTypeParameters[genericParameters[i].Name] = canonicalArguments[i];
+        foreach (var parameter in owner.Source.TypeParams ?? [])
+            context.GenericTypeParameters[parameter.Name.Lexeme] = _types.Object;
+    }
+
+    private bool TryEmitDeclaredInstanceMethodValue(ILGenerator il, TypeBuilder owner, MethodBuilder original)
+    {
+        var source = GetNominalClassDeclaration(owner)?.Methods.FirstOrDefault(method =>
+            method.Body != null && !method.IsStatic && !method.IsPrivate
+            && method.ComputedKey == null && method.Name.Lexeme == original.Name);
+        if (source == null) return false;
+
+        // Method values carry a guest receiver, not the CLR instance that was
+        // used to find them. The same value can be borrowed by another object
+        // or a different closed generic instantiation without changing its body.
+        var adapter = DefineDeclarationMethodValue(owner, source, original);
+        var haveValue = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, adapter.Value);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, haveValue);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Newobj, adapter.Constructor);
+        EmitMethodInfoLiteral(il, adapter.Method, adapter.Type);
+        il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.Constructor);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stsfld, adapter.Value);
+        il.MarkLabel(haveValue);
+        return true;
     }
 
     private bool CanOwnDeclaredSymbolMethodValue(TypeBuilder owner)
@@ -68,7 +98,7 @@ public partial class ILCompiler
     private void EmitDeclaredSymbolMethodDescriptor(ILGenerator il, TypeBuilder owner,
         Stmt.Function source, MethodBuilder original, LocalBuilder key, Type? descriptorOwner = null)
     {
-        var adapter = DefineDeclarationSymbolMethodValue(owner, source, original);
+        var adapter = DefineDeclarationMethodValue(owner, source, original);
         var haveValue = il.DefineLabel();
         il.Emit(OpCodes.Ldsfld, adapter.Value);
         il.Emit(OpCodes.Brtrue, haveValue);

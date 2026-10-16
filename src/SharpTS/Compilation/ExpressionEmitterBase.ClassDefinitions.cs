@@ -142,6 +142,7 @@ public abstract partial class ExpressionEmitterBase
         MethodBuilder method, IReadOnlyList<Expr> arguments)
     {
         if (Ctx.IsStaticSuperContext || Ctx.CurrentClassExpr != null
+            || Ctx.HasGuestReceiver || Ctx.GuestThisVariableName != null
             || Ctx.RuntimeFeatures is not
                 { UsesClassPrototypeMutation: false, UsesDynamicPropertyDescriptors: false, UsesObjectIntegrityMutation: false }
             || arguments.Any(argument => argument is Expr.Spread) || AnyContainsSuspension(arguments)

@@ -269,6 +269,8 @@ public partial class ILCompiler
 
                 EmitPrototypeDataDescriptor(methodName, () =>
                 {
+                    if (TryEmitDeclaredInstanceMethodValue(il, typeBuilder, methodBuilder))
+                        return;
                     if (DefineDeclarationReceiverMethod(typeBuilder, methodBuilder) is { } adapter)
                     {
                         il.Emit(OpCodes.Newobj, adapter.Constructor);

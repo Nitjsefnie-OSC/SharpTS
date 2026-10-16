@@ -179,7 +179,7 @@ public partial class ILCompiler
     private void ApplyClassDefinitionStateMachineContext(CompilationContext ctx, MethodBuilder method, bool isInstance)
     {
         ApplyPrivateMethodValueContext(ctx, method);
-        ApplyDeclarationSymbolMethodValueContext(ctx, method);
+        ApplyDeclarationMethodValueContext(ctx, method);
         if (_classExprs.DefinitionMethods.TryGetValue(method, out var owner))
         {
             ctx.CurrentClassExpr = owner.Expression;

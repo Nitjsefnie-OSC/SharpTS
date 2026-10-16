@@ -253,6 +253,9 @@ public partial class RuntimeEmitter
         EmittedDateRuntime Dates,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
+        Type GeneratorInterface,
+        Type? AsyncGeneratorInterface,
+        MethodBuilder ReadGeneratorProperty,
         MethodInfo IHasFieldsGetProperty,
         MethodInfo IHasFieldsHasProperty,
         Type IHasFieldsInterface,
@@ -596,6 +599,26 @@ public partial class RuntimeEmitter
             () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
 
         il.MarkLabel(afterPDSCheckLabel);
+
+        // Generator methods are inherited guest properties, not reflected CLR methods.
+        var readGeneratorProperty = il.DefineLabel();
+        var notGenerator = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.GeneratorInterface);
+        il.Emit(OpCodes.Brtrue, readGeneratorProperty);
+        if (inputs.AsyncGeneratorInterface is not null)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, inputs.AsyncGeneratorInterface);
+            il.Emit(OpCodes.Brtrue, readGeneratorProperty);
+        }
+        il.Emit(OpCodes.Br, notGenerator);
+        il.MarkLabel(readGeneratorProperty);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ReadGeneratorProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGenerator);
 
         // $TSDate has no JavaScript-visible CLR own methods. Once expando/PDS
         // own properties miss, every named lookup must continue through the

@@ -146,8 +146,9 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Marks callable methods which do not implement ECMAScript [[Construct]].
-    /// Arrow, async, and generator functions therefore have no own `prototype`
-    /// property and reject construction even though they share $TSFunction.
+    /// Arrow and async functions have no ordinary own `prototype` property.
+    /// Generator-specific metadata supplies their prototype while preserving
+    /// construction rejection for every nonconstructible callable.
     /// </summary>
     private void EmitNonConstructibleAttribute(ModuleBuilder moduleBuilder, EmittedFunctionAttributesRuntime attributes)
     {

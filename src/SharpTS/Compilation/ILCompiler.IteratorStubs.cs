@@ -92,6 +92,7 @@ public partial class ILCompiler
             il, smBuilder.FunctionDCField, funcStmt, qualifiedName, paramOffset: 0,
             precreatedFunctionDC: environment.FunctionDisplayClass);
 
+        EmitIteratorPrototypeAssociation(il, methodBuilder);
         il.Emit(OpCodes.Ret);
     }
 
@@ -163,7 +164,25 @@ public partial class ILCompiler
                 il, smBuilder.FunctionDCField, method, funcDCKey, paramOffset, paramTypes,
                 environment.FunctionDisplayClass);
 
+        EmitIteratorPrototypeAssociation(il, methodBuilder);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>Associates the new iterator with its actual kickoff's current guest prototype.</summary>
+    private void EmitIteratorPrototypeAssociation(ILGenerator il, MethodBuilder kickoff)
+    {
+        MethodInfo method = kickoff;
+        if (kickoff.DeclaringType is { IsGenericTypeDefinition: true } owner)
+        {
+            // Resolve within the declaring class's own generic context, rather than
+            // the dynamic receiver's type, so inherited methods keep their identity.
+            var self = EmitGenerics.MakeGenericType(owner, owner.GetGenericArguments());
+            method = EmitterTypeHelpers.ResolveMethod(self, kickoff);
+        }
+
+        il.Emit(OpCodes.Dup);
+        _types.EmitLoadMethodInfo(il, method);
+        il.Emit(OpCodes.Call, _runtime.GeneratorPrototypes.Associate);
     }
 
     /// <summary>

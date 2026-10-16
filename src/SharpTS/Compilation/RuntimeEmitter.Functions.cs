@@ -16,6 +16,9 @@ public partial class RuntimeEmitter
         EmittedFunctionConstructionRuntime FunctionConstruction,
         EmittedFunctionPrototypeRuntime FunctionPrototypes,
         EmittedFunctionValueRuntime FunctionValues,
+        MethodBuilder GeneratorKind,
+        MethodBuilder EnsureGeneratorPrototype,
+        MethodBuilder ReadGeneratorInherited,
         EmittedObjectOwnPropertiesRuntime ObjectOwnProperties,
         EmittedObjectPrototypeRuntime ObjectPrototypes,
         EmittedObjectStateRuntime ObjectState,
@@ -751,6 +754,50 @@ public partial class RuntimeEmitter
         il.MarkLabel(notProxyLabel);
     }
 
+    private void EmitGeneratorFunctionGet(ILGenerator il, GetFunctionMethodInputs inputs)
+    {
+        var ordinary = il.DefineLabel();
+        var inherited = il.DefineLabel();
+        var function = il.DeclareLocal(inputs.FunctionValues.Type);
+        var kickoff = il.DeclareLocal(_types.MethodInfo);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.FunctionValues.Type);
+        il.Emit(OpCodes.Stloc, function);
+        il.Emit(OpCodes.Ldloc, function);
+        il.Emit(OpCodes.Brfalse, ordinary);
+        il.Emit(OpCodes.Ldloc, function);
+        il.Emit(OpCodes.Callvirt, inputs.FunctionValues.GetMethodInfo);
+        il.Emit(OpCodes.Stloc, kickoff);
+        il.Emit(OpCodes.Ldloc, kickoff);
+        il.Emit(OpCodes.Call, inputs.GeneratorKind);
+        il.Emit(OpCodes.Brfalse, ordinary);
+
+        // These own metadata slots retain the existing deletion and arity policy.
+        foreach (var name in new[] { "name", "length" })
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brtrue, ordinary);
+        }
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, inherited);
+        il.Emit(OpCodes.Ldloc, function);
+        il.Emit(OpCodes.Ldloc, kickoff);
+        il.Emit(OpCodes.Call, inputs.EnsureGeneratorPrototype);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(inherited);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ReadGeneratorInherited);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(ordinary);
+    }
+
     /// <summary>
     /// Emits the GetFunctionMethod helper that returns bind/call/apply wrappers.
     /// </summary>
@@ -888,6 +935,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.ReflectGet);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(ordinaryFunctionLookup);
+        // Generator callables inherit through their own kind's intrinsic graph.
+        EmitGeneratorFunctionGet(il, inputs);
 
         // Check for "bind"
         il.Emit(OpCodes.Ldarg_1);

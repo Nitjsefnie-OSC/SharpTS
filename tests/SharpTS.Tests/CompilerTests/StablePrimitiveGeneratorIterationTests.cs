@@ -73,12 +73,18 @@ public sealed class StablePrimitiveGeneratorIterationTests
 
         var run = consumer.CreateDelegate<Func<double, double>>();
         Assert.Equal(45, run(10));
+        // Amortize prototype weak-table capacity growth across iterator creations,
+        // while retaining the allocation budget per call and guarding every yield.
+        const int iterations = 32;
         long before = GC.GetAllocatedBytesForCurrentThread();
-        double result = run(100_000);
+        double result = 0;
+        for (int iteration = 0; iteration < iterations; iteration++)
+            result += run(100_000);
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        Assert.Equal(4_999_950_000, result);
-        Assert.True(allocated <= 512,
-            $"Native generator iteration allocated {allocated:N0} bytes.");
+        Assert.Equal(iterations * 4_999_950_000d, result);
+        Assert.True(allocated <= iterations * 512,
+            $"Native generator iteration allocated {allocated:N0} bytes over {iterations} calls "
+            + $"({(double)allocated / iterations:N1} bytes per call).");
     }
 
     [Theory, ModeData]

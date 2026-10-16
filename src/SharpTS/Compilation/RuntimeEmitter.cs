@@ -253,6 +253,9 @@ public partial class RuntimeEmitter
         EmitGeneratorInterface(moduleBuilder, runtime.Generators);
         runtime.Generators.CompleteEmission();
 
+        DefineGeneratorPrototypeRuntime(moduleBuilder, runtime.GeneratorPrototypes,
+            features.UsesAsyncGenerator || features.UsesForAwaitOf);
+
         // Emit $IAsyncGenerator only when async-generator or for-await support
         // can reference it.
         if (features.UsesAsyncGenerator || features.UsesForAwaitOf)
@@ -957,6 +960,7 @@ public partial class RuntimeEmitter
             EmitTlsSocketFinalize(tls);
         }
 
+        runtime.GeneratorPrototypes.Type.CreateType();
         EmitRuntimeClassFinalize(runtime.RuntimeClass);     // Finalize $Runtime after all method bodies
 
         if (features.UsesTls)
@@ -1007,6 +1011,7 @@ public partial class RuntimeEmitter
         runtime.NumericCoercion.CompleteEmission();
         runtime.ObjectStorage.CompleteEmission();
         runtime.DescriptorStorage.CompleteEmission();
+        runtime.GeneratorPrototypes.CompleteEmission();
         runtime.ObjectState.CompleteEmission();
         runtime.Errors.CompleteEmission();
         runtime.ObjectDescriptors.CompleteEmission();

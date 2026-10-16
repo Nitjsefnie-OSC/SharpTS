@@ -38,6 +38,9 @@ public partial class RuntimeEmitter
         EmittedErrorRuntime Errors,
         FieldBuilder FunctionPrototypeField,
         MethodBuilder FunctionPrototypePopulateMethod,
+        MethodBuilder FunctionGetMethodInfo,
+        MethodBuilder GeneratorKind,
+        MethodBuilder GeneratorFunctionPrototype,
         MethodBuilder GetProperty,
         Type IHasFieldsInterface,
         MethodBuilder InvokeMethodUnwrapped,
@@ -870,6 +873,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
         il.Emit(OpCodes.Brfalse, notTSFnForProtoLabel);
+        var ordinaryFunctionPrototype = il.DefineLabel();
+        var generatorKind = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, inputs.TSFunctionType);
+        il.Emit(OpCodes.Callvirt, inputs.FunctionGetMethodInfo);
+        il.Emit(OpCodes.Call, inputs.GeneratorKind);
+        il.Emit(OpCodes.Stloc, generatorKind);
+        il.Emit(OpCodes.Ldloc, generatorKind);
+        il.Emit(OpCodes.Brfalse, ordinaryFunctionPrototype);
+        il.Emit(OpCodes.Ldloc, generatorKind);
+        il.Emit(OpCodes.Call, inputs.GeneratorFunctionPrototype);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(ordinaryFunctionPrototype);
         il.Emit(OpCodes.Call, inputs.FunctionPrototypePopulateMethod);
         il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypeField);
         il.Emit(OpCodes.Ret);

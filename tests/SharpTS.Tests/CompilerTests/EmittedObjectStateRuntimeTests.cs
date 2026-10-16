@@ -122,7 +122,12 @@ public sealed class EmittedObjectStateRuntimeTests
         var method = typeof(RuntimeEmitter).GetMethod(freeze ? "EmitObjectFreeze" : "EmitObjectSeal", InstanceMembers)!;
         var inputs = Activator.CreateInstance(method.GetParameters()[2].ParameterType,
             runtime.ArrayStorage, runtime.DescriptorStorage, runtime.ObjectStorage)!;
-        method.Invoke(emitter, [type, supplied, inputs]); supplied.MarkIsExtensibleBodyEmitted(); supplied.CompleteEmission();
+        object?[] arguments = freeze
+            ? [type, supplied, inputs, Activator.CreateInstance(method.GetParameters()[3].ParameterType,
+                runtime.FunctionValues.Type, runtime.FunctionValues.GetMethodInfo,
+                runtime.GeneratorPrototypes.Kind, runtime.GeneratorPrototypes.EnsureOwnPrototype)]
+            : [type, supplied, inputs];
+        method.Invoke(emitter, arguments); supplied.MarkIsExtensibleBodyEmitted(); supplied.CompleteEmission();
         type.CreateType(); var loaded = SaveVerifyLoad(builder); var probe = loaded.GetType(type.FullName!)!;
         var value = new Dictionary<string, object> { ["a"] = 1d };
         Assert.Same(value, Call(probe, freeze ? "ObjectFreeze" : "ObjectSeal", value));

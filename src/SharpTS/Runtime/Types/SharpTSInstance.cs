@@ -61,6 +61,8 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public object? Prototype => HasExplicitPrototype ? _explicitPrototype : _klass.Prototype;
     private object? _explicitPrototype;
     internal bool HasExplicitPrototype { get; private set; }
+    internal bool UsesDynamicPrototypeChain
+        => HasExplicitPrototype || _klass.HasModifiedInstancePrototypeChain;
 
     internal void SetExplicitPrototype(object? prototype)
     {
@@ -199,7 +201,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public object? Get(Token name)
     {
         string propName = name.Lexeme;
-        if (HasExplicitPrototype)
+        if (UsesDynamicPrototypeChain)
         {
             if (_getters?.TryGetValue(propName, out var getter) == true)
                 return InvokeOwnAccessor(getter, []);
@@ -256,7 +258,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public void Set(Token name, object? value)
     {
         string propName = name.Lexeme;
-        if (HasExplicitPrototype)
+        if (UsesDynamicPrototypeChain)
         {
             _interpreter!.SetInstancePropertyWithExplicitPrototype(this, propName, value, false);
             return;
@@ -324,7 +326,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public void SetStrict(Token name, object? value, bool strictMode)
     {
         string propName = name.Lexeme;
-        if (HasExplicitPrototype)
+        if (UsesDynamicPrototypeChain)
         {
             _interpreter!.SetInstancePropertyWithExplicitPrototype(this, propName, value, strictMode);
             return;
@@ -412,7 +414,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
     public bool HasProperty(string name)
     {
-        if (HasExplicitPrototype)
+        if (UsesDynamicPrototypeChain)
             return GetOwnPropertyDescriptor(name) is not null || _interpreter!.HasProperty(Prototype, name);
         if (!_lookupCache.TryGetValue(name, out PropertyResolution? resolution))
         {
@@ -839,9 +841,13 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         return new SharpTSPropertyDescriptor
         {
             Value = fieldValue,
+            HasValue = true,
             Writable = flags.Writable,
+            HasWritable = true,
             Enumerable = flags.Enumerable,
-            Configurable = flags.Configurable
+            HasEnumerable = true,
+            Configurable = flags.Configurable,
+            HasConfigurable = true,
         };
     }
 

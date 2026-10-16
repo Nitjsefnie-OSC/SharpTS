@@ -242,13 +242,19 @@ public partial class RuntimeEmitter
             "_classPrototypeCache",
             classPrototypeCacheType,
             FieldAttributes.Private | FieldAttributes.Static | FieldAttributes.InitOnly);
+        var classPrototypeParentsField = typeBuilder.DefineField(
+            "_classPrototypeParents", classPrototypeCacheType,
+            FieldAttributes.Private | FieldAttributes.Static | FieldAttributes.InitOnly);
         EmitClassPrototypeSupport(
             typeBuilder,
             runtime.ClassPrototypes,
             runtime.ObjectPrototypes,
             runtime.DescriptorStorage,
             runtime.ObjectFields.Interface,
-            classPrototypeCacheField
+            classPrototypeCacheField,
+            classPrototypeParentsField,
+            runtime.ArrayStorage.Type,
+            runtime.ArrayOperations.PrototypeField
         );
 
         EmitCancellationCheck(typeBuilder, runtime.Cancellation);
@@ -573,6 +579,8 @@ public partial class RuntimeEmitter
 
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(classPrototypeCacheType));
         cctorIL.Emit(OpCodes.Stsfld, classPrototypeCacheField);
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(classPrototypeCacheType));
+        cctorIL.Emit(OpCodes.Stsfld, classPrototypeParentsField);
 
         // Initialize _symbolStorage = new ConditionalWeakTable<object, Dictionary<object, object?>>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(symbolStorageType));
@@ -2093,6 +2101,7 @@ public partial class RuntimeEmitter
             runtime.ObjectPrototypes,
             new ObjectSetPrototypeOfInputs(
                 runtime.ArrayStorage,
+                runtime.ClassPrototypes,
                 runtime.DescriptorStorage,
                 runtime.Errors,
                 runtime.ObjectRead.Property,

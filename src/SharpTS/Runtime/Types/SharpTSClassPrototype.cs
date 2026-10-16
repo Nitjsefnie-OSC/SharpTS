@@ -35,6 +35,15 @@ public sealed class SharpTSClassPrototype : ISharpTSMutableBuiltIn
 
     public SharpTSClass Class => _klass;
 
+    internal bool HasExplicitPrototype { get; private set; }
+    internal object? ExplicitPrototype { get; private set; }
+
+    internal void SetExplicitPrototype(object? prototype)
+    {
+        ExplicitPrototype = prototype;
+        HasExplicitPrototype = true;
+    }
+
     public bool HasExtra(string name) => _overlay.HasExtra(name);
     public object? TryGetExtra(string name) => _overlay.GetProperty(name);
     public void SetExtra(string name, object? value) => _overlay.SetProperty(name, value);

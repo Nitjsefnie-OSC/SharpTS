@@ -1922,6 +1922,8 @@ public static partial class ObjectBuiltIns
         SharpTSArrayPrototype => interp?.GetObjectPrototype(),
         SharpTSPromisePrototype => interp?.GetObjectPrototype(),
         SharpTSStringPrototype => interp?.GetObjectPrototype(),
+        SharpTSClassPrototype { HasExplicitPrototype: true } classPrototype
+            => classPrototype.ExplicitPrototype,
         SharpTSClassPrototype classPrototype
             => (object?)classPrototype.Class.Superclass?.Prototype ?? interp?.GetObjectPrototype(),
         // The Number prototype object is ordinary and inherits from this realm's
@@ -2026,6 +2028,13 @@ public static partial class ObjectBuiltIns
             case SharpTSInstance instance:
                 return ReferenceEquals(PrototypeOf(interpreter, instance), proto);
 
+            case SharpTSClassPrototype classPrototype:
+                if (ReferenceEquals(PrototypeOf(interpreter, classPrototype), proto)) return true;
+                if (!PropertyDescriptorStore.IsExtensible(classPrototype)) return false;
+                if (WouldCreatePrototypeCycle(interpreter, classPrototype, proto)) return false;
+                classPrototype.SetExplicitPrototype(proto);
+                return true;
+
             case ISharpTSCallable function when FunctionObjectProperties.TryGetStorage(function, interpreter, out var storage):
                 if (ReferenceEquals(PrototypeOf(interpreter, function), proto)) return true;
                 if (!storage.IsExtensible || !PropertyDescriptorStore.IsExtensible(function)) return false;
@@ -2063,7 +2072,8 @@ public static partial class ObjectBuiltIns
             // this preflight rather than having their traps invoked here.
             candidate = candidate switch
             {
-                SharpTSObject or SharpTSArray or Dictionary<string, object?>
+                SharpTSObject or SharpTSArray or SharpTSClassPrototype or SharpTSInstance
+                    or Dictionary<string, object?>
                     => PrototypeOf(interpreter, candidate),
                 ISharpTSCallable function when FunctionObjectProperties.TryGetStorage(function, interpreter, out _)
                     => PrototypeOf(interpreter, function),

@@ -2129,7 +2129,8 @@ public abstract partial class ExpressionEmitterBase
         return Ctx.ResolveClassName(Ctx.TypeMap?.Get(receiver), simpleClassName);
     }
 
-    protected bool GuardClassMethodPrototype => Ctx.RuntimeFeatures?.UsesReflect != false;
+    protected bool GuardClassMethodPrototype => Ctx.RuntimeFeatures?.UsesReflect != false
+        || Ctx.RuntimeFeatures is { UsesClassPrototypeMutation: true };
 
     // The two direct-call emitters retain their nominal fast path, but a
     // Reflect.construct receiver can carry another constructor's prototype.
@@ -2144,17 +2145,30 @@ public abstract partial class ExpressionEmitterBase
 
         var receiverLocal = SpillBoxed(receiver);
         var nominal = IL.DefineLabel();
+        var checkNominalChain = IL.DefineLabel();
+        var dynamicCall = IL.DefineLabel();
         completed = IL.DefineLabel();
         EmitThrowIfReceiverUndefined(receiverLocal, methodName);
         IL.Emit(OpCodes.Ldloc, receiverLocal);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.DescriptorStorage.HasPrototypeEntry);
-        IL.Emit(OpCodes.Brfalse, nominal);
+        IL.Emit(OpCodes.Brfalse, checkNominalChain);
         IL.Emit(OpCodes.Ldloc, receiverLocal);
         IL.Emit(OpCodes.Callvirt, Types.GetMethodNoParams(Types.Object, "GetType"));
         IL.Emit(OpCodes.Call, Ctx.Runtime.ClassPrototypes.Get);
         IL.Emit(OpCodes.Ldloc, receiverLocal);
         IL.Emit(OpCodes.Call, Ctx.Runtime.ObjectPrototypes.GetPrototypeOf);
-        IL.Emit(OpCodes.Beq, nominal);
+        IL.Emit(OpCodes.Bne_Un, dynamicCall);
+        IL.MarkLabel(checkNominalChain);
+        if (Ctx.RuntimeFeatures?.UsesClassPrototypeMutation != false)
+        {
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+            IL.Emit(OpCodes.Callvirt, Types.GetMethodNoParams(Types.Object, "GetType"));
+            IL.Emit(OpCodes.Call, Ctx.Runtime.ClassPrototypes.HasModifiedChain);
+            IL.Emit(OpCodes.Brfalse, nominal);
+        }
+        else
+            IL.Emit(OpCodes.Br, nominal);
+        IL.MarkLabel(dynamicCall);
         EmitGetPropertyAndInvoke(receiverLocal, methodName, arguments);
         IL.Emit(OpCodes.Br, completed);
         IL.MarkLabel(nominal);

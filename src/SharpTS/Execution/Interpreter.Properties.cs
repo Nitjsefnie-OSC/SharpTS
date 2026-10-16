@@ -491,7 +491,7 @@ public partial class Interpreter
                 continue;
             }
 
-            if (current is SharpTSInstance { HasExplicitPrototype: true } instance)
+            if (current is SharpTSInstance { UsesDynamicPrototypeChain: true } instance)
             {
                 if (TryReadDescriptor(instance.GetOwnPropertyDescriptor(name), receiver, out var instanceValue))
                     return instanceValue;
@@ -667,7 +667,9 @@ public partial class Interpreter
             {
                 if (TryReadDescriptor(prototype.GetOwnPropertyDescriptor(symbol), receiver, out var value))
                     return value;
-                current = prototype.Class.Superclass?.Prototype
+                current = prototype.HasExplicitPrototype
+                    ? prototype.ExplicitPrototype
+                    : prototype.Class.Superclass?.Prototype
                     ?? (ReferenceEquals(prototype.Class, SharpTSArrayClass.ArrayBase)
                         ? (object)GetArrayPrototype() : GetObjectPrototype());
                 continue;
@@ -882,7 +884,7 @@ public partial class Interpreter
                 obj = GetRecordPrototype(so);
                 continue;
             }
-            if (obj is SharpTSInstance { HasExplicitPrototype: true } instance)
+            if (obj is SharpTSInstance { UsesDynamicPrototypeChain: true } instance)
             {
                 if (instance.GetOwnPropertyDescriptor(name) is not null) return true;
                 obj = instance.Prototype;
@@ -916,6 +918,22 @@ public partial class Interpreter
         {
             if (current is SharpTSProxy prototypeProxy)
                 return prototypeProxy.TrapHas(symbol, this);
+            if (current is SharpTSClassPrototype classPrototype)
+            {
+                if (classPrototype.GetOwnPropertyDescriptor(symbol) is not null) return true;
+                current = classPrototype.HasExplicitPrototype
+                    ? classPrototype.ExplicitPrototype
+                    : (object?)classPrototype.Class.Superclass?.Prototype
+                        ?? (ReferenceEquals(classPrototype.Class, SharpTSArrayClass.ArrayBase)
+                            ? GetArrayPrototype() : GetObjectPrototype());
+                continue;
+            }
+            if (current is SharpTSInstance { UsesDynamicPrototypeChain: true } instance)
+            {
+                if (instance.HasSymbolProperty(symbol)) return true;
+                current = instance.Prototype;
+                continue;
+            }
             if (current is SharpTSObject record)
             {
                 if (record.HasSymbolProperty(symbol)
@@ -1740,7 +1758,7 @@ public partial class Interpreter
     private RuntimeValue EvaluateGetOnInstanceRV(SharpTSInstance instance, Token memberName)
     {
         instance.SetInterpreter(this);
-        if (instance.HasExplicitPrototype) return instance.GetRV(memberName);
+        if (instance.UsesDynamicPrototypeChain) return instance.GetRV(memberName);
         if (instance.GetOwnPropertyDescriptor(memberName.Lexeme) is not null)
             return instance.GetRV(memberName);
 
@@ -1999,6 +2017,8 @@ public partial class Interpreter
             }
             if (current is SharpTSFunctionPrototype functionPrototype)
                 return RuntimeValue.FromBoxed(GetPropertyValue(functionPrototype, memberName, simpleObj));
+            if (current is SharpTSClassPrototype classPrototype)
+                return RuntimeValue.FromBoxed(GetPropertyValue(classPrototype, memberName, simpleObj));
             // `function Foo(){}; Foo.prototype = new Array(1,2,3)` — an array standing in as a
             // prototype. Instances must inherit both its own indexed/named data and the
             // Array.prototype methods, the latter applied to the *original* receiver so
@@ -2253,6 +2273,8 @@ public partial class Interpreter
     /// </summary>
     private object? EvaluateGetOnFallback(object? obj, string memberName)
     {
+        if (obj is SharpTSClassPrototype)
+            return GetPropertyValue(obj, memberName);
         if (FunctionObjectProperties.TryGetExplicitPrototype(obj, this, out _))
             return GetPropertyValue(obj, memberName);
         if (obj is ISharpTSFunctionObject functionObject)

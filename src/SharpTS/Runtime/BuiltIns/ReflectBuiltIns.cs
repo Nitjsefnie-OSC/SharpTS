@@ -190,7 +190,7 @@ public static class ReflectBuiltIns
                         : interpreter.GetPropertyValue(function,
                             interpreter.ToPropertyKeyString(args[1].ToObject()), functionReceiver));
                 }
-                if (target is SharpTSFunction or SharpTSArrowFunction or BoundFunction)
+                if (target is SharpTSFunction or SharpTSArrowFunction or BoundFunction or SharpTSClassPrototype)
                 {
                     object? functionReceiver = args.Length > 2 ? args[2].ToObject() : target;
                     return RuntimeValue.FromBoxed(args[1].ToObject() is SharpTSSymbol symbol
@@ -293,7 +293,7 @@ public static class ReflectBuiltIns
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.getPrototypeOf requires a target object.");
                 if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var functionStorage))
                     return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
-                if (target is ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator)
+                if (target is ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator or SharpTSClassPrototype)
                     return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
                 return RuntimeValue.FromBoxed(target switch
                 {
@@ -329,6 +329,7 @@ public static class ReflectBuiltIns
                     SharpTSObject obj => obj.IsExtensible,
                     SharpTSInstance inst => inst.IsExtensible,
                     SharpTSArray arr => arr.IsExtensible,
+                    SharpTSClassPrototype prototype => PropertyDescriptorStore.IsExtensible(prototype),
                     ISharpTSCallable callable => PropertyDescriptorStore.IsExtensible(callable),
                     Dictionary<string, object?> dict => PropertyDescriptorStore.IsExtensible(dict),
                     _ => false
@@ -356,6 +357,9 @@ public static class ReflectBuiltIns
                         break;
                     case SharpTSArray arr:
                         arr.PreventExtensions();
+                        break;
+                    case SharpTSClassPrototype prototype:
+                        PropertyDescriptorStore.PreventExtensions(prototype);
                         break;
                     case ISharpTSCallable callable:
                         PropertyDescriptorStore.PreventExtensions(callable);

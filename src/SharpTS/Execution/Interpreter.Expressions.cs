@@ -440,6 +440,8 @@ public partial class Interpreter
             object? superPrototype = _environment.PrivateClass is { } owner
                 ? ObjectBuiltIns.PrototypeOf(this, owner.Prototype)
                 : superclass.Prototype;
+            if (superPrototype is null)
+                ThrowCannotReadProperty(superPrototype, property.Lexeme);
             return RuntimeValue.FromBoxed(GetPropertyValueFromChain(
                 superPrototype, property.Lexeme, thisReceiver));
         }
@@ -1446,7 +1448,7 @@ public partial class Interpreter
     private object? GetInstanceSymbolValue(SharpTSInstance instance, SharpTSSymbol symbol)
     {
         if (instance.HasSymbolProperty(symbol)) return instance.GetBySymbol(symbol);
-        if (instance.HasExplicitPrototype)
+        if (instance.UsesDynamicPrototypeChain)
             return instance.Prototype is { } prototype
                 ? GetSymbolPropertyValue(prototype, symbol, instance)
                 : SharpTSUndefined.Instance;

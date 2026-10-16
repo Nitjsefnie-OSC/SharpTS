@@ -56,6 +56,7 @@ public partial class RuntimeEmitter
 
     private readonly record struct ObjectSetPrototypeOfInputs(
         EmittedArrayStorageRuntime ArrayStorage,
+        EmittedClassPrototypeRuntime ClassPrototypes,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
         MethodBuilder GetProperty,
@@ -1309,6 +1310,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.ArrayStorage.Type);
         il.Emit(OpCodes.Brtrue, notClassInstanceLabel);
+        // A declaration's stable prototype uses the same CLR carrier as its
+        // instances, but has an ordinary mutable internal prototype of its own.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.Get);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Beq, notClassInstanceLabel);
         // It's a class instance - throw TypeError
         GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor, "Cannot set prototype of class instance");
         il.MarkLabel(notClassInstanceLabel);
@@ -1335,7 +1343,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, cycleCursor);
         il.Emit(OpCodes.Brfalse, cycleDone);
         il.Emit(OpCodes.Ldloc, cycleCursor);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.NormalizePrototype);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.NormalizePrototype);
         var noCycleAtCursor = il.DefineLabel();
         il.Emit(OpCodes.Bne_Un, noCycleAtCursor);
         GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
@@ -1370,6 +1380,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, inputs.DescriptorStorage.SetPrototype);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.UpdateParent);
 
         // Also store in local prototype table for backward compatibility
         il.Emit(OpCodes.Ldsfld, prototypeStoreField);

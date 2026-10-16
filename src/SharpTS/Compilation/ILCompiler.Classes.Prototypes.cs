@@ -157,14 +157,20 @@ public partial class ILCompiler
             constructor = EmitterTypeHelpers.ResolveConstructor(selfType, constructor);
         }
 
+        Type? baseType = typeBuilder.BaseType;
+        // Populate the native base before registration selects its parent. This
+        // also lets registration preserve a generic family's explicit override.
+        if (baseType == _runtime.ArrayStorage.Type)
+            il.Emit(OpCodes.Call, _runtime.ArrayOperations.PrototypePopulateMethod);
+
         il.Emit(OpCodes.Ldtoken, selfType);
         il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Newobj, constructor);
 
         Type? basePrototypeType = null;
-        Type? baseType = typeBuilder.BaseType;
-        if (baseType != null && TryResolveClassPrototypeConstructor(baseType, out _))
+        if (baseType != null && (baseType == _runtime.ArrayStorage.Type
+            || TryResolveClassPrototypeConstructor(baseType, out _)))
             basePrototypeType = baseType;
 
         if (basePrototypeType == null)
@@ -188,16 +194,6 @@ public partial class ILCompiler
         il.Emit(OpCodes.Call, _runtime.ClassPrototypes.Get);
         var prototypeLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Stloc, prototypeLocal);
-
-        // The native Array base does not have a compiler-only prototype
-        // constructor, but remains the actual base of the guest class chain.
-        if (baseType == _runtime.ArrayStorage.Type)
-        {
-            il.Emit(OpCodes.Call, _runtime.ArrayOperations.PrototypePopulateMethod);
-            il.Emit(OpCodes.Ldloc, prototypeLocal);
-            il.Emit(OpCodes.Ldsfld, _runtime.ArrayOperations.PrototypeField);
-            il.Emit(OpCodes.Call, _runtime.DescriptorStorage.SetPrototype);
-        }
 
         void EmitPrototypeDataDescriptor(string propertyName, Action emitValue)
         {

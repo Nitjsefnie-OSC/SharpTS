@@ -51,7 +51,7 @@ public sealed class EmittedObjectPrototypeRuntimeTests
         var first = new EmittedRuntime(); var second = new EmittedRuntime();
         Assert.NotSame(first.ObjectPrototypes, second.ObjectPrototypes); Assert.NotSame(first.ClassPrototypes, second.ClassPrototypes);
         Assert.False(first.ObjectPrototypes.IsComplete); Assert.False(first.ClassPrototypes.IsComplete);
-        Assert.Equal(10, Handles(typeof(EmittedObjectPrototypeRuntime)).Length); Assert.Equal(3, Handles(typeof(EmittedClassPrototypeRuntime)).Length);
+        Assert.Equal(10, Handles(typeof(EmittedObjectPrototypeRuntime)).Length); Assert.Equal(6, Handles(typeof(EmittedClassPrototypeRuntime)).Length);
         Assert.Null(typeof(EmittedRuntime).GetProperty(nameof(EmittedRuntime.ObjectPrototypes))!.SetMethod);
         Assert.Null(typeof(EmittedRuntime).GetProperty(nameof(EmittedRuntime.ClassPrototypes))!.SetMethod);
     }

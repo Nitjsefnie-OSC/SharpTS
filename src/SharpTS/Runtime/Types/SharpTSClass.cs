@@ -76,6 +76,13 @@ public partial class SharpTSClass(
     /// TypeError.prototype</c> both depend on that identity holding.
     /// </summary>
     public SharpTSClassPrototype Prototype => _prototype ??= new SharpTSClassPrototype(this);
+
+    // Cached instance lookups remain valid until a prototype's parent changes.
+    // Constructor inheritance is fixed, so it can conservatively detect any
+    // modified home along the original instance chain without altering statics.
+    internal bool HasModifiedInstancePrototypeChain
+        => _prototype?.HasExplicitPrototype == true
+            || Superclass?.HasModifiedInstancePrototypeChain == true;
     private readonly Dictionary<string, ISharpTSCallable?> _staticMethodCache = [];
     private readonly HashSet<string> _deletedStaticMethods = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SharpTSFunction?> _getterCache = [];

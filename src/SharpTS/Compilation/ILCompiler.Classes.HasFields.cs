@@ -1171,6 +1171,20 @@ public partial class ILCompiler
         il.Emit(OpCodes.Call, _runtime.ClassDefinitions.ReadPrototypeProperty);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(nominalPrototype);
+        if (_features?.UsesClassPrototypeMutation != false)
+        {
+            var unchangedChain = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+            il.Emit(OpCodes.Call, _runtime.ClassPrototypes.HasModifiedChain);
+            il.Emit(OpCodes.Brfalse, unchangedChain);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, prototypeLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, _runtime.ClassDefinitions.ReadPrototypeProperty);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(unchangedChain);
+        }
         var noDescriptor = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _runtime.ClassDefinitions.InstanceInterface);

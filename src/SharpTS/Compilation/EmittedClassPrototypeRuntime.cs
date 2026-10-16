@@ -30,6 +30,27 @@ public sealed class EmittedClassPrototypeRuntime
         internal set => SetHandle(ref _register, value);
     }
 
+    private MethodBuilder? _hasModifiedChain;
+    public MethodBuilder HasModifiedChain
+    {
+        get => Require(_hasModifiedChain);
+        internal set => SetHandle(ref _hasModifiedChain, value);
+    }
+
+    private MethodBuilder? _normalizePrototype;
+    public MethodBuilder NormalizePrototype
+    {
+        get => Require(_normalizePrototype);
+        internal set => SetHandle(ref _normalizePrototype, value);
+    }
+
+    private MethodBuilder? _updateParent;
+    public MethodBuilder UpdateParent
+    {
+        get => Require(_updateParent);
+        internal set => SetHandle(ref _updateParent, value);
+    }
+
     private static T Require<T>(T? handle, [CallerMemberName] string name = "") where T : class =>
         handle ?? throw new InvalidOperationException("Prototype metadata '" + name + "' has not been declared.");
 
@@ -54,6 +75,9 @@ public sealed class EmittedClassPrototypeRuntime
         _ = MarkerType;
         _ = Get;
         _ = Register;
+        _ = HasModifiedChain;
+        _ = NormalizePrototype;
+        _ = UpdateParent;
         IsComplete = true;
     }
 }

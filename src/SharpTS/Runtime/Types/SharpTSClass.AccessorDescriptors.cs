@@ -1,3 +1,6 @@
+using SharpTS.Runtime.BuiltIns;
+using SharpTS.Runtime.Exceptions;
+
 namespace SharpTS.Runtime.Types;
 
 public partial class SharpTSClass
@@ -32,6 +35,27 @@ public partial class SharpTSClass
     {
         foreach (var name in _getters.Keys.Concat(_setters.Keys).Distinct(StringComparer.Ordinal))
             yield return (name, AccessorDescriptor(_getters.GetValueOrDefault(name), _setters.GetValueOrDefault(name), name));
+        foreach (var accessor in _instanceAutoAccessors)
+        {
+            string name = accessor.Name.Lexeme;
+            var getter = BuiltInMethod.CreateV2($"get {name}", 0, (_, receiver, _) =>
+                RuntimeValue.FromBoxed(GetOwnAutoAccessorStorage(receiver.ToObject(), name)[name]));
+            var setter = accessor.IsReadonly ? null : BuiltInMethod.CreateV2($"set {name}", 1, (_, receiver, args) =>
+            {
+                GetOwnAutoAccessorStorage(receiver.ToObject(), name)[name] = args[0].ToObject();
+                return RuntimeValue.Undefined;
+            });
+            yield return (name, AccessorDescriptor(getter, setter));
+        }
+    }
+
+    private Dictionary<string, object?> GetOwnAutoAccessorStorage(object? receiver, string name)
+    {
+        if (receiver is null || !_autoAccessorStorage.TryGetValue(receiver, out var storage)
+            || !storage.ContainsKey(name))
+            throw new ThrowException(new SharpTSTypeError(
+                $"Cannot access auto-accessor '{name}' on this receiver"));
+        return storage;
     }
 
     internal IEnumerable<(SharpTSSymbol Key, SharpTSPropertyDescriptor Descriptor)> OwnInstanceSymbolAccessorDescriptors()

@@ -1283,7 +1283,7 @@ public partial class Interpreter
         // Standard path: SharpTSInstance — walk the class chain
         if (left is SharpTSInstance instance)
         {
-            if (instance.HasExplicitPrototype)
+            if (instance.UsesDynamicPrototypeChain)
                 return InstanceOfByPrototype(left, targetClass);
             SharpTSClass? current = instance.GetClass();
             while (current != null)

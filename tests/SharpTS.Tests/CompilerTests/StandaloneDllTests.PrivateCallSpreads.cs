@@ -6,6 +6,21 @@ namespace SharpTS.Tests.CompilerTests;
 public partial class StandaloneDllTests
 {
     [Theory]
+    [InlineData("instance-issue")]
+    [InlineData("instance-packing")]
+    [InlineData("instance-iterator-order")]
+    [InlineData("instance-suspended-readers")]
+    [InlineData("instance-pending-arguments")]
+    public void Isolated_Issue2153InstancePrivateCalls_PackArguments(string name)
+    {
+        var row = PrivateCallSpreadTests.Cases().Single(row => (string)row[0] == name);
+        using var directory = IntegrationTests.CliTestHelper.CreateTempDirectory();
+        var path = directory.CreateFile("main.ts", (string)row[1]);
+        AssertStandaloneConstructorIdentity(directory.Path, path,
+            directory.GetPath("instance-private-spreads-" + name + ".dll"), (string)row[2]);
+    }
+
+    [Theory]
     [InlineData("fields-methods-reference")]
     [InlineData("iterable-order-reference")]
     [InlineData("abrupt-reference")]

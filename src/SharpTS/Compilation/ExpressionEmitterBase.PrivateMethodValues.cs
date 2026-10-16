@@ -180,11 +180,14 @@ public abstract partial class ExpressionEmitterBase
         string name = call.Name.Lexeme.TrimStart('#');
         string owner = Ctx.ResolvePrivateMethodOwner(current, name);
         var value = Ctx.ClassRegistry?.GetPrivateMethodValue(owner, name);
-        if (value is null || (!Ctx.HasGuestReceiver
+        if (value is null) return false;
+        bool requiresArgumentPacking = call.Arguments.Any(argument => argument is Expr.Spread)
+            || value.Source.Parameters.Any(parameter => parameter.IsRest);
+        if (!requiresArgumentPacking && !Ctx.HasGuestReceiver
                 && !Ctx.TypeMapper.IsDynamicClassInstance(Ctx.TypeMap?.GetClassType(owner))
                 && value.Definition == null && !value.Source.IsStatic
                 && !Parsing.Visitors.ArgumentsRefScanner.Contains(value.Source.Parameters, value.Source.Body,
-                    treatEvalReferenceAsUse: true))) return false;
+                    treatEvalReferenceAsUse: true)) return false;
         var receiver = SpillGenericPrivateOperand(call.Object);
         EmitPrivateMethodValue(value, owner, name, receiver);
         EmitGuestMethodInvocation(receiver, call.Arguments);

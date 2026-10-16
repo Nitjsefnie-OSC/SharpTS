@@ -15,6 +15,7 @@ public partial class RuntimeEmitter
         EmittedObjectReadRuntime ObjectRead,
         EmittedObjectStorageRuntime ObjectStorage,
         EmittedReflectedMethodRuntime ReflectedMethods,
+        Type SymbolType,
         FieldInfo UndefinedInstance,
         MethodInfo TypeOf
     );
@@ -255,6 +256,14 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, returnNewObj);
+
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Isinst, inputs.SymbolType);
+        il.Emit(OpCodes.Brtrue, returnNewObj);
+
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Isinst, _types.BigInteger);
         il.Emit(OpCodes.Brtrue, returnNewObj);
 
         il.Emit(OpCodes.Ldloc, resultLocal);

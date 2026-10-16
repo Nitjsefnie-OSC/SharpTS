@@ -735,6 +735,7 @@ public partial class RuntimeEmitter
                 runtime.ObjectRead,
                 runtime.ObjectStorage,
                 runtime.ReflectedMethods,
+                runtime.Symbols.Type,
                 runtime.Sentinels.UndefinedInstance,
                 runtime.Operators.TypeOf
             )

@@ -26,6 +26,8 @@ public partial class ILCompiler
             string infix = method.IsStatic ? "::static::" : "::";
             string key = $"{qualifiedClassName}{infix}{method.Name.Lexeme}";
             _closures.FunctionAstNodes[key] = method;
+            if (_modules.CurrentPath != null)
+                _functionDefinitionModule[key] = _modules.CurrentPath;
             DefineFunctionDisplayClass(method, key);
             if (_closures.FunctionDisplayClasses.ContainsKey(key))
                 _syncMethodFunctionDCKeys[method] = key;

@@ -1269,13 +1269,9 @@ public partial class ILCompiler
         // Abstract methods have no body to emit
         if (method.Body != null)
         {
-            // #1237: an inner `function` declared inside a method is collected (its method/display
-            // class are emitted) but was never materialized into a binding here, so every reference
-            // fell through to ThrowUndefinedVariable. Wire the in-place materializer so each inner
-            // function declaration is created at its textual position by the statement emitter's
-            // Stmt.Function arm. Methods have no function-level display class, so a top-of-body hoist
-            // (EmitInnerFunctionHoisting) would snapshot captured method-locals before they are
-            // assigned; in-place materialization captures them correctly. See WireInPlaceInnerFunctions.
+            // Materialize ordinary nested functions at their declaration sites.
+            // Captured method locals retain the shared function display class
+            // initialized above, so both callable bodies observe subsequent writes.
             WireInPlaceInnerFunctions(ctx);
 
             foreach (var stmt in method.Body)

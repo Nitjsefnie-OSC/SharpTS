@@ -5,6 +5,53 @@ namespace SharpTS.Tests.SharedTests;
 
 public sealed class ReflectSymbolKeyTests
 {
+    public const string StringReceiverIssueSource = """
+        const target: any = {}, receiver: any = { value: 7 };
+        Object.defineProperty(target, "x", { get: function(this: any) { return this.value; } });
+        console.log(Reflect.get(target, "x", receiver));
+        """ + "\n";
+
+    public const string StringInheritedReceiverSource = """
+        const state: any = { gets: 0, receiver: null, order: "" }, marker = {};
+        const prototype: any = { value: 1, data: null };
+        Object.defineProperty(prototype, "x", {
+            get: function(this: any) {
+                state.gets++; state.receiver = this; state.order += "G"; return this.value;
+            }, configurable: true
+        });
+        const target: any = Object.create(prototype), receiver: any = { value: 7 };
+        target.value = 3;
+        const get: any = Reflect.get;
+        console.log(Reflect.get(target, "x", receiver), get(target, "x", receiver),
+            get(prototype, "x", target), Reflect.get(target, "x"), state.gets);
+        console.log(get(target, "data", receiver) === null,
+            get(target, "missing", receiver) === undefined, state.gets);
+        function targetArgument() { state.order += "T"; return target; }
+        function keyArgument(): string { state.order += "K"; return "x"; }
+        function receiverArgument() { state.order += "R"; return receiver; }
+        state.order = "";
+        console.log(get(targetArgument(), keyArgument(), receiverArgument()), state.order, state.gets);
+        state.order = "";
+        function failedKey(): string { state.order += "K"; throw marker; }
+        try { get(targetArgument(), failedKey(), receiverArgument()); }
+        catch (error) { console.log(error === marker, state.order, state.gets); }
+        state.order = "";
+        function failedReceiver(): any { state.order += "R"; throw marker; }
+        try { get(targetArgument(), keyArgument(), failedReceiver()); }
+        catch (error) { console.log(error === marker, state.order, state.gets); }
+        Object.defineProperty(target, "x", {
+            get: function(this: any) { state.gets++; state.receiver = this; throw marker; }, configurable: true
+        });
+        try { get(target, "x", receiver); }
+        catch (error) { console.log(error === marker, state.receiver === receiver, state.gets); }
+        const identity: any = {};
+        Object.defineProperty(identity, "x", {
+            get: function(this: any) { "use strict"; return this; }
+        });
+        console.log(get(identity, "x", 0) === 0, get(identity, "x", false) === false,
+            get(identity, "x", "") === "");
+        """ + "\n";
+
     public static IEnumerable<object[]> Cases()
     {
         yield return ["issue", """
@@ -211,6 +258,8 @@ public sealed class ReflectSymbolKeyTests
             function receiver() { order += "R"; return {}; }
             console.log(Reflect.get(target, propertyKey, receiver()), order, correctReceiver);
             """, "7 RGC true\n"];
+        yield return ["string-receiver-issue", StringReceiverIssueSource, "7\n"];
+        yield return ["string-inherited-receiver-and-order", StringInheritedReceiverSource, "7 7 3 3 4\ntrue true 4\n7 TKRG 5\ntrue TK 5\ntrue TKR 5\ntrue true 6\ntrue true true\n"];
     }
 
     [Theory, ModeData]

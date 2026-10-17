@@ -54,6 +54,8 @@ public partial class StandaloneDllTests
     [InlineData("class-methods")]
     [InlineData("coercion-order")]
     [InlineData("number-key-coercion")]
+    [InlineData("string-receiver-issue")]
+    [InlineData("string-inherited-receiver-and-order")]
     public void Isolated_Issue2067ReflectSymbolKeys_VerifyBeforeExecution(string name)
     {
         var row = ReflectSymbolKeyTests.Cases().Single(row => (string)row[0] == name);
@@ -66,6 +68,9 @@ public partial class StandaloneDllTests
         Assert.True(compile.ExitCode == 0, compile.StandardOutput + compile.StandardError);
         Assert.Contains("IL verification passed.", compile.StandardOutput);
         Assert.DoesNotContain("SharpTS", GetAssemblyReferences(output));
+        Assert.All(GetAssemblyReferences(output), reference => Assert.True(
+            reference is "mscorlib" or "netstandard" || reference.StartsWith("System", StringComparison.Ordinal),
+            "Unexpected standalone reference: " + reference));
         Assert.False(File.Exists(directory.GetPath("SharpTS.dll")));
         Assert.Equal((string)row[2], ExecuteCompiledDllIsolated(output, timeoutMs: 30000,
             verifyStandardError: error => Assert.Empty(error), standardInput: ""));

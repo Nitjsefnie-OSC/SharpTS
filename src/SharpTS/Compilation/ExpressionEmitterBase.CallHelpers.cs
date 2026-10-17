@@ -1279,6 +1279,7 @@ public abstract partial class ExpressionEmitterBase
         Expr.ObjectLiteral ol => ol.Properties.Any(p =>
             (p.Key is Expr.ComputedKey ck && ExprContainsSuspension(ck.Expression)) || ExprContainsSuspension(p.Value)),
         Expr.TemplateLiteral tl => AnyContainsSuspension(tl.Expressions),
+        Expr.TaggedTemplateLiteral tagged => ExprContainsSuspension(tagged.Tag) || AnyContainsSuspension(tagged.Expressions),
         Expr.Spread sp => ExprContainsSuspension(sp.Expression),
         Expr.TypeAssertion ta => ExprContainsSuspension(ta.Expression),
         Expr.Satisfies sa => ExprContainsSuspension(sa.Expression),

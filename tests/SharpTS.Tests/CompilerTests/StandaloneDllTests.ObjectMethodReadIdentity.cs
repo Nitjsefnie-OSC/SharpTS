@@ -9,6 +9,7 @@ public partial class StandaloneDllTests
     [InlineData("original", false)]
     [InlineData("data-read-forms", true)]
     [InlineData("getter-and-tags", true)]
+    [InlineData("async-member-tags", true)]
     [InlineData("constructor-values", true)]
     public void Saved_Issue2092ObjectMethodReads_VerifyBeforeExecution(string name, bool standalone)
     {

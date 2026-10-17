@@ -57,59 +57,7 @@ public partial class AsyncMoveNextEmitter
     }
 
     protected override void EmitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral ttl)
-    {
-        // Spill the tag and interpolated expressions first: an await inside any of them
-        // must suspend with an empty stack (same two-phase pattern as EmitTemplateLiteral).
-        var tagLocal = SpillBoxed(ttl.Tag);
-        var exprLocals = ttl.Expressions.Select(SpillBoxed).ToList();
-
-        // 1. Load the tag function reference
-        _il.Emit(OpCodes.Ldloc, tagLocal);
-
-        // 2. Create cooked strings array (object?[] to allow null for invalid escapes)
-        _il.Emit(OpCodes.Ldc_I4, ttl.CookedStrings.Count);
-        _il.Emit(OpCodes.Newarr, typeof(object));
-        for (int i = 0; i < ttl.CookedStrings.Count; i++)
-        {
-            _il.Emit(OpCodes.Dup);
-            _il.Emit(OpCodes.Ldc_I4, i);
-            if (ttl.CookedStrings[i] != null)
-            {
-                _il.Emit(OpCodes.Ldstr, ttl.CookedStrings[i]!);
-            }
-            else
-            {
-                _il.Emit(OpCodes.Ldnull);
-            }
-            _il.Emit(OpCodes.Stelem_Ref);
-        }
-
-        // 3. Create raw strings array
-        _il.Emit(OpCodes.Ldc_I4, ttl.RawStrings.Count);
-        _il.Emit(OpCodes.Newarr, typeof(string));
-        for (int i = 0; i < ttl.RawStrings.Count; i++)
-        {
-            _il.Emit(OpCodes.Dup);
-            _il.Emit(OpCodes.Ldc_I4, i);
-            _il.Emit(OpCodes.Ldstr, ttl.RawStrings[i]);
-            _il.Emit(OpCodes.Stelem_Ref);
-        }
-
-        // 4. Create expressions array (from the pre-spilled locals)
-        _il.Emit(OpCodes.Ldc_I4, exprLocals.Count);
-        _il.Emit(OpCodes.Newarr, typeof(object));
-        for (int i = 0; i < exprLocals.Count; i++)
-        {
-            _il.Emit(OpCodes.Dup);
-            _il.Emit(OpCodes.Ldc_I4, i);
-            _il.Emit(OpCodes.Ldloc, exprLocals[i]);
-            _il.Emit(OpCodes.Stelem_Ref);
-        }
-
-        // 5. Call runtime helper: InvokeTaggedTemplate(tag, cooked, raw, exprs)
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.Templates.Invoke);
-        SetStackUnknown();
-    }
+        => base.EmitTaggedTemplateLiteral(ttl);
 
     // EmitSet is inherited from ExpressionEmitterBase: it covers the same cases
     // (globalThis, static fields, registry, dynamic SetProperty) plus CommonJS

@@ -1351,15 +1351,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     }
 
     /// <summary>
-    /// Emits a tagged template literal. Default uses two-phase pattern.
-    /// ILEmitter overrides with its own implementation.
+    /// Emits a tagged template literal, retaining an ordinary member Reference's
+    /// receiver and selected callable across interpolation suspension.
     /// </summary>
     protected virtual void EmitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral ttl)
     {
-        // Phase 1: Evaluate tag and all expressions to temps. SpillBoxed registers each
-        // so an await in a later interpolation persists the tag and earlier expressions
-        // across the suspension (#400).
-        var tagTemp = SpillBoxed(ttl.Tag);
+        var (tagTemp, receiverTemp) = SpillTaggedTemplateReference(ttl.Tag);
 
         var exprTemps = new List<LocalBuilder>();
         for (int i = 0; i < ttl.Expressions.Count; i++)
@@ -1367,6 +1364,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
         // Phase 2: Build arrays and call from temps
         IL.Emit(OpCodes.Ldloc, tagTemp);
+        if (receiverTemp is not null) IL.Emit(OpCodes.Ldloc, receiverTemp);
 
         IL.Emit(OpCodes.Ldc_I4, ttl.CookedStrings.Count);
         IL.Emit(OpCodes.Newarr, typeof(object));
@@ -1401,8 +1399,62 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             IL.Emit(OpCodes.Stelem_Ref);
         }
 
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.Templates.Invoke);
+        IL.Emit(OpCodes.Call, receiverTemp is null
+            ? Ctx.Runtime!.Templates.Invoke : Ctx.Runtime!.Templates.InvokeWithThis);
         SetStackUnknown();
+    }
+
+    private (LocalBuilder Tag, LocalBuilder? Receiver) SpillTaggedTemplateReference(Expr tag)
+    {
+        Expr reference = ExpressionUnwrapper.Unwrap(tag);
+        if (!TaggedTemplateReferenceHasOptionalLink(reference))
+        {
+            if (reference is Expr.Get get)
+            {
+                var receiver = SpillBoxed(get.Object);
+                IL.Emit(OpCodes.Ldloc, receiver);
+                if (!IsNullPlaceholderGlobal(get.Object))
+                    EmitThrowIfUndefinedReceiverOnStack(get.Name.Lexeme);
+                IL.Emit(OpCodes.Ldstr, get.Name.Lexeme);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Property);
+                SetStackUnknown();
+                return (_helpers.SpillStoreObject(), receiver);
+            }
+            if (reference is Expr.GetIndex index)
+            {
+                // Both values must be registered before a key or interpolation
+                // can suspend; no operand remains on the evaluation stack.
+                var receiver = SpillBoxed(index.Object);
+                var key = SpillBoxed(index.Index);
+                if (!IsNullPlaceholderGlobal(index.Object))
+                    EmitThrowIfUndefinedIndexReceiver(receiver, key);
+                IL.Emit(OpCodes.Ldloc, receiver);
+                IL.Emit(OpCodes.Ldloc, key);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Index);
+                SetStackUnknown();
+                return (_helpers.SpillStoreObject(), receiver);
+            }
+        }
+        // Optional chains and super keep their existing expression policy.
+        // Comma/conditional values are detached, rather than References.
+        return (SpillBoxed(tag), null);
+    }
+
+    private static bool TaggedTemplateReferenceHasOptionalLink(Expr expression)
+    {
+        // The complete tag was already unwrapped for Reference classification.
+        // A grouping within its receiver ends an optional chain, so do not peel
+        // that boundary while following type-only wrappers on the chain itself.
+        return expression switch
+        {
+            Expr.TypeAssertion assertion => TaggedTemplateReferenceHasOptionalLink(assertion.Expression),
+            Expr.Satisfies satisfies => TaggedTemplateReferenceHasOptionalLink(satisfies.Expression),
+            Expr.NonNullAssertion assertion => TaggedTemplateReferenceHasOptionalLink(assertion.Expression),
+            Expr.Get get => get.Optional || TaggedTemplateReferenceHasOptionalLink(get.Object),
+            Expr.GetIndex index => index.Optional || TaggedTemplateReferenceHasOptionalLink(index.Object),
+            Expr.Call call => call.Optional || TaggedTemplateReferenceHasOptionalLink(call.Callee),
+            _ => false
+        };
     }
 
     /// <summary>

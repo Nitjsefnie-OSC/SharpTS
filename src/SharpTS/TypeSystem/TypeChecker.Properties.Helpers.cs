@@ -141,9 +141,12 @@ public partial class TypeChecker
                 if (TryGetAccessorSetterAccess(current, isStatic: true, memberName.Lexeme, out _))
                     EnforceAccessorAccess(current, classType, memberName, isStatic: true, isWrite: false);
                 else
+                {
                     EnforceStaticMemberAccess(current, memberName);
+                    ObservePendingGetterFieldRead(current, isStatic: true, memberName.Lexeme);
+                }
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Static);
-                return staticPropType;
+                return ResolveFieldStageGetter(current, isStatic: true, memberName.Lexeme, staticPropType);
             }
             current = GetSuperclass(current);
         }
@@ -340,7 +343,7 @@ public partial class TypeChecker
             EnforceAccessorAccess(accessor.DeclaringType, instance.ResolvedClassType,
                 memberName, isStatic: false, isWrite: false);
             ObserveSourceMemberSelection(memberName, accessor.DeclaringType, MemberFacet.Instance);
-            return accessor.GetterType ?? accessor.SetterType!;
+            return SelectedInstanceAccessorReadType(accessor, memberNameStr);
         }
 
         // Handle instantiated generic class (e.g., Box<number>)
@@ -404,6 +407,7 @@ public partial class TypeChecker
         // Check for field
         if (gc.FieldTypes?.TryGetValue(memberName, out var fieldType) == true)
         {
+            ObservePendingGetterFieldRead(gc, isStatic: false, memberName);
             ObserveSourceMemberSelection(memberToken, gc, MemberFacet.Instance);
             return Substitute(fieldType, subs);
         }
@@ -432,6 +436,7 @@ public partial class TypeChecker
                 }
                 if (superFields != null && superFields.TryGetValue(memberName, out var superField))
                 {
+                    ObservePendingGetterFieldRead(currentSuper, isStatic: false, memberName);
                     ObserveSourceMemberSelection(memberToken, currentSuper, MemberFacet.Instance);
                     return SubstituteConstructorMember(superField, fieldSubstitutions);
                 }
@@ -565,6 +570,7 @@ public partial class TypeChecker
             var fieldTypes = GetFieldTypes(current);
             if (fieldTypes != null && fieldTypes.TryGetValue(memberNameStr, out var fieldType))
             {
+                ObservePendingGetterFieldRead(current, isStatic: false, memberNameStr);
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Instance);
                 return promiseHeritage ? Sub(fieldType) : SubstituteConstructorMember(fieldType, fieldSubstitutions);
             }

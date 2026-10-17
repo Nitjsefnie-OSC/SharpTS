@@ -292,56 +292,66 @@ public partial class TypeChecker
             _ => null
         };
 
-        foreach (var field in fields)
+        var getterScope = CreateFieldGetterScope(sourceOwner, fields, mutableClass, instanceEnvironment);
+        _fieldGetterScope = getterScope;
+        try
         {
-            if (field.Initializer == null || field.IsDeclare) continue;
-
-            TypeInfo.Class currentClass = mutableClass.Freeze();
-            RefreshSelfBindings(currentClass);
-
-            TypeEnvironment previousEnvironment = _environment;
-            TypeInfo.Class? previousClass = _currentClass;
-            TypeInfo? previousThisType = _currentFunctionThisType;
-            bool previousStaticMethod = _inStaticMethod;
-            bool previousStaticBlock = _inStaticBlock;
-            bool previousGlobalThis = _currentArrowCapturesScriptGlobalThis;
-            TypeEnvironment? previousFlowBoundary = _deferredInitializerFlowBoundary;
-            var previousAssignmentState = field.IsStatic ? null : SnapshotDefiniteAssignmentState();
-            _environment = field.IsStatic ? staticEnvironment : instanceEnvironment;
-            _currentClass = currentClass;
-            // A mutable instance self lets callbacks inferred here observe the completed
-            // class after later fields and method returns have been published.
-            _currentFunctionThisType = field.IsStatic
-                ? currentClass : new TypeInfo.Instance(mutableClass);
-            _inStaticMethod = field.IsStatic;
-            _inStaticBlock = false;
-            _currentArrowCapturesScriptGlobalThis = false;
-            if (!field.IsStatic) _deferredInitializerFlowBoundary = outerEnvironment;
-            _privateNameEnclosingClasses.Push(previousClass);
-            if (!field.IsStatic) PushEmptyNarrowingScope();
-            try
+            foreach (var field in fields)
             {
-                anyInferredFieldTypeResolved |= CheckAndInferClassFieldInitializer(field, mutableClass);
-            }
-            finally
-            {
-                if (!field.IsStatic)
+                if (field.Initializer == null || field.IsDeclare) continue;
+
+                TypeInfo.Class currentClass = mutableClass.Freeze();
+                RefreshSelfBindings(currentClass);
+
+                TypeEnvironment previousEnvironment = _environment;
+                TypeInfo.Class? previousClass = _currentClass;
+                TypeInfo? previousThisType = _currentFunctionThisType;
+                bool previousStaticMethod = _inStaticMethod;
+                bool previousStaticBlock = _inStaticBlock;
+                bool previousGlobalThis = _currentArrowCapturesScriptGlobalThis;
+                TypeEnvironment? previousFlowBoundary = _deferredInitializerFlowBoundary;
+                var previousAssignmentState = field.IsStatic ? null : SnapshotDefiniteAssignmentState();
+                _environment = field.IsStatic ? staticEnvironment : instanceEnvironment;
+                _currentClass = currentClass;
+                // A mutable instance self lets callbacks inferred here observe the completed
+                // class after later fields and method returns have been published.
+                _currentFunctionThisType = field.IsStatic
+                    ? currentClass : new TypeInfo.Instance(mutableClass);
+                _inStaticMethod = field.IsStatic;
+                _inStaticBlock = false;
+                _currentArrowCapturesScriptGlobalThis = false;
+                if (!field.IsStatic) _deferredInitializerFlowBoundary = outerEnvironment;
+                _privateNameEnclosingClasses.Push(previousClass);
+                if (!field.IsStatic) PushEmptyNarrowingScope();
+                try
                 {
-                    PopNarrowingScope();
-                    RestoreDefiniteAssignmentState(previousAssignmentState);
+                    anyInferredFieldTypeResolved |= CheckAndInferClassFieldInitializer(field, mutableClass);
+                    getterScope.PendingFields.Remove((field.IsStatic, GetFieldMemberName(field)));
                 }
-                _privateNameEnclosingClasses.Pop();
-                _environment = previousEnvironment;
-                _currentClass = previousClass;
-                _currentFunctionThisType = previousThisType;
-                _inStaticMethod = previousStaticMethod;
-                _inStaticBlock = previousStaticBlock;
-                _currentArrowCapturesScriptGlobalThis = previousGlobalThis;
-                _deferredInitializerFlowBoundary = previousFlowBoundary;
+                finally
+                {
+                    if (!field.IsStatic)
+                    {
+                        PopNarrowingScope();
+                        RestoreDefiniteAssignmentState(previousAssignmentState);
+                    }
+                    _privateNameEnclosingClasses.Pop();
+                    _environment = previousEnvironment;
+                    _currentClass = previousClass;
+                    _currentFunctionThisType = previousThisType;
+                    _inStaticMethod = previousStaticMethod;
+                    _inStaticBlock = previousStaticBlock;
+                    _currentArrowCapturesScriptGlobalThis = previousGlobalThis;
+                    _deferredInitializerFlowBoundary = previousFlowBoundary;
+                }
             }
+            RefreshSelfBindings(mutableClass.Freeze());
+            return anyInferredFieldTypeResolved;
         }
-        RefreshSelfBindings(mutableClass.Freeze());
-        return anyInferredFieldTypeResolved;
+        finally
+        {
+            _fieldGetterScope = getterScope.Previous;
+        }
 
         void RefreshSelfBindings(TypeInfo.Class currentClass)
         {

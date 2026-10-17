@@ -1400,6 +1400,7 @@ public partial class TypeChecker
         // Select the nearest lexical declaration before checking the member kind.
         if (owner.PrivateFieldTypes.TryGetValue(fieldName, out var fieldType))
         {
+            ObservePendingGetterFieldRead(owner, isStatic: false, fieldName);
             ObservePrivateSourceMemberSelection(get.Name, objType, owner, MemberFacet.PrivateInstance);
             return fieldType;
         }
@@ -1417,6 +1418,7 @@ public partial class TypeChecker
         // Check static private fields if accessing on the class itself
         if (IsStaticPrivateConstructor(objType, owner) && owner.StaticPrivateFieldTypes.TryGetValue(fieldName, out var staticFieldType))
         {
+            ObservePendingGetterFieldRead(owner, isStatic: true, fieldName);
             ObservePrivateSourceMemberSelection(get.Name, objType, owner, MemberFacet.PrivateStatic);
             return objType is TypeInfo.Any ? TypeInfo.Any.Shared : staticFieldType;
         }
@@ -1507,6 +1509,7 @@ public partial class TypeChecker
         MemberFacet selectedFacet = MemberFacet.PrivateInstance;
         if (owner.PrivateFieldTypes.TryGetValue(methodName, out var pf))
         {
+            ObservePendingGetterFieldRead(owner, isStatic: false, methodName);
             methodType = pf;
         }
         else if (owner.PrivateMethodTypes.TryGetValue(methodName, out var pm))
@@ -1519,6 +1522,8 @@ public partial class TypeChecker
         {
             methodType = spm;
             selectedFacet = MemberFacet.PrivateStatic;
+            if (owner.StaticPrivateFieldTypes.ContainsKey(methodName))
+                ObservePendingGetterFieldRead(owner, isStatic: true, methodName);
         }
 
         if (methodType == null)

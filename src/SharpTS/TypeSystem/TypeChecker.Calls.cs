@@ -462,7 +462,7 @@ public partial class TypeChecker
             }
         }
 
-        throw new TypeCheckException($"Can only call functions.", tsCode: "TS2349");
+        throw new TypeCheckException($"Can only call functions.", call.Paren.Line, tsCode: "TS2349");
     }
 
     /// <summary>

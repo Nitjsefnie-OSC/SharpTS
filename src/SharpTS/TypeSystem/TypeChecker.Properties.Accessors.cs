@@ -6,7 +6,15 @@ namespace SharpTS.TypeSystem;
 public partial class TypeChecker
 {
     private readonly record struct SelectedInstanceAccessor(
-        TypeInfo DeclaringType, TypeInfo? GetterType, TypeInfo? SetterType);
+        TypeInfo DeclaringType, TypeInfo? GetterType, TypeInfo? SetterType,
+        TypeInfo? RawGetterType, Dictionary<string, TypeInfo> Substitutions);
+
+    private TypeInfo SelectedInstanceAccessorReadType(SelectedInstanceAccessor selected, string name) =>
+        selected.RawGetterType is { } getter
+            ? SubstituteConstructorMember(
+                ResolveFieldStageGetter(selected.DeclaringType, isStatic: false, name, getter),
+                selected.Substitutions)
+            : selected.SetterType!;
 
     private bool TrySelectInstanceAccessor(
         TypeInfo.Instance receiver, string name, out SelectedInstanceAccessor selected)
@@ -32,7 +40,8 @@ public partial class TypeChecker
             {
                 selected = new(current,
                     getter is null ? null : SubstituteConstructorMember(getter, substitutions),
-                    setter is null ? null : SubstituteConstructorMember(setter, substitutions));
+                    setter is null ? null : SubstituteConstructorMember(setter, substitutions),
+                    getter, substitutions);
                 return true;
             }
 

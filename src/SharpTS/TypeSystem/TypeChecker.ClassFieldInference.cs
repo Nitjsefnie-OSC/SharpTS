@@ -12,6 +12,194 @@ public partial class TypeChecker
     private readonly ConditionalWeakTable<BindingSymbol, ClassFieldConstWidening> _classFieldConstWidening = new();
     private readonly ConditionalWeakTable<TypeInfo, ClassFieldConstWidening> _classFieldReadonlyWidening = new();
 
+    private sealed class FieldGetterDependency(Stmt.Accessor accessor)
+    {
+        public Stmt.Accessor Accessor { get; } = accessor;
+        public bool HasUnresolvedDependency { get; set; }
+    }
+
+    private sealed class FieldGetterScope(
+        TypeInfo.MutableClass owner, TypeEnvironment environment,
+        TypeInfo.Class?[] enclosingClasses, FieldGetterScope? previous)
+    {
+        public TypeInfo.MutableClass Owner { get; } = owner;
+        public TypeEnvironment Environment { get; } = environment;
+        public TypeInfo.Class?[] EnclosingClasses { get; } = enclosingClasses;
+        public FieldGetterScope? Previous { get; } = previous;
+        public Dictionary<(bool IsStatic, string Name), Stmt.Accessor> Getters { get; } = [];
+        public Dictionary<Stmt.Accessor, TypeInfo> Resolved { get; } = new(ReferenceEqualityComparer.Instance);
+        public List<FieldGetterDependency> Active { get; } = [];
+        public HashSet<(bool IsStatic, string Name)> PendingFields { get; } = [];
+    }
+
+    private FieldGetterScope? _fieldGetterScope;
+    // Early inference is provisional: the ordinary body pass must see completed
+    // fields and self bindings, rather than treating its result as an annotation.
+    private readonly ConditionalWeakTable<TypeInfo.MutableClass, HashSet<Stmt.Accessor>>
+        _fieldStageInferredGetters = new();
+
+    private FieldGetterScope CreateFieldGetterScope(
+        object sourceOwner, IReadOnlyList<Stmt.Field> fields,
+        TypeInfo.MutableClass owner, TypeEnvironment environment)
+    {
+        var scope = new FieldGetterScope(owner, environment,
+            new[] { _currentClass }.Concat(_privateNameEnclosingClasses).ToArray(), _fieldGetterScope);
+        var accessors = sourceOwner switch
+        {
+            Stmt.Class declaration => declaration.Accessors,
+            Expr.ClassExpr expression => expression.Accessors,
+            _ => null
+        };
+        if (accessors is not null)
+            foreach (var accessor in accessors)
+            {
+                if (accessor.Kind.Type != TokenType.GET ||
+                    accessor.ReturnType is not null || accessor.ReturnTypeNode is not null)
+                    continue;
+                string? name = ClassAccessorName(accessor);
+                if (name is null) continue;
+                var getters = accessor.IsStatic ? owner.StaticGetters : owner.Getters;
+                if (!getters.TryGetValue(name, out var type)) continue;
+                // Expression instance getters have a temporary permissive view
+                // until the normal body pass; an explicit setter annotation is
+                // already a real contextual type and retains its old policy.
+                bool pendingExpressionGetter = sourceOwner is Expr.ClassExpr && !accessor.IsStatic &&
+                    type is TypeInfo.Any && !accessors.Any(candidate =>
+                        candidate.Kind.Type == TokenType.SET && !candidate.IsStatic &&
+                        ClassAccessorName(candidate) == name && candidate.SetterParam?.Type is not null);
+                if (type is TypeInfo.Inferred || pendingExpressionGetter)
+                    scope.Getters[(accessor.IsStatic, name)] = accessor;
+            }
+        foreach (var field in fields)
+            if (field.Initializer is not null && !field.IsDeclare &&
+                field.TypeAnnotation is null && field.TypeAnnotationNode is null)
+                scope.PendingFields.Add((field.IsStatic, GetFieldMemberName(field)));
+        return scope;
+    }
+
+    private string? ClassAccessorName(Stmt.Accessor accessor) => accessor.ComputedKey is not null
+        ? TryGetWellKnownSymbolMemberName(accessor.ComputedKey) : accessor.Name.Lexeme;
+
+    private FieldGetterScope? FindFieldGetterScope(TypeInfo owner)
+    {
+        int ownerId = SelectedSourceClassId(owner);
+        if (ownerId == 0) return null;
+        for (var scope = _fieldGetterScope; scope is not null; scope = scope.Previous)
+            if (scope.Owner.DeclarationId == ownerId) return scope;
+        return null;
+    }
+
+    private void ObservePendingGetterFieldRead(TypeInfo owner, bool isStatic, string name)
+    {
+        if (FindFieldGetterScope(owner) is not { } scope ||
+            !scope.PendingFields.Contains((isStatic, name))) return;
+        MarkFieldGetterDependenciesUnresolved();
+    }
+
+    private void MarkFieldGetterDependenciesUnresolved()
+    {
+        for (var scope = _fieldGetterScope; scope is not null; scope = scope.Previous)
+            foreach (var dependency in scope.Active) dependency.HasUnresolvedDependency = true;
+    }
+
+    private void ObservePendingGetterIndexRead(TypeInfo receiver, string name)
+    {
+        if (_fieldGetterScope is null) return;
+        bool isStatic = receiver is not TypeInfo.Instance;
+        TypeInfo? current = receiver is TypeInfo.Instance instance ? instance.ResolvedClassType : receiver;
+        HashSet<TypeInfo> visited = new(ReferenceEqualityComparer.Instance);
+        for (; current is not null && visited.Add(current); current = GetSuperclass(current))
+        {
+            if ((isStatic ? GetStaticMethods(current) : GetMethods(current))?.ContainsKey(name) == true ||
+                (isStatic ? TryGetAccessorSetterAccess(current, isStatic: true, name, out _)
+                    : GetGetters(current)?.ContainsKey(name) == true ||
+                        GetSetters(current)?.ContainsKey(name) == true))
+                return;
+            if ((isStatic ? GetStaticProperties(current) : GetFieldTypes(current))?.ContainsKey(name) == true)
+            {
+                ObservePendingGetterFieldRead(current, isStatic, name);
+                return;
+            }
+        }
+    }
+
+    private TypeInfo ResolveFieldStageGetter(TypeInfo owner, bool isStatic, string name, TypeInfo type)
+    {
+        if (FindFieldGetterScope(owner) is not { } scope ||
+            !scope.Getters.TryGetValue((isStatic, name), out var accessor)) return type;
+        if (scope.Resolved.TryGetValue(accessor, out var resolved))
+        {
+            if (resolved is TypeInfo.Inferred) MarkFieldGetterDependenciesUnresolved();
+            return resolved;
+        }
+        if (scope.Active.Any(dependency => ReferenceEquals(dependency.Accessor, accessor)))
+        {
+            MarkFieldGetterDependenciesUnresolved();
+            return TypeInfo.Inferred.Shared;
+        }
+
+        var getters = isStatic ? scope.Owner.StaticGetters : scope.Owner.Getters;
+        var setters = isStatic ? scope.Owner.StaticSetters : scope.Owner.Setters;
+        TypeInfo originalGetter = getters[name];
+        bool hadSetter = setters.TryGetValue(name, out var originalSetter);
+        var dependency = new FieldGetterDependency(accessor);
+        var previousEnvironment = _environment;
+        var previousClass = _currentClass;
+        var previousEnclosingClasses = _privateNameEnclosingClasses.ToArray();
+        bool previousStaticBlock = _inStaticBlock;
+        bool previousGlobalThis = _currentArrowCapturesScriptGlobalThis;
+        scope.Active.Add(dependency);
+        getters[name] = TypeInfo.Inferred.Shared;
+        scope.Owner.ResetFrozenCache();
+        _environment = scope.Environment;
+        _currentClass = scope.Owner.Freeze();
+        _privateNameEnclosingClasses.Clear();
+        foreach (var enclosingClass in scope.EnclosingClasses.Reverse())
+            _privateNameEnclosingClasses.Push(enclosingClass);
+        _inStaticBlock = false;
+        _currentArrowCapturesScriptGlobalThis = false;
+        try
+        {
+            CheckClassAccessorBodies([accessor], scope.Owner, recoverComputedSymbolDiagnostics: false);
+            if (dependency.HasUnresolvedDependency)
+            {
+                // Do not turn an unchecked field's permissive placeholder into
+                // a callable/assignable getter result. Forward fields are not
+                // rechecked or evaluated by this dependency resolver.
+                getters[name] = originalGetter;
+                if (hadSetter) setters[name] = originalSetter!;
+                PublishStaticAccessorTypes(scope.Owner);
+                resolved = TypeInfo.Inferred.Shared;
+            }
+            else
+            {
+                resolved = getters[name];
+                _fieldStageInferredGetters.GetOrCreateValue(scope.Owner).Add(accessor);
+            }
+            scope.Resolved[accessor] = resolved;
+            return resolved;
+        }
+        catch
+        {
+            getters[name] = originalGetter;
+            if (hadSetter) setters[name] = originalSetter!;
+            PublishStaticAccessorTypes(scope.Owner);
+            throw;
+        }
+        finally
+        {
+            scope.Active.RemoveAt(scope.Active.Count - 1);
+            scope.Owner.ResetFrozenCache();
+            _environment = previousEnvironment;
+            _currentClass = previousClass;
+            _privateNameEnclosingClasses.Clear();
+            foreach (var enclosingClass in previousEnclosingClasses.Reverse())
+                _privateNameEnclosingClasses.Push(enclosingClass);
+            _inStaticBlock = previousStaticBlock;
+            _currentArrowCapturesScriptGlobalThis = previousGlobalThis;
+        }
+    }
+
     // A const's literal type alone cannot distinguish `const n = 1` from
     // `const n: 1 = 1`. Retain the mutable-slot view under the actual source binding,
     // including aliases/imports, without rechecking its initializer later.

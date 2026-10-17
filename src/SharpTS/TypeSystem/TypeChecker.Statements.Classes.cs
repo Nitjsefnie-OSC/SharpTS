@@ -1000,6 +1000,9 @@ public partial class TypeChecker
                     accessorReturnType = accessorName != null
                         ? getters[accessorName]
                         : (accessor.ReturnType != null ? ResolveAnnotation(accessor.ReturnType, accessor.ReturnTypeNode, accessor, EditorAnnotationSlot.Return)! : TypeInfo.Any.Shared);
+                    if (_fieldStageInferredGetters.TryGetValue(mutableClass, out var earlyGetters) &&
+                        earlyGetters.Remove(accessor))
+                        accessorReturnType = TypeInfo.Inferred.Shared;
                 }
                 else
                 {

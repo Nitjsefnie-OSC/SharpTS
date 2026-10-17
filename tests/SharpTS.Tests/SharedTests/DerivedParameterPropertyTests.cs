@@ -48,6 +48,50 @@ public sealed class DerivedParameterPropertyTests
             const first = new Derived(2, true), second = new Derived(3, false);
             console.log(first.base, first.value, second.base, second.value);
             """, "2\n3\n1 2 1 3\n"];
+        yield return ["shadowed-parameter-at-super", """
+            class Base {}
+            class Derived extends Base {
+                constructor(public value: number) {
+                    value++;
+                    {
+                        let value = "shadow";
+                        super();
+                        console.log(this.value, value);
+                        this.value += 2;
+                    }
+                }
+            }
+            console.log(new Derived(44).value);
+            """, "45 shadow\n47\n"];
+        yield return ["expression-shadow-and-explicit-assignment", """
+            class Base {}
+            const Derived = class extends Base {
+                constructor(public value: number = 40) {
+                    value += 5;
+                    {
+                        const value = 99;
+                        super();
+                        console.log(this.value, value);
+                        this.value = value;
+                    }
+                }
+            };
+            console.log(new Derived().value);
+            """, "45 99\n99\n"];
+        yield return ["catch-binding-shadows-parameter", """
+            class Base {}
+            class Derived extends Base {
+                constructor(public value: number) {
+                    value += 2;
+                    try { throw "caught"; }
+                    catch (value) {
+                        super();
+                        console.log(this.value, value);
+                    }
+                }
+            }
+            console.log(new Derived(44).value);
+            """, "46 caught\n46\n"];
         yield return ["super-expression-and-base-control", """
             class Base { constructor(public base: number) {} }
             class Derived extends Base {

@@ -117,7 +117,7 @@ public partial class ILCompiler
                 foreach (var accessor in classStmt.AutoAccessors?.Where(accessor => !accessor.IsStatic) ?? [])
                     EmitReceiverAutoAccessorInitializer(ctx, accessor, className);
                 var parameterEmitter = new ILEmitter(ctx);
-                foreach (var assignment in parameterProperties) parameterEmitter.EmitStatement(assignment);
+                foreach (var assignment in parameterProperties) parameterEmitter.EmitConstructorParameterProperty(assignment);
             });
         else if (initializeNominalElementsAtSuper)
             EmitOnceOnlyConstructorElements(ctx, () =>
@@ -127,7 +127,7 @@ public partial class ILCompiler
                 EmitOrderedFieldInitializers();
                 EmitInstanceAutoAccessorInitializers();
                 var parameterEmitter = new ILEmitter(ctx);
-                foreach (var assignment in parameterProperties) parameterEmitter.EmitStatement(assignment);
+                foreach (var assignment in parameterProperties) parameterEmitter.EmitConstructorParameterProperty(assignment);
             });
 
         // Initialize @lock decorator fields if present

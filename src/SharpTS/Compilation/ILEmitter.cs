@@ -34,6 +34,7 @@ public partial class ILEmitter : StatementEmitterBase, IEmitterContext
 {
     private readonly CompilationContext _ctx;
     private readonly LocalVariableResolver _resolver;
+    private Expr.Variable? _constructorParameterPropertyValue;
     private readonly Stack<AbruptCompletionScope> _abruptCompletionScopes = [];
     private readonly Stack<IteratorLoopCompletionScope> _iteratorLoopCompletionScopes = [];
     private readonly Stack<LocalThrowScope> _localThrowScopes = [];

@@ -778,14 +778,14 @@ public partial class ILCompiler
                         il.Emit(OpCodes.Ldelem_Ref);
                     });
                 var parameterEmitter = new ILEmitter(ctx);
-                foreach (var assignment in parameterProperties) parameterEmitter.EmitStatement(assignment);
+                foreach (var assignment in parameterProperties) parameterEmitter.EmitConstructorParameterProperty(assignment);
             });
         else if (initializeNominalElementsAtSuper)
             EmitOnceOnlyConstructorElements(ctx, () =>
             {
                 EmitInstanceFieldInitializers();
                 var parameterEmitter = new ILEmitter(ctx);
-                foreach (var assignment in parameterProperties) parameterEmitter.EmitStatement(assignment);
+                foreach (var assignment in parameterProperties) parameterEmitter.EmitConstructorParameterProperty(assignment);
             });
 
         if (!hasExplicitSuperCall)

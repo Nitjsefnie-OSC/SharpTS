@@ -2486,7 +2486,7 @@ public partial class TypeChecker
         TypeInfo.Class? previousClass = _typeMap.GetClassExprType(classExpr);
         string className = previousClass?.Name ?? classExpr.Name?.Lexeme ?? $"$ClassExpr_{++_classExprCounter}";
 
-        // Make the expression's own type parameters available to Promise heritage
+        // Make the expression's own type parameters available to heritage
         // arguments, while resolving the superclass value in its enclosing scope.
         List<TypeInfo.TypeParameter>? classTypeParams = null;
         TypeEnvironment classTypeEnv = new(_environment);
@@ -2516,11 +2516,7 @@ public partial class TypeChecker
             {
                 if (superType is TypeInfo.GenericClass genericSuperclass)
                 {
-                    // The ordinary constructor chain retains its existing type
-                    // argument policy; full ancestry substitution is scoped to
-                    // the tracked native Promise projection here.
-                    using (new EnvironmentScope(this,
-                               TryGetDefaultLibraryPromiseType(genericSuperclass, out _) ? classTypeEnv : _environment))
+                    using (new EnvironmentScope(this, classTypeEnv))
                     {
                         List<TypeInfo> arguments = classExpr.SuperclassTypeArgs
                             .Select((_, index) => ResolveTypeArg(

@@ -16,19 +16,6 @@ namespace SharpTS.TypeSystem;
 /// </remarks>
 public partial class TypeChecker
 {
-    /// <summary>
-    /// When the current class extends a generic-class instantiation (e.g. <c>extends Box&lt;number&gt;</c>),
-    /// substitutes the superclass's type arguments into a member type resolved from it — so a
-    /// <c>super(...)</c> call or <c>super.method(...)</c> sees the instantiated parameter/return types
-    /// (e.g. <c>T</c> → <c>number</c>) rather than the generic parameters.
-    /// </summary>
-    private TypeInfo SubstituteSuperclassTypeArgs(TypeInfo memberType)
-    {
-        if (_currentClass?.Superclass is TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig)
-            return Substitute(memberType, GenericClassSubs(gc, ig.TypeArguments));
-        return memberType;
-    }
-
     private TypeInfo CheckSuper(Expr.Super expr)
     {
         CaptureEditorSuperReceiver(expr);
@@ -50,8 +37,6 @@ public partial class TypeChecker
             throw new TypeCheckException($" Class '{_currentClass.Name}' does not have a superclass.", tsCode: "TS2335");
         }
 
-        // Get methods from superclass, handling both Class and InstantiatedGeneric
-        var superMethods = GetMethods(_currentClass.Superclass);
         var superName = GetClassName(_currentClass.Superclass) ?? "unknown";
 
         // If the superclass is a placeholder MutableClass (from Any-typed globals like Error),
@@ -64,9 +49,10 @@ public partial class TypeChecker
         // super() constructor call - Method is null
         if (expr.Method == null)
         {
-            if (superMethods != null && superMethods.TryGetValue("constructor", out var ctorType))
+            var (constructor, constructorSubs) = FindInheritedConstructor(_currentClass.Superclass, []);
+            if (constructor is not null)
             {
-                return SubstituteSuperclassTypeArgs(ctorType);
+                return SubstituteConstructorMember(constructor, constructorSubs);
             }
             // Default constructor with no parameters
             return new TypeInfo.Function([], TypeInfo.Void.Shared);

@@ -200,7 +200,8 @@ public partial class TypeChecker
             // Only check min arity if no spreads (spreads can expand to any count)
             if (!hasSpread && !allParamsAny && nonSpreadCount < funcType.MinArity)
             {
-                throw new TypeCheckException($"Expected at least {funcType.MinArity} arguments but got {nonSpreadCount}.", tsCode: "TS2554");
+                throw new TypeCheckException($"Expected at least {funcType.MinArity} arguments but got {nonSpreadCount}.",
+                    line: call.Callee is Expr.Super { Method: null } ? call.Paren.Line : null, tsCode: "TS2554");
             }
 
             // Check for too many arguments (when there's no rest parameter).
@@ -210,7 +211,8 @@ public partial class TypeChecker
             if (!hasSpread && !funcType.HasRestParam && !allParamsAny
                 && nonSpreadCount > funcType.ParamTypes.Count)
             {
-                throw new TypeCheckException($"Expected {funcType.ParamTypes.Count} arguments but got {nonSpreadCount}.", tsCode: "TS2554");
+                throw new TypeCheckException($"Expected {funcType.ParamTypes.Count} arguments but got {nonSpreadCount}.",
+                    line: call.Callee is Expr.Super { Method: null } ? call.Paren.Line : null, tsCode: "TS2554");
             }
 
             // Get rest param element type if function has rest parameter
@@ -314,7 +316,8 @@ public partial class TypeChecker
                             bool optional = paramIndex >= funcType.MinArity;
                             if (!IsArgumentCompatible(funcType.ParamTypes[paramIndex], argType, optional))
                             {
-                                throw new TypeCheckException($"Argument {argIndex + 1} expected type '{funcType.ParamTypes[paramIndex]}' but got '{argType}'.", tsCode: "TS2345");
+                                throw new TypeCheckException($"Argument {argIndex + 1} expected type '{funcType.ParamTypes[paramIndex]}' but got '{argType}'.",
+                                    line: call.Callee is Expr.Super { Method: null } ? call.Paren.Line : null, tsCode: "TS2345");
                             }
                         }
                         else if (restElementType != null)
@@ -1321,7 +1324,8 @@ public partial class TypeChecker
         if (matchingSignatures.Count == 0)
         {
             string argTypesStr = string.Join(", ", argTypes);
-            throw new TypeCheckException($"No overload matches call with arguments ({argTypesStr}).", tsCode: "TS2769");
+            throw new TypeCheckException($"No overload matches call with arguments ({argTypesStr}).",
+                line: call.Callee is Expr.Super { Method: null } ? call.Paren.Line : null, tsCode: "TS2769");
         }
 
         // tsc resolves overloads in two passes: SUBTYPE matching first, then assignability. The

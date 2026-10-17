@@ -419,8 +419,10 @@ public partial class TypeChecker
         if (gc.Superclass != null)
         {
             TypeInfo? currentSuper = gc.Superclass;
+            var fieldSubstitutions = subs;
             while (currentSuper != null)
             {
+                fieldSubstitutions = ComposeInheritedFieldReadSubstitutions(currentSuper, fieldSubstitutions);
                 var superMethods = GetMethods(currentSuper);
                 var superFields = GetFieldTypes(currentSuper);
                 if (superMethods != null && superMethods.TryGetValue(memberName, out var superMethod))
@@ -431,13 +433,24 @@ public partial class TypeChecker
                 if (superFields != null && superFields.TryGetValue(memberName, out var superField))
                 {
                     ObserveSourceMemberSelection(memberToken, currentSuper, MemberFacet.Instance);
-                    return superField;
+                    return SubstituteConstructorMember(superField, fieldSubstitutions);
                 }
                 currentSuper = GetSuperclass(currentSuper);
             }
         }
 
         return TypeInfo.Any.Shared;
+    }
+
+    private Dictionary<string, TypeInfo> ComposeInheritedFieldReadSubstitutions(
+        TypeInfo current, Dictionary<string, TypeInfo> substitutions)
+    {
+        if (current is not TypeInfo.InstantiatedGeneric
+            { GenericDefinition: TypeInfo.GenericClass generic } instantiated)
+            return substitutions;
+        var arguments = instantiated.TypeArguments
+            .Select(argument => SubstituteConstructorMember(argument, substitutions)).ToList();
+        return GenericClassSubs(generic, arguments);
     }
 
     /// <summary>
@@ -480,6 +493,7 @@ public partial class TypeChecker
         TypeInfo? current = startClass;
         bool promiseHeritage = TryGetDefaultLibraryPromiseType(startClass, out _);
         Dictionary<string, TypeInfo> substitutions = promiseSubstitutions ?? [];
+        Dictionary<string, TypeInfo> fieldSubstitutions = [];
         TypeInfo Sub(TypeInfo type) => promiseHeritage
             ? SubstituteConstructorMember(type, substitutions)
             : substitutions.Count > 0 ? Substitute(type, substitutions) : type;
@@ -495,6 +509,9 @@ public partial class TypeChecker
             {
                 return builtInMember;
             }
+
+            if (!promiseHeritage)
+                fieldSubstitutions = ComposeInheritedFieldReadSubstitutions(current, fieldSubstitutions);
 
             // If current is an InstantiatedGeneric, build/extend the substitution map
             if (current is TypeInfo.InstantiatedGeneric igCurrent &&
@@ -549,7 +566,7 @@ public partial class TypeChecker
             if (fieldTypes != null && fieldTypes.TryGetValue(memberNameStr, out var fieldType))
             {
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Instance);
-                return Sub(fieldType);
+                return promiseHeritage ? Sub(fieldType) : SubstituteConstructorMember(fieldType, fieldSubstitutions);
             }
 
             current = GetSuperclass(current);

@@ -384,6 +384,9 @@ public abstract record TypeInfo
         public Dictionary<string, TypeInfo> Setters { get; } = [];
         public Dictionary<string, TypeInfo> StaticGetters { get; } = [];
         public Dictionary<string, TypeInfo> StaticSetters { get; } = [];
+        // Accessor write visibility belongs to its checked owner, independently
+        // of the getter-selected read map. Null marks a getter-only accessor.
+        internal Dictionary<(bool IsStatic, string Name), AccessModifier?> AccessorSetterAccess { get; } = [];
         public Dictionary<string, TypeInfo> FieldTypes { get; } = [];
         public bool IsAbstract { get; set; }
         public HashSet<string> AbstractMethods { get; } = [];
@@ -436,7 +439,10 @@ public abstract record TypeInfo
                 StaticMethodAccess.Count > 0 ? StaticMethodAccess.ToFrozenDictionary() : null,
                 StaticFieldAccess.Count > 0 ? StaticFieldAccess.ToFrozenDictionary() : null,
                 StaticReadonlyFields.ToFrozenSet(),
-                StaticSetters.Count > 0 ? StaticSetters.ToFrozenDictionary() : null);
+                StaticSetters.Count > 0 ? StaticSetters.ToFrozenDictionary() : null)
+            {
+                AccessorSetterAccess = AccessorSetterAccess.Count > 0 ? AccessorSetterAccess.ToFrozenDictionary() : null
+            };
             return _frozenCore;
         }
 

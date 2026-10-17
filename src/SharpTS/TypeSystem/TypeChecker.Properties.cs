@@ -333,7 +333,18 @@ public partial class TypeChecker
         {
             var narrowedType = GetNarrowing(path);
             if (narrowedType != null)
+            {
+                // An alias write may establish this path without reading it.
+                // Narrowing the value does not grant accessor visibility.
+                if (objType is TypeInfo.Instance narrowedReceiver &&
+                    TrySelectInstanceAccessor(narrowedReceiver, get.Name.Lexeme, out var accessor))
+                {
+                    EnforceAccessorAccess(accessor.DeclaringType, narrowedReceiver.ResolvedClassType,
+                        get.Name, isStatic: false, isWrite: false);
+                    ObserveSourceMemberSelection(get.Name, accessor.DeclaringType, MemberFacet.Instance);
+                }
                 return narrowedType;
+            }
         }
 
         // Expand recursive type aliases lazily before property access
@@ -907,11 +918,17 @@ public partial class TypeChecker
                 var staticProps = GetStaticProperties(current);
                 if (staticProps != null && staticProps.TryGetValue(set.Name.Lexeme, out var staticPropType))
                 {
-                    EnforceStaticMemberAccess(current, set.Name);
+                    var setterType = GetStaticSetters(current)?.GetValueOrDefault(set.Name.Lexeme);
+                    if (setterType is not null)
+                        EnforceAccessorAccess(current, objType, set.Name, isStatic: true, isWrite: true);
+                    else if (TryGetAccessorSetterAccess(current, isStatic: true, set.Name.Lexeme, out _))
+                        EnforceAccessorAccess(current, objType, set.Name, isStatic: true, isWrite: false);
+                    else
+                        EnforceStaticMemberAccess(current, set.Name);
                     if (ClassInfoAccessor.Get(current, c => c.Core.StaticReadonlyFields, gc => gc.Core.StaticReadonlyFields)?.Contains(set.Name.Lexeme) == true)
                         throw new TypeCheckException($" Cannot assign to '{set.Name.Lexeme}' because it is a read-only property.", tsCode: "TS2540");
                     ObserveSourceMemberSelection(set.Name, current, MemberFacet.Static);
-                    TypeInfo writeType = GetStaticSetters(current)?.GetValueOrDefault(set.Name.Lexeme) ?? staticPropType;
+                    TypeInfo writeType = setterType ?? staticPropType;
                     TypeInfo valueType = CheckExpr(set.Value);
                     if (!IsCompatible(writeType, valueType))
                     {
@@ -929,6 +946,24 @@ public partial class TypeChecker
         if (objType is TypeInfo.Instance instance)
         {
              string memberName = set.Name.Lexeme;
+             if (TrySelectInstanceAccessor(instance, memberName, out var accessor))
+             {
+                 EnforceAccessorAccess(accessor.DeclaringType, instance.ResolvedClassType,
+                     set.Name, isStatic: false, isWrite: accessor.SetterType is not null);
+                 if (accessor.SetterType is not { } setterType)
+                     throw new TypeCheckException(
+                         $"Cannot assign to '{memberName}' because it is a read-only property (has getter but no setter).",
+                         set.Name.Line, tsCode: "TS2540");
+                 ObserveSourceMemberSelection(set.Name, accessor.DeclaringType, MemberFacet.Instance);
+                 TypeInfo valueType = CheckExpr(set.Value);
+                 if (!IsCompatible(setterType, valueType))
+                     throw new TypeCheckException(
+                         $"Cannot assign '{valueType}' to property '{memberName}' expecting '{setterType}'.",
+                         set.Name.Line, tsCode: "TS2322");
+                 if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, setterType, valueType);
+                 return valueType;
+             }
+
              bool promiseHeritage = TryGetDefaultLibraryPromiseType(instance, out _);
              var promiseGeneric = promiseHeritage && instance.ResolvedClassType is TypeInfo.InstantiatedGeneric
                  { GenericDefinition: TypeInfo.GenericClass } projected ? projected : null;
@@ -944,20 +979,6 @@ public partial class TypeChecker
                  Dictionary<string, TypeInfo> subs = [];
                  for (int i = 0; i < gc.TypeParams.Count; i++)
                      subs[gc.TypeParams[i].Name] = ig.TypeArguments[i];
-
-                 // Check for setter
-                 if (gc.Setters?.TryGetValue(memberName, out var setterType) == true)
-                 {
-                     ObserveSourceMemberSelection(set.Name, gc, MemberFacet.Instance);
-                     var substitutedType = Substitute(setterType, subs);
-                     TypeInfo valueType = CheckExpr(set.Value);
-                     if (!IsCompatible(substitutedType, valueType))
-                     {
-                         throw new TypeCheckException($" Cannot assign '{valueType}' to property '{memberName}' expecting '{substitutedType}'.", tsCode: "TS2322");
-                     }
-                     if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, substitutedType, valueType);
-                     return valueType;
-                 }
 
                  // Check for field
                  if (gc.FieldTypes?.TryGetValue(memberName, out var fieldType) == true)
@@ -985,42 +1006,19 @@ public partial class TypeChecker
              TypeInfo? current = startClass;
              var substitutions = promiseSubstitutions;
 
-             // Check for setter first
-             while (current != null)
-             {
-                 if (promiseHeritage)
-                     substitutions = ComposePromiseHeritageSubstitutions(current, substitutions);
-                 var setters = GetSetters(current);
-                 var getters = GetGetters(current);
-                 if (setters != null && setters.TryGetValue(memberName, out var setterType))
-                 {
-                     if (promiseHeritage)
-                         setterType = SubstituteConstructorMember(setterType, substitutions);
-                     ObserveSourceMemberSelection(set.Name, current, MemberFacet.Instance);
-                     TypeInfo valueType = CheckExpr(set.Value);
-                     if (!IsCompatible(setterType, valueType))
-                     {
-                         throw new TypeCheckException($" Cannot assign '{valueType}' to property '{memberName}' expecting '{setterType}'.", tsCode: "TS2322");
-                     }
-                     if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, setterType, valueType);
-                     return valueType;
-                 }
-
-                 // Check if there's a getter but no setter (read-only property)
-                 if (getters != null && getters.ContainsKey(memberName) && (setters == null || !setters.ContainsKey(memberName)))
-                 {
-                     throw new TypeCheckException($" Cannot assign to '{memberName}' because it is a read-only property (has getter but no setter).", tsCode: "TS2540");
-                 }
-
-                 current = GetSuperclass(current);
-             }
-
-             // Reset to check access and readonly
-             current = startClass;
-
              // Check access and readonly
              while (current != null)
              {
+                 // The nearest member was ordinary, otherwise the accessor path
+                 // above would have handled the write. Farther accessors cannot
+                 // impose their read-side visibility on that nearer declaration.
+                 if (GetGetters(current)?.ContainsKey(memberName) == true ||
+                     GetSetters(current)?.ContainsKey(memberName) == true)
+                 {
+                     current = GetSuperclass(current);
+                     continue;
+                 }
+
                  // Check access modifier
                  AccessModifier access = AccessModifier.Public;
                  var fieldAccess = GetFieldAccess(current);

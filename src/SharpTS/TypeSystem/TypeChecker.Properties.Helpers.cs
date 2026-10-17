@@ -138,7 +138,10 @@ public partial class TypeChecker
             }
             if (staticProps != null && staticProps.TryGetValue(memberName.Lexeme, out var staticPropType))
             {
-                EnforceStaticMemberAccess(current, memberName);
+                if (TryGetAccessorSetterAccess(current, isStatic: true, memberName.Lexeme, out _))
+                    EnforceAccessorAccess(current, classType, memberName, isStatic: true, isWrite: false);
+                else
+                    EnforceStaticMemberAccess(current, memberName);
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Static);
                 return staticPropType;
             }
@@ -331,6 +334,14 @@ public partial class TypeChecker
     private TypeInfo CheckGetOnInstance(TypeInfo.Instance instance, Token memberName)
     {
         string memberNameStr = memberName.Lexeme;
+
+        if (TrySelectInstanceAccessor(instance, memberNameStr, out var accessor))
+        {
+            EnforceAccessorAccess(accessor.DeclaringType, instance.ResolvedClassType,
+                memberName, isStatic: false, isWrite: false);
+            ObserveSourceMemberSelection(memberName, accessor.DeclaringType, MemberFacet.Instance);
+            return accessor.GetterType ?? accessor.SetterType!;
+        }
 
         // Handle instantiated generic class (e.g., Box<number>)
         if (instance.ClassType is TypeInfo.InstantiatedGeneric ig &&

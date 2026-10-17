@@ -183,6 +183,53 @@ public sealed class DefaultLibraryPromiseHeritageTests
         yield return ["selected-augmentation-readonly", """
             interface Promise<T> { readonly extraCode: string; } class P extends Promise<number> {} new P(resolve => resolve(1)).extraCode = "bad";
             """, "TS2540", 1];
+
+        // Accessor selection must retain the authoritative default-library Promise route.
+        yield return ["promise-generic-inherited-private", """
+            class Root<T> extends Promise<T> { private get value(): T { return undefined as any; } }
+            class Middle<U> extends Root<U> {}
+            class Leaf<V> extends Middle<V> {}
+            declare const receiver: Leaf<number>;
+            const result: number = receiver.value;
+            """, "TS2341", 5];
+
+        yield return ["promise-generic-inherited-type", """
+            class Root<T> extends Promise<T> { public get value(): T { return undefined as any; } }
+            class Middle<U> extends Root<U> {}
+            class Leaf<V> extends Middle<V> {}
+            declare const receiver: Leaf<number>;
+            const result: string = receiver.value;
+            """, "TS2322", 5];
+
+        yield return ["generic-public-and-promise-typing", """
+            class Root<T> { public get value(): T { return undefined as any; } }
+            class Middle<U> extends Root<U> {}
+            class Leaf<V> extends Middle<V> {}
+            declare const receiver: Leaf<number>;
+            const result: number = receiver.value;
+            class PromiseRoot<T> extends Promise<T> { public get value(): T { return undefined as any; } }
+            class PromiseMiddle<U> extends PromiseRoot<U> {}
+            class PromiseLeaf<V> extends PromiseMiddle<V> {}
+            declare const promiseReceiver: PromiseLeaf<number>;
+            const promiseResult: number = promiseReceiver.value;
+
+            class IdentityBase<T> {
+                get identity(): <T>(value: T) => T { return function<T>(value: T): T { return value; }; }
+            }
+            class IdentityMiddle<U> extends IdentityBase<U> {}
+            class IdentityChild extends IdentityMiddle<number> {}
+            const ordinary = new IdentityChild();
+            const ordinaryText: string = ordinary.identity("text");
+            const ordinaryNumber: number = ordinary.identity(7);
+            class IdentityPromiseBase<T> extends Promise<T> {
+                get identity(): <T>(value: T) => T { return function<T>(value: T): T { return value; }; }
+            }
+            class IdentityPromiseMiddle<U> extends IdentityPromiseBase<U> {}
+            class IdentityPromiseChild extends IdentityPromiseMiddle<number> {}
+            const promised = new IdentityPromiseChild(resolve => resolve(7));
+            const promisedText: string = promised.identity("text");
+            const promisedNumber: number = promised.identity(7);
+            """, "", 0];
     }
 
     [Theory, MemberData(nameof(Cases))]

@@ -447,15 +447,20 @@ public partial class TypeChecker
         }
     }
 
-    private static void PublishAccessorReadAccess(
+    private void PublishAccessorReadAccess(
         TypeInfo.MutableClass mutableClass, Stmt.Accessor accessor, string name)
     {
-        if (accessor.IsStatic)
-            mutableClass.StaticFieldAccess[name] = accessor.Access;
-        else if (accessor.Kind.Type == TokenType.GET || !mutableClass.Getters.ContainsKey(name))
+        var key = (accessor.IsStatic, name);
+        if (accessor.Kind.Type == TokenType.SET)
+            mutableClass.AccessorSetterAccess[key] = accessor.Access;
+        else
+            mutableClass.AccessorSetterAccess.TryAdd(key, null);
+
+        var getters = accessor.IsStatic ? mutableClass.StaticGetters : mutableClass.Getters;
+        if (accessor.Kind.Type == TokenType.GET || !getters.ContainsKey(name))
             // A paired setter's visibility does not restrict reads through a
             // public getter, regardless of the declarations' source order.
-            mutableClass.FieldAccess[name] = accessor.Access;
+            (accessor.IsStatic ? mutableClass.StaticFieldAccess : mutableClass.FieldAccess)[name] = accessor.Access;
     }
 
     // Resolves auto-accessors in the active class environment, mutating signatures before the caller freezes them.

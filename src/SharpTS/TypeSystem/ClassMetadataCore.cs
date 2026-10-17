@@ -37,6 +37,9 @@ public sealed record ClassMetadataCore(
     FrozenDictionary<string, TypeInfo>? StaticSetters = null
 )
 {
+    /// <summary>Independent accessor write visibility; null entries identify getter-only members.</summary>
+    public FrozenDictionary<(bool IsStatic, string Name), AccessModifier?>? AccessorSetterAccess { get; init; }
+
     /// <summary>True when the class declares any index signature.</summary>
     public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
 

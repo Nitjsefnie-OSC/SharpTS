@@ -222,7 +222,7 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
             il.Emit(OpCodes.Ldnull);
         }
 
-        // Emit radix (default 10)
+        // An omitted radix lets the runtime infer hexadecimal from a 0x prefix.
         if (arguments.Count > 1)
         {
             emitter.EmitExpression(arguments[1]);
@@ -230,8 +230,7 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
         }
         else
         {
-            il.Emit(OpCodes.Ldc_I4, 10);
-            il.Emit(OpCodes.Box, ctx.Types.Int32);
+            il.Emit(OpCodes.Ldnull);
         }
 
         il.Emit(OpCodes.Call, ctx.Runtime!.Numbers.ParseInt);

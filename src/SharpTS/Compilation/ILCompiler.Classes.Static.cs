@@ -127,6 +127,8 @@ public partial class ILCompiler
 
         if (_classes.DeferredDefinitions.TryGet(typeBuilder, out var deferredDefinition))
         {
+            if (deferredDefinition.CapturedKeys != null)
+                EmitComputedMemberRegistrations(emitter, il, typeBuilder, deferredDefinition);
             il.Emit(OpCodes.Ret);
             il = deferredDefinition.Initializer.GetILGenerator();
             ctx = CreateModuleMemberContext(il, deferredDefinition.Initializer);
@@ -253,9 +255,19 @@ public partial class ILCompiler
     /// <summary>
     /// Installs computed method/accessor descriptors in definition order.
     /// </summary>
-    private void EmitComputedMemberRegistrations(ILEmitter emitter, ILGenerator il, TypeBuilder typeBuilder)
+    private void EmitComputedMemberRegistrations(ILEmitter emitter, ILGenerator il, TypeBuilder typeBuilder,
+        DeferredClassDefinition? capturedDefinition = null)
     {
-        if (_classes.DeferredDefinitions.TryGet(typeBuilder, out _)) return;
+        if (capturedDefinition == null && _classes.DeferredDefinitions.TryGet(typeBuilder, out _)) return;
+        var capturedKeys = capturedDefinition?.CapturedKeys;
+        var noCapturedKeys = il.DefineLabel();
+        if (capturedKeys != null)
+        {
+            // The erased owner's .cctor precedes guest key evaluation. Later
+            // closed owners reuse those keys for their own prototype carriers.
+            il.Emit(OpCodes.Ldsfld, capturedKeys);
+            il.Emit(OpCodes.Brfalse, noCapturedKeys);
+        }
         var members = new List<(Stmt.Function? Method, Stmt.Accessor? Accessor, Expr Key, MethodBuilder Builder, int Position)>();
         foreach (var (method, key, builder) in _classes.ComputedMembers.GetMethods(typeBuilder))
             members.Add((method, null, key, builder, method.Name.Start));
@@ -265,6 +277,7 @@ public partial class ILCompiler
         var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
         foreach (var (method, accessor, key, builder, _) in members.OrderBy(member => member.Position))
         {
+            if (capturedKeys != null && builder.IsStatic) continue;
             if (accessor != null)
             {
                 // These descriptors were installed before user initialization;
@@ -272,7 +285,7 @@ public partial class ILCompiler
                 if (accessor.IsStatic && GetConstantComputedAccessorName(key) != null
                     && GetNominalClassDeclaration(typeBuilder) != null) continue;
                 var accessorKey = il.DeclareLocal(_types.Object);
-                EmitComputedPropertyKey(emitter, il, key); il.Emit(OpCodes.Stloc, accessorKey);
+                EmitKey(key); il.Emit(OpCodes.Stloc, accessorKey);
                 EmitDeclaredAccessorDescriptor(il, typeBuilder, accessor, builder,
                     () => il.Emit(OpCodes.Ldloc, accessorKey));
                 continue;
@@ -285,7 +298,7 @@ public partial class ILCompiler
                 // Retain ordinary keys only as ownership metadata: their reads
                 // consult live descriptors rather than reconstructing a wrapper.
                 evaluatedKey = il.DeclareLocal(_types.Object);
-                EmitComputedPropertyKey(emitter, il, key);
+                EmitKey(key);
                 il.Emit(OpCodes.Stloc, evaluatedKey);
                 EmitDeclaredComputedMethodDescriptor(il, typeBuilder, method!, builder, evaluatedKey);
                 il.Emit(OpCodes.Ldloc, evaluatedKey);
@@ -299,7 +312,7 @@ public partial class ILCompiler
             // property key: preserve Symbols; coerce every other value exactly as bracket
             // access does (notably null -> "null") before using it as a registry key.
             if (evaluatedKey != null) il.Emit(OpCodes.Ldloc, evaluatedKey);
-            else EmitComputedPropertyKey(emitter, il, key);
+            else EmitKey(key);
 
             // method MethodInfo
             EmitMethodInfoLiteral(il, builder, typeBuilder);
@@ -309,6 +322,21 @@ public partial class ILCompiler
 
             il.Emit(OpCodes.Call, _runtime.SymbolAccessors.RegisterMethod);
             il.MarkLabel(registrationDone);
+        }
+        il.MarkLabel(noCapturedKeys);
+
+        void EmitKey(Expr key)
+        {
+            if (capturedKeys == null)
+            {
+                EmitComputedPropertyKey(emitter, il, key);
+                return;
+            }
+            int index = Enumerable.Range(0, capturedDefinition!.Keys.Count)
+                .First(index => ReferenceEquals(capturedDefinition.Keys[index], key));
+            il.Emit(OpCodes.Ldsfld, capturedKeys);
+            il.Emit(OpCodes.Ldc_I4, index);
+            il.Emit(OpCodes.Ldelem_Ref);
         }
     }
 
@@ -327,8 +355,12 @@ public partial class ILCompiler
             deferred.Add((accessor.ComputedKey!, builder, accessor.IsStatic, accessor.Kind.Type == TokenType.GET, accessor.Name.Start, null));
         foreach (var field in fields.Where(field => field.ComputedKey != null && !field.IsDeclare))
             deferred.Add((field.ComputedKey!, null, field.IsStatic, null, field.Name.Start, field));
+        // Generic accessor keys belong to the source definition, rather than
+        // each closed CLR owner's initializer. Reuse definition-time capture.
+        bool hasGenericAccessorKeys = source is Stmt.Class && typeBuilder.IsGenericTypeDefinition
+            && deferred.Any(entry => entry.IsGetter.HasValue);
         // Field names are evaluated with the definition, even when no key suspends.
-        if (!deferred.Any(entry => entry.Field != null || ExpressionContainsSuspension(entry.Key)
+        if (!hasGenericAccessorKeys && !deferred.Any(entry => entry.Field != null || ExpressionContainsSuspension(entry.Key)
             || ExpressionContainsLexicalNewTarget(entry.Key)))
             return;
 
@@ -347,6 +379,14 @@ public partial class ILCompiler
         var fieldKeys = new Dictionary<Stmt.Field, FieldBuilder>(ReferenceEqualityComparer.Instance);
         var il = registrar.GetILGenerator();
         var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
+        FieldBuilder? capturedKeys = null;
+        if (hasGenericAccessorKeys)
+        {
+            capturedKeys = keyOwner.DefineField($"$computedMemberKeys_{typeBuilder.Name}", _types.ObjectArray,
+                FieldAttributes.Assembly | FieldAttributes.Static);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stsfld, capturedKeys);
+        }
 
         for (int i = 0; i < deferred.Count; i++)
         {
@@ -403,7 +443,7 @@ public partial class ILCompiler
             : initializer);
         il.Emit(OpCodes.Ret);
         var keys = deferred.Select(entry => entry.Key).ToArray();
-        _classes.DeferredDefinitions.Declare(source, typeBuilder, initializer, registrar, keys, fieldKeys);
+        _classes.DeferredDefinitions.Declare(source, typeBuilder, initializer, registrar, keys, fieldKeys, capturedKeys);
     }
 
     private void EmitComputedStaticFieldInitializer(ILEmitter emitter, ILGenerator il,

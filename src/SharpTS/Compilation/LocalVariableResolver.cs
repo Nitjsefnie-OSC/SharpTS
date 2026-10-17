@@ -65,22 +65,8 @@ public class LocalVariableResolver : IVariableResolver
         }
 
         // 1. Parameters
-        if (_ctx.TryGetParameter(name, out var argIndex))
-        {
-            _il.Emit(OpCodes.Ldarg, argIndex);
-            // Check if we have type information for this parameter
-            if (_ctx.TryGetParameterType(name, out var paramType) && paramType != null)
-            {
-                var stackType = MapTypeToStackType(paramType);
-                // Box union types immediately so that StackType.Unknown correctly means "boxed object"
-                if (stackType == StackType.Unknown && UnionTypeHelper.IsUnionType(paramType))
-                {
-                    _il.Emit(OpCodes.Box, paramType);
-                }
-                return stackType;
-            }
-            return StackType.Unknown; // Fallback for untyped parameters
-        }
+        if (TryLoadParameter(name) is { } parameterType)
+            return parameterType;
 
         // 2. Function display class fields (captured function-local vars)
         // Check this BEFORE regular locals to ensure we use the shared storage.
@@ -293,6 +279,22 @@ public class LocalVariableResolver : IVariableResolver
             _ctx.EntryPointDisplayClassFields?.ContainsKey(name) == true) return true;
         if (_ctx.TopLevelStaticVars?.ContainsKey(name) == true) return true;
         return false;
+    }
+
+    internal StackType? TryLoadParameter(string name)
+    {
+        if (!_ctx.TryGetParameter(name, out var argIndex)) return null;
+
+        _il.Emit(OpCodes.Ldarg, argIndex);
+        if (_ctx.TryGetParameterType(name, out var paramType) && paramType != null)
+        {
+            var stackType = MapTypeToStackType(paramType);
+            // Unknown values must already be boxed, including union parameters.
+            if (stackType == StackType.Unknown && UnionTypeHelper.IsUnionType(paramType))
+                _il.Emit(OpCodes.Box, paramType);
+            return stackType;
+        }
+        return StackType.Unknown;
     }
 
     /// <inheritdoc />

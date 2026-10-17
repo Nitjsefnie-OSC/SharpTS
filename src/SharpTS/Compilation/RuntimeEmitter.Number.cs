@@ -433,6 +433,41 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>Emits a leading-whitespace scan, leaving the trimmed string on the stack.</summary>
+    private void EmitParseIntTrimStart(ILGenerator il, Action emitString)
+    {
+        // Include U+FEFF in both typed and general prefix inference paths.
+        var trimIndex = il.DeclareLocal(_types.Int32);
+        var trimLoop = il.DefineLabel();
+        var trimDone = il.DefineLabel();
+        var nextLine = il.DefineLabel();
+        il.MarkLabel(trimLoop);
+        il.Emit(OpCodes.Ldloc, trimIndex);
+        emitString();
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length")!.GetGetMethod()!);
+        il.Emit(OpCodes.Bge, trimDone);
+        emitString();
+        il.Emit(OpCodes.Ldloc, trimIndex);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", [_types.Int32])!);
+        // CLR whitespace includes NEL; ECMAScript whitespace does not.
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4, 0x85);
+        il.Emit(OpCodes.Beq, nextLine);
+        EmitJsWhitespaceCheck(il);
+        il.Emit(OpCodes.Brfalse, trimDone);
+        il.Emit(OpCodes.Ldloc, trimIndex);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, trimIndex);
+        il.Emit(OpCodes.Br, trimLoop);
+        il.MarkLabel(nextLine);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(trimDone);
+        emitString();
+        il.Emit(OpCodes.Ldloc, trimIndex);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Substring", [_types.Int32])!);
+    }
+
     /// <summary>
     /// Emits the allocation-free typed parse core used when the caller has already
     /// proved the input is a string and the radix is a native Int32. The general
@@ -473,9 +508,8 @@ public partial class RuntimeEmitter
         var endLoop = il.DefineLabel();
         var returnResult = il.DefineLabel();
 
-        // Trim is allocation-free when no surrounding whitespace is present.
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Trim", Type.EmptyTypes)!);
+        // Substring(0) retains the input when no leading whitespace is present.
+        EmitParseIntTrimStart(il, () => il.Emit(OpCodes.Ldarg_0));
         il.Emit(OpCodes.Stloc, strLocal);
         il.Emit(OpCodes.Ldloc, strLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.String, "Length")!.GetGetMethod()!);
@@ -576,7 +610,7 @@ public partial class RuntimeEmitter
 
         // Reuse the correctly-rounded, allocation-free decimal scanner after
         // radix inference. Pass the original string so its ECMAScript whitespace
-        // boundary is not broadened by String.Trim above.
+        // boundary is not broadened by the leading scan above.
         il.Emit(OpCodes.Ldloc, radixLocal);
         il.Emit(OpCodes.Ldc_I4_S, (sbyte)10);
         il.Emit(OpCodes.Bne_Un, nonDecimalRadix);
@@ -698,8 +732,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, stringCoercion.ToJsString);
         il.Emit(OpCodes.Stloc, rawStrLocal);
-        il.Emit(OpCodes.Ldloc, rawStrLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Trim", Type.EmptyTypes)!);
+        EmitParseIntTrimStart(il, () => il.Emit(OpCodes.Ldloc, rawStrLocal));
         il.Emit(OpCodes.Stloc, strLocal);
 
         // Check for empty string
@@ -743,7 +776,7 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notPlusLabel);
 
-        // Get radix (default 10)
+        // Omitted and non-finite radices infer the base from the input prefix.
         il.MarkLabel(getRadixLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, afterRadixLabel); // null -> check for hex prefix
@@ -759,6 +792,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, afterRadixLabel);
 
         il.MarkLabel(radixFromDoubleLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsFinite", [_types.Double])!);
+        il.Emit(OpCodes.Brfalse, afterRadixLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Unbox_Any, _types.Double);
         il.Emit(OpCodes.Conv_I4);

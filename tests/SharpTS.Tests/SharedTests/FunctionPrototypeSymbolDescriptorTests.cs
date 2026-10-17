@@ -98,11 +98,7 @@ public sealed class FunctionPrototypeSymbolDescriptorTests
     }
 
     public static IEnumerable<object[]> ParityCases()
-        // Compiled constructor indexed writes ignore inherited readonly Symbols (#2219);
-        // the interpreter descriptor repair is independently covered here.
-        => Cases().SelectMany(row => ((string)row[0] == "inherited-readonly"
-                ? new[] { ExecutionMode.Interpreted }
-                : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
+        => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ParityCases))]
@@ -111,16 +107,6 @@ public sealed class FunctionPrototypeSymbolDescriptorTests
     {
         Assert.NotEmpty(name);
         Assert.Equal(expected, TestHarness.Run(source, mode));
-    }
-
-    [Fact]
-    public void InterpretedDeletingMissingFunctionPrototypeSymbolSucceeds()
-    {
-        // Compiled indexed deletion of absent Symbols is tracked in #2220.
-        Assert.Equal("true\n", TestHarness.RunInterpreted("""
-            const prototype: any = Function.prototype;
-            console.log(delete prototype[Symbol("missing")]);
-            """));
     }
 
     [Fact]

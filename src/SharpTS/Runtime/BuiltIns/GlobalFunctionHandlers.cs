@@ -162,12 +162,11 @@ internal static class GlobalFunctionHandlers
         var str = strRV.IsString
             ? strRV.AsString()
             : interpreter.ToStringForBuiltInArgument(strRV.ToObject());
-        int radix = 10;
+        int radix = 0;
         if (arguments.Count > 1)
         {
             var radixRV = await evaluateArg(arguments[1]);
-            if (radixRV.IsNumber)
-                radix = (int)Interpreter.ToNumber(radixRV);
+            radix = unchecked((int)interpreter.ToUint32(radixRV.ToObject()));
         }
         return RuntimeValue.FromNumber(NumberBuiltIns.ParseInt(str, radix));
     }

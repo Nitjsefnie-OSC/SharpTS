@@ -104,8 +104,9 @@ public partial class ILCompiler
         // SetProperty overrides use $EnsureFields, including when a base constructor
         // dispatches through the derived override before this constructor resumes.
         var ensureFields = _classes.PropertyDispatch.Require(className).EnsureFields;
-        var parameterProperties = ctx.ClassConstructorThisCell != null && classStmt.SuperclassExpr != null
+        var parameterProperties = classStmt.SuperclassExpr != null
             ? constructor?.Body?.Where(statement => IsConstructorParameterProperty(statement, constructor)).ToList() ?? [] : [];
+        bool initializeNominalElementsAtSuper = ctx.ClassConstructorThisCell == null && parameterProperties.Count != 0;
         if (ctx.ClassConstructorThisCell != null)
             EmitOnceOnlyConstructorElements(ctx, () =>
             {
@@ -116,7 +117,17 @@ public partial class ILCompiler
                 foreach (var accessor in classStmt.AutoAccessors?.Where(accessor => !accessor.IsStatic) ?? [])
                     EmitReceiverAutoAccessorInitializer(ctx, accessor, className);
                 var parameterEmitter = new ILEmitter(ctx);
-                foreach (var assignment in parameterProperties) parameterEmitter.EmitStatement(assignment);
+                foreach (var assignment in parameterProperties) parameterEmitter.EmitConstructorParameterProperty(assignment);
+            });
+        else if (initializeNominalElementsAtSuper)
+            EmitOnceOnlyConstructorElements(ctx, () =>
+            {
+                // Keep nominal fields and their typed accessors synchronized.
+                // The callback runs at the successful super expression itself.
+                EmitOrderedFieldInitializers();
+                EmitInstanceAutoAccessorInitializers();
+                var parameterEmitter = new ILEmitter(ctx);
+                foreach (var assignment in parameterProperties) parameterEmitter.EmitConstructorParameterProperty(assignment);
             });
 
         // Initialize @lock decorator fields if present
@@ -297,24 +308,8 @@ public partial class ILCompiler
         bool privateInitializationEmitted = !deferPrivateInitialization;
         if (!deferPrivateInitialization && ctx.ClassConstructorThisCell == null) EmitOrderedFieldInitializers();
         // TypeScript 4.9+: Initialize instance auto-accessor backing fields
-        if (classStmt.AutoAccessors != null && ctx.ClassConstructorThisCell == null)
-        {
-            var instanceAutoAccessors = classStmt.AutoAccessors.Where(a => !a.IsStatic && a.Initializer != null).ToList();
-            if (instanceAutoAccessors.Count > 0)
-            {
-                ctx.FieldsField = fieldsField;
-                ctx.IsInstanceMethod = true;
-                var autoAccessorEmitter = new ILEmitter(ctx);
-
-                bool previous = ctx.SuppressNewTarget;
-                ctx.SuppressNewTarget = true;
-                foreach (var autoAccessor in instanceAutoAccessors)
-                {
-                    EmitAutoAccessorInitializer(autoAccessorEmitter, autoAccessor, className, isStatic: false);
-                }
-                ctx.SuppressNewTarget = previous;
-            }
-        }
+        if (ctx.ClassConstructorThisCell == null && !initializeNominalElementsAtSuper)
+            EmitInstanceAutoAccessorInitializers();
 
         // Emit constructor body
         if (constructor != null)
@@ -358,7 +353,8 @@ public partial class ILCompiler
                 {
                     if (parameterProperties.Contains(stmt)) continue;
                     emitter.EmitStatement(stmt);
-                    if (ctx.ClassConstructorThisCell == null && !privateInitializationEmitted && ContainsSuperCall(stmt))
+                    if (ctx.ClassConstructorThisCell == null && !initializeNominalElementsAtSuper
+                        && !privateInitializationEmitted && ContainsSuperCall(stmt))
                     {
                         EmitOrderedFieldInitializers();
                         privateInitializationEmitted = true;
@@ -375,6 +371,20 @@ public partial class ILCompiler
         }
 
         il.Emit(OpCodes.Ret);
+
+        void EmitInstanceAutoAccessorInitializers()
+        {
+            var instanceAutoAccessors = classStmt.AutoAccessors?.Where(a => !a.IsStatic && a.Initializer != null).ToList() ?? [];
+            if (instanceAutoAccessors.Count == 0) return;
+            ctx.FieldsField = fieldsField;
+            ctx.IsInstanceMethod = true;
+            var autoAccessorEmitter = new ILEmitter(ctx);
+            bool previous = ctx.SuppressNewTarget;
+            ctx.SuppressNewTarget = true;
+            foreach (var autoAccessor in instanceAutoAccessors)
+                EmitAutoAccessorInitializer(autoAccessorEmitter, autoAccessor, className, isStatic: false);
+            ctx.SuppressNewTarget = previous;
+        }
 
         void EmitOrderedFieldInitializers()
         {

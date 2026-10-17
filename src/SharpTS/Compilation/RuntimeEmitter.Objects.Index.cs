@@ -1952,7 +1952,12 @@ public partial class RuntimeEmitter
             il.MarkLabel(notProxy);
         }
         EmitInheritedSymbolSetter(il, inputs.ObjectPrototypes, inputs.Symbols, inputs.DescriptorStorage,
-            inputs.InvokeMethodValue, inputs.SymbolAccessors, inputs.Errors, inputs.UndefinedType);
+            inputs.InvokeMethodValue, inputs.SymbolAccessors, inputs.Errors, inputs.UndefinedType,
+            inputs.ProxySelected
+                ? new ProxySetCallInputs(inputs.ReflectAssignment!.Set,
+                    inputs.ObjectDescriptors.GetOwnPropertyDescriptor, inputs.ObjectRead.Property,
+                    inputs.InvokeMethodUnwrapped)
+                : null);
         // #266: symbol-keyed class accessor setter (`set [Symbol.x](v) {...}`).
         // A registered setter takes the write (accessor semantics) instead of
         // storing a data property. Found setter is a MethodInfo invoked with the
@@ -2123,7 +2128,8 @@ public partial class RuntimeEmitter
 
     private void EmitInheritedSymbolSetter(ILGenerator il, EmittedObjectPrototypeRuntime prototypes,
         EmittedSymbolRuntime symbols, EmittedDescriptorStorageRuntime storage, MethodBuilder invoke,
-        EmittedSymbolAccessorRuntime accessors, EmittedErrorRuntime errors, Type undefinedType)
+        EmittedSymbolAccessorRuntime accessors, EmittedErrorRuntime errors, Type undefinedType,
+        ProxySetCallInputs? proxySet)
     {
         var done = il.DefineLabel();
         var prototype = il.DeclareLocal(_types.Object);
@@ -2154,6 +2160,29 @@ public partial class RuntimeEmitter
         il.MarkLabel(loop);
         il.Emit(OpCodes.Ldloc, prototype);
         il.Emit(OpCodes.Brfalse, done);
+        if (proxySet is { } proxyInputs)
+        {
+            var isProxy = il.DefineLabel();
+            var notProxy = il.DefineLabel();
+            EmitProxyTypeCheck(il, () => il.Emit(OpCodes.Ldloc, prototype), isProxy, notProxy);
+            il.MarkLabel(isProxy);
+            // Enter the inherited Proxy's [[Set]] before consulting descriptors
+            // or its prototype. Keep both the Symbol key and original receiver.
+            EmitProxySetCompiledCall(il, proxyInputs,
+                () => il.Emit(OpCodes.Ldloc, prototype),
+                () => il.Emit(OpCodes.Ldarg_1),
+                () => il.Emit(OpCodes.Ldarg_2),
+                () => il.Emit(OpCodes.Ldarg_0));
+            var handled = il.DefineLabel();
+            il.Emit(OpCodes.Brtrue, handled);
+            il.Emit(OpCodes.Ldarg_3);
+            il.Emit(OpCodes.Brfalse, handled);
+            GuestErrorEmitter.ThrowError(il, errors.CreateException, errors.TypeErrorConstructor,
+                "Proxy set trap returned false");
+            il.MarkLabel(handled);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notProxy);
+        }
         il.Emit(OpCodes.Ldloc, prototype);
         il.Emit(OpCodes.Call, symbols.GetStorage);
         il.Emit(OpCodes.Ldarg_1);
@@ -2583,14 +2612,28 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
-        // Symbol key handler: honor frozen/sealed (same rationale as the
-        // string-key dict path) before falling through to GetSymbolDict.Remove.
+        // Symbol key handler: deleting a missing own property succeeds even
+        // when the receiver is frozen/sealed or inherits the same Symbol.
+        // Look up the own entry before checking its configurability.
         // ECMA-262 §10.1.10 OrdinaryDelete: a non-configurable own property
         // refuses [[Delete]] — Object.seal/freeze mark every own descriptor
         // non-configurable, so symbol-keyed entries on a sealed/frozen object
         // must also reject delete. Pre-fix `delete obj[sym]` returned true
         // for sealed objects with symbol props.
         il.MarkLabel(symbolKeyLabel);
+        var symDeleteDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        var symDeleteValueLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.Symbols.TryGetStorage);
+        il.Emit(OpCodes.Stloc, symDeleteDictLocal);
+        il.Emit(OpCodes.Ldloc, symDeleteDictLocal);
+        il.Emit(OpCodes.Brfalse, trueLabel);
+        il.Emit(OpCodes.Ldloc, symDeleteDictLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, symDeleteValueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+        il.Emit(OpCodes.Brfalse, trueLabel);
+
         var symDelObjLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
         il.Emit(OpCodes.Ldarg_0);
@@ -2610,18 +2653,8 @@ public partial class RuntimeEmitter
         il.MarkLabel(symDelNotSealedLabel);
         // A symbol descriptor can itself be non-configurable even when the
         // containing object is not sealed or frozen.
-        var symDeleteDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
-        var symDeleteValueLocal = il.DeclareLocal(_types.Object);
         var symDeleteDescriptorLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
         var symDeleteAllowedLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, inputs.Symbols.GetStorage);
-        il.Emit(OpCodes.Stloc, symDeleteDictLocal);
-        il.Emit(OpCodes.Ldloc, symDeleteDictLocal);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloca, symDeleteValueLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
-        il.Emit(OpCodes.Brfalse, symDeleteAllowedLabel);
         il.Emit(OpCodes.Ldloc, symDeleteValueLocal);
         il.Emit(OpCodes.Isinst, inputs.DescriptorStorage.DescriptorType);
         il.Emit(OpCodes.Stloc, symDeleteDescriptorLocal);
@@ -2678,7 +2711,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Blt, compactLoop);
         il.MarkLabel(symbolDeleteDone);
-        il.Emit(OpCodes.Ldloc, symbolRemoved);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(dictLabel);

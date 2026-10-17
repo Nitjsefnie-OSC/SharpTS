@@ -38,9 +38,35 @@ public partial class ILEmitter
         }
     }
 
+    internal void EmitConstructorParameterProperty(Stmt statement)
+    {
+        var value = ((Expr.Set)((Stmt.Expression)statement).Expr).Value as Expr.Variable
+            ?? throw new InvalidOperationException("Expected a synthetic constructor parameter property.");
+        var previous = _constructorParameterPropertyValue;
+        _constructorParameterPropertyValue = value;
+        try
+        {
+            EmitStatement(statement);
+        }
+        finally
+        {
+            _constructorParameterPropertyValue = previous;
+        }
+    }
+
     protected override void EmitVariable(Expr.Variable v)
     {
         var name = v.Name.Lexeme;
+        // Synthetic parameter properties run at super(), possibly inside a block
+        // that shadows the parameter. Read the parameter's current binding, not
+        // the lexical environment containing that super() call.
+        if (ReferenceEquals(v, _constructorParameterPropertyValue))
+        {
+            SetStackType(_resolver.TryLoadParameter(name)
+                ?? throw new InvalidOperationException("Constructor parameter property has no parameter binding."));
+            return;
+        }
+
         if (_ctx.HasLoopBodyBindingAccess(name))
         {
             SetStackType(_resolver.TryLoadVariable(name)!.Value);

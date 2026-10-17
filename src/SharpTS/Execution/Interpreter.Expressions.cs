@@ -1562,28 +1562,22 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(value);
         }
 
-        if (obj is ISharpTSFunctionObject functionObject)
+        // OrdinarySet enters an inherited Proxy's [[Set]] with the original
+        // function as Receiver. A descriptor-only walk cannot replace that
+        // protocol without either skipping the trap or exposing other traps.
+        if (index is SharpTSSymbol functionSymbol
+            && FunctionObjectProperties.TryGetStorage(obj, this, out _))
         {
-            if (index is SharpTSSymbol functionSymbol)
-            {
-                var properties = FunctionObjectProperties.GetProperties(functionObject, this);
-                if (!TryAssignThroughDescriptor(
-                        properties.GetOwnPropertyDescriptor(functionSymbol)
-                            ?? FindInheritedSymbolDescriptor(functionObject, functionSymbol),
-                        functionObject, functionSymbol.ToString(), value, strictMode))
-                    properties.SetBySymbolStrict(functionSymbol, value, strictMode);
-            }
-            else SetFunctionObjectProperty(functionObject, ToPropertyKeyString(index), value, strictMode);
+            bool assigned = SharpTSProxy.OrdinarySet(this, obj, functionSymbol, value, obj);
+            if (!assigned && strictMode)
+                throw StrictModeErrors.TypeError(
+                    $"Cannot assign to symbol property '{functionSymbol}'");
             return RuntimeValue.FromBoxed(value);
         }
 
-        if (obj is BoundFunction boundFunction && index is SharpTSSymbol boundSymbol)
+        if (obj is ISharpTSFunctionObject functionObject)
         {
-            var storage = boundFunction.OwnPropertyStorage;
-            if (!TryAssignThroughDescriptor(storage.GetOwnPropertyDescriptor(boundSymbol)
-                    ?? FindInheritedSymbolDescriptor(boundFunction, boundSymbol),
-                    boundFunction, boundSymbol.ToString(), value, strictMode))
-                storage.SetBySymbolStrict(boundSymbol, value, strictMode);
+            SetFunctionObjectProperty(functionObject, ToPropertyKeyString(index), value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
 
@@ -1630,15 +1624,6 @@ public partial class Interpreter
                 if (!TryAssignThroughDescriptor(properties.GetOwnPropertyDescriptor(key), obj, key, value, strictMode))
                     properties.SetPropertyStrict(key, value, strictMode);
             }
-            return RuntimeValue.FromBoxed(value);
-        }
-        if (obj is SharpTSFunction or SharpTSArrowFunction && index is SharpTSSymbol ordinarySymbol
-            && FunctionObjectProperties.TryGetStorage(obj, this, out var ordinaryProperties))
-        {
-            if (!TryAssignThroughDescriptor(ordinaryProperties.GetOwnPropertyDescriptor(ordinarySymbol)
-                    ?? FindInheritedSymbolDescriptor(obj, ordinarySymbol),
-                    obj, ordinarySymbol.ToString(), value, strictMode))
-                ordinaryProperties.SetBySymbolStrict(ordinarySymbol, value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
         if (obj is SharpTSFunction fn)

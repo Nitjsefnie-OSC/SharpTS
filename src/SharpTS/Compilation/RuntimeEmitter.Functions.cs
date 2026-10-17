@@ -100,13 +100,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitBoundFunctionName(MethodBuilder captureName, MethodBuilder getFunctionProperty)
+    private void EmitBoundFunctionName(MethodBuilder captureName, MethodBuilder getProperty)
     {
         var il = captureName.GetILGenerator();
         il.Emit(OpCodes.Ldstr, "bound ");
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "name");
-        il.Emit(OpCodes.Call, getFunctionProperty);
+        il.Emit(OpCodes.Call, getProperty);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
         il.Emit(OpCodes.Ret);
@@ -772,13 +772,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.GeneratorKind);
         il.Emit(OpCodes.Brfalse, ordinary);
 
-        // These own metadata slots retain the existing deletion and arity policy.
+        // A deleted own metadata slot falls through the generator function's
+        // prototype chain, which inherits Function.prototype's name and length.
         foreach (var name in new[] { "name", "length" })
         {
+            var otherProperty = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldstr, name);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-            il.Emit(OpCodes.Brtrue, ordinary);
+            il.Emit(OpCodes.Brfalse, otherProperty);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+            il.Emit(OpCodes.Brtrue, inherited);
+            il.Emit(OpCodes.Br, ordinary);
+            il.MarkLabel(otherProperty);
         }
 
         il.Emit(OpCodes.Ldarg_1);

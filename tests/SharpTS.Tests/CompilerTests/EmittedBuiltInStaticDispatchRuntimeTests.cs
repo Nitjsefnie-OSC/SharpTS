@@ -115,6 +115,7 @@ public sealed class EmittedBuiltInStaticDispatchRuntimeTests
             Check(typeof(double), "isInteger", runtime.Numbers.IsInteger, 1);
             Check(typeof(double), "isSafeInteger", runtime.Numbers.IsSafeInteger, 1);
             Check(typeof(double), "parseInt", runtime.Numbers.ParseInt, 2);
+            Check(typeof(double), "parseFloat", runtime.Numbers.ParseFloat, 1);
             var getProperty = type.GetMethod(runtime.ObjectRead.Property.Name)!;
             object? Read(Type target, string name) => getProperty.Invoke(null, [Resolve(target), name]);
             Assert.Equal(double.MaxValue, Assert.IsType<double>(lookup.Invoke(null, [typeof(double), "MAX_VALUE"])));
@@ -185,7 +186,7 @@ public sealed class EmittedBuiltInStaticDispatchRuntimeTests
             foreach (string name in names) ownerType.GetProperty(name)!.SetValue(owner, Stub(ownerType.Name + "_" + name));
             return owner;
         }
-        var numbers = Owner(typeof(EmittedNumberRuntime), "IsNaN", "IsFinite", "IsInteger", "IsSafeInteger", "ParseInt");
+        var numbers = Owner(typeof(EmittedNumberRuntime), "IsNaN", "IsFinite", "IsInteger", "IsSafeInteger", "ParseInt", "ParseFloat");
         var keys = Owner(typeof(EmittedObjectKeysRuntime), "Keys", "Names", "Symbols");
         var operations = Owner(typeof(EmittedObjectOperationsRuntime), "Values", "Entries", "FromEntries", "Assign", "Is", "GroupBy");
         var state = Owner(typeof(EmittedObjectStateRuntime), "Freeze", "Seal", "PreventExtensions", "IsExtensible", "IsFrozen", "IsSealed");
@@ -217,6 +218,7 @@ public sealed class EmittedBuiltInStaticDispatchRuntimeTests
         object? Lookup(Type target, string name) => lookup.Invoke(null, [target, name]);
         Assert.Equal("ArrayCheck:isArray:1", Lookup(typeof(IList<object>), "isArray"));
         Assert.Equal("EmittedNumberRuntime_ParseInt:parseInt:2", Lookup(typeof(double), "parseInt"));
+        Assert.Equal("EmittedNumberRuntime_ParseFloat:parseFloat:1", Lookup(typeof(double), "parseFloat"));
         Assert.Equal("CharCode:fromCharCode:1", Lookup(typeof(string), "fromCharCode"));
         Assert.Equal("EmittedObjectDescriptorRuntime_DefineProperty:defineProperty:3", Lookup(typeof(object), "defineProperty"));
         Assert.Equal("SymbolFor:for:1", Lookup(typeof(Uri), "for"));

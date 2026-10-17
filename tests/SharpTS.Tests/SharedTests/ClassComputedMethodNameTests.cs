@@ -123,6 +123,32 @@ public sealed class ClassComputedMethodNameTests
         + "true true true false \"[generator]\" 1 \"bound [generator]\"\n"
         + "true true true false \"[asyncGenerator]\" 1 \"bound [asyncGenerator]\"\n";
 
+    public const string OwnNameSource = """
+        Object.defineProperty(Function.prototype, "name", { value: "inherited", configurable: true });
+        Object.defineProperty(Function.prototype, "length", { value: 42, configurable: true });
+        const key = Symbol("async");
+        class Declared {
+            async [key]() {}
+            static async [key]() {}
+        }
+        const Expression: any = class {
+            async [key]() {}
+            static async [key]() {}
+        };
+        for (const constructor of [Declared, Expression]) {
+            const owner: any = constructor, instance: any = new owner();
+            for (const method of [owner[key], instance[key]]) {
+                const bound: any = method.bind(null);
+                console.log(JSON.stringify(method.name), JSON.stringify(Reflect.get(method, "name")),
+                    JSON.stringify(bound.name), JSON.stringify(bound.bind(null).name));
+            }
+        }
+        const arrow: any = [async (value: any) => value][0];
+        const bound: any = arrow.bind(null);
+        console.log(JSON.stringify(arrow.name), JSON.stringify(Reflect.get(arrow, "name")),
+            JSON.stringify(bound.name), arrow.length, Reflect.get(arrow, "length"));
+        """;
+
     public const string MutationSource = """
         const key = Symbol("initial");
         class Declared { static [key](first: any) { return this; } }
@@ -199,6 +225,9 @@ public sealed class ClassComputedMethodNameTests
         var kindRows = string.Concat(Enumerable.Repeat("\"\" \"\" 1 1 true \"bound \" 0\n", 4)) + "true true true true\n";
         yield return ["kinds", KindsSource, kindRows + kindRows];
         yield return ["identity", IdentitySource, IdentityExpected];
+        yield return ["own-name-before-inherited", OwnNameSource,
+            string.Concat(Enumerable.Repeat("\"[async]\" \"[async]\" \"bound [async]\" \"bound bound [async]\"\n", 4))
+                + "\"\" \"\" \"bound \" 1 1\n"];
         var mutationRows = "\"[initial]\"\ntrue \"renamed\" \"bound renamed\" 1 0 true\n"
             + "\"bound renamed\" \"later\" \"bound later\" \"bound bound renamed\"\n";
         yield return ["mutation", MutationSource, mutationRows + mutationRows];

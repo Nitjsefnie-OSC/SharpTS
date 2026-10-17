@@ -636,58 +636,36 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
     /// Removes a property by symbol key. Respects frozen/sealed state.
     /// </summary>
     public bool DeleteBySymbol(SharpTSSymbol symbol)
-    {
-        if (IsFrozen || IsSealed)
-        {
-            // Frozen and sealed objects silently ignore property deletions
-            return false;
-        }
-        if (HasSymbolProperty(symbol) && !GetSymbolPropertyFlags(symbol).Configurable)
-            return false;
-        List<SharpTSSymbol>? propertyOrder = HasSymbolProperty(symbol)
-            ? EnsureSymbolPropertyOrder()
-            : null;
-        bool removed = _symbolFields?.Remove(symbol) ?? false;
-        removed = (_symbolAccessors?.Remove(symbol) ?? false) || removed;
-        if (removed)
-        {
-            propertyOrder!.Remove(symbol);
-            _symbolDescriptors?.Remove(symbol);
-        }
-        return removed;
-    }
+        => DeleteBySymbolStrict(symbol, strictMode: false);
 
     /// <summary>
     /// Removes a property by symbol key with strict mode behavior.
-    /// In strict mode, throws TypeError for deletions on frozen/sealed objects.
+    /// Deleting an absent own property succeeds; strict mode throws TypeError
+    /// when a present property is non-configurable.
     /// </summary>
     public bool DeleteBySymbolStrict(SharpTSSymbol symbol, bool strictMode)
     {
+        if (!HasSymbolProperty(symbol)) return true;
         if (IsFrozen || IsSealed)
         {
             if (strictMode)
             {
-                throw new Exception($"TypeError: Cannot delete symbol property of a frozen or sealed object");
+                throw StrictModeErrors.TypeError("Cannot delete symbol property of a frozen or sealed object");
             }
             return false;
         }
-        if (HasSymbolProperty(symbol) && !GetSymbolPropertyFlags(symbol).Configurable)
+        if (!GetSymbolPropertyFlags(symbol).Configurable)
         {
             if (strictMode)
                 throw StrictModeErrors.TypeError("Cannot delete non-configurable symbol property of object");
             return false;
         }
-        List<SharpTSSymbol>? propertyOrder = HasSymbolProperty(symbol)
-            ? EnsureSymbolPropertyOrder()
-            : null;
-        bool removed = _symbolFields?.Remove(symbol) ?? false;
-        removed = (_symbolAccessors?.Remove(symbol) ?? false) || removed;
-        if (removed)
-        {
-            propertyOrder!.Remove(symbol);
-            _symbolDescriptors?.Remove(symbol);
-        }
-        return removed;
+        List<SharpTSSymbol> propertyOrder = EnsureSymbolPropertyOrder();
+        _symbolFields?.Remove(symbol);
+        _symbolAccessors?.Remove(symbol);
+        propertyOrder.Remove(symbol);
+        _symbolDescriptors?.Remove(symbol);
+        return true;
     }
 
     /// <summary>

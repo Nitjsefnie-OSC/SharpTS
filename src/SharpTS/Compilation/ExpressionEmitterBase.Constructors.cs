@@ -382,20 +382,13 @@ public abstract partial class ExpressionEmitterBase
                 return true;
 
             case "Boolean":
-                IL.Emit(OpCodes.Ldstr, "Boolean");
-                if (arguments.Count == 0)
-                {
-                    IL.Emit(OpCodes.Ldc_I4_0);
-                    IL.Emit(OpCodes.Box, Ctx.Types.Boolean);
-                }
-                else
-                {
-                    EmitExpression(arguments[0]);
-                    EnsureBoxed();
-                    IL.Emit(OpCodes.Call, Ctx.Runtime!.Booleans.IsTruthy);
-                    IL.Emit(OpCodes.Box, Ctx.Types.Boolean);
-                }
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.BoxedPrimitives.New);
+                EmitArgsArrayWithSpread(arguments);
+                var booleanArguments = _helpers.SpillStoreObject();
+                IL.Emit(OpCodes.Ldtoken, Ctx.Types.Boolean);
+                IL.Emit(OpCodes.Call, Ctx.Types.TypeGetTypeFromHandle);
+                IL.Emit(OpCodes.Ldloc, booleanArguments);
+                IL.Emit(OpCodes.Castclass, Ctx.Types.ObjectArray);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.Value);
                 SetStackUnknown();
                 return true;
 

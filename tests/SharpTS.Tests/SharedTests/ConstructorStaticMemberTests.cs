@@ -1,3 +1,4 @@
+using SharpTS.Parsing;
 using SharpTS.Tests.Infrastructure;
 using SharpTS.TypeSystem;
 using SharpTS.TypeSystem.Exceptions;
@@ -7,6 +8,50 @@ namespace SharpTS.Tests.SharedTests;
 
 public sealed class ConstructorStaticMemberTests
 {
+    private const string DotNetConvertDeclaration = """
+        @DotNetType("System.Convert")
+        declare class Convert { static toString(value: boolean): string; }
+        """;
+
+    [Theory, ModeData]
+    public void DotNetStaticAliasesRetainTheirDeclaredSignatures(ExecutionMode mode)
+    {
+        string source = DotNetConvertDeclaration + """
+            const Alias = Convert;
+            console.log(Convert.toString(true), Convert.ToString(false), Alias.ToString(true));
+            """;
+        Assert.Equal("True False True\n", TestHarness.Run(source, mode, DecoratorMode.Legacy));
+    }
+
+    [Theory]
+    [InlineData("Convert.ToString(1);", "TS2345")]
+    [InlineData("const value: number = Convert.ToString(true);", "TS2322")]
+    [InlineData("Convert.missing();", "TS2339")]
+    public void DotNetStaticAliasesKeepArgumentReturnAndMemberChecks(string use, string code)
+    {
+        var checker = new TypeChecker();
+        checker.SetDecoratorMode(DecoratorMode.Legacy);
+        var error = Assert.ThrowsAny<TypeCheckException>(() => checker.Check(
+            new Parser(new Lexer(DotNetConvertDeclaration + use).ScanTokens(), DecoratorMode.Legacy).ParseOrThrow()));
+        Assert.Equal(code, error.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void SourceConstructorWithTheSameNameDoesNotAcquireDotNetAliases()
+    {
+        string source = DotNetConvertDeclaration + """
+            function read() {
+                class Convert { static toString(value: boolean): string { return "source"; } }
+                return Convert.ToString(true);
+            }
+            """;
+        var checker = new TypeChecker();
+        checker.SetDecoratorMode(DecoratorMode.Legacy);
+        var error = Assert.ThrowsAny<TypeCheckException>(() => checker.Check(
+            new Parser(new Lexer(source).ScanTokens(), DecoratorMode.Legacy).ParseOrThrow()));
+        Assert.Equal("TS2339", error.Diagnostic.TsCode);
+    }
+
     [Theory]
     [InlineData("class C {} const value = C.missing;")]
     [InlineData("const C = class {}; const value = C.missing;")]

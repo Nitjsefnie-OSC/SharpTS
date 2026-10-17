@@ -374,6 +374,7 @@ public abstract record TypeInfo
         // Heritage from an any-valued constructor retains an unknown static
         // surface. Source class shells must not acquire this permission.
         internal bool IsDynamicSuperclass { get; init; }
+        internal bool IsDotNetMapped { get; set; }
         public Dictionary<string, TypeInfo> Methods { get; } = [];
         public Dictionary<string, TypeInfo> StaticMethods { get; } = [];
         public Dictionary<string, TypeInfo> StaticProperties { get; } = [];
@@ -448,7 +449,8 @@ public abstract record TypeInfo
             {
                 AccessorSetterAccess = AccessorSetterAccess.Count > 0 ? AccessorSetterAccess.ToFrozenDictionary() : null,
                 OrdinaryOptionalMembers = OrdinaryOptionalMembers.Count > 0 ? OrdinaryOptionalMembers.ToFrozenSet() : null,
-                StaticStringIndexType = StaticStringIndexType
+                StaticStringIndexType = StaticStringIndexType,
+                IsDotNetMapped = IsDotNetMapped
             };
             return _frozenCore;
         }

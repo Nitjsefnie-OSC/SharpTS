@@ -391,7 +391,7 @@ public partial class TypeChecker
                 if (autoAccessor.Initializer != null)
                 {
                     TypeInfo initType = CheckExpr(autoAccessor.Initializer);
-                    TypeInfo declaredType = classTypeForBody.Getters[autoAccessor.Name.Lexeme];
+                    TypeInfo declaredType = (autoAccessor.IsStatic ? classTypeForBody.StaticProperties : classTypeForBody.Getters)[autoAccessor.Name.Lexeme];
                     if (!IsCompatible(declaredType, initType))
                     {
                         throw new TypeCheckException($" Cannot assign type '{initType}' to auto-accessor '{autoAccessor.Name.Lexeme}' of type '{declaredType}'.", tsCode: "TS2322");

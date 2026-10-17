@@ -141,23 +141,26 @@ public partial class TypeChecker
                 c => c.Core.StaticStringIndexType, gc => gc.Core.StaticStringIndexType);
             var staticMethods = GetStaticMethods(current);
             var staticProps = GetStaticProperties(current);
-            if (staticMethods != null && staticMethods.TryGetValue(memberName.Lexeme, out var staticMethodType))
+            string lookupName = ResolveDotNetStaticMemberName(current, memberName.Lexeme, staticMethods, staticProps);
+            Token lookupMember = lookupName == memberName.Lexeme ? memberName
+                : new Token(memberName.Type, lookupName, memberName.Literal, memberName.Line);
+            if (staticMethods != null && staticMethods.TryGetValue(lookupName, out var staticMethodType))
             {
-                EnforceStaticMemberAccess(current, memberName);
+                EnforceStaticMemberAccess(current, lookupMember);
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Static);
                 return staticMethodType;
             }
-            if (staticProps != null && staticProps.TryGetValue(memberName.Lexeme, out var staticPropType))
+            if (staticProps != null && staticProps.TryGetValue(lookupName, out var staticPropType))
             {
-                if (TryGetAccessorSetterAccess(current, isStatic: true, memberName.Lexeme, out _))
-                    EnforceAccessorAccess(current, classType, memberName, isStatic: true, isWrite: false);
+                if (TryGetAccessorSetterAccess(current, isStatic: true, lookupName, out _))
+                    EnforceAccessorAccess(current, classType, lookupMember, isStatic: true, isWrite: false);
                 else
                 {
-                    EnforceStaticMemberAccess(current, memberName);
-                    ObservePendingGetterFieldRead(current, isStatic: true, memberName.Lexeme);
+                    EnforceStaticMemberAccess(current, lookupMember);
+                    ObservePendingGetterFieldRead(current, isStatic: true, lookupName);
                 }
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Static);
-                return ResolveFieldStageGetter(current, isStatic: true, memberName.Lexeme, staticPropType);
+                return ResolveFieldStageGetter(current, isStatic: true, lookupName, staticPropType);
             }
             current = GetSuperclass(current);
         }
@@ -190,6 +193,22 @@ public partial class TypeChecker
         throw new TypeCheckException(
             $"Property '{memberName.Lexeme}' does not exist on type 'typeof {GetClassName(classType)}'.",
             memberName.Line, tsCode: "TS2339");
+    }
+
+    private static string ResolveDotNetStaticMemberName(TypeInfo owner, string requested,
+        IReadOnlyDictionary<string, TypeInfo>? methods, IReadOnlyDictionary<string, TypeInfo>? properties)
+    {
+        bool isDotNetMapped = owner is TypeInfo.MutableClass mutable
+            ? mutable.IsDotNetMapped
+            : ClassInfoAccessor.Get(owner, c => c.Core.IsDotNetMapped, gc => gc.Core.IsDotNetMapped);
+        if (methods?.ContainsKey(requested) == true || properties?.ContainsKey(requested) == true
+            || !isDotNetMapped)
+            return requested;
+
+        string clrName = Runtime.DotNet.DotNetTypeRegistry.ToPascalCase(requested);
+        return (methods?.Keys ?? []).Concat(properties?.Keys ?? [])
+            .FirstOrDefault(name => Runtime.DotNet.DotNetTypeRegistry.ToPascalCase(name) == clrName)
+            ?? requested;
     }
 
     private static TypeInfo? GetConstructorStringIndexType(TypeInfo classType)

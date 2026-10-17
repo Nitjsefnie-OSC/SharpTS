@@ -46,6 +46,9 @@ public sealed record ClassMetadataCore(
     /// <summary>String index signature on the constructor, independent of instance indices.</summary>
     public TypeInfo? StaticStringIndexType { get; init; }
 
+    // CLR interop accepts the declared camelCase member's PascalCase spelling.
+    internal bool IsDotNetMapped { get; init; }
+
     /// <summary>True when the class declares any index signature.</summary>
     public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
 

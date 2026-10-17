@@ -460,14 +460,13 @@ public partial class TypeChecker
                 }
 
                 // Register as getter (always available)
-                mutableClass.Getters[propName] = accessorType;
-                if (!autoAccessor.IsStatic)
-                    mutableClass.FieldAccess[propName] = autoAccessor.Access;
+                (autoAccessor.IsStatic ? mutableClass.StaticGetters : mutableClass.Getters)[propName] = accessorType;
+                (autoAccessor.IsStatic ? mutableClass.StaticFieldAccess : mutableClass.FieldAccess)[propName] = autoAccessor.Access;
 
                 // Register as setter (unless readonly)
                 if (!autoAccessor.IsReadonly)
                 {
-                    mutableClass.Setters[propName] = accessorType;
+                    (autoAccessor.IsStatic ? mutableClass.StaticSetters : mutableClass.Setters)[propName] = accessorType;
                 }
 
                 // Track as auto-accessor for decorator context
@@ -505,6 +504,7 @@ public partial class TypeChecker
                     }
                 }
             }
+            PublishStaticAccessorTypes(mutableClass);
         }
     }
 

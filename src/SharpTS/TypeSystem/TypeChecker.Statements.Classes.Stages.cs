@@ -66,9 +66,14 @@ public partial class TypeChecker
             foreach (var indexSig in indexSignatures)
             {
                 TypeInfo valueType = ResolveAnnotation(indexSig.ValueType, indexSig.ValueTypeNode)!;
-                if (indexSig.IsStatic && indexSig.KeyType == TokenType.TYPE_STRING)
+                if (indexSig.IsStatic)
                 {
-                    mutableClass.StaticStringIndexType = valueType;
+                    switch (indexSig.KeyType)
+                    {
+                        case TokenType.TYPE_STRING: mutableClass.StaticStringIndexType = valueType; break;
+                        case TokenType.TYPE_NUMBER: mutableClass.StaticNumberIndexType = valueType; break;
+                        case TokenType.TYPE_SYMBOL: mutableClass.StaticSymbolIndexType = valueType; break;
+                    }
                     continue;
                 }
                 switch (indexSig.KeyType)

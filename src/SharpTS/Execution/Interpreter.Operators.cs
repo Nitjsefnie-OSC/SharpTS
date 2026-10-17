@@ -962,6 +962,11 @@ public partial class Interpreter
         return true;
     }
 
+    /// <summary>ECMA-262 §7.1.19 ToPropertyKey, preserving Symbol results.</summary>
+    internal object ToPropertyKey(object? value)
+        => PropertyKeyConverter.ToPropertyKey(
+            IsObjectLike(value) ? ToPrimitive(value, PrimitiveHint.String) : value);
+
     /// <summary>
     /// ECMA-262 §7.1.19 ToPropertyKey for non-Symbol values. Property-key
     /// coercion uses the string hint, so arrays use their comma-joined form,

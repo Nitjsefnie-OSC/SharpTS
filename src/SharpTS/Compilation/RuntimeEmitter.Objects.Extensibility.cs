@@ -7,12 +7,16 @@ public partial class RuntimeEmitter
 {
     private readonly record struct ObjectIntegrityInputs(EmittedArrayStorageRuntime ArrayStorage, EmittedDescriptorStorageRuntime DescriptorStorage, EmittedObjectStorageRuntime ObjectStorage);
 
+    private readonly record struct GeneratorIntegrityInputs(Type FunctionType, MethodInfo GetMethodInfo,
+        MethodInfo Kind, MethodInfo EnsureOwnPrototype);
+
     /// <summary>
     /// Emits Object.freeze(obj) - freezes an object to prevent property changes.
     /// Uses PropertyDescriptorStore to track frozen objects for compiled code.
     /// Signature: object ObjectFreeze(object obj)
     /// </summary>
-    private void EmitObjectFreeze(TypeBuilder typeBuilder, EmittedObjectStateRuntime objectState, ObjectIntegrityInputs inputs)
+    private void EmitObjectFreeze(TypeBuilder typeBuilder, EmittedObjectStateRuntime objectState, ObjectIntegrityInputs inputs,
+        GeneratorIntegrityInputs generators)
     {
         var method = typeBuilder.DefineMethod(
             "ObjectFreeze",
@@ -28,6 +32,25 @@ public partial class RuntimeEmitter
         // If obj is null, just return it
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnLabel);
+
+        // A generator already owns its prototype slot, even when no read has
+        // materialized the descriptor. Make that slot visible before freezing.
+        var afterGenerator = il.DefineLabel();
+        var generatorFunction = il.DeclareLocal(generators.FunctionType);
+        var kickoff = il.DeclareLocal(_types.MethodInfo);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Isinst, generators.FunctionType);
+        il.Emit(OpCodes.Stloc, generatorFunction);
+        il.Emit(OpCodes.Ldloc, generatorFunction); il.Emit(OpCodes.Brfalse, afterGenerator);
+        il.Emit(OpCodes.Ldloc, generatorFunction); il.Emit(OpCodes.Callvirt, generators.GetMethodInfo);
+        il.Emit(OpCodes.Stloc, kickoff);
+        il.Emit(OpCodes.Ldloc, kickoff); il.Emit(OpCodes.Call, generators.Kind);
+        il.Emit(OpCodes.Brfalse, afterGenerator);
+        il.Emit(OpCodes.Ldloc, generatorFunction); il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+        il.Emit(OpCodes.Brtrue, afterGenerator);
+        il.Emit(OpCodes.Ldloc, generatorFunction); il.Emit(OpCodes.Ldloc, kickoff);
+        il.Emit(OpCodes.Call, generators.EnsureOwnPrototype); il.Emit(OpCodes.Pop);
+        il.MarkLabel(afterGenerator);
 
         // Stage E.2 M2: also call $Array.Freeze() to set the internal _isFrozen
         // bit. SetStrict / SetLong / the frozen-check branches in SetIndex all

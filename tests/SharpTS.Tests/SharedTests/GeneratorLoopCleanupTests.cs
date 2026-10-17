@@ -122,8 +122,7 @@ public class GeneratorLoopCleanupTests
         Assert.Equal("step true\ntrue close\n", TestHarness.Run(source, mode));
     }
 
-    // Compiled consumer close failures retain a separate boundary (#2123).
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void CollectionCallbacks_CloseGeneratorAndPreserveTheirThrow(ExecutionMode mode)
     {
         const string source = """
@@ -180,8 +179,7 @@ public class GeneratorLoopCleanupTests
             TestHarness.Run(source, mode));
     }
 
-    // Compiled Math.sumPrecise independently omits generator close (#2124).
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void SumPrecise_CloseFailurePreservesNonNumberError(ExecutionMode mode)
     {
         // Compare the invalid-element error with the same error during failing close.

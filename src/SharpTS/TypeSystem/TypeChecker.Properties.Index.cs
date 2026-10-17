@@ -34,6 +34,17 @@ public partial class TypeChecker
     {
         TypeInfo objType = CheckExpr(getIndex.Object);
         TypeInfo indexType = CheckExpr(getIndex.Index);
+        if (_fieldGetterScope is not null)
+        {
+            if (getIndex.Index is Expr.Literal { Value: string dependencyName })
+                ObservePendingGetterIndexRead(objType, dependencyName);
+            else if (TryGetStringLiteralKeys(indexType, out var dependencyNames))
+                foreach (string name in dependencyNames)
+                    ObservePendingGetterIndexRead(objType, name);
+            else if (indexType is TypeInfo.Symbol or TypeInfo.UniqueSymbol &&
+                TryGetWellKnownSymbolMemberName(getIndex.Index) is { } symbolName)
+                ObservePendingGetterIndexRead(objType, symbolName);
+        }
         if (_hasDefaultLibraries &&
             getIndex.Index is Expr.Literal { Value: string directGlobalProperty } &&
             (getIndex.Object is Expr.Variable { Name.Lexeme: "globalThis" } ||
@@ -352,6 +363,10 @@ public partial class TypeChecker
             if (objType is TypeInfo.Record { StringIndexType: { } recIdxType }) return WithUncheckedUndefined(recIdxType);
             if (objType is TypeInfo.Interface { StringIndexType: { } itfIdxType }) return WithUncheckedUndefined(itfIdxType);
         }
+
+        if (getIndex.Index is Expr.Literal { Value: string functionMemberName } &&
+            ResolveFunctionShapeMember(objType, functionMemberName) is { } apparentNamedMember)
+            return apparentNamedMember;
 
         // Exclude<keyof T, symbol> remains a deferred conditional while T is open, but every
         // possible result is a string-or-number property key. Such a domain can safely read a
@@ -1250,6 +1265,9 @@ public partial class TypeChecker
             return GetFunctionHasInstanceReadType(objType, getIndex.Index)
                 ?? GetMemberType(objType, "@@hasInstance");
 
+        if (getIndex.Index is Expr.Literal { Value: string functionMemberName } &&
+            ResolveFunctionShapeMember(objType, functionMemberName) is { } apparentNamedMember)
+            return apparentNamedMember;
         if (IsStringOrNumberIndexDomain(indexType) && StringIndexOf(objType) is { } domainIndex)
             return WithUncheckedUndefined(domainIndex);
 

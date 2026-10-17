@@ -13,26 +13,17 @@ public sealed class ClassExpressionStaticSelfTests
         console.log(C.value === C);
         """;
 
-    // #2207 separately tracks checking this member reads in class-expression
-    // static field initializers. Keep the raw repro below and cast only those
-    // reads in the checked CLI/standalone variants.
     public static IEnumerable<object[]> Cases()
     {
-        yield return ["original", """
-            const C = class Named {
-                static get self() { return Named; }
-                static value = (this as any).self;
-            };
-            console.log(C.value === C);
-            """, "true\n"];
+        yield return ["original", OriginalSource, "true\n"];
         yield return ["getter-method-and-block", """
             let reads = 0;
             const events: string[] = [];
             const C = class Named {
                 static get self() { reads++; events.push("get"); return Named; }
                 static method() { events.push("method"); return Named; }
-                static fromGetter = (this as any).self;
-                static fromMethod = (this as any).method();
+                static fromGetter = this.self;
+                static fromMethod = this.method();
                 static fromBlock: any;
                 static { events.push("block"); this.fromBlock = this.self; }
             };
@@ -44,9 +35,9 @@ public sealed class ClassExpressionStaticSelfTests
             function make(value: number) {
                 return class Named {
                     static get self() { return Named; }
-                    static value = (this as any).self;
+                    static value = this.self;
                     static captured = value;
-                    static pair: any = [(this as any).self, value];
+                    static pair: any = [this.self, value];
                     static read(): any { return [Named, value]; }
                 };
             }
@@ -60,11 +51,9 @@ public sealed class ClassExpressionStaticSelfTests
             const saved: any[] = [];
             function make() {
                 return class Named {
-                    // Capture the getter's read; #2208 separately tracks an
-                    // arrow reading the expression's self name directly.
-                    static get self() { const owner = Named; return () => owner; }
-                    static escaped = (this as any).self;
-                    static during = (this as any).escaped();
+                    static get self() { return () => Named; }
+                    static escaped = this.self;
+                    static during = this.escaped();
                     static { saved.push(this.self); }
                 };
             }
@@ -80,8 +69,8 @@ public sealed class ClassExpressionStaticSelfTests
                 return class Named extends Base {
                     static get self() { return Named; }
                     static get details(): any { return [Named, value, super.marker]; }
-                    static owner = (this as any).self;
-                    static snapshot = (this as any).details;
+                    static owner = this.self;
+                    static snapshot = this.details;
                     static blockOwner: any;
                     static { this.blockOwner = this.self; }
                 };
@@ -99,14 +88,14 @@ public sealed class ClassExpressionStaticSelfTests
             const Outer = class Named {
                 static #secret = mark(61);
                 static get self() { events.push("getter"); return Named; }
-                static first = (this as any).self;
+                static first = this.self;
                 static Inner = class Inner {
                     static get self() { return Inner; }
-                    static own = (this as any).self;
+                    static own = this.self;
                     static get outer() { return Named; }
-                    static owner = (this as any).outer;
+                    static owner = this.outer;
                     static get secret() { return Named.#secret; }
-                    static value = (this as any).secret;
+                    static value = this.secret;
                 };
                 static last = mark(67);
                 static { events.push("block"); }
@@ -123,7 +112,7 @@ public sealed class ClassExpressionStaticSelfTests
 
     [Theory, ModeData]
     public void OriginalSourceHasSelfBindingDuringStaticInitialization(ExecutionMode mode)
-        => Assert.Equal("true\n", TestHarness.RunUnchecked(OriginalSource, mode));
+        => Assert.Equal("true\n", TestHarness.Run(OriginalSource, mode));
 
     [Theory, MemberData(nameof(ParityCases))]
     public void NamedSelfIsAvailableBeforeStaticInitialization(

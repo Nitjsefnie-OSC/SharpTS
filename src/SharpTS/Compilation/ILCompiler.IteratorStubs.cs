@@ -6,6 +6,148 @@ namespace SharpTS.Compilation;
 
 public partial class ILCompiler
 {
+    private void EmitIteratorExpressionStub(GeneratorExpressionCompilation info)
+    {
+        var source = info.Source;
+        var method = info.Kickoff;
+        var iterator = (IIteratorStateMachineBuilder)info.StateMachine;
+        var il = method.GetILGenerator();
+        int receiverSkip = source.HasOwnThis ? 1 : 0;
+        int argumentOffset = 1 + receiverSkip; // CLR target, then optional guest this.
+        var sourceTypes = method.GetParameters().Skip(receiverSkip)
+            .Select(parameter => parameter.ParameterType).ToArray();
+        var context = CreateModuleMemberContext(il, method);
+        context.IsInstanceMethod = true;
+        context.IsStrictMode = _strictArrows.Contains(source) || _isStrictMode
+            || BodyDeclaresUseStrict(source.BlockBody);
+        context.CapturedFields = _closures.DisplayClassFields[source];
+        context.CellCapturedFieldNames = _closures.Analyzer.GetClosureCellFields(source);
+        context.LoopBodyCellCaptures = _closures.Analyzer.GetLoopBodyCellCaptures(source);
+        context.EmittingTypeBuilder = info.TargetType;
+        context.CurrentClassName = _async.ArrowEnclosingClassNames.GetValueOrDefault(source);
+        if (_closures.ArrowEntryPointDCFields.TryGetValue(source, out var entryPoint))
+            context.CurrentArrowEntryPointDCField = entryPoint;
+        if (_closures.ArrowFunctionDCFields.TryGetValue(source, out var functionDC))
+        {
+            context.CurrentArrowFunctionDCField = functionDC;
+            if (_closures.ArrowFunctionDCSource.TryGetValue(source, out var owner)
+                && _closures.FunctionDisplayClassFields.TryGetValue(owner, out var fields))
+            {
+                context.FunctionDisplayClassFields = fields;
+                context.CapturedFunctionLocals = [.. fields.Keys];
+            }
+        }
+        if (_closures.ArrowScopeDCFields.TryGetValue(source, out var arrowDC)
+            && _closures.ArrowScopeDCSource.TryGetValue(source, out var arrowOwner)
+            && _closures.ArrowScopeDisplayClassFields.TryGetValue(arrowOwner, out var parentFields))
+        {
+            context.CurrentArrowScopeDCField = arrowDC;
+            context.ParentArrowScopeDisplayClassFields = parentFields;
+            context.ParentArrowCapturedLocals = [.. parentFields.Keys];
+        }
+        if (_arrowScopeDCExtraFields.TryGetValue(source, out var extraReferences))
+        {
+            context.CurrentArrowScopeDCExtraFields = extraReferences;
+            context.ExtraArrowScopeBindings = BuildExtraScopeBindings(
+                source, _closures.Analyzer.GetCaptures(source), extraReferences);
+        }
+        foreach (var (name, capture) in info.Captures)
+        {
+            if (capture.IsCell || capture.TargetPath.Count != 2) continue;
+            var reference = capture.TargetPath[0];
+            if (context.CurrentArrowFunctionDCField != reference)
+                context.CapturedFunctionLocals?.Remove(name);
+            if (context.CurrentArrowScopeDCField != reference)
+                context.ParentArrowCapturedLocals?.Remove(name);
+            (context.ExtraArrowScopeBindings ??= [])[name] = new(reference, capture.TargetPath[1]);
+        }
+        if (source.HasOwnThis) context.DefineParameter("__this", 1, _types.Object);
+        for (int i = 0; i < source.Parameters.Count; i++)
+            context.DefineParameter(source.Parameters[i].Name.Lexeme, i + argumentOffset, sourceTypes[i]);
+        ApplyCapturedTopLevelVariableAccess(context);
+        ApplyCommonJsModuleAccess(context);
+
+        // This scope belongs to this invocation, whereas the expression target
+        // stores its enclosing lexical environment and is shared by its iterators.
+        LocalBuilder? ownScope = null;
+        if (_closures.ArrowScopeDisplayClasses.TryGetValue(source, out var scopeType)
+            && _closures.ArrowScopeDisplayClassCtors.TryGetValue(source, out var scopeCtor))
+        {
+            ownScope = il.DeclareLocal(scopeType);
+            il.Emit(OpCodes.Newobj, scopeCtor);
+            il.Emit(OpCodes.Stloc, ownScope);
+            context.ArrowScopeDisplayClassLocal = ownScope;
+            context.ArrowScopeDisplayClassFields = _closures.ArrowScopeDisplayClassFields[source];
+            context.CapturedArrowLocals = [.. context.ArrowScopeDisplayClassFields.Keys];
+        }
+
+        LocalBuilder? arguments = null;
+        if (ReferencesArgumentsIdentifier(info.FunctionShape.Body, source.Parameters))
+            arguments = EmitArgumentsLocalPrologueCore(il, context, source.Parameters,
+                sourceTypes, argumentOffset, publishedArgsLeadingSkip: receiverSkip);
+        new ILEmitter(context).EmitDefaultParameters(source.Parameters, argumentOffset, sourceTypes);
+
+        il.Emit(OpCodes.Newobj, iterator.Constructor);
+        EmitIteratorArgumentsStore(il, iterator, arguments);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stfld, info.EnvironmentField);
+        if (iterator.ThisField != null)
+        {
+            il.Emit(OpCodes.Dup);
+            if (source.HasOwnThis) il.Emit(OpCodes.Ldarg_1);
+            else il.Emit(OpCodes.Ldsfld, _runtime.FunctionValues.CurrentThisField);
+            if (!context.IsStrictMode && _runtime.GlobalObject.HasSingletonField)
+            {
+                var useGlobal = il.DefineLabel();
+                var bound = il.DefineLabel();
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Brfalse, useGlobal);
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Isinst, _runtime.Sentinels.UndefinedType);
+                il.Emit(OpCodes.Brfalse, bound);
+                il.MarkLabel(useGlobal);
+                il.Emit(OpCodes.Pop);
+                il.Emit(OpCodes.Ldsfld, _runtime.GlobalObject.SingletonField);
+                il.MarkLabel(bound);
+            }
+            il.Emit(OpCodes.Stfld, iterator.ThisField);
+        }
+        for (int i = 0; i < source.Parameters.Count; i++)
+        {
+            if (iterator.GetVariableField(source.Parameters[i].Name.Lexeme) is not { } field) continue;
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldarg, i + argumentOffset);
+            il.Emit(OpCodes.Stfld, field);
+        }
+        if (ownScope != null && iterator.FunctionDCField != null)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldloc, ownScope);
+            il.Emit(OpCodes.Stfld, iterator.FunctionDCField);
+            var scopeFields = _closures.ArrowScopeDisplayClassFields[source];
+            for (int i = 0; i < source.Parameters.Count; i++)
+            {
+                if (!scopeFields.TryGetValue(source.Parameters[i].Name.Lexeme, out var field)) continue;
+                il.Emit(OpCodes.Ldloc, ownScope);
+                il.Emit(OpCodes.Ldarg, i + argumentOffset);
+                il.Emit(OpCodes.Stfld, field);
+            }
+            if (source.Name is { } self && scopeFields.TryGetValue(self.Lexeme, out var selfField))
+            {
+                il.Emit(OpCodes.Ldloc, ownScope);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldfld, info.FunctionValueField);
+                il.Emit(OpCodes.Stfld, selfField);
+            }
+        }
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, info.FunctionValueField);
+        il.Emit(OpCodes.Call, _runtime.GeneratorPrototypes.AssociateFunction);
+        il.Emit(OpCodes.Ret);
+    }
+
     // The reference-type iterator state-machine creation stubs, shared between the sync generator and
     // async generator families (#1126). Both build byte-identical stubs — the only prior difference was
     // the static `smBuilder` type, now abstracted behind IIteratorStateMachineBuilder — so a single free
@@ -92,6 +234,7 @@ public partial class ILCompiler
             il, smBuilder.FunctionDCField, funcStmt, qualifiedName, paramOffset: 0,
             precreatedFunctionDC: environment.FunctionDisplayClass);
 
+        EmitIteratorPrototypeAssociation(il, methodBuilder);
         il.Emit(OpCodes.Ret);
     }
 
@@ -163,7 +306,25 @@ public partial class ILCompiler
                 il, smBuilder.FunctionDCField, method, funcDCKey, paramOffset, paramTypes,
                 environment.FunctionDisplayClass);
 
+        EmitIteratorPrototypeAssociation(il, methodBuilder);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>Associates the new iterator with its actual kickoff's current guest prototype.</summary>
+    private void EmitIteratorPrototypeAssociation(ILGenerator il, MethodBuilder kickoff)
+    {
+        MethodInfo method = kickoff;
+        if (kickoff.DeclaringType is { IsGenericTypeDefinition: true } owner)
+        {
+            // Resolve within the declaring class's own generic context, rather than
+            // the dynamic receiver's type, so inherited methods keep their identity.
+            var self = EmitGenerics.MakeGenericType(owner, owner.GetGenericArguments());
+            method = EmitterTypeHelpers.ResolveMethod(self, kickoff);
+        }
+
+        il.Emit(OpCodes.Dup);
+        _types.EmitLoadMethodInfo(il, method);
+        il.Emit(OpCodes.Call, _runtime.GeneratorPrototypes.Associate);
     }
 
     /// <summary>

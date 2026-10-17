@@ -213,20 +213,25 @@ public static partial class ObjectBuiltIns
             while (iterator.MoveNext())
             {
                 var element = iterator.Current;
-                if (element is SharpTSArray pair && pair.Length >= 2)
+                if (!RuntimeValue.FromBoxed(element).IsObject)
+                    throw new ThrowException(new SharpTSTypeError(
+                        "Object.fromEntries() requires entry objects"));
+
+                object? key;
+                object? value;
+                if (element is List<object?> listPair)
                 {
-                    string key = pair.Get(0)?.ToString() ?? "";
-                    result[key] = pair.Get(1);
-                }
-                else if (element is List<object?> listPair && listPair.Count >= 2)
-                {
-                    string key = listPair[0]?.ToString() ?? "";
-                    result[key] = listPair[1];
+                    key = listPair.Count > 0 ? listPair[0] : SharpTSUndefined.Instance;
+                    value = listPair.Count > 1 ? listPair[1] : SharpTSUndefined.Instance;
                 }
                 else
                 {
-                    throw new Exception("Runtime Error: Object.fromEntries() requires [key, value] pairs");
+                    // Entry slots are ordinary properties, independent of array length.
+                    // Both Gets precede key coercion, and getters retain their receiver.
+                    key = interpreter.GetPropertyValue(element, "0");
+                    value = interpreter.GetPropertyValue(element, "1");
                 }
+                result[key?.ToString() ?? ""] = value;
             }
         }
         catch
@@ -971,10 +976,10 @@ public static partial class ObjectBuiltIns
                 => meta.HasMetadataProperty(propertyKey)
                     ? GetCallableMetaDescriptor((ISharpTSCallable)meta, propertyKey)
                     : null,
-            ISharpTSCallable callable when propertyKey is "name" or "length"
-                => GetCallableMetaDescriptor(callable, propertyKey),
             SharpTSFunction fn => GetFunctionOwnPropertyDescriptor(fn, propertyKey),
             SharpTSArrowFunction arrow => GetFunctionOwnPropertyDescriptor(arrow, propertyKey),
+            ISharpTSCallable callable when propertyKey is "name" or "length"
+                => GetCallableMetaDescriptor(callable, propertyKey),
             _ => GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey)
         };
     }

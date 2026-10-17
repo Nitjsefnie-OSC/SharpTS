@@ -11,7 +11,7 @@ using Xunit;
 namespace SharpTS.Tests.Compilation;
 
 /// <summary>
-/// Pins what the <c>--ref-asm</c> post-pass — <c>PEPacker.AssemblyReferenceRewriter</c> — must carry
+/// Pins what the production <c>--ref-asm</c> post-pass, including its PE-Packer compatibility step, must carry
 /// across unchanged. The rewriter rebuilds the whole metadata image, so anything it does not know how
 /// to copy vanishes from the output silently: the assembly still loads and still runs, which is
 /// exactly why the loss needs an assertion rather than a smoke test.
@@ -29,6 +29,9 @@ namespace SharpTS.Tests.Compilation;
 /// </list>
 /// <para>Row counts are compared against the pre-rewrite image rather than pinned to literals, so the
 /// test tracks whatever the compiler happens to emit for the fixture below.</para>
+/// <para>The generator intrinsics also emit interleaved nested owners. The production compatibility
+/// entry point preserves their hierarchy while working around PE-Packer 1.0.7's NestedClass copy
+/// order; the raw dependency cannot serialize this fixture.</para>
 /// </remarks>
 public class ReferenceRewriteFidelityTests
 {
@@ -132,7 +135,34 @@ public class ReferenceRewriteFidelityTests
         Assert.Equal(PropertyAccessors(before), PropertyAccessors(after));
     }
 
+    [Fact]
+    public void RewritePreservesInterleavedNestedTypeIdentityAndHierarchy()
+    {
+        byte[] before = Compile();
+        byte[] after = RewriteReferences(before);
+        var expected = NestedTypes(before);
+
+        // Enclosing-type traversal would append these NestedClass rows out of nested RID order.
+        Assert.Contains(expected.Zip(expected.Skip(1)), pair => pair.First.ParentRid > pair.Second.ParentRid);
+        Assert.Equal(expected, NestedTypes(after));
+    }
+
     // ---------------------------------------------------------------- helpers
+
+    private readonly record struct NestedTypeIdentity(int Rid, int ParentRid, string Namespace, string Name);
+
+    private static NestedTypeIdentity[] NestedTypes(byte[] image)
+    {
+        using var peReader = new PEReader(new MemoryStream(image, writable: false));
+        var reader = peReader.GetMetadataReader();
+        return reader.TypeDefinitions.Select(handle =>
+        {
+            var type = reader.GetTypeDefinition(handle);
+            return new NestedTypeIdentity(MetadataTokens.GetRowNumber(handle),
+                MetadataTokens.GetRowNumber(type.GetDeclaringType()),
+                reader.GetString(type.Namespace), reader.GetString(type.Name));
+        }).Where(type => type.ParentRid != 0).ToArray();
+    }
 
     /// <summary>
     /// Every <c>Type::Property</c> in the image mapped to the names of its accessor methods, which
@@ -204,17 +234,9 @@ public class ReferenceRewriteFidelityTests
         return image;
     }
 
-    private static byte[] RewriteReferences(byte[] image)
-    {
-        using var source = new MemoryStream(image, writable: false);
-        using var rewriter = new AssemblyReferenceRewriter(
-            source,
+    private static byte[] RewriteReferences(byte[] image) =>
+        AssemblyReferenceRewriteCompatibility.Rewrite(
+            image,
             EmbeddedReferenceAssemblyIndex.Default,
             ReferencePolicy.RetargetCoreLibOnly);
-        rewriter.Rewrite();
-
-        using var output = new MemoryStream();
-        rewriter.Save(output);
-        return output.ToArray();
-    }
 }

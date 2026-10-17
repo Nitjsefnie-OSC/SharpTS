@@ -140,7 +140,15 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Brfalse, endLabel);
 
         // Set loop variable from Current (loaded from hoisted enumerator field)
-        if (varField != null)
+        if (_ctx!.ClosureAnalyzer?.IsLoopBodyCellDeclaration(f.Variable) == true)
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, enumeratorField);
+            _il.Emit(OpCodes.Callvirt, current);
+            if (!TryInitializeLexicalCell(f.Variable, fresh: true))
+                throw new InvalidOperationException("Iterator loop cell has not been declared.");
+        }
+        else if (varField != null)
         {
             _il.Emit(OpCodes.Ldarg_0);
             _il.Emit(OpCodes.Ldarg_0);  // this for enumerator field
@@ -243,7 +251,8 @@ public partial class AsyncGeneratorMoveNextEmitter
         // loopVar = result.value
         _il.Emit(OpCodes.Ldloc, resultLocal);
         _il.Emit(OpCodes.Call, _ctx.Runtime.IteratorProtocol.Value);
-        if (varField != null)
+        if (TryInitializeLexicalCell(f.Variable, fresh: true)) { }
+        else if (varField != null)
         {
             var valueTemp = _il.DeclareLocal(_types.Object);
             _il.Emit(OpCodes.Stloc, valueTemp);

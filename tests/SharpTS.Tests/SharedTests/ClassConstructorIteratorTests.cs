@@ -258,6 +258,46 @@ public sealed class ClassConstructorIteratorTests
         }
         """;
 
+    public const string MissingRequiredConsumersSource = """
+        const state = { gets: 0 };
+        class C { static get [Symbol.iterator]() { state.gets++; return undefined; } }
+        const iterable: any = C;
+        const beforeSpread = state.gets;
+        try { const values = [...iterable]; }
+        catch (error) { console.log(error instanceof TypeError, state.gets === beforeSpread + 1); }
+        const beforeDestructure = state.gets;
+        try { const [first] = iterable; }
+        catch (error) { console.log(error instanceof TypeError, state.gets === beforeDestructure + 1); }
+        async function run() {
+            await Promise.resolve(0);
+            const beforeLoop = state.gets;
+            try { for (const value of iterable) {} }
+            catch (error) { console.log(error instanceof TypeError, state.gets === beforeLoop + 1); }
+            const beforeAsyncLoop = state.gets;
+            try { for await (const value of iterable) {} }
+            catch (error) { console.log(error instanceof TypeError, state.gets === beforeAsyncLoop + 1); }
+        }
+        run();
+        """;
+
+    public const string MissingArrayLikeFallbackSource = """
+        const state: any = { gets: 0, selected: null };
+        const input: any = {
+            0: "a", 1: "b", length: 2,
+            get [Symbol.iterator]() { state.gets++; return state.selected; }
+        };
+        for (const method of [null, undefined]) {
+            state.selected = method;
+            const before = state.gets, values = Array.from(input);
+            console.log(values.join(","), state.gets === before + 1);
+        }
+        """;
+
+    public const string PlainArrayLikeFallbackSource = """
+        const input: any = { 0: "a", 1: "b", length: 2 };
+        console.log(Array.from(input).join(","));
+        """;
+
     public const string GetterOverrideSource = """
         let syncGets = 0, asyncGets = 0;
         function* syncValues() { yield {} as any; }
@@ -386,7 +426,25 @@ public sealed class ClassConstructorIteratorTests
         => GetterCases().Concat(new[] {
             new object[] { "missing", GetterMissingSource, string.Concat(Enumerable.Repeat("true true\n", 4)) },
             new object[] { "array-from", GetterArrayFromSource, "true 1 1\n" }
-        });
+        }).Concat(MissingConsumerCases().Where(row => (string)row[0] != "missing-required-consumers"));
+
+    public static IEnumerable<object[]> MissingConsumerCases()
+    {
+        yield return ["missing-required-consumers", MissingRequiredConsumersSource,
+            string.Concat(Enumerable.Repeat("true true\n", 4))];
+        yield return ["missing-array-like-fallback", MissingArrayLikeFallbackSource, "a,b true\na,b true\n"];
+        yield return ["plain-array-like-fallback", PlainArrayLikeFallbackSource, "a,b\n"];
+    }
+
+    public static IEnumerable<object[]> MissingConsumerModeCases()
+        // Compiled missing-class spread/async for-of/for-await are #2271, #2322 and #2323.
+        // Interpreted explicit-null/undefined Array.from fallback is #2320.
+        => MissingConsumerCases().SelectMany(row => ((string)row[0] switch {
+                "missing-required-consumers" => new[] { ExecutionMode.Interpreted },
+                "missing-array-like-fallback" => new[] { ExecutionMode.Compiled },
+                _ => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            })
+            .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ParityCases))]
     public void ConstructorProtocolsUseTheClassReceiver(
@@ -403,15 +461,21 @@ public sealed class ClassConstructorIteratorTests
         string source, string expected, ExecutionMode mode)
         => Assert.Equal(expected, TestHarness.Run(source, mode));
 
-    // Interpreter missing-method error branding is tracked separately in #2133.
-    [Fact]
-    public void CompiledMissingIteratorGettersAreAcquiredOnceAndThrowTypeError()
-        => Assert.Equal(string.Concat(Enumerable.Repeat("true true\n", 4)), TestHarness.RunCompiled(GetterMissingSource));
+    [Theory, ModeData]
+    public void MissingIteratorGettersAreAcquiredOnceAndThrowTypeError(ExecutionMode mode)
+        => Assert.Equal(string.Concat(Enumerable.Repeat("true true\n", 4)), TestHarness.Run(GetterMissingSource, mode));
 
-    // Interpreter Array.from's duplicate getter acquisition is tracked in #2136.
-    [Fact]
-    public void CompiledArrayFromAcquiresConstructorIteratorGettersOnce()
-        => Assert.Equal("true 1 1\n", TestHarness.RunCompiled(GetterArrayFromSource));
+    [Theory, MemberData(nameof(MissingConsumerModeCases))]
+    public void MissingIteratorConsumersRequireGuestTypeErrorsOrArrayLikeFallback(
+        string name, string source, string expected, ExecutionMode mode)
+    {
+        Assert.NotEmpty(name);
+        Assert.Equal(expected, TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void ArrayFromAcquiresConstructorIteratorGettersOnce(ExecutionMode mode)
+        => Assert.Equal("true 1 1\n", TestHarness.Run(GetterArrayFromSource, mode));
 
     [Theory]
     [InlineData("iterator")]

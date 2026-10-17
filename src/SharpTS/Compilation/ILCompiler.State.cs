@@ -122,6 +122,7 @@ public partial class ILCompiler
     {
         public ClosureAnalyzer Analyzer { get; set; } = null!;
         public Dictionary<Expr.ArrowFunction, MethodBuilder> ArrowMethods { get; } = new(ReferenceEqualityComparer.Instance);
+        public Dictionary<Expr.ArrowFunction, GeneratorExpressionCompilation> GeneratorExpressions { get; } = new(ReferenceEqualityComparer.Instance);
         public ArrowBoxedAdapterEmitter BoxedAdapters { get; } = new();
 
         // Maps `const NAME = (args) => …` (and `export const NAME = …`) at top-

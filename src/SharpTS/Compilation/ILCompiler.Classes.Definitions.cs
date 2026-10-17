@@ -58,10 +58,12 @@ public partial class ILCompiler
                     il.Emit(OpCodes.Ldarg_0);
                     continue;
                 }
-                if (slot == _types.ListOfObject && sourceParameters?.ElementAtOrDefault(i)?.IsRest == true)
+                if (sourceParameters?.ElementAtOrDefault(i)?.IsRest == true)
                 {
-                    // Rest-marker slots are inherited from declaration adapters.
-                    // Ordinary expression rest parameters remain on their existing ABI.
+                    // Ordinary expression constructors use object slots, while
+                    // declaration adapters retain List<object> rest markers.
+                    // Source rest parameters receive the whole tail as a fresh
+                    // guest Array through either CLR representation.
                     il.Emit(OpCodes.Ldarg_0);
                     il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.IEnumerableOfObject));
                     il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldlen); il.Emit(OpCodes.Conv_I4); il.Emit(OpCodes.Ldc_I4, i);
@@ -70,6 +72,7 @@ public partial class ILCompiler
                     il.Emit(OpCodes.Sub); il.Emit(OpCodes.Ldc_I4_0);
                     il.Emit(OpCodes.Call, _types.GetMethod(typeof(Math), "Max", _types.Int32, _types.Int32));
                     il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "GetRange", _types.Int32, _types.Int32));
+                    il.Emit(OpCodes.Newobj, _runtime.ArrayStorage.Ctor);
                     continue;
                 }
                 var missing = il.DefineLabel();

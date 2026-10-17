@@ -81,8 +81,8 @@ internal sealed record BlockScopeRenameResult(
 /// <list type="bullet">
 /// <item>Only class and <c>let</c>/<c>const</c> (<see cref="Stmt.Const"/>, <see cref="Stmt.Var"/> with
 /// <c>IsVar == false</c>) declarations are renamed. <c>for</c>/<c>for-of</c>/<c>for-in</c>/<c>catch</c>
-/// introduce scopes (so shadowing is detected accurately) but their loop-variable / catch-parameter
-/// bindings are left alone.</item>
+/// introduce scopes. Loop headers also receive distinct storage when preserving debug bindings or
+/// shadowing a generator expression's retained free binding.</item>
 /// <item>Declarations and references INSIDE a nested closure are never added to <see cref="Renames"/>
 /// — the closure compiles in its own context. The walk descends into arrows only to resolve which
 /// renamed generator binding each capture refers to (the <see cref="CaptureRenames"/> side-map).</item>
@@ -113,6 +113,7 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
     private readonly HashSet<string> _loopBodyStorageNames = [];
     private readonly HashSet<string> _assignedStorageNames = [];
     private readonly HashSet<string> _relayedLoopBodyStorageNames = [];
+    private readonly HashSet<string> _outerCaptureNames = [];
     private int _loopBodyDepth;
     private int _counter;
     private bool _preserveDebugBindings;
@@ -135,8 +136,10 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
     /// pass false: they lift only captured-AND-mutated locals, so a read-only arrow capture flows through
     /// the per-arrow snapshot path the capture pivot can redirect (#767).
     /// </param>
-    public static BlockScopeRenameResult Compute(Stmt.Function func, bool arrowReadCapturesShareStorage = false, bool preserveDebugBindings = false) =>
-        Compute(func.Name.Lexeme, func.Parameters, func.Body, arrowReadCapturesShareStorage, preserveDebugBindings);
+    public static BlockScopeRenameResult Compute(Stmt.Function func, bool arrowReadCapturesShareStorage = false,
+        bool preserveDebugBindings = false, IEnumerable<string>? outerCaptureNames = null) =>
+        Compute(func.Name.Lexeme, func.Parameters, func.Body, arrowReadCapturesShareStorage,
+            preserveDebugBindings, outerCaptureNames);
 
     /// <summary>
     /// Arrow-function overload (#766). Arrows have no self-name, and only a block body can hold
@@ -146,7 +149,8 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
         Compute(selfName: null, arrow.Parameters, arrow.BlockBody, arrowReadCapturesShareStorage, preserveDebugBindings);
 
     private static BlockScopeRenameResult Compute(
-        string? selfName, List<Stmt.Parameter> parameters, List<Stmt>? body, bool arrowReadCapturesShareStorage, bool preserveDebugBindings)
+        string? selfName, List<Stmt.Parameter> parameters, List<Stmt>? body, bool arrowReadCapturesShareStorage,
+        bool preserveDebugBindings, IEnumerable<string>? outerCaptureNames = null)
     {
         var renamer = new GeneratorBlockScopeRenamer { _preserveDebugBindings = preserveDebugBindings };
         if (preserveDebugBindings) renamer._seenBindings = [];
@@ -155,6 +159,15 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
         new CaptureClassifier(renamer._renameOffLimits, renamer._writeCaptured, arrowReadCapturesShareStorage).Run(body);
 
         renamer.PushScope();
+        // An expression retains free bindings in its environment. Own nested
+        // declarations must not reuse their names as hoisted iterator fields.
+        if (outerCaptureNames is not null)
+            foreach (var name in outerCaptureNames)
+            {
+                renamer.CurrentScope[name] = name;
+                renamer._outerCaptureNames.Add(name);
+                renamer._seenBindings?.Add(name);
+            }
         // The callable's own name is in scope inside the body (a named function expression can call
         // itself by it); a nested-block let/const may shadow it, so seed it for shadow detection.
         // Never renamed (it is not a hoisted local — it resolves to the function/method itself).
@@ -411,7 +424,10 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
             _seenBindings?.Add(storage);
         }
         PushScope();
-        if (_preserveDebugBindings && _arrowDepth == 0 && stmt.IsDeclaration && !stmt.IsVar)
+        // A retained free binding has no own iterator field. Its shadowing header
+        // must not create a same-named field that masks the environment path.
+        if ((_preserveDebugBindings || _outerCaptureNames.Contains(stmt.Variable.Lexeme))
+            && _arrowDepth == 0 && stmt.IsDeclaration && !stmt.IsVar)
             DeclareBlockScoped(stmt, stmt.Variable.Lexeme);
         else
             CurrentScope[stmt.Variable.Lexeme] = storage;
@@ -435,7 +451,8 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
             _seenBindings?.Add(storage);
         }
         PushScope();
-        if (_preserveDebugBindings && _arrowDepth == 0 && stmt.IsDeclaration && !stmt.IsVar)
+        if ((_preserveDebugBindings || _outerCaptureNames.Contains(stmt.Variable.Lexeme))
+            && _arrowDepth == 0 && stmt.IsDeclaration && !stmt.IsVar)
             DeclareBlockScoped(stmt, stmt.Variable.Lexeme);
         else
             CurrentScope[stmt.Variable.Lexeme] = storage;

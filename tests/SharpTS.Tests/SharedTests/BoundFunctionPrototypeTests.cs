@@ -159,8 +159,7 @@ public sealed class BoundFunctionPrototypeTests
         }
     }
 
-    // Compiled Reflect.deleteProperty with Symbol keys is tracked in #2160.
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void ReflectDeleteRemovesOwnBoundSymbolHandler(ExecutionMode mode)
     {
         const string source = """

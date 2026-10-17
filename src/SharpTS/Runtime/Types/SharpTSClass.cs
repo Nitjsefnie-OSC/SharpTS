@@ -404,6 +404,12 @@ public partial class SharpTSClass(
                 throw StrictModeErrors.TypeError($"Cannot assign to read only property '{name}'");
             return;
         }
+        if (!HasOwnStaticMember(name) && !Compilation.PropertyDescriptorStore.IsExtensible(this))
+        {
+            if (strictMode)
+                throw StrictModeErrors.TypeError($"Cannot add property '{name}' to a non-extensible object");
+            return;
+        }
         if (_staticMethods.ContainsKey(name))
             _deletedStaticMethods.Add(name);
         _staticMethodCache.Remove(name);
@@ -411,6 +417,15 @@ public partial class SharpTSClass(
             _staticPropertyObject.SetPropertyStrict(name, value, strictMode);
         else
             _staticProperties[name] = value;
+    }
+
+    internal void InitializeStaticProperty(string name, object? value)
+    {
+        // Ordered field initialization is a definition: rejected own creation
+        // throws even though the shared storage path retains its existing policy.
+        if (!HasOwnStaticMember(name) && !Compilation.PropertyDescriptorStore.IsExtensible(this))
+            throw StrictModeErrors.TypeError($"Cannot define property '{name}' on a non-extensible object");
+        SetStaticProperty(name, value);
     }
 
     internal SharpTSPropertyDescriptor? GetOwnStaticPropertyDescriptor(string name)
@@ -482,7 +497,17 @@ public partial class SharpTSClass(
     private Dictionary<SharpTSSymbol, object?>? _staticSymbolProperties;
 
     public void SetStaticBySymbol(SharpTSSymbol symbol, object? value)
+        => SetStaticBySymbol(symbol, value, strictMode: false);
+
+    internal void SetStaticBySymbol(SharpTSSymbol symbol, object? value, bool strictMode)
     {
+        if (GetOwnStaticSymbolPropertyDescriptor(symbol) is null
+            && !Compilation.PropertyDescriptorStore.IsExtensible(this))
+        {
+            if (strictMode)
+                throw StrictModeErrors.TypeError($"Cannot add property '{symbol}' to a non-extensible object");
+            return;
+        }
         // Assignment changes a method's value without changing its attributes.
         if (_staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol) is null
             && _staticSymbolMethods?.TryGetValue(symbol, out var method) == true)
@@ -572,6 +597,18 @@ public partial class SharpTSClass(
     public void AddSymbolMethod(SharpTSSymbol symbol, ISharpTSCallable func, bool isStatic)
     {
         string name = symbol.Description is { } description ? $"[{description}]" : "";
+        SetComputedMethodName(func, name);
+        BindPrivateMemberOwner(func);
+        if (isStatic) (_staticSymbolMethods ??= [])[symbol] = func;
+        else
+        {
+            (_symbolMethods ??= [])[symbol] = func;
+            _prototype?.DefineDeclaredSymbolMethod(symbol, func);
+        }
+    }
+
+    internal static void SetComputedMethodName(ISharpTSCallable func, string name)
+    {
         switch (func)
         {
             case SharpTSFunction function:
@@ -586,13 +623,6 @@ public partial class SharpTSClass(
             case SharpTSAsyncGeneratorFunction function:
                 function.ComputedName = name;
                 break;
-        }
-        BindPrivateMemberOwner(func);
-        if (isStatic) (_staticSymbolMethods ??= [])[symbol] = func;
-        else
-        {
-            (_symbolMethods ??= [])[symbol] = func;
-            _prototype?.DefineDeclaredSymbolMethod(symbol, func);
         }
     }
 
@@ -684,7 +714,7 @@ public partial class SharpTSClass(
             BindPrivateMemberOwner(method);
     }
 
-    private void BindPrivateMemberOwner(ISharpTSCallable method)
+    internal void BindPrivateMemberOwner(ISharpTSCallable method)
     {
         switch (method)
         {

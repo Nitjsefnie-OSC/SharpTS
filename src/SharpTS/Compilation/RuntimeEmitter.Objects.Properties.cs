@@ -71,8 +71,127 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    // Empty entry stack; all paths return with the original constructor receiver.
+    // Source generic constructors own descriptors on their canonical source Type,
+    // while the actual live prototype can be a constructed CLR Type.
+    private void EmitTypePrototypeReadAndReturn(ILGenerator il, GetPropertyInputs inputs)
+    {
+        var prototype = il.DeclareLocal(_types.Object);
+        var prototypeType = il.DeclareLocal(_types.Type);
+        var sourceType = il.DeclareLocal(_types.Type);
+        var descriptor = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
+        var synthesizedDescriptor = il.DeclareLocal(_types.Object);
+        var loop = il.DefineLabel();
+        var advance = il.DefineLabel();
+        var missing = il.DefineLabel();
+        var reflectGet = il.DefineLabel();
+        var readDescriptor = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Brfalse, missing);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Stloc, prototypeType);
+        il.Emit(OpCodes.Ldloc, prototypeType);
+        il.Emit(OpCodes.Brfalse, reflectGet);
+        il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ldloc, prototypeType);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+        il.Emit(OpCodes.Brfalse, reflectGet);
+
+        // A real descriptor on the actual prototype wins over its source identity,
+        // including data undefined and accessors without getters.
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descriptor);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Brtrue, readDescriptor);
+        il.Emit(OpCodes.Ldloc, prototypeType);
+        il.Emit(OpCodes.Call, inputs.SymbolAccessors.RegistryKey);
+        il.Emit(OpCodes.Stloc, sourceType);
+        il.Emit(OpCodes.Ldloc, sourceType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descriptor);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Brtrue, readDescriptor);
+
+        // A source class can still expose ordinary CLR-backed own slots, such as
+        // static fields, through synthesized descriptors. Tombstones suppress that
+        // fallback on both identities without hiding a live PDS descriptor above.
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+        il.Emit(OpCodes.Brtrue, advance);
+        var sourceNotDeleted = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, sourceType);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Beq, sourceNotDeleted);
+        il.Emit(OpCodes.Ldloc, sourceType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+        il.Emit(OpCodes.Brtrue, advance);
+        il.MarkLabel(sourceNotDeleted);
+
+        var noExactSynthesizedDescriptor = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ObjectDescriptors.GetOwnPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, synthesizedDescriptor);
+        il.Emit(OpCodes.Ldloc, synthesizedDescriptor);
+        il.Emit(OpCodes.Brfalse, noExactSynthesizedDescriptor);
+        il.Emit(OpCodes.Ldloc, synthesizedDescriptor);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brfalse, reflectGet);
+        il.MarkLabel(noExactSynthesizedDescriptor);
+        il.Emit(OpCodes.Ldloc, sourceType);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Beq, advance);
+        il.Emit(OpCodes.Ldloc, sourceType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ObjectDescriptors.GetOwnPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, synthesizedDescriptor);
+        il.Emit(OpCodes.Ldloc, synthesizedDescriptor);
+        il.Emit(OpCodes.Brfalse, advance);
+        il.Emit(OpCodes.Ldloc, synthesizedDescriptor);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, advance);
+        il.Emit(OpCodes.Ldloc, sourceType);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.Emit(OpCodes.Br, reflectGet);
+
+        il.MarkLabel(advance);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.Emit(OpCodes.Br, loop);
+
+        il.MarkLabel(readDescriptor);
+        EmitDescriptorReadAndReturn(il, inputs.DescriptorStorage, descriptor,
+            () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
+        // Native constructors and arbitrary object/Proxy prototypes retain their
+        // ordinary Reflect.get path and its original receiver.
+        il.MarkLabel(reflectGet);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.Reflect.Get);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(missing);
+        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+    }
+
     private LocalBuilder EmitStaticMemberLookupOwner(ILGenerator il, LocalBuilder owner, Type userClassInterface)
     {
+        // Only source classes can be generic implementers of this output's own
+        // $IHasFields interface; its built-in carriers are non-generic.
+        if (!_features.UsesUserClasses) return owner;
         var methodOwnerLocal = il.DeclareLocal(_types.Type);
         il.Emit(OpCodes.Ldloc, owner);
         il.Emit(OpCodes.Stloc, methodOwnerLocal);
@@ -91,11 +210,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, methodOwnerLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
         il.Emit(OpCodes.Brfalse, methodOwnerReady);
-        il.Emit(OpCodes.Ldloc, methodOwnerLocal);
+        EmitCloseOpenGenericOwner(il, methodOwnerLocal);
+        il.MarkLabel(methodOwnerReady);
+        return methodOwnerLocal;
+    }
+
+    /// <summary>
+    /// Closes an owner already known to contain generic parameters with arguments
+    /// selected from its emitted CLR bounds. The caller retains the guest owner
+    /// separately for constructor identity and accessor receivers.
+    /// </summary>
+    private void EmitCloseOpenGenericOwner(ILGenerator il, LocalBuilder owner)
+    {
+        il.Emit(OpCodes.Ldloc, owner);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
-        il.Emit(OpCodes.Stloc, methodOwnerLocal);
+        il.Emit(OpCodes.Stloc, owner);
         var argumentsLocal = il.DeclareLocal(_types.MakeArrayType(_types.Type));
-        il.Emit(OpCodes.Ldloc, methodOwnerLocal);
+        il.Emit(OpCodes.Ldloc, owner);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericArguments"));
         il.Emit(OpCodes.Stloc, argumentsLocal);
         var argumentIndex = il.DeclareLocal(_types.Int32);
@@ -161,12 +292,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldlen);
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Blt, fillArguments);
-        il.Emit(OpCodes.Ldloc, methodOwnerLocal);
+        il.Emit(OpCodes.Ldloc, owner);
         il.Emit(OpCodes.Ldloc, argumentsLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "MakeGenericType", _types.MakeArrayType(_types.Type)));
-        il.Emit(OpCodes.Stloc, methodOwnerLocal);
-        il.MarkLabel(methodOwnerReady);
-        return methodOwnerLocal;
+        il.Emit(OpCodes.Stloc, owner);
     }
 
     private readonly record struct GetPropertyInputs(
@@ -243,6 +372,9 @@ public partial class RuntimeEmitter
         EmittedDateRuntime Dates,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
+        Type GeneratorInterface,
+        Type? AsyncGeneratorInterface,
+        MethodBuilder ReadGeneratorProperty,
         MethodInfo IHasFieldsGetProperty,
         MethodInfo IHasFieldsHasProperty,
         Type IHasFieldsInterface,
@@ -586,6 +718,26 @@ public partial class RuntimeEmitter
             () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
 
         il.MarkLabel(afterPDSCheckLabel);
+
+        // Generator methods are inherited guest properties, not reflected CLR methods.
+        var readGeneratorProperty = il.DefineLabel();
+        var notGenerator = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.GeneratorInterface);
+        il.Emit(OpCodes.Brtrue, readGeneratorProperty);
+        if (inputs.AsyncGeneratorInterface is not null)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, inputs.AsyncGeneratorInterface);
+            il.Emit(OpCodes.Brtrue, readGeneratorProperty);
+        }
+        il.Emit(OpCodes.Br, notGenerator);
+        il.MarkLabel(readGeneratorProperty);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ReadGeneratorProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGenerator);
 
         // $TSDate has no JavaScript-visible CLR own methods. Once expando/PDS
         // own properties miss, every named lookup must continue through the
@@ -1455,24 +1607,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notDefinitionValue);
         il.Emit(OpCodes.Pop);
-
-        var notDefinitionConstructor = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "constructor");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brfalse, notDefinitionConstructor);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, inputs.ClassDefinitions.InstanceInterface);
-        il.Emit(OpCodes.Dup);
-        var noDefinitionReceiver = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, noDefinitionReceiver);
-        il.Emit(OpCodes.Callvirt, inputs.ClassDefinitions.GetDefinition);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Brfalse, noDefinitionReceiver);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(noDefinitionReceiver);
-        il.Emit(OpCodes.Pop);
-        il.MarkLabel(notDefinitionConstructor);
 
         // __proto__ accessor (ECMA-262 Annex B.2.2.1): obj.__proto__ delegates
         // to Object.getPrototypeOf(obj). All object types support this — the
@@ -2406,37 +2540,57 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noComputedStaticGetterLabel);
 
-            // Computed static methods are emitted under synthetic CLR names
-            // and registered by their evaluated JavaScript property key. They
-            // therefore cannot be found by the ordinary name-based reflection
-            // probes below. Consult the shared registry after own descriptor
-            // storage (which may shadow the method), matching the instance
-            // $IHasFields dispatch path.
-            var noComputedStaticMethodLabel = il.DefineLabel();
-            var computedStaticMethodLocal = il.DeclareLocal(_types.Object);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindMethod);
-            il.Emit(OpCodes.Stloc, computedStaticMethodLocal);
-            il.Emit(OpCodes.Ldloc, computedStaticMethodLocal);
-            il.Emit(OpCodes.Brfalse, noComputedStaticMethodLabel);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloc, computedStaticMethodLocal);
-            il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(noComputedStaticMethodLabel);
+            var typePrototypeRead = _features.UsesUserClasses ? il.DefineLabel() : default;
+            if (_features.UsesUserClasses)
+            {
+                // Computed static methods own canonical data descriptors. Once the
+                // own descriptor misses, their registry entry is ownership metadata,
+                // not a value to reconstruct: follow the live constructor prototype
+                // so deletion cannot resurrect a synthetic CLR method wrapper.
+                var noComputedStaticMethodLabel = il.DefineLabel();
+                var computedStaticMethodLocal = il.DeclareLocal(_types.Object);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindMethod);
+                il.Emit(OpCodes.Stloc, computedStaticMethodLocal);
+                il.Emit(OpCodes.Ldloc, computedStaticMethodLocal);
+                il.Emit(OpCodes.Brfalse, noComputedStaticMethodLabel);
+                il.Emit(OpCodes.Br, typePrototypeRead);
+                il.MarkLabel(noComputedStaticMethodLabel);
+            }
 
-            // A configurable built-in that was deleted must stay absent. This
-            // check precedes both the JS built-in table and CLR reflection,
-            // either of which would otherwise synthesize it again.
+            // A deleted own built-in must not be synthesized again, but reads
+            // still follow the live prototype with the original receiver.
             var typeBuiltinPresentLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
             il.Emit(OpCodes.Brfalse, typeBuiltinPresentLabel);
-            il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
-            il.Emit(OpCodes.Ret);
+            if (_features.UsesUserClasses)
+            {
+                // Computed-method misses and deleted own slots share one emitted
+                // continuation, including canonical descriptors at every class hop.
+                il.MarkLabel(typePrototypeRead);
+                EmitTypePrototypeReadAndReturn(il, inputs);
+            }
+            else
+            {
+                var deletedTypePrototype = il.DeclareLocal(_types.Object);
+                var deletedTypeMissing = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+                il.Emit(OpCodes.Stloc, deletedTypePrototype);
+                il.Emit(OpCodes.Ldloc, deletedTypePrototype);
+                il.Emit(OpCodes.Brfalse, deletedTypeMissing);
+                il.Emit(OpCodes.Ldloc, deletedTypePrototype);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Call, inputs.Reflect.Get);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(deletedTypeMissing);
+                il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
+                il.Emit(OpCodes.Ret);
+            }
             il.MarkLabel(typeBuiltinPresentLabel);
 
             // Prefer the JS static-member table to CLR reflection. Besides
@@ -2659,6 +2813,7 @@ public partial class RuntimeEmitter
             var baseBuiltInLocal = il.DeclareLocal(_types.Object);
             var baseStaticMethodLocal = il.DeclareLocal(_types.MethodInfo);
             var baseStaticFieldLocal = il.DeclareLocal(typeof(FieldInfo));
+            var baseDescriptorOwner = il.DeclareLocal(_types.Type);
             il.Emit(OpCodes.Ldloc, typeLocal);
             il.Emit(OpCodes.Stloc, walkTypeLocal);
             var baseWalkLoop = il.DefineLabel();
@@ -2669,6 +2824,13 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Stloc, walkTypeLocal);
             il.Emit(OpCodes.Ldloc, walkTypeLocal);
             il.Emit(OpCodes.Brfalse, classInstanceLabel);
+            if (_features.UsesUserClasses)
+            {
+                // Native ancestors retain their actual identity; the source-class
+                // probe below can replace this separate lookup/deletion owner.
+                il.Emit(OpCodes.Ldloc, walkTypeLocal);
+                il.Emit(OpCodes.Stloc, baseDescriptorOwner);
+            }
             // desc = PDSGetPropertyDescriptor(walkType, name);  (expando shadow)
             il.Emit(OpCodes.Ldloc, walkTypeLocal);
             il.Emit(OpCodes.Ldarg_1);
@@ -2687,7 +2849,6 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, walkTypeLocal);
             il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
             il.Emit(OpCodes.Brfalse, baseProbeDeclaredLabel);
-            var baseDescriptorOwner = il.DeclareLocal(_types.Type);
             il.Emit(OpCodes.Ldloc, walkTypeLocal);
             il.Emit(OpCodes.Call, inputs.SymbolAccessors.RegistryKey);
             il.Emit(OpCodes.Stloc, baseDescriptorOwner);
@@ -2705,10 +2866,28 @@ public partial class RuntimeEmitter
             EmitDescriptorReadAndReturn(il, inputs.DescriptorStorage, baseDescLocal,
                 () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
 
+            il.MarkLabel(baseProbeDeclaredLabel);
+            if (_features.UsesUserClasses)
+            {
+                // Live descriptors above win over old tombstones. A deleted
+                // ancestor suppresses only its synthesized slots, not farther bases.
+                il.Emit(OpCodes.Ldloc, walkTypeLocal);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+                il.Emit(OpCodes.Brtrue, baseWalkLoop);
+                var baseNotDeleted = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, baseDescriptorOwner);
+                il.Emit(OpCodes.Ldloc, walkTypeLocal);
+                il.Emit(OpCodes.Beq, baseNotDeleted);
+                il.Emit(OpCodes.Ldloc, baseDescriptorOwner);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+                il.Emit(OpCodes.Brtrue, baseWalkLoop);
+                il.MarkLabel(baseNotDeleted);
+            }
             // Runtime intrinsic constructors (notably $Promise) do not implement
             // $IHasFields, but their JS static table still participates in the
             // constructor inheritance chain (Custom.resolve → Promise.resolve).
-            il.MarkLabel(baseProbeDeclaredLabel);
             if (inputs.Promise is not null)
             {
                 var noBaseBuiltInLabel = il.DefineLabel();

@@ -330,7 +330,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 EmitPostfixIncrement(poi);
                 break;
             case Expr.ArrowFunction af:
-                EmitArrowFunction(af);
+                if (af.IsGenerator) EmitGeneratorExpression(af);
+                else EmitArrowFunction(af);
                 break;
             case Expr.RegexLiteral re:
                 EmitRegexLiteral(re);
@@ -861,7 +862,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // CommonJS: bare `exports` → ldsfld $exports of the current CJS module.
         if (TryEmitCjsVariable(name)) return;
 
-        if (TryEmitGlobalVariable(name)) return;
+        if (TryEmitGlobalVariable(name, v)) return;
 
         // An unresolved identifier is a ReferenceError in every execution
         // context, including state-machine bodies.  Returning CLR null here
@@ -1234,6 +1235,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 EnsureBoxed();
                 IL.Emit(OpCodes.Stloc, objLocal);
 
+                var invalidLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Brfalse, invalidLabel);
                 IL.Emit(OpCodes.Ldsfld, storageField);
                 IL.Emit(OpCodes.Ldloc, objLocal);
                 IL.Emit(OpCodes.Ldloca, dictLocal);
@@ -1242,6 +1246,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
                 var validLabel = IL.DefineLabel();
                 IL.Emit(OpCodes.Brtrue, validLabel);
+                IL.MarkLabel(invalidLabel);
                 GuestErrorEmitter.ThrowTypeError(IL, Ctx.Runtime!,
                     $"Cannot call private method #{methodName} on an object whose class did not declare it");
                 IL.MarkLabel(validLabel);
@@ -1346,15 +1351,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     }
 
     /// <summary>
-    /// Emits a tagged template literal. Default uses two-phase pattern.
-    /// ILEmitter overrides with its own implementation.
+    /// Emits a tagged template literal, retaining an ordinary member Reference's
+    /// receiver and selected callable across interpolation suspension.
     /// </summary>
     protected virtual void EmitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral ttl)
     {
-        // Phase 1: Evaluate tag and all expressions to temps. SpillBoxed registers each
-        // so an await in a later interpolation persists the tag and earlier expressions
-        // across the suspension (#400).
-        var tagTemp = SpillBoxed(ttl.Tag);
+        var (tagTemp, receiverTemp) = SpillTaggedTemplateReference(ttl.Tag);
 
         var exprTemps = new List<LocalBuilder>();
         for (int i = 0; i < ttl.Expressions.Count; i++)
@@ -1362,6 +1364,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
         // Phase 2: Build arrays and call from temps
         IL.Emit(OpCodes.Ldloc, tagTemp);
+        if (receiverTemp is not null) IL.Emit(OpCodes.Ldloc, receiverTemp);
 
         IL.Emit(OpCodes.Ldc_I4, ttl.CookedStrings.Count);
         IL.Emit(OpCodes.Newarr, typeof(object));
@@ -1396,8 +1399,62 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             IL.Emit(OpCodes.Stelem_Ref);
         }
 
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.Templates.Invoke);
+        IL.Emit(OpCodes.Call, receiverTemp is null
+            ? Ctx.Runtime!.Templates.Invoke : Ctx.Runtime!.Templates.InvokeWithThis);
         SetStackUnknown();
+    }
+
+    private (LocalBuilder Tag, LocalBuilder? Receiver) SpillTaggedTemplateReference(Expr tag)
+    {
+        Expr reference = ExpressionUnwrapper.Unwrap(tag);
+        if (!ReferenceHasOptionalLink(reference))
+        {
+            if (reference is Expr.Get get)
+            {
+                var receiver = SpillBoxed(get.Object);
+                IL.Emit(OpCodes.Ldloc, receiver);
+                if (!IsNullPlaceholderGlobal(get.Object))
+                    EmitThrowIfUndefinedReceiverOnStack(get.Name.Lexeme);
+                IL.Emit(OpCodes.Ldstr, get.Name.Lexeme);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Property);
+                SetStackUnknown();
+                return (_helpers.SpillStoreObject(), receiver);
+            }
+            if (reference is Expr.GetIndex index)
+            {
+                // Both values must be registered before a key or interpolation
+                // can suspend; no operand remains on the evaluation stack.
+                var receiver = SpillBoxed(index.Object);
+                var key = SpillBoxed(index.Index);
+                if (!IsNullPlaceholderGlobal(index.Object))
+                    EmitThrowIfUndefinedIndexReceiver(receiver, key);
+                IL.Emit(OpCodes.Ldloc, receiver);
+                IL.Emit(OpCodes.Ldloc, key);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Index);
+                SetStackUnknown();
+                return (_helpers.SpillStoreObject(), receiver);
+            }
+        }
+        // Optional chains and super keep their existing expression policy.
+        // Comma/conditional values are detached, rather than References.
+        return (SpillBoxed(tag), null);
+    }
+
+    private static bool ReferenceHasOptionalLink(Expr expression)
+    {
+        // The complete member expression was already unwrapped for classification.
+        // A grouping within its receiver ends an optional chain, so do not peel
+        // that boundary while following type-only wrappers on the chain itself.
+        return expression switch
+        {
+            Expr.TypeAssertion assertion => ReferenceHasOptionalLink(assertion.Expression),
+            Expr.Satisfies satisfies => ReferenceHasOptionalLink(satisfies.Expression),
+            Expr.NonNullAssertion assertion => ReferenceHasOptionalLink(assertion.Expression),
+            Expr.Get get => get.Optional || ReferenceHasOptionalLink(get.Object),
+            Expr.GetIndex index => index.Optional || ReferenceHasOptionalLink(index.Object),
+            Expr.Call call => call.Optional || ReferenceHasOptionalLink(call.Callee),
+            _ => false
+        };
     }
 
     /// <summary>
@@ -1957,7 +2014,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
     private void EmitCapturingArrowDisplayViaHooks(
         Expr.ArrowFunction af,
-        ConstructorBuilder displayCtor)
+        ConstructorBuilder displayCtor,
+        bool generatorExpression = false)
     {
         IL.Emit(OpCodes.Newobj, displayCtor);
 
@@ -2000,6 +2058,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         {
             foreach (var (capturedVar, field) in fieldMap)
             {
+                if (generatorExpression && af.Name?.Lexeme == capturedVar) continue;
                 IL.Emit(OpCodes.Dup);
 
                 // #767: a captured nested-block shadow was renamed to its own generator storage; source
@@ -2013,6 +2072,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 if (capturedVar == "this" && Resolver.TryLoadThisBindingCell()) { }
                 else if (capturedVar == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
                 else if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+                else if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(IL, Ctx, af, capturedVar)) { }
                 else if (Ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
                 {
                     IL.Emit(OpCodes.Ldloc, cellLocal);
@@ -2108,14 +2168,16 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
     /// <summary>
     /// Tries to emit a global variable load (after resolver fails).
-    /// Checks TopLevelStaticVars → Functions → NamespaceFields → CapturedTopLevelVars.
+    /// Real module storage precedes checked external class values and name-based fallbacks.
     /// </summary>
-    protected virtual bool TryEmitGlobalVariable(string name)
+    protected virtual bool TryEmitGlobalVariable(string name, Expr.Variable? reference = null)
     {
         // JavaScript global constants — must be checked before user-defined variables. State
         // machine emitters (Async/Generator/AsyncGenerator MoveNextEmitter) reach this via the
         // base EmitVariable; ILEmitter and AsyncArrowMoveNextEmitter call the helper directly.
-        if (TryEmitJsGlobalConstant(name)) return true;
+        // A checked external alias is a module binding, even when it has a global's spelling.
+        if ((reference == null || !TryResolveExternalClassValue(reference, out _)) &&
+            TryEmitJsGlobalConstant(name)) return true;
 
         if (Ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
         {
@@ -2141,6 +2203,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             SetStackUnknown();
             return true;
         }
+
+        if (reference != null && TryEmitExternalClassValue(reference)) return true;
 
         if (Ctx.Functions.TryGetValue(Ctx.ResolveFunctionName(name), out var funcMethod))
         {
@@ -2743,7 +2807,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     _helpers.IL.Emit(OpCodes.Ldstr, "function");
                     _helpers.SetStackUnknown();
                 }
-                else if (u.Right is Expr.Variable tv && !IsKnownVariable(tv.Name.Lexeme))
+                else if (u.Right is Expr.Variable tv && !IsKnownVariable(tv))
                 {
                     _helpers.IL.Emit(OpCodes.Ldstr, "undefined");
                     _helpers.SetStackUnknown();

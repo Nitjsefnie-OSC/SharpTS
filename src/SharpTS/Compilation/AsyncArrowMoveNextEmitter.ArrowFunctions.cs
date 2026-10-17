@@ -80,6 +80,7 @@ public partial class AsyncArrowMoveNextEmitter
             // value (LoadVariableForCapture would deref the cell). The closure body derefs.
             if (capturedVar == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
             else if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+            else if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(_il, _ctx, af, capturedVar)) { }
             else if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
                 _il.Emit(OpCodes.Ldloc, cellLocal);
             else

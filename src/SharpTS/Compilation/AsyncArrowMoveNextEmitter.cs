@@ -244,6 +244,7 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
 
     protected override void EmitVarDeclaration(Stmt.Var v)
     {
+        if (TryInitializeLoopBodyBinding(v)) return;
         // Route a shadowing block-scoped binding to its own storage (#766).
         if (BlockScopeRenames.TryGetValue(v, out var renamed))
             v = v with { Name = RenameToken(v.Name, renamed) };

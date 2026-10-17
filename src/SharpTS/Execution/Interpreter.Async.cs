@@ -139,7 +139,8 @@ public partial class Interpreter
             SharpTSIterator iter => iter.Elements,
             SharpTSGenerator gen => gen,
             string s => StringBuiltIns.IterateCodePoints(s),
-            _ => throw new InterpreterException("for...of requires an iterable (array, Map, Set, or iterator).")
+            _ => throw new ThrowException(new SharpTSTypeError(
+                "for...of requires an iterable (array, Map, Set, or iterator)."))
         });
 
         var iterator = items.GetEnumerator();
@@ -192,12 +193,30 @@ public partial class Interpreter
     private async Task<object?> AwaitAsyncIterationValue(object? value)
     {
         if (value is SharpTSPromise promise)
-            return await AwaitPreservingEnvironment(promise.GetValueAsync());
+            return await AwaitPreservingEnvironment(NormalizePromiseForAwait(promise));
         if (value is Task<object?> task)
             return await AwaitPreservingEnvironment(task);
         if (TryGetThenable(value, out var thenFn))
             return await AwaitPreservingEnvironment(AdoptThenable(value!, thenFn));
         return value;
+    }
+
+    /// <summary>
+    /// Performs Await's intrinsic PromiseResolve identity decision before
+    /// choosing native task reuse or queued assimilation through the live then.
+    /// </summary>
+    private Task<object?> NormalizePromiseForAwait(SharpTSPromise promise)
+    {
+        // Read exactly once, without consulting a shadowable Promise binding.
+        // A throwing constructor getter is an abrupt PromiseResolve completion.
+        if (ReferenceEquals(GetProperty(promise, "constructor"), PromiseGlobalValue))
+            return promise.GetValueAsync();
+
+        // Inline settlement keeps resumed interpreter work visible to the event
+        // loop, matching existing async-return/combinator capability adoption.
+        var completion = new TaskCompletionSource<object?>();
+        PromiseBuiltIns.ResolveThenableIntoCapability(this, completion, promise);
+        return completion.Task;
     }
 
     private async Task<ExecutionResult> ExecuteLoopBodyAsync(string varName, object? value, Stmt body)
@@ -287,7 +306,7 @@ public partial class Interpreter
 
             // Await the result if it's a promise/task
             if (nextResult is SharpTSPromise promise)
-                nextResult = await AwaitPreservingEnvironment(promise.Task);
+                nextResult = await AwaitPreservingEnvironment(NormalizePromiseForAwait(promise));
             else if (nextResult is Task<object?> task)
                 nextResult = await AwaitPreservingEnvironment(task);
 
@@ -369,7 +388,7 @@ public partial class Interpreter
         try
         {
             if (result is SharpTSPromise promise)
-                await AwaitPreservingEnvironment(promise.Task);
+                await AwaitPreservingEnvironment(NormalizePromiseForAwait(promise));
             else if (result is Task<object?> task)
                 await AwaitPreservingEnvironment(task);
         }

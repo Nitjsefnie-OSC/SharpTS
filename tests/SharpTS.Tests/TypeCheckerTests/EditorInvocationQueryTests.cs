@@ -218,6 +218,34 @@ public sealed class EditorInvocationQueryTests
     }
 
     [Fact]
+    public void TwoEdgeInheritedGenericConstructorRetainsOriginalCandidateAndConcreteSelection()
+    {
+        var value = Check("""
+            class Base<T> { constructor(value: T) {} }
+            class Middle<U> extends Base<U> {}
+            class Child extends Middle<number> {}
+            /*direct*/new Base<number>(2);
+            /*new*/new Child(1);
+            """);
+        Clean(value);
+        var direct = At(value, "direct");
+        var constructor = At(value, "new");
+        Selected(direct, 0);
+        Selected(constructor, 0);
+        var directCandidate = Assert.Single(direct.Candidates);
+        var candidate = Assert.Single(constructor.Candidates);
+        Assert.Equal(directCandidate.OriginalSignatureId, candidate.OriginalSignatureId);
+        Assert.False(candidate.IsImplicit);
+        Assert.Equal("T", Assert.Single(candidate.Declared.Parameters).Type.Text);
+        Assert.Equal("number", Assert.Single(constructor.SelectedSignature!.Parameters).Type.Text);
+        Assert.Equal("Child", constructor.SelectedSignature.ReturnType.Text);
+        Assert.NotNull(candidate.Origin);
+        Assert.Same(value.Document, candidate.Origin.Document);
+        Assert.Equal("constructor", candidate.Origin.Name?.Lexeme);
+        Assert.Same(directCandidate.Origin!.Owner, candidate.Origin.Owner);
+    }
+
+    [Fact]
     public void GenericConstructorInferenceFailureStillRetainsCandidates()
     {
         var value = Check("class Box<T> { constructor(value: T) {} } /*new*/new Box();");

@@ -1,5 +1,6 @@
 using SharpTS.Parsing;
 using SharpTS.Parsing.Visitors;
+using SharpTS.TypeSystem;
 
 namespace SharpTS.Compilation;
 
@@ -35,6 +36,9 @@ public class ClosureAnalyzer : AstVisitorBase
 
     // Current function being analyzed (for tracking captures)
     private object? _currentFunction;
+
+    private TypeMap? _checkedTypes;
+    private IReadOnlySet<string>? _moduleClrImports;
 
     // Current function's name (for self-reference detection in named function expressions)
     private string? _currentFunctionName;
@@ -150,6 +154,23 @@ public class ClosureAnalyzer : AstVisitorBase
     // Per-iteration reference-cell analysis (#650), run alongside capture analysis
     // and reachable wherever this analyzer is threaded (via _ctx.ClosureAnalyzer).
     private readonly PerIterationCellAnalyzer _cells = new();
+    private readonly LoopBodyCellAnalyzer _bodyCells = new();
+
+    internal bool IsLoopBodyCellDeclaration(Token declaration) => _bodyCells.IsCellDeclaration(declaration);
+    internal bool TryGetLoopBodyCellCapture(object closure, string name, out Token declaration) =>
+        _bodyCells.TryGetCaptureDeclaration(closure, name, out declaration);
+    internal IReadOnlyDictionary<string, Token>? GetLoopBodyCellCaptures(object closure) =>
+        _bodyCells.ClosureCaptures.GetValueOrDefault(closure);
+    internal bool TryGetClassSelfOwner(Expr.Variable reference, out Expr.ClassExpr owner)
+    {
+        if (_bodyCells.CanTransportClassSelf(reference))
+            return _bodyCells.TryGetClassSelfOwner(reference, out owner);
+        // Ordinary nested declarations do not yet carry an evaluated class
+        // owner. Preserve their previous capture/emission path; the raw lexical
+        // identity remains available in the independent analysis.
+        owner = null!;
+        return false;
+    }
 
     /// <summary>
     /// The <c>for (let/const …)</c> binding names in <paramref name="loop"/> that need
@@ -161,7 +182,13 @@ public class ClosureAnalyzer : AstVisitorBase
     /// The captured names in <paramref name="closure"/> that hold a per-iteration cell
     /// (the closure body must dereference <c>StrongBox.Value</c>); empty when none do.
     /// </summary>
-    public HashSet<string> GetClosureCellFields(object closure) => _cells.GetClosureCellFields(closure);
+    public HashSet<string> GetClosureCellFields(object closure)
+    {
+        var cells = new HashSet<string>(_cells.GetClosureCellFields(closure));
+        if (_bodyCells.ClosureCaptures.TryGetValue(closure, out var bodyCells))
+            cells.UnionWith(bodyCells.Keys);
+        return cells;
+    }
 
     /// <summary>
     /// Gets the captured variables for a given function/arrow AST node.
@@ -270,13 +297,28 @@ public class ClosureAnalyzer : AstVisitorBase
     /// <summary>
     /// Analyze the entire program to detect captures.
     /// </summary>
-    public void Analyze(List<Stmt> statements)
+    public void Analyze(List<Stmt> statements) => Analyze(statements, null, null);
+
+    internal void Analyze(
+        List<Stmt> statements,
+        TypeMap? checkedTypes,
+        IReadOnlyDictionary<Stmt, IReadOnlySet<string>>? moduleClrImports)
     {
+        // Resolve lexical declaration identities before ordinary capture discovery.
+        // A named class expression's immutable self is carried by its evaluated
+        // definition, independently of any same-spelled outer variable storage.
+        _bodyCells.Analyze(statements);
+        _checkedTypes = checkedTypes;
         _scopeStack.Push([]);
         HoistFunctionDeclarations(statements);
         foreach (var stmt in statements)
+        {
+            _moduleClrImports = moduleClrImports?.GetValueOrDefault(stmt);
             Visit(stmt);
+        }
         _scopeStack.Pop();
+        _moduleClrImports = null;
+        _checkedTypes = null;
 
         // Resolve sync-arrow chain forwards now that every capture and per-iteration
         // classification is final (#1231).
@@ -285,6 +327,12 @@ public class ClosureAnalyzer : AstVisitorBase
         // Per-iteration cell analysis (#650) is independent of capture-source state,
         // so run it as its own pass over the same statements.
         _cells.Analyze(statements);
+        foreach (var (closure, captures) in _bodyCells.ClosureCaptures)
+        {
+            if (!_captures.TryGetValue(closure, out var names)) _captures[closure] = names = [];
+            names.UnionWith(captures.Keys);
+            _allCapturedVariables.UnionWith(captures.Keys);
+        }
     }
 
     /// <summary>
@@ -905,7 +953,31 @@ public class ClosureAnalyzer : AstVisitorBase
 
     protected override void VisitVariable(Expr.Variable expr)
     {
+        if (TryGetClassSelfOwner(expr, out _)) return;
+        if (IsModuleClrImportReference(expr)) return;
         ReferenceVariable(expr.Name.Lexeme);
+    }
+
+    private bool IsModuleClrImportReference(Expr.Variable expression)
+    {
+        string name = expression.Name.Lexeme;
+        if (_moduleClrImports?.Contains(name) != true ||
+            _checkedTypes?.Get(expression) is not TypeInfo.Class imported ||
+            !DotNetTypeSynthesizer.TryGetClrClassType(imported, out _))
+        {
+            return false;
+        }
+
+        // Module ASTs share a program scope during this walk. A declaration from
+        // another module must not turn a CLR import into a capture of that value.
+        // Every real inner binding still shadows the import and needs its storage.
+        int innerScopes = _scopeStack.Count - 1;
+        foreach (var scope in _scopeStack)
+        {
+            if (innerScopes-- == 0) break;
+            if (scope.Contains(name)) return false;
+        }
+        return true;
     }
 
     protected override void VisitAssign(Expr.Assign expr)

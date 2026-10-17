@@ -294,18 +294,22 @@ public class SuperConstructorHandler : ICallHandler
         // Reuse ordinary statically-resolved method argument lowering. Besides
         // evaluating and discarding surplus values safely, it publishes the
         // exact caller list when the base constructor binds `arguments`.
-        emitter.EmitStaticCallArguments(arguments, parentCtor);
+        var parentParameters = parentCtor.GetParameters();
         if (ctx.CurrentClassExpr is { } expression
             && ctx.ClassExprDefinitionFields?.TryGetValue(expression, out var definitionField) == true
-            && parentCtor.GetParameters().LastOrDefault()?.ParameterType == ctx.Runtime!.ClassDefinitions.Type)
+            && parentParameters.LastOrDefault()?.ParameterType == ctx.Runtime!.ClassDefinitions.Type)
         {
-            il.Emit(OpCodes.Pop);
+            // The trailing definition is metadata, never a guest argument slot.
+            // Keep parentCtor's identity so its raw arguments snapshot is published.
+            emitter.EmitStaticCallArguments(arguments, parentCtor, parentParameters[..^1]);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, EmitterTypeHelpers.SelfFieldReference(definitionField));
             il.Emit(OpCodes.Castclass, ctx.Runtime.ClassDefinitions.Type);
             il.Emit(OpCodes.Ldfld, ctx.Runtime.ClassDefinitions.Parent);
             il.Emit(OpCodes.Isinst, ctx.Runtime.ClassDefinitions.Type);
         }
+        else
+            emitter.EmitStaticCallArguments(arguments, parentCtor, parentParameters);
 
         var bodyConstructor = ctx.NewTargetConstructorBodies?.GetValueOrDefault(parentCtor) ?? parentCtor;
         if (bodyConstructor != parentCtor)

@@ -9,13 +9,9 @@ public partial class RuntimeEmitter
         EmittedArrayStorageRuntime ArrayStorage,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
-        MethodBuilder GetIteratorFunction,
         MethodBuilder InvokeValue,
-        MethodBuilder IterateToList,
-        TypeBuilder RuntimeType,
-        EmittedSymbolRuntime Symbols,
-        TypeBuilder TSFunctionType,
-        Type UndefinedType
+        CollectionConsumerInputs Iteration,
+        TypeBuilder TSFunctionType
     );
 
     private readonly record struct MapGroupByInputs(
@@ -61,150 +57,83 @@ public partial class RuntimeEmitter
         GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor, "Object.groupBy: callback is not callable");
         il.MarkLabel(gbCallableOkLabel);
 
-        // Locals
-        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);     // groups dict
-        var listLocal = il.DeclareLocal(_types.ListOfObject);               // array elements
-        var indexLocal = il.DeclareLocal(_types.Int32);                     // loop index
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);                // callback args
-        var keyLocal = il.DeclareLocal(_types.Object);                      // callback result
-        var keyStrLocal = il.DeclareLocal(_types.String);                   // key as string
-        var existingLocal = il.DeclareLocal(_types.Object);                 // existing list
-
-        // Labels
-        var loopStart = il.DefineLabel();
-        var loopEnd = il.DefineLabel();
-        var hasExistingLabel = il.DefineLabel();
-        var addElementLabel = il.DefineLabel();
-        var keyNotNullLabel = il.DefineLabel();
-
-        // dict = new Dictionary<string, object?>()
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.DictionaryStringObject));
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var keyLocal = il.DeclareLocal(_types.Object);
+        var keyStrLocal = il.DeclareLocal(_types.String);
+        var existingLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         il.Emit(OpCodes.Stloc, dictLocal);
 
-        // GroupBy requires a JavaScript iterable. The general materializer has
-        // a CLR-IEnumerable compatibility fallback for host APIs; reject an
-        // ordinary non-iterable object here so a nullish/absent @@iterator
-        // produces the guest TypeError mandated by GetIterator.
-        var groupByMaterializeLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, inputs.ArrayStorage.Type);
-        il.Emit(OpCodes.Brtrue, groupByMaterializeLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.ListOfObject);
-        il.Emit(OpCodes.Brtrue, groupByMaterializeLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brtrue, groupByMaterializeLabel);
-        var groupByIteratorLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldsfld, inputs.Symbols.Iterator);
-        il.Emit(OpCodes.Call, inputs.GetIteratorFunction);
-        il.Emit(OpCodes.Stloc, groupByIteratorLocal);
-        var groupByHasIteratorLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, groupByIteratorLocal);
-        il.Emit(OpCodes.Brfalse, groupByHasIteratorLabel);
-        il.Emit(OpCodes.Ldloc, groupByIteratorLocal);
-        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
-        il.Emit(OpCodes.Brfalse, groupByMaterializeLabel);
-        il.MarkLabel(groupByHasIteratorLabel);
-        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor, "Object.groupBy: items is not iterable");
-        il.MarkLabel(groupByMaterializeLabel);
+        EmitCollectionConsumerLoop(il, inputs.Iteration,
+            () => il.Emit(OpCodes.Ldarg_0), (valueLocal, indexLocal) =>
+            {
+                var hasExistingLabel = il.DefineLabel();
+                var addElementLabel = il.DefineLabel();
+                var keyNotNullLabel = il.DefineLabel();
+                // args = new object[] { current value, (double)i }
+                il.Emit(OpCodes.Ldc_I4_2);
+                il.Emit(OpCodes.Newarr, _types.Object);
+                // args[0] = current value
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Ldloc, valueLocal);
+                il.Emit(OpCodes.Stelem_Ref);
+                // args[1] = (double)i
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Ldc_I4_1);
+                il.Emit(OpCodes.Ldloc, indexLocal);
+                il.Emit(OpCodes.Conv_R8);
+                il.Emit(OpCodes.Box, _types.Double);
+                il.Emit(OpCodes.Stelem_Ref);
+                il.Emit(OpCodes.Stloc, argsLocal);
 
-        // Materialize through the shared iterator protocol. Besides arrays,
-        // this handles custom iterables and produces the spec TypeError for a
-        // nullish/non-callable Symbol.iterator instead of a CLR cast error.
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldsfld, inputs.Symbols.Iterator);
-        il.Emit(OpCodes.Ldtoken, inputs.RuntimeType);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle")!);
-        il.Emit(OpCodes.Call, inputs.IterateToList);
-        il.Emit(OpCodes.Stloc, listLocal);
+                // key = InvokeValue(callback, args)
+                il.Emit(OpCodes.Ldarg_1);  // callback
+                il.Emit(OpCodes.Ldloc, argsLocal);
+                il.Emit(OpCodes.Call, inputs.InvokeValue);
+                il.Emit(OpCodes.Stloc, keyLocal);
 
-        // i = 0
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, indexLocal);
+                // keyStr = key?.ToString() ?? "undefined"
+                il.Emit(OpCodes.Ldloc, keyLocal);
+                il.Emit(OpCodes.Brtrue, keyNotNullLabel);
+                il.Emit(OpCodes.Ldstr, "undefined");
+                il.Emit(OpCodes.Br, addElementLabel);
+                il.MarkLabel(keyNotNullLabel);
+                il.Emit(OpCodes.Ldloc, keyLocal);
+                il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+                il.MarkLabel(addElementLabel);
+                il.Emit(OpCodes.Stloc, keyStrLocal);
 
-        // Loop start
-        il.MarkLabel(loopStart);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, loopEnd);
+                // if (dict.TryGetValue(keyStr, out existing))
+                il.Emit(OpCodes.Ldloc, dictLocal);
+                il.Emit(OpCodes.Ldloc, keyStrLocal);
+                il.Emit(OpCodes.Ldloca, existingLocal);
+                il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
+                il.Emit(OpCodes.Brtrue, hasExistingLabel);
 
-        // args = new object[] { list[i], (double)i }
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        // args[0] = list[i]
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stelem_Ref);
-        // args[1] = (double)i
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_R8);
-        il.Emit(OpCodes.Box, _types.Double);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Stloc, argsLocal);
+                // Create new list, wrap in $Array, store in dict
+                // existing = new $Array(new List<object?>())
+                il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.EmptyTypes));
+                il.Emit(OpCodes.Newobj, inputs.ArrayStorage.Ctor);
+                il.Emit(OpCodes.Stloc, existingLocal);
+                // dict[keyStr] = existing
+                il.Emit(OpCodes.Ldloc, dictLocal);
+                il.Emit(OpCodes.Ldloc, keyStrLocal);
+                il.Emit(OpCodes.Ldloc, existingLocal);
+                il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", [_types.String, _types.Object])!);
 
-        // key = InvokeValue(callback, args)
-        il.Emit(OpCodes.Ldarg_1);  // callback
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, inputs.InvokeValue);
-        il.Emit(OpCodes.Stloc, keyLocal);
+                il.MarkLabel(hasExistingLabel);
 
-        // keyStr = key?.ToString() ?? "undefined"
-        il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Brtrue, keyNotNullLabel);
-        il.Emit(OpCodes.Ldstr, "undefined");
-        il.Emit(OpCodes.Br, addElementLabel);
-        il.MarkLabel(keyNotNullLabel);
-        il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-        il.MarkLabel(addElementLabel);
-        il.Emit(OpCodes.Stloc, keyStrLocal);
+                // Get elements from existing $Array and add current element
+                // ((existing as $Array).Elements).Add(current value)
+                il.Emit(OpCodes.Ldloc, existingLocal);
+                il.Emit(OpCodes.Castclass, inputs.ArrayStorage.Type);
+                il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.ElementsGetter);
+                il.Emit(OpCodes.Ldloc, valueLocal);
+                il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
 
-        // if (dict.TryGetValue(keyStr, out existing))
-        il.Emit(OpCodes.Ldloc, dictLocal);
-        il.Emit(OpCodes.Ldloc, keyStrLocal);
-        il.Emit(OpCodes.Ldloca, existingLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
-        il.Emit(OpCodes.Brtrue, hasExistingLabel);
-
-        // Create new list, wrap in $Array, store in dict
-        // existing = new $Array(new List<object?>())
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.EmptyTypes));
-        il.Emit(OpCodes.Newobj, inputs.ArrayStorage.Ctor);
-        il.Emit(OpCodes.Stloc, existingLocal);
-        // dict[keyStr] = existing
-        il.Emit(OpCodes.Ldloc, dictLocal);
-        il.Emit(OpCodes.Ldloc, keyStrLocal);
-        il.Emit(OpCodes.Ldloc, existingLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", [_types.String, _types.Object])!);
-
-        il.MarkLabel(hasExistingLabel);
-
-        // Get elements from existing $Array and add current element
-        // ((existing as $Array).Elements).Add(list[i])
-        il.Emit(OpCodes.Ldloc, existingLocal);
-        il.Emit(OpCodes.Castclass, inputs.ArrayStorage.Type);
-        il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.ElementsGetter);
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
-
-        // i++
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, indexLocal);
-        il.Emit(OpCodes.Br, loopStart);
-
-        il.MarkLabel(loopEnd);
+            });
 
         // Return an ordinary object with a null prototype (§20.1.2.7 step 2).
         // A plain dictionary is already the compiler's ordinary-object

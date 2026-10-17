@@ -108,6 +108,19 @@ Use `-Suite Core`, `-Suite Gui`, or `-Suite Standalone` for focused work,
 `-DescribeOnly` prints the exact partitions from an existing build without
 running them. `-ShardCount 1` reduces standalone resource usage.
 
+Standalone partitions balance discovered test entries: methods with more theory
+rows are assigned first to the least-loaded shard, with ordinal method names and
+shard indexes breaking ties. Every method stays intact, so all its runtime rows
+run in exactly one shard. Discovered entries estimate workload; opaque theories
+can expand further at execution and equal weights need not take equal time.
+
+Local results include each standalone plan, its inventory digest, exact filter,
+method weights and shard totals. CI uses six shards on each platform and uploads
+the plan, execution duration and TRX results as `standalone-<os>-<shard>` artifacts
+for seven days, including failed runs. Compare Linux and Windows durations and
+executed case counts alongside the inventory digest when assessing balance.
+The 25-minute CI test step, 30-minute job and 120-second hang guard stay bounded.
+
 Core tests use xUnit's conservative parallel scheduler with the default CPU-based
 collection limit. It bounds unfinished collections so awaited test continuations
 can release synchronization gates promptly. The aggressive scheduler lets later

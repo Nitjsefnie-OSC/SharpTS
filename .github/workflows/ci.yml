@@ -64,6 +64,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/test-ci-change-scope.ps1
+          ./scripts/test-standalone-shard-plan.ps1
           ./scripts/test-github-workflows.ps1
 
       - name: Install and run actionlint 1.7.12
@@ -280,11 +281,18 @@ jobs:
         run: dotnet build tests/SharpTS.Tests/SharpTS.Tests.csproj --no-restore --configuration Release
       - name: Test standalone
         shell: pwsh
-        # Deterministic method shards cover every theory row on each platform.
-        # The expanded regression corpus needs a bounded 25-minute aggregate
-        # step; the shard runner retains its 120-second per-test hang guard.
-        run: ./scripts/test-standalone-shard.ps1 -ShardIndex ${{ matrix.shard }} -ShardCount 6
+        # Balance discovered row counts while keeping each method's rows together.
+        # Preserve the aggregate deadline and 120-second per-test hang guard.
+        run: ./scripts/test-standalone-shard.ps1 -ShardIndex ${{ matrix.shard }} -ShardCount 6 -ResultsDirectory artifacts/standalone/${{ matrix.os }}-${{ matrix.shard }}
         timeout-minutes: 25
+      - name: Upload standalone shard evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: standalone-${{ matrix.os }}-${{ matrix.shard }}
+          path: artifacts/standalone/
+          if-no-files-found: warn
+          retention-days: 7
 
   typescript-conformance:
     needs: workflow-policy

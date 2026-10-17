@@ -125,6 +125,7 @@ public abstract partial class StateMachineExitRoutingEmitter
 
     protected override void EmitConstDeclaration(Stmt.Const c)
     {
+        if (TryInitializeLoopBodyBinding(new Stmt.Var(c.Name, c.TypeAnnotation, c.Initializer))) return;
         if (BlockScopeRenames.TryGetValue(c, out var renamed))
             c = c with { Name = RenameToken(c.Name, renamed) };
         base.EmitConstDeclaration(c);

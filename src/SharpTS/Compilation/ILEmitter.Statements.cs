@@ -145,6 +145,8 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GlobalObject.SetProperty);
         }
 
+        if (TryInitializeLoopBodyBinding(v)) return;
+
         // Module-level storage (static field / entry-point display class) is only the right
         // target when this declaration IS a module-level binding: we are emitting the module
         // top-level statements (IsModuleTopLevel) and not inside a nested block. Inside a
@@ -319,15 +321,7 @@ public partial class ILEmitter
             }
             IL.Emit(OpCodes.Stloc, predeclaredLexical);
 
-            if (_ctx.LexicalCaptureWriteBacks.TryGetValue(v.Name.Lexeme, out var writeBacks))
-            {
-                foreach (var (displayClass, field) in writeBacks)
-                {
-                    IL.Emit(OpCodes.Ldloc, displayClass);
-                    IL.Emit(OpCodes.Ldloc, predeclaredLexical);
-                    IL.Emit(OpCodes.Stfld, field);
-                }
-            }
+            RefreshLexicalCaptureSnapshots(v.Name.Lexeme, predeclaredLexical);
             return;
         }
 
@@ -973,6 +967,8 @@ public partial class ILEmitter
             if (f.Initializer != null)
                 EmitStatement(f.Initializer);
 
+            CopyGeneratorForBindings(f);
+
             EmitStringScanSnapshots(f);
 
             // The Count Primes setup loop fills a fresh promoted boolean[] with
@@ -1034,6 +1030,7 @@ public partial class ILEmitter
             EmitStatement(f.Body);
 
             builder.MarkLabel(continueLabel);
+            CopyGeneratorForBindings(f);
             // CreatePerIterationEnvironment analog: copy each cell's end-of-body value
             // into a FRESH cell BEFORE the increment, so the closures created this
             // iteration keep the value they observed and the increment acts on the
@@ -2428,6 +2425,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldloc, resultLocal);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.IteratorProtocol.Value);
             IL.Emit(OpCodes.Stloc, loopVar);
+            InitializeGeneratorLoopLocal(f.Variable, loopVar);
 
             _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
                 closeNeeded, iterContinueLabel, escapingTargets));
@@ -2713,6 +2711,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, result);
         IL.Emit(OpCodes.Ldfld, valueField);
         IL.Emit(OpCodes.Stloc, loopVar);
+        InitializeGeneratorLoopLocal(loop.Variable, loopVar);
 
         _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
             closeNeeded, cont, escapingTargets));
@@ -2870,6 +2869,7 @@ public partial class ILEmitter
             builder.MarkLabel(unholedLabel);
         }
         IL.Emit(OpCodes.Stloc, loopVar);
+        InitializeGeneratorLoopLocal(f.Variable, loopVar);
 
         // Body
         EmitStatement(f.Body);
@@ -2933,6 +2933,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, resultLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime.IteratorProtocol.Value);
         IL.Emit(OpCodes.Stloc, loopVar);
+        InitializeGeneratorLoopLocal(f.Variable, loopVar);
 
         _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
             closeNeeded, continueLabel, escapingTargets));
@@ -3075,6 +3076,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Callvirt,
             _ctx.Runtime.Generators.NumericCurrent);
         IL.Emit(OpCodes.Stloc, loopVar);
+        InitializeGeneratorLoopLocal(f.Variable, loopVar);
 
         _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
             closeNeeded, continueLabel, escapingTargets));
@@ -3142,6 +3144,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, enumLocal);
         IL.Emit(OpCodes.Callvirt, current);
         IL.Emit(OpCodes.Stloc, loopVar);
+        InitializeGeneratorLoopLocal(f.Variable, loopVar);
 
         EmitStatement(f.Body);
 
@@ -3192,6 +3195,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, indexLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.ObjectRead.Element);
         IL.Emit(OpCodes.Stloc, loopVar);
+        InitializeGeneratorLoopLocal(f.Variable, loopVar);
 
         // Emit body
         EmitStatement(f.Body);
@@ -3214,35 +3218,30 @@ public partial class ILEmitter
     protected override void EmitBlock(Stmt.Block b)
     {
         _ctx.Locals.EnterScope();
-
-        RegisterRuntimeClassBindingScopes(b.Statements);
-        _ctx.PredeclareCapturedLexicalLocals?.Invoke(IL, _ctx, b.Statements);
-        InitializeCapturedLexicalTdzBindings(b.Statements);
-
-        // Class declarations have lexical block bindings but their CLR Types
-        // are defined ahead of method emission. Predeclare an undefined local
-        // for TDZ behavior; the declaration statement installs its Type token.
-        PredeclareBlockScopedClassLocals(b.Statements);
-
-        // Check if block contains using declarations
-        var usingResources = new List<UsingResourceLocals>();
-        bool hasUsing = b.Statements.Any(s => s is Stmt.Using);
-
-        if (hasUsing)
+        List<LoopBodyCellScopeEntry> cells = [];
+        try
         {
-            // Emit block with try/finally for disposal
-            EmitBlockWithUsing(b.Statements, usingResources);
-        }
-        else
-        {
-            // Simple block without using declarations
-            foreach (var stmt in b.Statements)
-            {
-                EmitStatement(stmt);
-            }
-        }
+            EnterLoopBodyCellScope(b.Statements, cells);
+            RegisterRuntimeClassBindingScopes(b.Statements);
+            _ctx.PredeclareCapturedLexicalLocals?.Invoke(IL, _ctx, b.Statements);
+            InitializeCapturedLexicalTdzBindings(b.Statements);
 
-        _ctx.Locals.ExitScope();
+            // Class declarations have lexical block bindings but their CLR Types
+            // are defined ahead of method emission. Predeclare an undefined local
+            // for TDZ behavior; the declaration statement installs its Type token.
+            PredeclareBlockScopedClassLocals(b.Statements);
+
+            var usingResources = new List<UsingResourceLocals>();
+            bool hasUsing = b.Statements.Any(s => s is Stmt.Using);
+            if (hasUsing) EmitBlockWithUsing(b.Statements, usingResources);
+            else
+                foreach (var stmt in b.Statements) EmitStatement(stmt);
+        }
+        finally
+        {
+            ExitLoopBodyCellScope(cells);
+            _ctx.Locals.ExitScope();
+        }
     }
 
     private void PredeclareBlockScopedClassLocals(IEnumerable<Stmt> statements)
@@ -3288,6 +3287,8 @@ public partial class ILEmitter
 
         foreach (var name in names)
         {
+            if (_ctx.LoopBodyCellDeclarations.ContainsKey(name) || _ctx.LoopBodyCellShadows.ContainsKey(name))
+                continue;
             if (_ctx.CapturedFunctionLocals?.Contains(name) == true
                 && _ctx.FunctionDisplayClassFields?.TryGetValue(name, out var functionField) == true
                 && _ctx.FunctionDisplayClassLocal != null)
@@ -4457,6 +4458,16 @@ public partial class ILEmitter
 
     protected override void EmitSwitch(Stmt.Switch s)
     {
+        EmitExpression(s.Subject);
+        EmitBoxIfNeeded(s.Subject);
+        var subject = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, subject);
+        WithGeneratorLexicalScope(s.Cases.SelectMany(item => item.Body).Concat(s.DefaultBody ?? []),
+            () => EmitSwitchCases(s, subject));
+    }
+
+    private void EmitSwitchCases(Stmt.Switch s, LocalBuilder subjectLocal)
+    {
         // Check for exhaustive switch optimization
         var switchAnalysis = _ctx.DeadCode?.GetSwitchResult(s);
         bool skipDefault = switchAnalysis?.DefaultIsUnreachable == true;
@@ -4465,12 +4476,6 @@ public partial class ILEmitter
         var endLabel = builder.DefineLabel("switch_end");
         var defaultLabel = builder.DefineLabel("switch_default");
         var caseLabels = s.Cases.Select((_, i) => builder.DefineLabel($"switch_case_{i}")).ToList();
-
-        // Evaluate subject once
-        EmitExpression(s.Subject);
-        var subjectLocal = IL.DeclareLocal(_ctx.Types.Object);
-        EmitBoxIfNeeded(s.Subject);
-        IL.Emit(OpCodes.Stloc, subjectLocal);
 
         // Generate case comparisons
         for (int i = 0; i < s.Cases.Count; i++)
@@ -4591,8 +4596,7 @@ public partial class ILEmitter
             _iteratorLoopCompletionScopes.Count));
         try
         {
-            foreach (var stmt in t.TryBlock)
-                EmitStatement(stmt);
+            EmitGeneratorScopedStatements(t.TryBlock);
         }
         finally
         {
@@ -4620,10 +4624,12 @@ public partial class ILEmitter
         _ctx.Locals.EnterScope();
         try
         {
-            if (t.CatchParam != null)
-                _ctx.Locals.RegisterLocal(t.CatchParam.Lexeme, catchValue);
-            foreach (var stmt in t.CatchBlock)
-                EmitStatement(stmt);
+            WithGeneratorLexicalScope(t.CatchBlock, () =>
+            {
+                if (t.CatchParam != null && !TryInitializeGeneratorCatchBinding(t.CatchParam, catchValue))
+                    _ctx.Locals.RegisterLocal(t.CatchParam.Lexeme, catchValue);
+                foreach (var stmt in t.CatchBlock) EmitStatement(stmt);
+            }, t, t.CatchParam);
         }
         finally
         {
@@ -4676,25 +4682,29 @@ public partial class ILEmitter
         {
             _ctx.ExceptionBlockDepth++;
             builder.BeginExceptionBlock();
-            foreach (var stmt in t.TryBlock)
-                EmitStatement(stmt);
+            EmitGeneratorScopedStatements(t.TryBlock);
 
             builder.BeginCatchBlock(_ctx.Types.Exception);
             _ctx.Locals.EnterScope();
             try
             {
+                LocalBuilder? caught = null;
                 if (t.CatchParam != null)
                 {
-                    var exLocal = _ctx.Locals.DeclareLocal(t.CatchParam.Lexeme, _ctx.Types.Object);
+                    caught = IL.DeclareLocal(_ctx.Types.Object);
                     IL.Emit(OpCodes.Call, _ctx.Runtime!.Errors.WrapException);
-                    IL.Emit(OpCodes.Stloc, exLocal);
+                    IL.Emit(OpCodes.Stloc, caught);
                 }
                 else
                 {
                     IL.Emit(OpCodes.Pop);
                 }
-                foreach (var stmt in t.CatchBlock)
-                    EmitStatement(stmt);
+                WithGeneratorLexicalScope(t.CatchBlock, () =>
+                {
+                    if (t.CatchParam != null && !TryInitializeGeneratorCatchBinding(t.CatchParam, caught!))
+                        _ctx.Locals.RegisterLocal(t.CatchParam.Lexeme, caught!);
+                    foreach (var stmt in t.CatchBlock) EmitStatement(stmt);
+                }, t, t.CatchParam);
             }
             finally
             {
@@ -4705,8 +4715,7 @@ public partial class ILEmitter
         }
         else
         {
-            foreach (var stmt in t.TryBlock)
-                EmitStatement(stmt);
+            EmitGeneratorScopedStatements(t.TryBlock);
         }
 
         builder.Emit_Leave(runFinally);
@@ -4720,8 +4729,7 @@ public partial class ILEmitter
 
         _abruptCompletionScopes.Pop();
         builder.MarkLabel(runFinally);
-        foreach (var stmt in t.FinallyBlock!)
-            EmitStatement(stmt);
+        EmitGeneratorScopedStatements(t.FinallyBlock!);
 
         // A normal finally preserves and resumes the pending completion.
         IL.Emit(OpCodes.Ldloc, kind);

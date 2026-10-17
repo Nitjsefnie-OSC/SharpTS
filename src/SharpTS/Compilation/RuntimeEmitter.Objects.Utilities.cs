@@ -58,7 +58,7 @@ public partial class RuntimeEmitter
         MethodInfo InvokeCapturedIteratorNext,
         MethodInfo GetIteratorDone,
         MethodInfo GetIteratorValue,
-        MethodInfo GetProperty,
+        MethodInfo CloseIterator,
         MethodInfo CreateException,
         ConstructorInfo TypeErrorCtor);
 
@@ -768,7 +768,6 @@ public partial class RuntimeEmitter
         var nextMethod = il.DeclareLocal(_types.Object);
         var iteratorResult = il.DeclareLocal(_types.Object);
         var clrIterator = il.DeclareLocal(_types.IEnumeratorOfObject);
-        var returnFunction = il.DeclareLocal(_types.Object);
         var element = il.DeclareLocal(_types.Object);
         var value = il.DeclareLocal(_types.Double);
         var exactUnits = il.DeclareLocal(_types.BigInteger);
@@ -973,32 +972,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, index);
         il.Emit(OpCodes.Br, loop);
 
-        // IteratorClose on abrupt non-Number rejection.
+        // Non-Number rejection is already a throw completion. Close the actual
+        // iterator through the shared protocol, suppressing any cleanup failure
+        // before raising that TypeError. A generated generator's CLR Dispose is
+        // empty; IteratorClose instead invokes its guest abrupt-return protocol.
         il.MarkLabel(invalidElement);
         il.Emit(OpCodes.Ldloc, customIterator);
         il.Emit(OpCodes.Brfalse, throwInvalidElement);
         var closeJsIterator = il.DefineLabel();
+        var closeInvalidIterator = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, clrIteratorActive);
         il.Emit(OpCodes.Brfalse, closeJsIterator);
         il.Emit(OpCodes.Ldloc, clrIterator);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IDisposable, "Dispose"));
-        il.Emit(OpCodes.Br, throwInvalidElement);
+        il.Emit(OpCodes.Br, closeInvalidIterator);
         il.MarkLabel(closeJsIterator);
         il.Emit(OpCodes.Ldloc, iterator);
-        il.Emit(OpCodes.Ldstr, "return");
-        il.Emit(OpCodes.Call, peers.GetProperty);
-        il.Emit(OpCodes.Stloc, returnFunction);
-        il.Emit(OpCodes.Ldloc, returnFunction);
-        il.Emit(OpCodes.Brfalse, throwInvalidElement);
-        il.Emit(OpCodes.Ldloc, returnFunction);
-        il.Emit(OpCodes.Isinst, peers.UndefinedType);
-        il.Emit(OpCodes.Brtrue, throwInvalidElement);
-        il.Emit(OpCodes.Ldloc, iterator);
-        il.Emit(OpCodes.Ldloc, returnFunction);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Call, peers.InvokeMethodValue);
-        il.Emit(OpCodes.Pop);
+        il.MarkLabel(closeInvalidIterator);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Call, peers.CloseIterator);
         il.MarkLabel(throwInvalidElement);
         GuestErrorEmitter.ThrowError(il, peers.CreateException, peers.TypeErrorCtor, "Math.sumPrecise: every element must be a Number");
 

@@ -44,40 +44,40 @@ public abstract partial class IteratorMoveNextEmitter : StateMachineExitRoutingE
     /// flag path's sync segments) drives the Leave-vs-Br choice so an internal branch inside a segment
     /// stays a legal <c>Br</c>.
     /// </summary>
-    protected void EmitSimpleTryCatch(Stmt.TryCatch t)
+    protected void EmitSimpleTryCatch(Stmt.TryCatch t, Stmt.TryCatch? lexicalDeclaration = null)
     {
+        var declaration = lexicalDeclaration ?? t;
         _protectedRegionDepth++;
         Ctx.ExceptionBlockDepth++;
         IL.BeginExceptionBlock();
 
-        foreach (var stmt in t.TryBlock)
-            EmitStatement(stmt);
+        EmitGeneratorScopedStatements(t.TryBlock);
 
         if (t.CatchBlock != null)
         {
             IL.BeginCatchBlock(typeof(Exception));
-
-            if (t.CatchParam != null)
+            var caught = IL.DeclareLocal(Types.Object);
+            if (declaration.CatchParam != null)
             {
-                // Stack has the .NET exception; wrap to the TS value and bind to the catch param,
-                // honouring a hoisted field if the param is read across a yield/await (#569).
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.Errors.WrapException);
-                StoreCaughtExceptionToParam(GetBindingStorageName(t, t.CatchParam.Lexeme));
+                IL.Emit(OpCodes.Stloc, caught);
             }
-            else
+            else IL.Emit(OpCodes.Pop);
+            WithGeneratorLexicalScope(t.CatchBlock, () =>
             {
-                IL.Emit(OpCodes.Pop);
-            }
-
-            foreach (var stmt in t.CatchBlock)
-                EmitStatement(stmt);
+                if (declaration.CatchParam is { } parameter)
+                {
+                    IL.Emit(OpCodes.Ldloc, caught);
+                    StoreCaughtExceptionToParam(GetBindingStorageName(declaration, parameter.Lexeme), parameter);
+                }
+                foreach (var statement in t.CatchBlock) EmitStatement(statement);
+            }, declaration, declaration.CatchParam);
         }
 
         if (t.FinallyBlock != null)
         {
             IL.BeginFinallyBlock();
-            foreach (var stmt in t.FinallyBlock)
-                EmitStatement(stmt);
+            EmitGeneratorScopedStatements(t.FinallyBlock);
         }
 
         IL.EndExceptionBlock();
@@ -163,8 +163,9 @@ public abstract partial class IteratorMoveNextEmitter : StateMachineExitRoutingE
     /// behaviour — lost the value whenever the catch parameter was hoisted, because reads resolve the
     /// field first (#569).
     /// </summary>
-    protected void StoreCaughtExceptionToParam(string name)
+    protected void StoreCaughtExceptionToParam(string name, Token? originalToken = null)
     {
+        if (originalToken != null && TryInitializeLexicalCell(originalToken)) return;
         if (GetHoistedVariableField(name) == null)
         {
             // Not hoisted: register a local so the catch body's reads resolve to it.

@@ -408,6 +408,9 @@ public partial class TypeChecker
     // Track the declared 'this' type for explicit this parameter (e.g., function f(this: MyType) {})
     private TypeInfo? _currentFunctionThisType = null;
     private bool _currentArrowCapturesScriptGlobalThis;
+    // Instance initializers are checked before construction. Their assignments may widen
+    // scopes created inside the initializer, but must not alter the enclosing live flow.
+    private TypeEnvironment? _deferredInitializerFlowBoundary;
     // Contextual 'this' type for object literal accessor bodies (set during CheckObject two-pass)
     private TypeInfo? _pendingObjectThisType = null;
 
@@ -601,6 +604,9 @@ public partial class TypeChecker
         BindingSymbol? assignedBinding = _environment.GetValueBinding(name);
         for (TypeEnvironment? env = _environment.Enclosing; env != null; env = env.Enclosing)
         {
+            if (ReferenceEquals(env, _deferredInitializerFlowBoundary))
+                return;
+
             if (!env.IsDefinedLocally(name))
                 continue;
 
@@ -1364,6 +1370,7 @@ public partial class TypeChecker
         _excessivelyRecursiveVariables.Clear();
         _intersectionDeclaredVariables.Clear();
         ResetInterfaceDeclarationTracking();
+        ResetDefaultLibraryPromiseHeritage();
         ResetFunctionDeclarationTracking();
         _standaloneSourceDocument = sourceDocument;
         if (sourceDocument is not null) RegisterEditorScope(sourceDocument, _environment, EditorScopeKind.Source);
@@ -1455,6 +1462,7 @@ public partial class TypeChecker
         _excessivelyRecursiveVariables.Clear();
         _intersectionDeclaredVariables.Clear();
         ResetInterfaceDeclarationTracking();
+        ResetDefaultLibraryPromiseHeritage();
         ResetFunctionDeclarationTracking();
         _standaloneSourceDocument = sourceDocument;
         if (sourceDocument is not null) RegisterEditorScope(sourceDocument, _environment, EditorScopeKind.Source);
@@ -1733,6 +1741,7 @@ public partial class TypeChecker
     /// <returns>A TypeMap containing resolved types for all expressions across all modules</returns>
     public TypeMap CheckModules(List<ParsedModule> modules, ModuleResolver resolver)
     {
+        _diagnostics.Clear();
         IndexNewTargetContexts(modules.SelectMany(module => module.Statements));
         Bindings.Clear();
         _members?.Clear();
@@ -1751,6 +1760,7 @@ public partial class TypeChecker
         _intersectionDeclaredVariables.Clear();
         _synthesizedJsxUses.Clear();
         ResetInterfaceDeclarationTracking();
+        ResetDefaultLibraryPromiseHeritage();
         ResetFunctionDeclarationTracking();
         _standaloneSourceDocument = null;
 
@@ -1852,6 +1862,7 @@ public partial class TypeChecker
             foreach (var module in modules.Where(module => module.IsDefaultLibrary))
                 PrepareModule(module);
             _defaultLibraryArrayBinding = scriptEnv.GetValueBinding("Array");
+            _defaultLibraryPromiseBinding = scriptEnv.GetValueBinding("Promise");
             CaptureDefaultLibraryErrorBindings(scriptEnv);
             foreach (var module in modules.Where(module => !module.IsDefaultLibrary && module.IsScript))
                 PrepareModule(module);

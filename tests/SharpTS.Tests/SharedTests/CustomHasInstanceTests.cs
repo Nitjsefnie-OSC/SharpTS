@@ -96,11 +96,9 @@ public sealed class CustomHasInstanceTests
         Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 
-    [Theory, InterpretedOnlyData]
+    [Theory, ModeData]
     public void InheritedProxyHandlerLookupPreservesOriginalReceiver(ExecutionMode mode)
     {
-        // The emitted Symbol prototype walk has a separate preexisting gap:
-        // it does not yet dispatch inherited Proxy get traps.
         const string source = """
             const prototype: any = new Proxy({}, {
                 get(target: any, key: any, receiver: any) {

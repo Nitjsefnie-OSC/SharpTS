@@ -12,6 +12,7 @@ public partial class AsyncArrowMoveNextEmitter
 
     protected override void EmitVariable(Expr.Variable v)
     {
+        var checkedReference = v;
         if (TryEmitDefaultParameterTdz(v.Name.Lexeme))
             return;
 
@@ -22,6 +23,7 @@ public partial class AsyncArrowMoveNextEmitter
 
         string name = v.Name.Lexeme;
 
+        if (LexicalEnvironmentCellAccess.TryLoad(_il, Ctx, name)) { SetStackUnknown(); return; }
         // Outer DC, then own DC, before the resolver: promoted captures may still have
         // stale hoisted fields. Reads retain this order; writes put per-iteration cells first.
         if (TryResolveDisplayClassStorage(name) is { } displayStorage)
@@ -44,7 +46,9 @@ public partial class AsyncArrowMoveNextEmitter
         // must check them explicitly — otherwise a bare NaN/Infinity compiled to a null load,
         // e.g. `NaN === NaN` degraded to `null === null` → true (#648). Checked after the
         // resolver so a same-named local/param/capture still shadows the global.
-        if (TryEmitJsGlobalConstant(name)) return;
+        // Checked external aliases wait for the remaining real capture storage below.
+        bool externalClassValue = TryResolveExternalClassValue(checkedReference, out _);
+        if (!externalClassValue && TryEmitJsGlobalConstant(name)) return;
 
         // Check if it's an imported value (from another module) - must check BEFORE Functions
         // because cross-module function references need to go through the import field
@@ -54,8 +58,9 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
-        // Fallback: Check if it's a global function
-        if (_ctx?.Functions.TryGetValue(_ctx.ResolveFunctionName(name), out var funcMethod) == true)
+        // Name-based functions must not steal a checked CLR import from another module.
+        if (!externalClassValue &&
+            _ctx?.Functions.TryGetValue(_ctx.ResolveFunctionName(name), out var funcMethod) == true)
         {
             _il.Emit(OpCodes.Ldnull);
             Types.EmitLoadMethodInfoViaHandle(_il, funcMethod);
@@ -103,7 +108,7 @@ public partial class AsyncArrowMoveNextEmitter
         // disables its static-call strategy. Resolve it after every lexical
         // capture so globals such as Promise remain available without hiding
         // a same-named enclosing binding.
-        if (TryEmitGlobalVariable(name))
+        if (TryEmitGlobalVariable(name, checkedReference))
             return;
 
         // Not found - push null
@@ -121,6 +126,7 @@ public partial class AsyncArrowMoveNextEmitter
         EnsureBoxed();
         _il.Emit(OpCodes.Dup);
 
+        if (LexicalEnvironmentCellAccess.TryStore(_il, Ctx, name)) { SetStackUnknown(); return; }
         // Simple assignment keeps module storage ahead of the resolver fallback. Declaration
         // and compound/increment stores below instead resolve hoisted/captured fields first.
         var storage = _resolver!.TryResolveCell(name)
@@ -138,6 +144,7 @@ public partial class AsyncArrowMoveNextEmitter
 
     private void StoreVariable(string name)
     {
+        if (LexicalEnvironmentCellAccess.TryStore(_il, Ctx, name)) return;
         // Renaming happens at the AST boundary. Cells and live display classes win over any
         // hoisted copy; hoisted parameters/locals and outer captures win over module globals.
         var storage = _resolver!.TryResolveCell(name)

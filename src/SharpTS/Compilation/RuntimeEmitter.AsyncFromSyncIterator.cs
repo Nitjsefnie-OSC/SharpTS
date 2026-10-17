@@ -202,42 +202,13 @@ public partial class RuntimeEmitter
         fromSync.AwaitResult = method;
 
         var il = method.GetILGenerator();
-        var valueLocal = il.DeclareLocal(_types.Object);
         var taskLocal = il.DeclareLocal(_types.TaskOfObject);
-        var notPromise = il.DefineLabel();
-        var notTask = il.DefineLabel();
-        var haveTask = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, inputs.GetIteratorValue);
-        il.Emit(OpCodes.Stloc, valueLocal);
-
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, inputs.Promise.Type);
-        il.Emit(OpCodes.Brfalse, notPromise);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Castclass, inputs.Promise.Type);
-        il.Emit(OpCodes.Callvirt, inputs.Promise.TaskGetter);
-        il.Emit(OpCodes.Stloc, taskLocal);
-        il.Emit(OpCodes.Br, haveTask);
-
-        il.MarkLabel(notPromise);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, _types.TaskOfObject);
-        il.Emit(OpCodes.Brfalse, notTask);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Castclass, _types.TaskOfObject);
-        il.Emit(OpCodes.Stloc, taskLocal);
-        il.Emit(OpCodes.Br, haveTask);
-
-        // Ordinary values and thenables follow the same PromiseResolve-style
-        // adoption path used by compiled await expressions.
-        il.MarkLabel(notTask);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Call, inputs.Promise.CoerceAwaitableToTaskMethod);
+        il.Emit(OpCodes.Call, inputs.Promise.AwaitValueToTaskMethod);
         il.Emit(OpCodes.Stloc, taskLocal);
 
-        il.MarkLabel(haveTask);
         il.Emit(OpCodes.Ldloc, taskLocal);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldftn, fromSync.AwaitContinuation);

@@ -459,6 +459,10 @@ public partial class Interpreter
                         System.Globalization.CultureInfo.InvariantCulture, out long index)
                     && index >= 0 && array.HasIndex(index))
                 {
+                    if (array.TryGetIndexAccessor(index, out var indexGetter, out _))
+                        return indexGetter is null
+                            ? SharpTSUndefined.Instance
+                            : BindAccessorToObject(indexGetter, receiver!).CallBoxed(this, []);
                     return GetArrayIndexValue(array, index).ToObject();
                 }
                 if (array.HasNamedProperty(name))
@@ -576,6 +580,19 @@ public partial class Interpreter
                     ObjectBuiltIns.OwnPropertyDescriptorOf(this, objectNamespace, name),
                     receiver, out var objectConstructorValue))
                 return objectConstructorValue;
+
+            if (current is SharpTSArrayGlobal arrayGlobal)
+            {
+                if (TryReadDescriptor(arrayGlobal.GetOwnPropertyDescriptor(name),
+                        receiver, out var arrayConstructorValue))
+                    return arrayConstructorValue;
+                if (arrayGlobal.HasOwnProperty(name))
+                    return arrayGlobal.GetMember(name);
+                // Walk the mutable prototype itself so deleted helpers stay absent
+                // and inherited methods retain their canonical, unbound identity.
+                current = ObjectBuiltIns.PrototypeOf(this, arrayGlobal);
+                continue;
+            }
 
             if (current is SharpTSFunctionGlobal && name == "prototype")
                 return GetFunctionPrototype();
@@ -883,6 +900,11 @@ public partial class Interpreter
                 if (so.HasProperty(name) || so.HasSetter(name)) return true;
                 obj = GetRecordPrototype(so);
                 continue;
+            }
+            if (obj is SharpTSInstance constructorInstance && name == "constructor")
+            {
+                constructorInstance.SetInterpreter(this);
+                return constructorInstance.HasProperty(name);
             }
             if (obj is SharpTSInstance { UsesDynamicPrototypeChain: true } instance)
             {
@@ -1441,8 +1463,10 @@ public partial class Interpreter
         // (PromiseBuiltIns wraps their results per SpeciesConstructor).
         if (obj is SharpTSPromise promise)
         {
-            if (promise.TryGetAccessor(memberName, out var ownGetter, out _) && ownGetter != null)
-                return RuntimeValue.FromBoxed(ownGetter.CallBoxed(this, []));
+            if (promise.TryGetAccessor(memberName, out var ownGetter, out _))
+                return RuntimeValue.FromBoxed(ownGetter != null
+                    ? FunctionBuiltIns.CallWithThis(this, ownGetter, promise, [])
+                    : SharpTSUndefined.Instance);
             if (promise.TryGetOwnProperty(memberName, out var ownProp))
                 return RuntimeValue.FromBoxed(ownProp);
             if (promise is SharpTSPromiseSubclassInstance promiseSub)
@@ -1898,9 +1922,9 @@ public partial class Interpreter
             if (!asyncFunction.HasBoundReceiver)
                 callee = asyncFunction.BindThisValue(receiver);
         }
-        else if (callee is SharpTSGeneratorFunction { PrivateOwner: not null } generatorMethod)
+        else if (callee is SharpTSGeneratorFunction generatorMethod)
             callee = generatorMethod.BindToReceiver(receiver);
-        else if (callee is SharpTSAsyncGeneratorFunction { PrivateOwner: not null } asyncGeneratorMethod)
+        else if (callee is SharpTSAsyncGeneratorFunction asyncGeneratorMethod)
             callee = asyncGeneratorMethod.BindToReceiver(receiver);
         else if (callee is ISharpTSCallable callable)
             callee = FunctionBuiltIns.BindStaticReceiver(callable, receiver) ?? callee;
@@ -2245,6 +2269,14 @@ public partial class Interpreter
         FunctionObjectProperties.GetProperties(function, this).SetPropertyStrict(name, value, strictMode);
     }
 
+    private void SetOrdinaryFunctionOwnProperty(
+        object function, SharpTSObject properties, string name, object? value, bool strictMode)
+    {
+        if (!TryAssignThroughDescriptor(
+                properties.GetOwnPropertyDescriptor(name), function, name, value, strictMode))
+            properties.SetPropertyStrict(name, value, strictMode);
+    }
+
     private bool TrySetExplicitFunctionPrototypeProperty(
         object function, string name, object? value, bool strictMode)
     {
@@ -2366,17 +2398,7 @@ public partial class Interpreter
 
         // Array global constructor: resolves `Array.prototype`, `Array.from`, etc.
         if (obj is SharpTSArrayGlobal arrGlobal)
-        {
-            if (arrGlobal.GetMember(memberName) is { } ownMember)
-                return ownMember;
-            var functionPrototype = GetFunctionPrototype();
-            if (functionPrototype.GetExtraGetter(memberName) is { } inheritedGetter)
-                return BindAccessorToObject(inheritedGetter, arrGlobal).CallBoxed(this, []);
-            if (functionPrototype.HasExtra(memberName))
-                return functionPrototype.TryGetExtra(memberName);
-            return InheritedObjectPrototypeMember(arrGlobal, memberName)
-                ?? SharpTSUndefined.Instance;
-        }
+            return GetPropertyValue(arrGlobal, memberName);
         if (obj is SharpTSArrayPrototype arrProto)
         {
             if (arrProto.GetExtraGetter(memberName) is { } getter)
@@ -2521,8 +2543,10 @@ public partial class Interpreter
         // fields/getters/methods, all before the built-in Promise members.
         if (obj is SharpTSPromise promise)
         {
-            if (promise.TryGetAccessor(memberName, out var ownGetter, out _) && ownGetter != null)
-                return ownGetter.CallBoxed(this, []);
+            if (promise.TryGetAccessor(memberName, out var ownGetter, out _))
+                return ownGetter != null
+                    ? FunctionBuiltIns.CallWithThis(this, ownGetter, promise, [])
+                    : SharpTSUndefined.Instance;
             if (promise.TryGetOwnProperty(memberName, out var promiseOwnProp))
                 return promiseOwnProp;
             if (promise is SharpTSPromiseSubclassInstance promiseSub)
@@ -2722,23 +2746,14 @@ public partial class Interpreter
         }
         if (obj is SharpTSFunction userFn)
         {
-            // Accessor set path (Object.defineProperty setter).
-            if (userFn.TryGetAccessor(set.Name.Lexeme, out _, out var setter) && setter != null)
-            {
-                setter.CallBoxed(this, [value]);
-                return value;
-            }
-            userFn.SetProperty(set.Name.Lexeme, value);
+            SetOrdinaryFunctionOwnProperty(
+                userFn, userFn.OwnPropertyStorage, set.Name.Lexeme, value, strictMode);
             return value;
         }
         if (obj is SharpTSArrowFunction arrowFn)
         {
-            if (arrowFn.TryGetAccessor(set.Name.Lexeme, out _, out var arrowSetter) && arrowSetter != null)
-            {
-                arrowSetter.CallBoxed(this, [value]);
-                return value;
-            }
-            arrowFn.SetProperty(set.Name.Lexeme, value);
+            SetOrdinaryFunctionOwnProperty(
+                arrowFn, arrowFn.OwnPropertyStorage, set.Name.Lexeme, value, strictMode);
             return value;
         }
         if (obj is SharpTSAsyncFunction asyncFn)
@@ -3333,6 +3348,8 @@ public partial class Interpreter
         if (owner?.HasStaticPrivateField(fieldName) == true)
         {
             if (!ReferenceEquals(obj, owner)) throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it"));
+            if (!owner.HasInstalledStaticPrivateField(fieldName))
+                throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} before initialization"));
             return owner.GetStaticPrivateFieldRV(fieldName);
         }
         if (owner?.GetPrivateMethod(fieldName) is { } privateMethod)
@@ -3400,6 +3417,8 @@ public partial class Interpreter
         if (owner is not null && owner.HasStaticPrivateField(fieldName))
         {
             if (!ReferenceEquals(obj, owner)) throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} from an object whose class did not declare it"));
+            if (!owner.HasInstalledStaticPrivateField(fieldName))
+                throw new ThrowException(new SharpTSTypeError($"Cannot access private member {fieldName} before initialization"));
             owner.SetStaticPrivateField(fieldName, value.ToObject());
             return value;
         }

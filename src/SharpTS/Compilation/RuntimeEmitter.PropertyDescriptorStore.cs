@@ -10,7 +10,8 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class RuntimeEmitter
 {
-    private readonly record struct DescriptorKeyInputs(Type FunctionType, MethodInfo GetMethodInfo);
+    private readonly record struct DescriptorKeyInputs(
+        Type FunctionType, MethodInfo GetMethodInfo, FieldInfo PropertyIdentityField);
 
     /// <summary>
     /// Emits all property descriptor types: $FrozenSealedState, $PrototypeInfo,
@@ -1527,8 +1528,9 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Reads <c>arg0</c> (the receiver), and stores the canonical PDS key in
     /// <paramref name="keyLocal"/>: if the receiver is a <c>$TSFunction</c>,
-    /// substitute its underlying <c>MethodInfo</c>; otherwise use the receiver
-    /// directly. Required so <c>fn.x = v</c> followed by <c>fn.x</c> resolve
+    /// use its explicit expression identity when supplied, otherwise its underlying
+    /// <c>MethodInfo</c>; other receivers use their own identity. Required so
+    /// <c>fn.x = v</c> followed by <c>fn.x</c> resolve
     /// to the same descriptor entry even when each <c>fn</c> reference produces
     /// a fresh wrapper instance — function declarations don't share identity
     /// across references in compiled mode (no <c>GetOrCreate</c> instance cache
@@ -1549,6 +1551,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Stloc, fLocal);
         il.Emit(OpCodes.Brfalse, afterLabel);
+
+        // An evaluated function keeps its own property identity even when
+        // another evaluation reuses the same emitted kickoff method.
+        var useMethod = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, fLocal);
+        il.Emit(OpCodes.Ldfld, keys.PropertyIdentityField);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, useMethod);
+        il.Emit(OpCodes.Stloc, keyLocal);
+        il.Emit(OpCodes.Br, afterLabel);
+        il.MarkLabel(useMethod);
+        il.Emit(OpCodes.Pop);
 
         // mi = f.GetMethodInfo()
         var miLocal = il.DeclareLocal(_types.MethodInfo);

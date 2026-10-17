@@ -15,24 +15,39 @@ namespace SharpTS.TypeSystem;
 public partial class TypeChecker
 {
     /// <summary>
-    /// Finds a constructor by walking up the inheritance chain.
-    /// Returns the constructor type and the class that owns it, or (null, null) if no constructor found.
+    /// Finds the nearest constructor while composing every instantiated ancestor.
+    /// Keeps the original signature identity for editor candidate selection.
     /// </summary>
-    private (TypeInfo? Constructor, TypeInfo? OwningClass) FindInheritedConstructor(TypeInfo classType)
+    private (TypeInfo? Constructor, Dictionary<string, TypeInfo> Substitutions) FindInheritedConstructor(
+        TypeInfo classType, Dictionary<string, TypeInfo> substitutions)
     {
         TypeInfo? current = classType;
-        while (current != null)
+        HashSet<TypeInfo> visited = new(ReferenceEqualityComparer.Instance);
+        for (int depth = 0; current != null && depth < 256; depth++)
         {
+            ThrowIfCancellationRequested();
+            if (!visited.Add(current)) break;
+
+            if (current is TypeInfo.InstantiatedGeneric
+                { GenericDefinition: TypeInfo.GenericClass generic } instantiated)
+            {
+                // Evaluate all arguments in the incoming scope before replacing
+                // it with this owner's parameters, including repeated names.
+                var arguments = instantiated.TypeArguments
+                    .Select(argument => SubstituteConstructorMember(argument, substitutions)).ToList();
+                substitutions = GenericClassSubs(generic, arguments);
+            }
+
             // Handle MutableClass placeholders (e.g. Any-typed superclasses like Error)
             if (current is TypeInfo.MutableClass mc && mc.Methods.TryGetValue("constructor", out var mcCtor))
-                return (mcCtor, current);
+                return (mcCtor, substitutions);
 
             var methods = GetMethods(current);
             if (methods?.TryGetValue("constructor", out var ctor) == true)
-                return (ctor, current);
+                return (ctor, substitutions);
             current = GetSuperclass(current);
         }
-        return (null, null);
+        return (null, substitutions);
     }
 
     /// <summary>
@@ -773,8 +788,15 @@ public partial class TypeChecker
 
             // Check constructor with substituted parameter types (walk inheritance chain). When the
             // constructor is inherited from a generic-class instantiation, compose the substitutions.
-            var (ctorTypeInfo, owningClass) = FindInheritedConstructor(genericClass);
-            ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, ComposeInheritedClassSubs(owningClass, subs));
+            if (TryGetDefaultLibraryPromiseConstructor(genericClass, subs, out var promiseConstructor))
+            {
+                ValidateConstructorCall(promiseConstructor, newExpr, qualifiedName, contextualArguments: true);
+            }
+            else
+            {
+                var (ctorTypeInfo, constructorSubs) = FindInheritedConstructor(genericClass, subs);
+                ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, constructorSubs);
+            }
 
             return new TypeInfo.Instance(instantiated);
         }
@@ -784,8 +806,15 @@ public partial class TypeChecker
             // Walk inheritance chain to find constructor. When it's inherited from a generic-class
             // instantiation (e.g. `class StringBox extends Box<string>`), substitute that parent's
             // type arguments so the inherited constructor's parameters resolve (T → string).
-            var (ctorTypeInfo, owningClass) = FindInheritedConstructor(classType);
-            ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, ComposeInheritedClassSubs(owningClass, []));
+            if (TryGetDefaultLibraryPromiseConstructor(classType, [], out var promiseConstructor))
+            {
+                ValidateConstructorCall(promiseConstructor, newExpr, qualifiedName, contextualArguments: true);
+            }
+            else
+            {
+                var (ctorTypeInfo, constructorSubs) = FindInheritedConstructor(classType, []);
+                ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, constructorSubs);
+            }
 
             return new TypeInfo.Instance(classType);
         }
@@ -808,7 +837,8 @@ public partial class TypeChecker
         TypeInfo? ctorTypeInfo,
         Expr.New newExpr,
         string qualifiedName,
-        Dictionary<string, TypeInfo>? subs = null)
+        Dictionary<string, TypeInfo>? subs = null,
+        bool contextualArguments = false)
     {
         if (ctorTypeInfo == null)
         {
@@ -820,29 +850,59 @@ public partial class TypeChecker
 
         if (ctorTypeInfo is TypeInfo.OverloadedFunction overloadedCtor)
         {
-            List<TypeInfo> argTypes = newExpr.Arguments.Select(CheckExpr).ToList();
+            // A projected native Promise constructor supplies the executor's callback
+            // types. Select its overload using the other arguments before checking
+            // that callback, so its parameters are never first checked as implicit any.
+            List<TypeInfo> argTypes = newExpr.Arguments.Select(argument =>
+                contextualArguments && IsContextualConstructorArrow(argument)
+                    ? TypeInfo.Any.Shared
+                    : CheckExpr(argument)).ToList();
             bool matched = false;
             foreach (var sig in overloadedCtor.Signatures)
             {
                 var paramTypes = subs != null
-                    ? sig.ParamTypes.Select(p => ResolveConstructorParameter(Substitute(p, subs))).ToList()
+                    ? sig.ParamTypes.Select(p => ResolveConstructorParameter(SubstituteConstructorMember(p, subs))).ToList()
                     : sig.ParamTypes.Select(ResolveConstructorParameter).ToList();
                 RecordEditorConstructorInstantiation(sig, paramTypes, sig.MinArity, sig.HasRestParam,
                     sig.ThisType, sig.ParamNames);
+                if (contextualArguments && newExpr.Arguments.Where((argument, index) =>
+                        index < paramTypes.Count &&
+                        !ContextualConstructorArrowMatches(argument, paramTypes[index])).Any())
+                    continue;
                 if (TryMatchConstructorArgs(argTypes, paramTypes, sig.MinArity, sig.HasRestParam))
                 {
+                    if (contextualArguments)
+                    {
+                        ValidateConstructorCall(sig, newExpr, qualifiedName, subs, contextualArguments: true);
+                    }
                     RecordEditorInvocationSelection(sig);
                     matched = true;
                     break;
                 }
             }
             if (!matched)
+            {
+                if (contextualArguments)
+                {
+                    var arityMatches = overloadedCtor.Signatures.Where(signature =>
+                        newExpr.Arguments.Count >= signature.MinArity &&
+                        (signature.HasRestParam || newExpr.Arguments.Count <= signature.ParamTypes.Count)).ToList();
+                    if (arityMatches.Count == 1)
+                    {
+                        ValidateConstructorCall(arityMatches[0], newExpr, qualifiedName, subs, contextualArguments: true);
+                        return;
+                    }
+                    else if (arityMatches.Count == 0)
+                        throw new TypeCheckException(
+                            $"No constructor overload for '{qualifiedName}' accepts {newExpr.Arguments.Count} arguments.", tsCode: "TS2554");
+                }
                 throw new TypeCheckException($" No constructor overload matches the call for '{qualifiedName}'.", tsCode: "TS2769");
+            }
         }
         else if (ctorTypeInfo is TypeInfo.Function ctorType)
         {
             var paramTypes = subs != null
-                ? ctorType.ParamTypes.Select(p => ResolveConstructorParameter(Substitute(p, subs))).ToList()
+                ? ctorType.ParamTypes.Select(p => ResolveConstructorParameter(SubstituteConstructorMember(p, subs))).ToList()
                 : ctorType.ParamTypes.Select(ResolveConstructorParameter).ToList();
             RecordEditorConstructorInstantiation(ctorType, paramTypes, ctorType.MinArity, ctorType.HasRestParam,
                 ctorType.ThisType, ctorType.ParamNames);
@@ -854,7 +914,9 @@ public partial class TypeChecker
 
             for (int i = 0; i < newExpr.Arguments.Count; i++)
             {
-                TypeInfo argType = CheckExpr(newExpr.Arguments[i]);
+                TypeInfo argType = contextualArguments && i < paramTypes.Count
+                    ? CheckExprWithContext(newExpr.Arguments[i], paramTypes[i])
+                    : CheckExpr(newExpr.Arguments[i]);
                 // Rest arguments are validated by their enclosing call shape; the
                 // stored final parameter is the rest-array type, not an element slot.
                 if (ctorType.HasRestParam && i >= paramTypes.Count - 1)
@@ -870,6 +932,35 @@ public partial class TypeChecker
         }
     }
 
+    private static bool IsContextualConstructorArrow(Expr expression) => expression switch
+    {
+        Expr.ArrowFunction => true,
+        Expr.Grouping grouping => IsContextualConstructorArrow(grouping.Expression),
+        _ => false
+    };
+
+    private bool ContextualConstructorArrowMatches(Expr expression, TypeInfo contextualType)
+    {
+        if (expression is Expr.Grouping grouping)
+            return ContextualConstructorArrowMatches(grouping.Expression, contextualType);
+        if (expression is not Expr.ArrowFunction { TypeParams: null or { Count: 0 } } arrow ||
+            GetContextualFunctionType(contextualType) is not { } function)
+            return true;
+
+        // Explicit executor parameter annotations can select a later overload.
+        // Leave unannotated parameters for the selected signature's contextual
+        // check, without checking the callback body against an earlier candidate.
+        for (int index = 0; index < arrow.Parameters.Count && index < function.ParamTypes.Count; index++)
+        {
+            var parameter = arrow.Parameters[index];
+            if (parameter.Type is not null &&
+                !IsCompatible(ResolveAnnotation(parameter.Type, parameter.TypeAnnotationNode, parameter)!,
+                    function.ParamTypes[index]))
+                return false;
+        }
+        return true;
+    }
+
     private TypeInfo ResolveConstructorParameter(TypeInfo type) =>
         type is TypeInfo.MappedType mapped && !ContainsOpenTypeVariable(mapped)
             ? ExpandMappedType(mapped)
@@ -883,7 +974,7 @@ public partial class TypeChecker
     {
         // Constructor inference follows inherited constructors too. Generic subclasses commonly
         // expose their type parameter only through an instantiated base constructor.
-        var (ctorTypeInfo, owningClass) = FindInheritedConstructor(genericClass);
+        var (ctorTypeInfo, inheritedSubs) = FindInheritedConstructor(genericClass, []);
         if (ctorTypeInfo is null)
         {
             // No constructor - can't infer type arguments without parameters
@@ -892,8 +983,6 @@ public partial class TypeChecker
             return null;
         }
 
-        Dictionary<string, TypeInfo> inheritedSubs = ComposeInheritedClassSubs(owningClass, []);
-
         // Get the constructor parameter types (may be overloaded)
         List<TypeInfo> constructorParamTypes;
         if (ctorTypeInfo is TypeInfo.OverloadedFunction overloadedCtor)
@@ -901,7 +990,7 @@ public partial class TypeChecker
             // Try each overload to find one that matches
             foreach (var sig in overloadedCtor.Signatures)
             {
-                var parameterTypes = sig.ParamTypes.Select(type => Substitute(type, inheritedSubs)).ToList();
+                var parameterTypes = sig.ParamTypes.Select(type => SubstituteConstructorMember(type, inheritedSubs)).ToList();
                 var result = TryInferFromConstructorSignature(genericClass, parameterTypes, argTypes);
                 if (result != null)
                     return result;
@@ -910,7 +999,7 @@ public partial class TypeChecker
         }
         else if (ctorTypeInfo is TypeInfo.Function ctorFunc)
         {
-            constructorParamTypes = ctorFunc.ParamTypes.Select(type => Substitute(type, inheritedSubs)).ToList();
+            constructorParamTypes = ctorFunc.ParamTypes.Select(type => SubstituteConstructorMember(type, inheritedSubs)).ToList();
         }
         else
         {

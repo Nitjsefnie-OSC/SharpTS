@@ -32,6 +32,19 @@ public partial class IteratorMoveNextEmitter
         if (BlockScopeRenames.TryGetValue(v, out var renamed))
             v = v with { Name = RenameToken(v.Name, renamed) };
 
+        if (LexicalEnvironmentCellAccess.TryLoad(IL, Ctx, v.Name.Lexeme))
+        {
+            SetStackUnknown();
+            return;
+        }
+
+        if (IsGeneratorExpressionFreeCapture(v.Name.Lexeme))
+        {
+            GeneratorExpressionCaptureAccess.TryLoad(IL, Ctx, v.Name.Lexeme);
+            SetStackUnknown();
+            return;
+        }
+
         if (TryGetFunctionDCField(v.Name.Lexeme, out var dcField))
         {
             IL.Emit(OpCodes.Ldarg_0);
@@ -46,6 +59,7 @@ public partial class IteratorMoveNextEmitter
 
     protected override void EmitVarDeclaration(Stmt.Var v)
     {
+        if (TryInitializeLoopBodyBinding(v)) return;
         bool stableNumeric = Ctx.TypeMap?.IsStableNumericStateMachineLocal(v) == true;
 
         if (BlockScopeRenames.TryGetValue(v, out var renamed))
@@ -78,6 +92,26 @@ public partial class IteratorMoveNextEmitter
         if (BlockScopeRenames.TryGetValue(a, out var renamed))
             a = a with { Name = RenameToken(a.Name, renamed) };
 
+        if (LexicalEnvironmentCellAccess.HasOwnAccess(Ctx, a.Name.Lexeme))
+        {
+            EmitExpression(a.Value);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Dup);
+            LexicalEnvironmentCellAccess.TryStore(IL, Ctx, a.Name.Lexeme);
+            SetStackUnknown();
+            return;
+        }
+
+        if (IsGeneratorExpressionFreeCapture(a.Name.Lexeme))
+        {
+            EmitExpression(a.Value);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Dup);
+            GeneratorExpressionCaptureAccess.TryStore(IL, Ctx, a.Name.Lexeme);
+            SetStackUnknown();
+            return;
+        }
+
         if (TryGetFunctionDCField(a.Name.Lexeme, out var dcField))
         {
             EmitExpression(a.Value);
@@ -98,6 +132,13 @@ public partial class IteratorMoveNextEmitter
     /// </summary>
     protected override void EmitStoreVariable(string name)
     {
+        if (LexicalEnvironmentCellAccess.TryStore(IL, Ctx, name)) return;
+        if (IsGeneratorExpressionFreeCapture(name))
+        {
+            GeneratorExpressionCaptureAccess.TryStore(IL, Ctx, name);
+            return;
+        }
+
         if (TryGetFunctionDCField(name, out var dcField))
         {
             StoreToDCField(dcField);
@@ -106,6 +147,11 @@ public partial class IteratorMoveNextEmitter
 
         base.EmitStoreVariable(name);
     }
+
+    private bool IsGeneratorExpressionFreeCapture(string name) =>
+        GetHoistedVariableField(name) == null && !Ctx.Locals.HasLocal(name)
+        && !Ctx.CellBindingLocals.ContainsKey(name)
+        && GeneratorExpressionCaptureAccess.HasCapture(Ctx, name);
 
     // The rename-then-delegate overrides for const declarations, compound/logical assignment, and
     // increment/decrement live on StateMachineExitRoutingEmitter (shared with the async families).

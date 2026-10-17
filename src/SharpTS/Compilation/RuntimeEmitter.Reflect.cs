@@ -25,8 +25,10 @@ public partial class RuntimeEmitter
         MethodInfo TypeOf, MethodInfo CreateException, ConstructorInfo TypeErrorConstructor);
 
     private readonly record struct ReflectDeletePropertyInputs(MethodInfo InvokeMethodUnwrapped,
-        MethodInfo ObjectGetOwnPropertyDescriptor, MethodInfo ToJsString, MethodInfo ObjectIsExtensible,
-        MethodInfo DeleteProperty, Type UndefinedType, MethodInfo GetProperty,
+        MethodInfo ObjectGetOwnPropertyDescriptor, MethodInfo ToPropertyKey, MethodInfo ObjectIsExtensible,
+        MethodInfo DeleteProperty, MethodInfo DeleteIndex, MethodInfo IsSymbol,
+        Type UndefinedType, MethodInfo GetProperty, MethodInfo TypeOf,
+        MethodInfo CreateException, ConstructorInfo TypeErrorConstructor,
         EmittedFunctionBindingRuntime FunctionBindings);
 
     private readonly record struct ReflectPreventExtensionsInputs(MethodInfo InvokeMethodUnwrapped,
@@ -325,9 +327,43 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]);
         reflectNamespace.DeleteProperty = method;
         var il = method.GetILGenerator();
-        var keyLocal = il.DeclareLocal(_types.String);
+        // Reflect requires an Object target before any observable key coercion.
+        // Keep this validation out of the shared delete-expression helpers.
+        var invalidTarget = il.DefineLabel();
+        var validTarget = il.DefineLabel();
+        var targetType = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, invalidTarget);
+        // Interop can retain CLR numeric carriers that TypeOf does not yet
+        // classify as JS numbers. Reject those specific primitives here,
+        // while preserving managed structs and enums as object targets.
+        foreach (var primitiveType in new[] { _types.Byte, _types.SByte,
+                     _types.Int16, _types.UInt16, _types.Int32, _types.UInt32,
+                     _types.Int64, _types.UInt64, _types.Single, _types.Double,
+                     _types.Decimal, _types.Char })
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, primitiveType);
+            il.Emit(OpCodes.Brtrue, invalidTarget);
+        }
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.TypeOf);
+        il.Emit(OpCodes.Stloc, targetType);
+        foreach (var kind in new[] { "object", "function" })
+        {
+            il.Emit(OpCodes.Ldloc, targetType);
+            il.Emit(OpCodes.Ldstr, kind);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, validTarget);
+        }
+        il.MarkLabel(invalidTarget);
+        GuestErrorEmitter.ThrowError(il, inputs.CreateException,
+            inputs.TypeErrorConstructor, "Reflect.deleteProperty requires an object target");
+        il.MarkLabel(validTarget);
+        var keyLocal = il.DeclareLocal(_types.Object);
+        var stringKeyLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, inputs.ToJsString);
+        il.Emit(OpCodes.Call, inputs.ToPropertyKey);
         il.Emit(OpCodes.Stloc, keyLocal);
 
         var proxyLabel = il.DefineLabel();
@@ -337,7 +373,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(proxyLabel);
         EmitProxyMethodCallUnwrapped(
             il, inputs.InvokeMethodUnwrapped, () => il.Emit(OpCodes.Ldarg_0),
-            "TrapDeletePropertyCompiled", () =>
+            "TrapDeletePropertyKeyCompiled", () =>
             {
                 il.Emit(OpCodes.Ldc_I4_5);
                 il.Emit(OpCodes.Newarr, _types.Object);
@@ -345,8 +381,11 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Ldc_I4_0);
                 il.Emit(OpCodes.Ldloc, keyLocal);
                 il.Emit(OpCodes.Stelem_Ref);
-                EmitDelegate(1, inputs.DeleteProperty,
-                    typeof(Func<object, string, bool>));
+                // Reuse the Reflect result normalization for forwarded ordinary
+                // deletes. The key is already a primitive, so this cannot repeat
+                // guest key coercion, and absent Symbols still return true.
+                EmitDelegate(1, method,
+                    typeof(Func<object, object, bool>));
                 EmitDelegate(2, inputs.ObjectGetOwnPropertyDescriptor,
                     typeof(Func<object, object, object?>));
                 EmitDelegate(3, inputs.ObjectIsExtensible,
@@ -369,6 +408,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notProxyLabel);
+        var symbolDelete = il.DefineLabel();
+        var checkDeleteResult = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Call, inputs.IsSymbol);
+        il.Emit(OpCodes.Brtrue, symbolDelete);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, stringKeyLocal);
         // Bound name/length can be synthesized own properties without a PDS
         // descriptor. Preserve their actual [[Delete]] result instead of
         // turning false into true when the descriptor fallback misses them.
@@ -384,7 +431,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(boundMetadataTarget);
         foreach (var metadata in new[] { "name", "length" })
         {
-            il.Emit(OpCodes.Ldloc, keyLocal);
+            il.Emit(OpCodes.Ldloc, stringKeyLocal);
             il.Emit(OpCodes.Ldstr, metadata);
             il.Emit(OpCodes.Call, _types.StringOpEquality);
             il.Emit(OpCodes.Brtrue, boundMetadataDelete);
@@ -392,13 +439,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, ordinaryDelete);
         il.MarkLabel(boundMetadataDelete);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldloc, stringKeyLocal);
         il.Emit(OpCodes.Call, inputs.DeleteProperty);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(ordinaryDelete);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldloc, stringKeyLocal);
         il.Emit(OpCodes.Call, inputs.DeleteProperty);
+        il.Emit(OpCodes.Br, checkDeleteResult);
+        il.MarkLabel(symbolDelete);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Call, inputs.DeleteIndex);
+        il.MarkLabel(checkDeleteResult);
         var deletedLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, deletedLabel);
         il.Emit(OpCodes.Ldarg_0);

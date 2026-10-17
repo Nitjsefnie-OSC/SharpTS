@@ -200,7 +200,8 @@ public sealed class StablePrimitivePromiseThenTests
             instruction.Operand is MethodBase
             {
                 Name: "PromiseThen" or "PromiseResolveValue" or "InvokeCallback"
-                    or "ObservePromiseConstructor" or "WrapDerivedPromiseResult"
+                    or "ObservePromiseConstructor" or "PrepareDerivedPromiseCapability"
+                    or "WrapDerivedPromiseResult"
             });
         Assert.DoesNotContain(instructions, instruction =>
             instruction.OpCode == OpCodes.Newarr

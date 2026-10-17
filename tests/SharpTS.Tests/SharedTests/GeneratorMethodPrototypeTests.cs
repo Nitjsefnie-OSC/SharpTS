@@ -31,11 +31,9 @@ public sealed class GeneratorMethodPrototypeTests
             TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void InterpreterMethodsAndIteratorsKeepTheirDistinctIntrinsicChains()
+    [Theory, ModeData]
+    public void MethodsAndIteratorsKeepTheirDistinctIntrinsicChains(ExecutionMode mode)
     {
-        // Compilation has an independent intrinsic-chain defect (#2139); its own-prototype
-        // descriptors and nonconstructibility are passing controls above.
         const string source = Methods + """
             for (const list of [sync, asynchronous]) {
                 for (const method of list) {
@@ -79,11 +77,11 @@ public sealed class GeneratorMethodPrototypeTests
             + string.Concat(Enumerable.Repeat(common +
             "AsyncGeneratorFunction AsyncGeneratorFunction AsyncGenerator [object AsyncGeneratorFunction] [object AsyncGenerator]\ntrue true false false false 1\n", 4))
             + "true true\ntrue true true\n";
-        Assert.Equal(expected, TestHarness.Run(source, ExecutionMode.Interpreted));
+        Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void InterpreterPrototypeWritesAndIntegrityApplyAcrossReceiverViews()
+    [Theory, ModeData]
+    public void PrototypeWritesAndIntegrityApplyAcrossReceiverViews(ExecutionMode mode)
     {
         const string source = Methods + """
             for (const method of [c.g, c.ag]) {
@@ -109,11 +107,11 @@ public sealed class GeneratorMethodPrototypeTests
                 Reflect.defineProperty(frozen, "prototype", { value: {} }));
             """;
         Assert.Equal("true\ntrue\ntrue false\ntrue false\ntrue\ntrue\ntrue\ntrue false\ntrue false\ntrue\ntrue true\nfalse false\n",
-            TestHarness.Run(source, ExecutionMode.Interpreted));
+            TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void InterpreterDeclarationAndUnliftedExpressionWrappersUseTheSamePrototypeContract()
+    [Theory, ModeData]
+    public void DeclarationAndUnliftedExpressionWrappersUseTheSamePrototypeContract(ExecutionMode mode)
     {
         const string source = """
             function* declared() {}
@@ -131,7 +129,7 @@ public sealed class GeneratorMethodPrototypeTests
             }
             """;
         Assert.Equal(string.Concat(Enumerable.Repeat("true true false false true\n", 4)),
-            TestHarness.Run(source, ExecutionMode.Interpreted));
+            TestHarness.Run(source, mode));
     }
 
     [Fact]

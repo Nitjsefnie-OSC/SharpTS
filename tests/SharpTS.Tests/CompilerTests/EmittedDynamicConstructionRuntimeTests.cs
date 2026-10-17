@@ -28,7 +28,12 @@ public sealed class EmittedDynamicConstructionRuntimeTests
         owner.MarkFunctionBodyEmitted(); owner.CompleteEmission(); Assert.True(owner.IsComplete);
         Assert.Throws<InvalidOperationException>(owner.CompleteEmission);
         Assert.Throws<InvalidOperationException>(owner.MarkFunctionBodyEmitted);
-        foreach (var item in Properties) Expect<InvalidOperationException>(() => item.SetValue(owner, handles[item.Name]));
+        foreach (var item in Properties)
+        {
+            Expect<InvalidOperationException>(() => item.SetValue(owner, handles[item.Name]));
+            Expect<InvalidOperationException>(() => item.SetValue(owner, null));
+            Assert.Same(handles[item.Name], item.GetValue(owner));
+        }
     }
 
     [Fact]
@@ -111,16 +116,84 @@ public sealed class EmittedDynamicConstructionRuntimeTests
     [Fact]
     public void OwnerAndHelpersUseExplicitDependencies()
     {
-        Assert.Equal(9, Properties.Length);
+        (string Name, Type Type)[] ownerApi =
+        [
+            (nameof(EmittedDynamicConstructionRuntime.ConstructWithNewTarget), typeof(MethodBuilder)),
+            (nameof(EmittedDynamicConstructionRuntime.FactoryAttributeConstructor), typeof(ConstructorBuilder)),
+            (nameof(EmittedDynamicConstructionRuntime.FactoryAttributeName), typeof(FieldBuilder)),
+            (nameof(EmittedDynamicConstructionRuntime.FactoryAttributeType), typeof(TypeBuilder)),
+            (nameof(EmittedDynamicConstructionRuntime.Function), typeof(MethodBuilder)),
+            (nameof(EmittedDynamicConstructionRuntime.FunctionWithNewTarget), typeof(MethodBuilder)),
+            (nameof(EmittedDynamicConstructionRuntime.IsComplete), typeof(bool)),
+            (nameof(EmittedDynamicConstructionRuntime.RecordClassReturn), typeof(MethodBuilder)),
+            (nameof(EmittedDynamicConstructionRuntime.ResolveClassReturn), typeof(MethodBuilder)),
+            (nameof(EmittedDynamicConstructionRuntime.Value), typeof(MethodBuilder))
+        ];
+        Assert.Equal(ownerApi, typeof(EmittedDynamicConstructionRuntime)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Select(property => (Name: property.Name, Type: property.PropertyType))
+            .OrderBy(property => property.Name, StringComparer.Ordinal));
+        Assert.Equal(ownerApi.Where(property => property.Type != typeof(bool)).Select(property => property.Name),
+            NewHandles().Keys.OrderBy(name => name, StringComparer.Ordinal));
         Assert.NotSame(new EmittedRuntime().DynamicConstruction, new EmittedRuntime().DynamicConstruction);
         Assert.Null(typeof(EmittedRuntime).GetProperty("DynamicConstruction")!.SetMethod);
         foreach (string old in new[] { "NewOnFunction", "ConstructDynamicValue" }) Assert.Null(typeof(EmittedRuntime).GetProperty(old));
-        foreach (string name in new[] { "EmitNewOnFunction", "EmitConstructDynamicValue", "EmitClassConstructorReturns" })
+        var contextParameters = new Dictionary<string, (string Name, Type Type)[]>
+        {
+            ["EmitNewOnFunction"] =
+            [
+                ("ClassDefinitions", typeof(EmittedClassDefinitionRuntime)),
+                ("DescriptorStorage", typeof(EmittedDescriptorStorageRuntime)),
+                ("Errors", typeof(EmittedErrorRuntime)),
+                ("FunctionBindings", typeof(EmittedFunctionBindingRuntime)),
+                ("FunctionIntrospection", typeof(EmittedFunctionIntrospectionRuntime)),
+                ("FunctionValues", typeof(EmittedFunctionValueRuntime)),
+                ("ObjectRead", typeof(EmittedObjectReadRuntime)),
+                ("ObjectStorage", typeof(EmittedObjectStorageRuntime)),
+                ("ReflectedMethods", typeof(EmittedReflectedMethodRuntime)),
+                ("SymbolType", typeof(Type)),
+                ("TypeOf", typeof(MethodInfo)),
+                ("UndefinedInstance", typeof(FieldInfo))
+            ],
+            ["EmitConstructDynamicValue"] =
+            [
+                ("ArrayConstructor", typeof(MethodInfo)),
+                ("Booleans", typeof(EmittedBooleanRuntime)),
+                ("BoxedPrimitives", typeof(EmittedBoxedPrimitiveRuntime)),
+                ("ClassDefinitions", typeof(EmittedClassDefinitionRuntime)),
+                ("DynamicConstruction", typeof(EmittedDynamicConstructionRuntime)),
+                ("Errors", typeof(EmittedErrorRuntime)),
+                ("FunctionConstruction", typeof(EmittedFunctionConstructionRuntime)),
+                ("FunctionValues", typeof(EmittedFunctionValueRuntime)),
+                ("NumericCoercion", typeof(EmittedNumericCoercionRuntime)),
+                ("RegExps", typeof(EmittedRegExpRuntime)),
+                ("StringCoercion", typeof(EmittedStringCoercionRuntime)),
+                ("UndefinedInstance", typeof(FieldInfo)),
+                ("UndefinedType", typeof(Type))
+            ],
+            ["EmitClassConstructorReturns"] =
+            [
+                ("Errors", typeof(EmittedErrorRuntime)),
+                ("SymbolType", typeof(Type)),
+                ("UndefinedType", typeof(Type))
+            ]
+        };
+        foreach (string name in contextParameters.Keys)
         {
             var method = typeof(RuntimeEmitter).GetMethod(name, Members)!;
             Assert.DoesNotContain(method.GetParameters(), p => p.ParameterType == typeof(EmittedRuntime) || p.ParameterType == typeof(RuntimeFeatureSet));
-            foreach (var parameter in method.GetParameters().Where(p => p.ParameterType.IsNested))
+            var contexts = method.GetParameters().Where(p => p.ParameterType.IsNested).ToArray();
+            Assert.NotEmpty(contexts);
+            foreach (var parameter in contexts)
+            {
                 Assert.DoesNotContain(parameter.ParameterType.GetFields(Members), f => f.FieldType == typeof(EmittedRuntime) || f.FieldType == typeof(RuntimeFeatureSet));
+                var constructors = parameter.ParameterType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.NotEmpty(constructors);
+                foreach (var constructor in constructors)
+                    Assert.Equal(contextParameters[name], constructor.GetParameters()
+                        .Select(input => (Name: input.Name!, Type: input.ParameterType))
+                        .OrderBy(input => input.Name, StringComparer.Ordinal));
+            }
         }
     }
 

@@ -16,6 +16,7 @@ public partial class RuntimeEmitter
         EmittedNumericCoercionRuntime NumericCoercion,
         EmittedRegExpRuntime RegExps,
         EmittedStringCoercionRuntime StringCoercion,
+        MethodInfo ArrayConstructor,
         FieldInfo UndefinedInstance,
         Type UndefinedType
     );
@@ -84,6 +85,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.UndefinedType);
         il.Emit(OpCodes.Brtrue, throwLabel);
+
+        // Array values use an IList<object> Type token, whose CLR construction
+        // is unrelated to JavaScript's numeric-length and element-list forms.
+        var notArrayTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Bne_Un, notArrayTypeLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ArrayConstructor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notArrayTypeLabel);
 
         // An aliased RegExp constructor is represented by the emitted $RegExp
         // Type. Activator cannot supply its JavaScript optional arguments (and

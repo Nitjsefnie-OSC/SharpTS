@@ -6,8 +6,8 @@ namespace SharpTS.Compilation;
 /// <summary>
 /// Emits the general NewPromiseCapability support (#349): the result of
 /// <c>then</c>/<c>catch</c>/<c>finally</c> when <c>SpeciesConstructor</c> resolves
-/// to a constructor that is <em>not</em> <c>%Promise%</c> or a guest
-/// <c>class … extends Promise</c> (ECMA-262 §27.2.4.5 + §27.2.5.4 step 7). The
+/// to a constructor other than intrinsic <c>%Promise%</c>, including guest
+/// Promise subclasses (ECMA-262 §27.2.4.5 + §27.2.5.4 step 7). The
 /// result is <c>new S((resolve, reject) =&gt; …)</c> with the captured capability
 /// adopting the settled source task; <c>S</c> may be any guest class and the
 /// returned object need not be a $Promise.
@@ -32,12 +32,14 @@ public partial class RuntimeEmitter
         EmitPromiseCapabilitySlotGetterBodies(runtime.RequirePromise());
         EmitNewPromiseCapabilityResultBody(runtime.RequirePromise());
         EmitCoerceAwaitableToTask(runtime);
+        EmitAwaitValueToTask(runtime);
     }
 
     /// <summary>
     /// Emits <c>CoerceAwaitableToTask(object value) -> Task&lt;object&gt;</c>: the
-    /// await coercion for a value that reached the state machine's wrap-value
-    /// path (already known not to be a $Promise or Task). An ordinary thenable
+    /// shared coercion used by resolving functions and ordinary await values.
+    /// Native promises/tasks unwrap without Await's constructor identity test.
+    /// An ordinary thenable
     /// (a value whose <c>then</c> member is callable, by <c>typeof</c>) is
     /// adopted — <c>then(resolve, reject)</c> settles a fresh capability whose
     /// task is awaited (ECMA-262 await → PromiseResolve, §27.2.1.3.2); anything

@@ -20,6 +20,9 @@ public class EmittedRuntime
     /// <summary>Required lazy iterator adapter construction and helper declarations.</summary>
     public EmittedIteratorHelpersRuntime IteratorHelpers { get; } = new();
 
+    /// <summary>Generator intrinsic graphs and iterator creation-time prototype selection.</summary>
+    public EmittedGeneratorPrototypeRuntime GeneratorPrototypes { get; } = new();
+
 
     /// <summary>Required iterable collection declarations, available before their bodies are emitted.</summary>
     public EmittedIteratorCollectionRuntime IteratorCollection { get; } = new();

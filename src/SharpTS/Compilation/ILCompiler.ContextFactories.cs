@@ -44,6 +44,7 @@ public partial class ILCompiler
             // Closure analysis registries
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
+            GeneratorExpressions = _closures.GeneratorExpressions,
             ConstArrowBindings = _closures.ConstArrowBindings,
             ArrowBoxedAdapters = _closures.BoxedAdapters,
             DirectCallArrowBindings = _closures.DirectCallArrowBindings,
@@ -270,6 +271,8 @@ public partial class ILCompiler
             StaticDirectEvalStatements = parentCtx.StaticDirectEvalStatements,
             ClosureAnalyzer = parentCtx.ClosureAnalyzer,
             ArrowMethods = parentCtx.ArrowMethods,
+            GeneratorExpressions = parentCtx.GeneratorExpressions,
+            LexicalTdzNames = parentCtx.LexicalTdzNames,
             ConstArrowBindings = parentCtx.ConstArrowBindings,
             ArrowBoxedAdapters = parentCtx.ArrowBoxedAdapters,
             DirectCallArrowBindings = parentCtx.DirectCallArrowBindings,

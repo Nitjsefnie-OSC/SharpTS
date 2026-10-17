@@ -272,24 +272,150 @@ public sealed class StaticPrivateMethodCallBrandTests
         Assert.Equal("8 0 8\ntrue|1 true|2 2 10\n", TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void InterpretedNullInstanceReceiversRejectBeforeArguments()
-    {
-        // Compiled null receiver branding retains a separate follow-up (#2150).
-        const string source = """
-            let effects = 0;
-            class C {
-                #m(value: any) { return value; }
-                read(object: any) { return object.#m(++effects); }
+    public const string NullInstanceReceiverSource = """
+        let effects = 0;
+        class C {
+            #m(value: any) { return value; }
+            read(object: any) { return object.#m(++effects); }
+        }
+        const reader: any = new C();
+        try { reader.read(null); }
+        catch (error: any) { console.log(error.name, error instanceof TypeError, effects); }
+        """;
+
+    public const string AsyncNullInstanceReceiverSource = """
+        let effects = 0, receivers = 0;
+        const marker = {};
+        function receiver(value: any) {
+            receivers++;
+            if (value === marker) throw marker;
+            return value;
+        }
+        class C {
+            #m(value: any) { return [this instanceof C, value].join("|"); }
+            async read(object: any) {
+                await Promise.resolve(0);
+                return receiver(object).#m(++effects);
             }
-            try { new C().read(null); }
-            catch (error) { console.log(error instanceof TypeError, effects); }
-            """;
-        Assert.Equal("true 0\n", TestHarness.RunInterpreted(source));
+        }
+        class Child extends C {}
+        async function run() {
+            const reader: any = new C();
+            try { await reader.read(null); }
+            catch (error: any) { console.log(error.name, error instanceof TypeError, effects, receivers); }
+            console.log(await reader.read(new Child()), effects, receivers);
+            try { await reader.read(marker); }
+            catch (error: any) { console.log(error === marker, effects, receivers); }
+        }
+        run().catch((error: any) => console.log("unexpected", error.name, error.message));
+        """;
+
+    public const string GeneratorNullInstanceReceiverSource = """
+        let effects = 0, receivers = 0;
+        function receiver(value: any) { receivers++; return value; }
+        class C {
+            #m(value: any) { return value; }
+            *read(object: any) {
+                yield 0;
+                return receiver(object).#m(++effects);
+            }
+        }
+        class Child extends C {}
+        const reader: any = new C();
+        const invalid = reader.read(null);
+        console.log(invalid.next().value);
+        try { invalid.next(); }
+        catch (error: any) { console.log(error.name, error instanceof TypeError, effects, receivers); }
+        const valid = reader.read(new Child());
+        valid.next();
+        const completed = valid.next();
+        console.log(completed.value, completed.done, effects, receivers);
+        """;
+
+    public const string AsyncGeneratorNullInstanceReceiverSource = """
+        let effects = 0, receivers = 0;
+        function receiver(value: any) { receivers++; return value; }
+        function pause(): Promise<void> {
+            return new Promise<void>(resolve => { setTimeout(() => resolve(), 1); });
+        }
+        class C {
+            #m(value: any) { return [this instanceof C, value].join("|"); }
+            async *read(object: any): AsyncGenerator<number, string, unknown> {
+                yield 0;
+                await pause();
+                return receiver(object).#m(++effects);
+            }
+        }
+        class Child extends C {}
+        async function run(): Promise<void> {
+            const reader: any = new C();
+            const invalid = reader.read(null);
+            console.log((await invalid.next()).value);
+            try { await invalid.next(); }
+            catch (error: any) { console.log(error.name, error instanceof TypeError, effects, receivers); }
+            const valid = reader.read(new Child());
+            await valid.next();
+            const completed = await valid.next();
+            console.log(completed.value, completed.done, effects, receivers);
+        }
+        run().catch((error: any) => console.log("unexpected", error.name, error.message));
+        """;
+
+    [Theory, ModeData]
+    public void NullInstanceReceiversRejectWithTypeErrorBeforeArguments(ExecutionMode mode)
+    {
+        Assert.Equal("TypeError true 0\n", TestHarness.Run(NullInstanceReceiverSource, mode));
     }
 
-    [Fact]
-    public void InterpretedInstancePrivateCallsRetainCapturedScopeAndSuperReceiver()
+    [Theory, ModeData]
+    public void AsyncNullInstanceReceiversEvaluateReceiverOnceBeforeArguments(ExecutionMode mode)
+    {
+        Assert.Equal("TypeError true 0 1\ntrue|1 1 2\ntrue 1 3\n",
+            TestHarness.Run(AsyncNullInstanceReceiverSource, mode));
+    }
+
+    [Theory, ModeData]
+    public void GeneratorNullInstanceReceiversRejectBeforeArgumentsAfterYield(ExecutionMode mode)
+    {
+        Assert.Equal("0\nTypeError true 0 1\n1 true 1 2\n",
+            TestHarness.Run(GeneratorNullInstanceReceiverSource, mode));
+    }
+
+    [Theory, ModeData]
+    public void AsyncGeneratorNullInstanceReceiversRejectBeforeArgumentsAfterYieldAndAwait(ExecutionMode mode)
+    {
+        Assert.Equal("0\nTypeError true 0 1\ntrue|1 true 1 2\n",
+            TestHarness.Run(AsyncGeneratorNullInstanceReceiverSource, mode));
+    }
+
+    public static IEnumerable<object[]> TypedNullInstanceReceiverCases()
+    {
+        const string dynamicCaller = "const reader: any = new C();";
+        const string typedCaller = "const reader = new C();";
+        yield return ["typed-issue", NullInstanceReceiverSource.Replace(dynamicCaller, typedCaller, StringComparison.Ordinal),
+            "TypeError true 0\n"];
+        yield return ["typed-async-reader", AsyncNullInstanceReceiverSource.Replace(dynamicCaller, typedCaller, StringComparison.Ordinal),
+            "TypeError true 0 1\ntrue|1 1 2\ntrue 1 3\n"];
+        yield return ["typed-generator-reader", GeneratorNullInstanceReceiverSource.Replace(dynamicCaller, typedCaller, StringComparison.Ordinal),
+            "0\nTypeError true 0 1\n1 true 1 2\n"];
+        yield return ["typed-async-generator-reader", AsyncGeneratorNullInstanceReceiverSource.Replace(dynamicCaller, typedCaller, StringComparison.Ordinal),
+            "0\nTypeError true 0 1\ntrue|1 true 1 2\n"];
+    }
+
+    public static IEnumerable<object[]> TypedNullInstanceReceiverModeCases() => TypedNullInstanceReceiverCases()
+        .SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            .Select(mode => new object[] { row[0], row[1], row[2], mode }));
+
+    [Theory, MemberData(nameof(TypedNullInstanceReceiverModeCases))]
+    public void TypedNullInstanceReceiversRejectBeforeArgumentsAcrossMethodKinds(
+        string name, string source, string expected, ExecutionMode mode)
+    {
+        Assert.NotEmpty(name);
+        Assert.Equal(expected, TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void InstancePrivateCallsRetainCapturedScopeAndSuperReceiver(ExecutionMode mode)
     {
         const string source = """
             function make(prefix: string) {
@@ -302,7 +428,7 @@ public sealed class StaticPrivateMethodCallBrandTests
             }
             console.log(make("outer").read());
             """;
-        Assert.Equal("outer:base\n", TestHarness.RunInterpreted(source));
+        Assert.Equal("outer:base\n", TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

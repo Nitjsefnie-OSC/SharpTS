@@ -466,6 +466,9 @@ public partial class ILCompiler
         il.MarkLabel(tryMethodsLabel);
         EmitInheritedGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: false);
         EmitClassPrototypeFieldFallback(il);
+        if ((_classes.Builders[className].Attributes & TypeAttributes.Abstract) == 0
+            && classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
+            EmitDeclaredComputedMethodRead(il, _classes.Builders[className]);
 
         // 2c. Check instance getters (accessors with `get` keyword). JS semantics: reading
         // `obj.foo` where `foo` is a getter must INVOKE the getter and return its result.
@@ -581,32 +584,9 @@ public partial class ILCompiler
         if (classStmt.Accessors?.Any(accessor => accessor.ComputedKey != null && !accessor.IsStatic) == true)
             EmitComputedInstanceGetterFallback(il);
 
-        // 3b. #791: non-symbol (string/number) computed method keys. Their bodies are emitted as
-        // $symmethod_N and registered in the symbol-method registry under the property-key string
-        // (RegisterSymbolMethod), but named/string-index access (obj.dyn, obj["dyn"]) funnels here
-        // rather than through the symbol-key branch, so consult the registry as a fallback. Gated on
-        // this class declaring a computed method to keep the common no-computed-method path untouched.
-        // Only this body's declaring owner may claim the result. Inherited methods
-        // must wait until a nearer setter-only accessor can stop base fallthrough.
-        if (classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
-        {
-            var noStrMethodLabel = il.DefineLabel();
-            var strMethodLocal = il.DeclareLocal(_types.Object);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Call, _runtime.SymbolAccessors.FindMethod);
-            il.Emit(OpCodes.Stloc, strMethodLocal);
-            il.Emit(OpCodes.Ldloc, strMethodLocal);
-            il.Emit(OpCodes.Brfalse, noStrMethodLabel);
-            EmitComputedMethodOwnerCheck(il, strMethodLocal, _classes.Builders[className], noStrMethodLabel);
-            // return new $TSFunction(this, (MethodInfo)mi)  — receiver-bound, mirroring the symbol path.
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloc, strMethodLocal);
-            il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.Constructor);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(noStrMethodLabel);
-        }
+        if ((_classes.Builders[className].Attributes & TypeAttributes.Abstract) != 0
+            && classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
+            EmitDeclaredComputedMethodRead(il, _classes.Builders[className]);
 
         // Evaluated computed members may supply the other accessor half or a
         // later data method. Only claim a missing getter after those own reads.
@@ -897,6 +877,18 @@ public partial class ILCompiler
         EmitInheritedGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: false);
 
         EmitInheritedClassExpressionFieldReads(il, classExpr);
+        var notLiveConstructor = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.StringOpEquality); il.Emit(OpCodes.Brfalse, notLiveConstructor);
+        // Evaluated class expressions own the back-reference on their live
+        // prototype. A computed method/accessor can replace it, and a missing
+        // property must not restore the template CLR constructor token.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, _runtime.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _runtime.ClassDefinitions.ReadPrototypeProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notLiveConstructor);
         EmitClassPrototypeFieldFallback(il);
 
         if (_classExprs.Getters.TryGetValue(classExpr, out var instanceGetters))
@@ -1085,6 +1077,53 @@ public partial class ILCompiler
         il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
         il.Emit(OpCodes.Call, _runtime.SymbolAccessors.RegistryKey);
         il.Emit(OpCodes.Bne_Un, notOwn);
+    }
+
+    private void EmitDeclaredComputedMethodRead(ILGenerator il, TypeBuilder owner)
+    {
+        // The registry records which evaluated ordinary keys belong to this
+        // declaration. Their live values belong to descriptors on the prototype,
+        // including undefined, replacement values, and an inherited value after
+        // deletion. Check before CLR methods so computed/literal collisions use
+        // the descriptor selected by source order.
+        var absent = il.DefineLabel();
+        var method = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _runtime.SymbolAccessors.FindMethod);
+        il.Emit(OpCodes.Stloc, method);
+        il.Emit(OpCodes.Ldloc, method); il.Emit(OpCodes.Brfalse, absent);
+        EmitComputedMethodOwnerCheck(il, method, owner, absent);
+
+        if ((owner.Attributes & TypeAttributes.Abstract) != 0)
+        {
+            // Abstract owners have no nominal guest prototype yet. Preserve the
+            // prior ordinary dispatch until that independent prototype gap is
+            // addressed, without publishing their method onto Object.prototype.
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, method);
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.Constructor);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(absent);
+            return;
+        }
+
+        var prototype = il.DeclareLocal(_types.Object);
+        var havePrototype = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Call, _runtime.ClassPrototypes.Get);
+        il.Emit(OpCodes.Stloc, prototype);
+        // A prototype can itself be read through $IHasFields after its own
+        // descriptor was deleted. Start on it rather than bypassing its slots.
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Beq, havePrototype);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, _runtime.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.MarkLabel(havePrototype);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, prototype); il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _runtime.ClassDefinitions.ReadPrototypeProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(absent);
     }
 
     /// <summary>

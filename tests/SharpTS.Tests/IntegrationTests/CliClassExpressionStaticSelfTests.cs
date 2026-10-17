@@ -11,14 +11,14 @@ public sealed class CliClassExpressionStaticSelfTests
     [Fact]
     public void ResolvedOriginalSourceSeesItsLexicalClassDuringStaticInitialization()
     {
-        // #2207 independently rejects the legal static-field this lookup.
         var statements = new Parser(new Lexer(ClassExpressionStaticSelfTests.OriginalSource).ScanTokens()).ParseOrThrow();
+        var typeMap = new TypeChecker().Check(statements);
         using var output = new StringWriter();
         using var errors = new StringWriter();
         using var interpreter = new Interpreter(output, errors);
         new VariableResolver(interpreter).Resolve(statements);
 
-        interpreter.Interpret(statements, new TypeMap());
+        interpreter.Interpret(statements, typeMap);
 
         Assert.Equal("true\n", output.ToString().Replace("\r\n", "\n"));
         Assert.Empty(errors.ToString());

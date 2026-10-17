@@ -166,11 +166,30 @@ public sealed class EditorSemanticScopeTests
         var hidden = Assert.Single(declaration.Fields, field => field.Name.Lexeme == "#hidden");
         Assert.Equal("T", Assert.Single(value.Facts.GetDeclarations(value.Document, field)).Type.Text);
         var ordinary = new TypeChecker().CheckWithRecovery(value.Statements, value.Document);
-        Assert.IsType<TypeInfo.Any>(ordinary.TypeMap.GetClassType(declaration)!.FieldTypes["count"]);
-        Assert.Equal("any", Assert.Single(value.Facts.GetDeclarations(value.Document, count)).Type.Text);
+        Assert.Equal(TokenType.TYPE_NUMBER,
+            Assert.IsType<TypeInfo.Primitive>(ordinary.TypeMap.GetClassType(declaration)!.FieldTypes["count"]).Type);
+        Assert.Equal("number", Assert.Single(value.Facts.GetDeclarations(value.Document, count)).Type.Text);
         Assert.Equal("number", Assert.Single(value.Facts.GetDeclarations(value.Document, hidden)).Type.Text);
         Assert.Equal(EditorFactAvailability.Available, Local(value, "self", "Model").Availability);
         Assert.Equal("T", Local(value, "self", "T", BindingNamespace.Type).Type.Text);
+    }
+
+    [Fact]
+    public void NamedExpressionFieldsPublishFinalTypesWithoutChangingTheirSourceOwners()
+    {
+        var value = Check("const Model = class Inner { count = 1; static total = 2; read(): number { return this.count; } };");
+        Clean(value);
+        var declaration = Assert.IsType<Stmt.Const>(value.Statements[0]);
+        var expression = Assert.IsType<Expr.ClassExpr>(declaration.Initializer);
+        foreach (var field in expression.Fields)
+        {
+            var fact = Assert.Single(value.Facts.GetDeclarations(value.Document, field));
+            Assert.Equal("number", fact.Type.Text);
+            Assert.Equal(EditorFactAvailability.Available, fact.Availability);
+        }
+        Assert.Equal(2, expression.Fields.Count);
+        Assert.All(value.Result.TypeMap.GetClassExprType(expression)!.FieldTypes.Values,
+            type => Assert.Equal(TokenType.TYPE_NUMBER, Assert.IsType<TypeInfo.Primitive>(type).Type));
     }
 
     [Fact]

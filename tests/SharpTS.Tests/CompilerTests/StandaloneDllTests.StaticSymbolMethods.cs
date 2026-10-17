@@ -20,6 +20,26 @@ public partial class StandaloneDllTests
             "cache-keys" => (StaticSymbolMethodIdentityTests.CacheKeySource, StaticSymbolMethodIdentityTests.CacheKeyExpected),
             _ => (StaticSymbolMethodIdentityTests.ReceiverSource, StaticSymbolMethodIdentityTests.ReceiverExpected)
         };
+        AssertStaticSymbolMethodSource(name, source, expected);
+    }
+
+    [Theory]
+    [MemberData(nameof(StaticSymbolMethodIdentityTests.ClosedGenericCases), MemberType = typeof(StaticSymbolMethodIdentityTests))]
+    public void Isolated_Issue2122ClosedGenericStaticSymbolMethods_PreserveCanonicalValues(
+        string name, string source, string expected)
+        => AssertStaticSymbolMethodSource("closed-generic-" + name, source, expected);
+
+    [Theory]
+    [MemberData(nameof(StaticSymbolMethodAssignmentTests.DescriptorCases), MemberType = typeof(StaticSymbolMethodAssignmentTests))]
+    public void Isolated_Issue2213StaticSymbolMethods_HaveLiveOwnDescriptors(
+        string name, string source, string expected)
+    {
+        Assert.NotEmpty(name);
+        AssertStaticSymbolMethodSource("descriptors-" + name, source, expected);
+    }
+
+    private static void AssertStaticSymbolMethodSource(string name, string source, string expected)
+    {
         using var directory = IntegrationTests.CliTestHelper.CreateTempDirectory();
         var path = directory.CreateFile("main.ts", source);
         var output = directory.GetPath("static-symbol-" + name + ".dll");
@@ -29,6 +49,9 @@ public partial class StandaloneDllTests
         Assert.True(compile.ExitCode == 0, compile.StandardOutput + compile.StandardError);
         Assert.Contains("IL verification passed.", compile.StandardOutput);
         Assert.DoesNotContain("SharpTS", GetAssemblyReferences(output));
+        Assert.All(GetAssemblyReferences(output), reference => Assert.True(
+            reference is "mscorlib" or "netstandard" || reference.StartsWith("System", StringComparison.Ordinal),
+            "Unexpected standalone reference: " + reference));
         Assert.False(File.Exists(directory.GetPath("SharpTS.dll")));
         Assert.Equal(expected, ExecuteCompiledDllIsolated(output, timeoutMs: 30000,
             verifyStandardError: error => Assert.Empty(error), standardInput: ""));

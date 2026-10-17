@@ -225,14 +225,13 @@ public sealed class NumberConstructorDescriptorTests
         Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void CompiledNumberParseIntValueRetainsNameAndArity()
+    [Theory, ModeData]
+    public void NumberParseIntValueRetainsNameAndArity(ExecutionMode mode)
     {
-        // Interpreter parse function arity is tracked separately in #2165.
-        Assert.Equal("parseInt 2\n", TestHarness.RunCompiled("""
+        Assert.Equal("parseInt 2\n", TestHarness.Run("""
             const constructor: any = Number, parse: any = constructor.parseInt;
             console.log(parse.name, parse.length);
-            """));
+            """, mode));
     }
 
     [Fact]

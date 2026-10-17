@@ -492,6 +492,8 @@ public partial class TypeChecker
     private TypeInfo ResolveAwaitedType(TypeInfo type) => type switch
     {
         TypeInfo.Promise p => ResolveAwaitedType(p.ValueType),
+        TypeInfo.Instance instance when TryGetDefaultLibraryPromiseType(instance, out var promise) =>
+            ResolveAwaitedType(promise.ValueType),
         TypeInfo.Union u => new TypeInfo.Union(
             u.FlattenedTypes.Select(ResolveAwaitedType).ToList()),
         _ => type
@@ -2484,6 +2486,18 @@ public partial class TypeChecker
         TypeInfo.Class? previousClass = _typeMap.GetClassExprType(classExpr);
         string className = previousClass?.Name ?? classExpr.Name?.Lexeme ?? $"$ClassExpr_{++_classExprCounter}";
 
+        // Make the expression's own type parameters available to heritage
+        // arguments, while resolving the superclass value in its enclosing scope.
+        List<TypeInfo.TypeParameter>? classTypeParams = null;
+        TypeEnvironment classTypeEnv = new(_environment);
+        MarkEditorBodyEntered(classExpr);
+        RegisterEditorScope(classExpr, classTypeEnv, EditorScopeKind.Class, EditorSyntaxRole.Whole);
+        if (classExpr.TypeParams != null && classExpr.TypeParams.Count > 0)
+        {
+            using (new EnvironmentScope(this, classTypeEnv))
+                classTypeParams = BuildGenericTypeParameters(classExpr.TypeParams, classTypeEnv);
+        }
+
         // Resolve superclass if present. Stored as TypeInfo so a MutableClass
         // placeholder (for `any`-typed supers like CJS-imported classes) can
         // also sit in this slot — CheckSuper special-cases MutableClass.
@@ -2492,15 +2506,24 @@ public partial class TypeChecker
         {
             TypeInfo superType = CheckExpr(classExpr.SuperclassExpr);
             superType = ProjectDefaultLibraryErrorHeritage(classExpr.SuperclassExpr, superType);
-            if (classExpr.SuperclassTypeArgs is { Count: > 0 })
+            TypeInfo.Class? promiseBase;
+            using (new EnvironmentScope(this, classTypeEnv))
+                promiseBase = ProjectDefaultLibraryPromiseHeritage(classExpr.SuperclassExpr, superType,
+                    classExpr.SuperclassTypeArgs, classExpr.SuperclassTypeArgNodes);
+            if (promiseBase is not null)
+                superType = promiseBase;
+            else if (classExpr.SuperclassTypeArgs is { Count: > 0 })
             {
                 if (superType is TypeInfo.GenericClass genericSuperclass)
                 {
-                    List<TypeInfo> arguments = classExpr.SuperclassTypeArgs
-                        .Select((_, index) => ResolveTypeArg(
-                            classExpr.SuperclassTypeArgs, classExpr.SuperclassTypeArgNodes, index))
-                        .ToList();
-                    superType = InstantiateGenericClass(genericSuperclass, arguments);
+                    using (new EnvironmentScope(this, classTypeEnv))
+                    {
+                        List<TypeInfo> arguments = classExpr.SuperclassTypeArgs
+                            .Select((_, index) => ResolveTypeArg(
+                                classExpr.SuperclassTypeArgs, classExpr.SuperclassTypeArgNodes, index))
+                            .ToList();
+                        superType = InstantiateGenericClass(genericSuperclass, arguments);
+                    }
                 }
                 else if (superType is not TypeInfo.Any)
                 {
@@ -2529,19 +2552,6 @@ public partial class TypeChecker
                 throw new TypeCheckException("Superclass must be a class", tsCode: "TS2507");
         }
 
-        // Handle generic type parameters
-        List<TypeInfo.TypeParameter>? classTypeParams = null;
-        TypeEnvironment classTypeEnv = new(_environment);
-        MarkEditorBodyEntered(classExpr);
-        RegisterEditorScope(classExpr, classTypeEnv, EditorScopeKind.Class, EditorSyntaxRole.Whole);
-        if (classExpr.TypeParams != null && classExpr.TypeParams.Count > 0)
-        {
-            // Multi-pass under classTypeEnv so a constraint referencing a later parameter resolves
-            // (`class<T extends U, U>`). Mirrors the class-declaration path.
-            using (new EnvironmentScope(this, classTypeEnv))
-                classTypeParams = BuildGenericTypeParameters(classExpr.TypeParams, classTypeEnv);
-        }
-
         // Create mutable class early so self-references work
         var mutableClass = previousClass is null
             ? new TypeInfo.MutableClass(className)
@@ -2550,7 +2560,7 @@ public partial class TypeChecker
         _newTargetSourceTypes[classExpr] = mutableClass;
         mutableClass.Superclass = superclass;
         mutableClass.IsAbstract = classExpr.IsAbstract;
-        RegisterSourceClassMembers(classExpr, mutableClass.DeclarationId);
+        RegisterSourceClassMembers(classExpr, mutableClass);
 
         // If named, define the name in class body scope for self-reference
         if (classExpr.Name != null)
@@ -2673,7 +2683,7 @@ public partial class TypeChecker
             // Collect field types
             foreach (var field in classExpr.Fields)
             {
-                string fieldName = field.Name.Lexeme;
+                string fieldName = GetFieldMemberName(field);
                 TypeInfo fieldType = ResolveAnnotation(field.TypeAnnotation, field.TypeAnnotationNode, field)
                     ?? TypeInfo.Any.Shared;
 
@@ -2748,7 +2758,16 @@ public partial class TypeChecker
             }
         }
 
-        // Freeze the mutable class
+        bool anyInferredFieldTypeResolved = CheckClassFieldInitializers(
+            classExpr, classExpr.Fields, mutableClass, classTypeEnv, classTypeParams);
+        if (anyInferredFieldTypeResolved)
+        {
+            _compatibilityCache = null;
+            _identityCompatibilityCache = null;
+        }
+
+        // Freeze the mutable class after initializer inference so every body and
+        // external expression result sees the same completed field metadata.
         // For body checking, always use the frozen MutableClass (which is a TypeInfo.Class)
         // This matches CheckClassDeclaration: generic classes store GenericClass externally but use
         // the frozen MutableClass for body checking since it has the same methods/fields structure.
@@ -2904,6 +2923,7 @@ public partial class TypeChecker
 
                 TypeEnvironment previousEnvFunc = _environment;
                 TypeInfo? previousReturnFunc = _currentFunctionReturnType;
+                TypeInfo? previousThisTypeFunc = _currentFunctionThisType;
                 var previousInferredFunc = _inferredReturnTypes;
                 var previousInferredYieldFunc = _inferredYieldTypes;
                 bool previousInStatic = _inStaticMethod;
@@ -2927,6 +2947,7 @@ public partial class TypeChecker
                 }
                 // Collect yield operand types only while inferring a generator method's type (#548).
                 _inferredYieldTypes = inferringMethodReturn && method.IsGenerator ? new List<TypeInfo>() : null;
+                _currentFunctionThisType = methodType.ThisType;
                 _inStaticMethod = method.IsStatic;
                 _inAsyncFunction = method.IsAsync;
                 _inGeneratorFunction = method.IsGenerator;
@@ -3009,6 +3030,7 @@ public partial class TypeChecker
                     PopDefiniteAssignmentScope();
                     _environment = previousEnvFunc;
                     _currentFunctionReturnType = previousReturnFunc;
+                    _currentFunctionThisType = previousThisTypeFunc;
                     _inferredReturnTypes = previousInferredFunc;
                     _inferredYieldTypes = previousInferredYieldFunc;
                     _inStaticMethod = previousInStatic;
@@ -3026,22 +3048,6 @@ public partial class TypeChecker
                 mutableClass.Getters[name] = TypeInfo.Inferred.Shared;
             anyInferredMethodReturnResolved |= CheckClassAccessorBodies(
                 classExpr.Accessors, mutableClass, recoverComputedSymbolDiagnostics: false);
-
-            // Check field initializers
-            foreach (var field in classExpr.Fields.Where(f => f.Initializer != null))
-            {
-                TypeInfo initType = CheckExpr(field.Initializer!);
-                TypeInfo fieldDeclaredType = field.IsPrivate
-                    ? field.IsStatic
-                        ? classTypeForBody.StaticPrivateFieldTypes[field.Name.Lexeme]
-                        : classTypeForBody.PrivateFieldTypes[field.Name.Lexeme]
-                    : field.IsStatic
-                    ? classTypeForBody.StaticProperties[field.Name.Lexeme]
-                    : classTypeForBody.FieldTypes[field.Name.Lexeme];
-
-                if (!IsCompatible(fieldDeclaredType, initType))
-                    throw new TypeCheckException($" Cannot assign type '{initType}' to field '{field.Name.Lexeme}' of type '{fieldDeclaredType}'.", tsCode: "TS2322");
-            }
         }
         finally
         {
@@ -3057,7 +3063,7 @@ public partial class TypeChecker
         // mutable state, re-register the TypeMap, and recompute the result type returned below.
         // Unlike a class declaration, a class expression publishes nothing to the outer environment —
         // its resolved type flows out solely through the return value and the TypeMap (#793).
-        if (anyInferredMethodReturnResolved)
+        if (anyInferredMethodReturnResolved || anyInferredFieldTypeResolved)
         {
             mutableClass.ResetFrozenCache();
             if (classTypeParams != null && classTypeParams.Count > 0)

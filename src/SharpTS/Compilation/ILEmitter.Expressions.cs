@@ -41,6 +41,11 @@ public partial class ILEmitter
     protected override void EmitVariable(Expr.Variable v)
     {
         var name = v.Name.Lexeme;
+        if (_ctx.HasLoopBodyBindingAccess(name))
+        {
+            SetStackType(_resolver.TryLoadVariable(name)!.Value);
+            return;
+        }
 
         if (TryEmitEnumInitializerMember(name))
             return;
@@ -104,6 +109,8 @@ public partial class ILEmitter
 
         // CommonJS: bare `exports` resolves to the current module's $exports static field.
         if (TryEmitCjsVariable(name)) return;
+
+        if (TryEmitExternalClassValue(v)) return;
 
         if (TryEmitWorkerGlobal(name)) return;
 
@@ -401,6 +408,15 @@ public partial class ILEmitter
 
     protected override void EmitAssign(Expr.Assign a)
     {
+        if (_ctx.HasLoopBodyBindingAccess(a.Name.Lexeme))
+        {
+            EmitExpression(a.Value);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Dup);
+            _resolver.TryStoreVariable(a.Name.Lexeme);
+            SetStackUnknown();
+            return;
+        }
         // CommonJS: `exports = X` → stsfld $exports (mirrors TryEmitCjsSet for module.exports).
         // Must run before EmitExpression(a.Value) so we can own the box+dup+stsfld sequence
         // cleanly — otherwise the generic "Unknown target" fallback at the bottom of this method
@@ -1007,95 +1023,7 @@ public partial class ILEmitter
             return;
         }
 
-        // Detect property access tag (obj.method`...`) for this binding
-        bool hasThisBinding = ttl.Tag is Expr.Get or Expr.GetIndex;
-        LocalBuilder? receiverLocal = null;
-
-        // 1. Emit the tag function reference (and receiver for property access tags)
-        if (hasThisBinding)
-        {
-            var receiver = ttl.Tag is Expr.Get g ? g.Object : ((Expr.GetIndex)ttl.Tag).Object;
-            // Emit and save the receiver object
-            EmitExpression(receiver);
-            EnsureBoxed();
-            receiverLocal = _ctx.ILBuilder.DeclareLocal(_ctx.Types.Object);
-            IL.Emit(OpCodes.Stloc, receiverLocal);
-            // Get the method: GetProperty(obj, name) — handles all object types including dictionaries
-            IL.Emit(OpCodes.Ldloc, receiverLocal);
-            if (ttl.Tag is Expr.Get property)
-            {
-                IL.Emit(OpCodes.Ldstr, property.Name.Lexeme);
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.ObjectRead.Property);
-            }
-            else
-            {
-                var index = ((Expr.GetIndex)ttl.Tag).Index;
-                EmitExpression(index);
-                EmitBoxIfNeeded(index);
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.ObjectRead.Index);
-            }
-            // Push thisArg (receiver) for WithThis call
-            IL.Emit(OpCodes.Ldloc, receiverLocal);
-        }
-        else
-        {
-            EmitExpression(ttl.Tag);
-            EmitBoxIfNeeded(ttl.Tag);
-        }
-
-        // 2. Create cooked strings array (object?[] to allow null for invalid escapes)
-        IL.Emit(OpCodes.Ldc_I4, ttl.CookedStrings.Count);
-        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
-        for (int i = 0; i < ttl.CookedStrings.Count; i++)
-        {
-            IL.Emit(OpCodes.Dup);
-            IL.Emit(OpCodes.Ldc_I4, i);
-            if (ttl.CookedStrings[i] != null)
-            {
-                IL.Emit(OpCodes.Ldstr, ttl.CookedStrings[i]!);
-            }
-            else
-            {
-                IL.Emit(OpCodes.Ldnull); // null for invalid escape sequences
-            }
-            IL.Emit(OpCodes.Stelem_Ref);
-        }
-
-        // 3. Create raw strings array
-        IL.Emit(OpCodes.Ldc_I4, ttl.RawStrings.Count);
-        IL.Emit(OpCodes.Newarr, _ctx.Types.String);
-        for (int i = 0; i < ttl.RawStrings.Count; i++)
-        {
-            IL.Emit(OpCodes.Dup);
-            IL.Emit(OpCodes.Ldc_I4, i);
-            IL.Emit(OpCodes.Ldstr, ttl.RawStrings[i]);
-            IL.Emit(OpCodes.Stelem_Ref);
-        }
-
-        // 4. Create expressions array
-        IL.Emit(OpCodes.Ldc_I4, ttl.Expressions.Count);
-        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
-        for (int i = 0; i < ttl.Expressions.Count; i++)
-        {
-            IL.Emit(OpCodes.Dup);
-            IL.Emit(OpCodes.Ldc_I4, i);
-            EmitExpression(ttl.Expressions[i]);
-            EmitBoxIfNeeded(ttl.Expressions[i]);
-            IL.Emit(OpCodes.Stelem_Ref);
-        }
-
-        // 5. Call appropriate runtime helper
-        if (hasThisBinding)
-        {
-            // Stack: tag, thisArg, cooked, raw, exprs
-            IL.Emit(OpCodes.Call, _ctx.Runtime!.Templates.InvokeWithThis);
-        }
-        else
-        {
-            // Stack: tag, cooked, raw, exprs
-            IL.Emit(OpCodes.Call, _ctx.Runtime!.Templates.Invoke);
-        }
-        SetStackUnknown();
+        base.EmitTaggedTemplateLiteral(ttl);
     }
 
     /// <summary>

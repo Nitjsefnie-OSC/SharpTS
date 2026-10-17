@@ -447,15 +447,20 @@ public partial class TypeChecker
         }
     }
 
-    private static void PublishAccessorReadAccess(
+    private void PublishAccessorReadAccess(
         TypeInfo.MutableClass mutableClass, Stmt.Accessor accessor, string name)
     {
-        if (accessor.IsStatic)
-            mutableClass.StaticFieldAccess[name] = accessor.Access;
-        else if (accessor.Kind.Type == TokenType.GET || !mutableClass.Getters.ContainsKey(name))
+        var key = (accessor.IsStatic, name);
+        if (accessor.Kind.Type == TokenType.SET)
+            mutableClass.AccessorSetterAccess[key] = accessor.Access;
+        else
+            mutableClass.AccessorSetterAccess.TryAdd(key, null);
+
+        var getters = accessor.IsStatic ? mutableClass.StaticGetters : mutableClass.Getters;
+        if (accessor.Kind.Type == TokenType.GET || !getters.ContainsKey(name))
             // A paired setter's visibility does not restrict reads through a
             // public getter, regardless of the declarations' source order.
-            mutableClass.FieldAccess[name] = accessor.Access;
+            (accessor.IsStatic ? mutableClass.StaticFieldAccess : mutableClass.FieldAccess)[name] = accessor.Access;
     }
 
     // Resolves auto-accessors in the active class environment, mutating signatures before the caller freezes them.
@@ -625,7 +630,7 @@ public partial class TypeChecker
             mutableClass.Superclass = superclass;
             _newTargetSourceTypes[classStmt] = mutableClass;
             mutableClass.IsAbstract = classStmt.IsAbstract;
-            RegisterSourceClassMembers(classStmt, mutableClass.DeclarationId);
+            RegisterSourceClassMembers(classStmt, mutableClass);
             MarkEditorBodyEntered(classStmt);
             classTypeEnv.Define(classStmt.Name.Lexeme, mutableClass);
             BindEditorClassSelf(classStmt, classTypeEnv, mutableClass);
@@ -646,12 +651,18 @@ public partial class TypeChecker
 
             TypeInfo.Class classTypeForBody = PublishInitialClassType(classStmt, mutableClass, classTypeParams);
 
+            bool anyInferredFieldTypeResolved = CheckClassFieldInitializers(
+                classStmt, classStmt.Fields, mutableClass, classTypeEnv, classTypeParams);
+            if (anyInferredFieldTypeResolved)
+            {
+                classTypeForBody = PublishInitialClassType(classStmt, mutableClass, classTypeParams);
+                _compatibilityCache = null;
+                _identityCompatibilityCache = null;
+            }
+
             ValidateDeclaredClassInterfaces(classStmt, classTypeForBody, classTypeParams);
 
             ValidateDeclaredClassMembers(classStmt, classTypeForBody, classTypeParams, classTypeEnv);
-
-            bool anyInferredFieldTypeResolved = CheckClassStaticFieldInitializers(
-                classStmt, classTypeForBody, mutableClass);
 
             CheckClassAutoAccessorInitializers(classStmt, classTypeForBody);
 
@@ -673,7 +684,6 @@ public partial class TypeChecker
 
             try
             {
-                CheckClassInstanceFieldInitializers(classStmt, classTypeForBody);
                 anyInferredMethodReturnResolved = CheckClassMethodBodies(
                     classStmt, classTypeForBody, mutableClass, prevEnv, recoverComputedSymbolDiagnostics);
                 anyInferredMethodReturnResolved |= CheckClassAccessorBodies(
@@ -702,28 +712,6 @@ public partial class TypeChecker
         finally
         {
             _recoveryMode = previousRecoveryMode;
-        }
-    }
-
-    // Called in the caller-owned instance environment. Each body stage restores its
-    // per-function state even on errors; the declaration owns class scope and recovery.
-    private void CheckClassInstanceFieldInitializers(Stmt.Class classStmt, TypeInfo.Class classTypeForBody)
-    {
-        // Check instance field initializers (e.g. `x = 5`, `r = () => { ... }`) within the
-        // instance context so `this` and the class's type parameters resolve inside them. Static
-        // fields are checked separately at class scope. Inferred/Any field types skip the
-        // assignability check but the initializer is still type-checked.
-        foreach (var field in classStmt.Fields)
-        {
-            if (field.IsStatic || field.Initializer == null) continue;
-            TypeInfo initType = CheckExpr(field.Initializer);
-            var declaredTypes = field.IsPrivate ? classTypeForBody.PrivateFieldTypes : classTypeForBody.FieldTypes;
-            if (declaredTypes.TryGetValue(GetFieldMemberName(field), out var fieldDeclaredType)
-                && fieldDeclaredType is not (TypeInfo.Inferred or TypeInfo.Any)
-                && !IsCompatible(fieldDeclaredType, initType))
-            {
-                throw new TypeCheckException($" Cannot assign type '{initType}' to field '{field.Name.Lexeme}' of type '{fieldDeclaredType}'.", tsCode: "TS2322");
-            }
         }
     }
 
@@ -1012,6 +1000,9 @@ public partial class TypeChecker
                     accessorReturnType = accessorName != null
                         ? getters[accessorName]
                         : (accessor.ReturnType != null ? ResolveAnnotation(accessor.ReturnType, accessor.ReturnTypeNode, accessor, EditorAnnotationSlot.Return)! : TypeInfo.Any.Shared);
+                    if (_fieldStageInferredGetters.TryGetValue(mutableClass, out var earlyGetters) &&
+                        earlyGetters.Remove(accessor))
+                        accessorReturnType = TypeInfo.Inferred.Shared;
                 }
                 else
                 {
@@ -1033,6 +1024,7 @@ public partial class TypeChecker
                 // Save and set context - accessor bodies are isolated from outer loop/switch/label context
                 TypeEnvironment previousEnvAcc = _environment;
                 TypeInfo? previousReturnAcc = _currentFunctionReturnType;
+                TypeInfo? previousThisTypeAcc = _currentFunctionThisType;
                 var previousInferredAcc = _inferredReturnTypes;
                 int previousLoopDepthAcc = _loopDepth;
                 int previousSwitchDepthAcc = _switchDepth;
@@ -1042,6 +1034,7 @@ public partial class TypeChecker
                 _environment = accessorEnv;
                 MarkEditorBodyEntered(accessor);
                 _currentFunctionReturnType = accessorReturnType;
+                _currentFunctionThisType = null;
                 bool inferringGetter = accessor.Kind.Type == TokenType.GET
                     && accessorReturnType is TypeInfo.Inferred;
                 if (inferringGetter)
@@ -1095,6 +1088,7 @@ public partial class TypeChecker
                     PopNarrowingScope();
                     _environment = previousEnvAcc;
                     _currentFunctionReturnType = previousReturnAcc;
+                    _currentFunctionThisType = previousThisTypeAcc;
                     _inferredReturnTypes = previousInferredAcc;
                     _loopDepth = previousLoopDepthAcc;
                     _switchDepth = previousSwitchDepthAcc;
@@ -1135,6 +1129,9 @@ public partial class TypeChecker
 
         TypeInfo superType = CheckExpr(classStmt.SuperclassExpr);
         superType = ProjectDefaultLibraryErrorHeritage(classStmt.SuperclassExpr, superType);
+        if (ProjectDefaultLibraryPromiseHeritage(classStmt.SuperclassExpr, superType,
+                classStmt.SuperclassTypeArgs, classStmt.SuperclassTypeArgNodes) is { } promiseBase)
+            return promiseBase;
         if (IsDefaultLibraryArrayHeritage(classStmt.SuperclassExpr, superType))
         {
             // The runtime's Array subclass bridge is also used by the single-file API.
@@ -1323,7 +1320,7 @@ public partial class TypeChecker
             Superclass = superclass,
             IsAbstract = classStmt.IsAbstract
         };
-        RegisterSourceClassMembers(classStmt, mutableClass.DeclarationId);
+        RegisterSourceClassMembers(classStmt, mutableClass);
         classTypeEnv.Define(classStmt.Name.Lexeme, mutableClass);
         BindEditorClassSelf(classStmt, classTypeEnv, mutableClass);
         classTypeEnv.Define("this", new TypeInfo.Instance(mutableClass));

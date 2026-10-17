@@ -272,51 +272,102 @@ public partial class TypeChecker
         }
     }
 
-    // Checks static initializers in the outer declaration environment. Returns whether
-    // mutableClass acquired inferred fields and therefore needs republishing.
-    private bool CheckClassStaticFieldInitializers(
-        Stmt.Class classStmt,
-        TypeInfo.Class classTypeForBody,
-        TypeInfo.MutableClass mutableClass)
+    // Check each initializer once before publishing the class used by member bodies.
+    // Instance initializers are hypothetical here; static initializers retain outer flow.
+    private bool CheckClassFieldInitializers(
+        object sourceOwner,
+        IReadOnlyList<Stmt.Field> fields,
+        TypeInfo.MutableClass mutableClass,
+        TypeEnvironment instanceEnvironment,
+        List<TypeInfo.TypeParameter>? classTypeParameters)
     {
         bool anyInferredFieldTypeResolved = false;
-        var previousClass = _currentClass;
-        _privateNameEnclosingClasses.Push(previousClass);
-        _currentClass = classTypeForBody;
+        TypeEnvironment outerEnvironment = _environment;
+        TypeEnvironment staticEnvironment = new(outerEnvironment);
+        RegisterEditorScope(sourceOwner, staticEnvironment, EditorScopeKind.Class, EditorSyntaxRole.Whole);
+        string? selfName = sourceOwner switch
+        {
+            Stmt.Class declaration => declaration.Name.Lexeme,
+            Expr.ClassExpr expression => expression.Name?.Lexeme,
+            _ => null
+        };
+
+        var getterScope = CreateFieldGetterScope(sourceOwner, fields, mutableClass, instanceEnvironment);
+        _fieldGetterScope = getterScope;
         try
         {
-
-            // Static private names are visible before their fields are installed.
-            foreach (var field in classStmt.Fields)
+            foreach (var field in fields)
             {
-                if (field.IsStatic && field.Initializer != null)
+                if (field.Initializer == null || field.IsDeclare) continue;
+
+                TypeInfo.Class currentClass = mutableClass.Freeze();
+                RefreshSelfBindings(currentClass);
+
+                TypeEnvironment previousEnvironment = _environment;
+                TypeInfo.Class? previousClass = _currentClass;
+                TypeInfo? previousThisType = _currentFunctionThisType;
+                bool previousStaticMethod = _inStaticMethod;
+                bool previousStaticBlock = _inStaticBlock;
+                bool previousGlobalThis = _currentArrowCapturesScriptGlobalThis;
+                TypeEnvironment? previousFlowBoundary = _deferredInitializerFlowBoundary;
+                var previousAssignmentState = field.IsStatic ? null : SnapshotDefiniteAssignmentState();
+                _environment = field.IsStatic ? staticEnvironment : instanceEnvironment;
+                _currentClass = currentClass;
+                // A mutable instance self lets callbacks inferred here observe the completed
+                // class after later fields and method returns have been published.
+                _currentFunctionThisType = field.IsStatic
+                    ? currentClass : new TypeInfo.Instance(mutableClass);
+                _inStaticMethod = field.IsStatic;
+                _inStaticBlock = false;
+                _currentArrowCapturesScriptGlobalThis = false;
+                if (!field.IsStatic) _deferredInitializerFlowBoundary = outerEnvironment;
+                _privateNameEnclosingClasses.Push(previousClass);
+                if (!field.IsStatic) PushEmptyNarrowingScope();
+                try
                 {
-                    TypeInfo initType = CheckExpr(field.Initializer);
-                    TypeInfo staticFieldDeclaredType = field.IsPrivate
-                        ? classTypeForBody.StaticPrivateFieldTypes[GetFieldMemberName(field)]
-                        : classTypeForBody.StaticProperties[GetFieldMemberName(field)];
-                    if (field.TypeAnnotation is null)
+                    anyInferredFieldTypeResolved |= CheckAndInferClassFieldInitializer(field, mutableClass);
+                    getterScope.PendingFields.Remove((field.IsStatic, GetFieldMemberName(field)));
+                }
+                finally
+                {
+                    if (!field.IsStatic)
                     {
-                        TypeInfo inferredFieldType = WidenLiteralType(initType);
-                        if (field.IsPrivate)
-                            mutableClass.StaticPrivateFields[GetFieldMemberName(field)] = inferredFieldType;
-                        else
-                            mutableClass.StaticProperties[GetFieldMemberName(field)] = inferredFieldType;
-                        anyInferredFieldTypeResolved = true;
-                        continue;
+                        PopNarrowingScope();
+                        RestoreDefiniteAssignmentState(previousAssignmentState);
                     }
-                    if (!IsCompatible(staticFieldDeclaredType, initType))
-                    {
-                        throw new TypeCheckException($" Cannot assign type '{initType}' to static property '{field.Name.Lexeme}' of type '{staticFieldDeclaredType}'.", tsCode: "TS2322");
-                    }
+                    _privateNameEnclosingClasses.Pop();
+                    _environment = previousEnvironment;
+                    _currentClass = previousClass;
+                    _currentFunctionThisType = previousThisType;
+                    _inStaticMethod = previousStaticMethod;
+                    _inStaticBlock = previousStaticBlock;
+                    _currentArrowCapturesScriptGlobalThis = previousGlobalThis;
+                    _deferredInitializerFlowBoundary = previousFlowBoundary;
                 }
             }
+            RefreshSelfBindings(mutableClass.Freeze());
             return anyInferredFieldTypeResolved;
         }
         finally
         {
-            _privateNameEnclosingClasses.Pop();
-            _currentClass = previousClass;
+            _fieldGetterScope = getterScope.Previous;
+        }
+
+        void RefreshSelfBindings(TypeInfo.Class currentClass)
+        {
+            instanceEnvironment.Define("this", new TypeInfo.Instance(mutableClass));
+            staticEnvironment.Define("this", currentClass);
+            if (mutableClass.Superclass != null)
+                instanceEnvironment.Define("super", mutableClass.Superclass);
+            if (selfName == null) return;
+            TypeInfo constructorType = classTypeParameters is { Count: > 0 }
+                ? mutableClass.FreezeGeneric(classTypeParameters) : currentClass;
+            instanceEnvironment.Define(selfName, constructorType);
+            instanceEnvironment.DefineType(selfName, constructorType);
+            staticEnvironment.Define(selfName, constructorType);
+            staticEnvironment.DefineType(selfName, constructorType);
+            BindEditorClassSelf(sourceOwner, instanceEnvironment, constructorType);
+            BindEditorClassSelf(sourceOwner, staticEnvironment, constructorType);
         }
     }
 

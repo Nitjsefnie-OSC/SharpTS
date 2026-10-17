@@ -662,7 +662,7 @@ public partial class ILCompiler
     private void AnalyzeClosuresAndPromotions(List<Stmt> statements, IReadOnlyList<ParsedModule>? modules = null)
     {
         PrepareRepeatingClassDeclarations(statements);
-        Phase2_AnalyzeClosures(statements);
+        Phase2_AnalyzeClosures(statements, modules);
         _closures.ConstArrowBindings = ConstArrowBindingAnalyzer.Collect(statements);
         StableMapIterationAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
         StableCustomIteratorAnalyzer.Analyze(
@@ -750,10 +750,27 @@ public partial class ILCompiler
     /// <summary>
     /// Phase 2: Analyze closures to detect captured variables.
     /// </summary>
-    private void Phase2_AnalyzeClosures(List<Stmt> statements)
+    private void Phase2_AnalyzeClosures(List<Stmt> statements, IReadOnlyList<ParsedModule>? modules = null)
     {
         _closures.Analyzer = new ClosureAnalyzer(_runtimeClassDeclarations);
-        _closures.Analyzer.Analyze(statements);
+        Dictionary<Stmt, IReadOnlySet<string>>? moduleClrImports = null;
+        if (modules != null)
+        {
+            foreach (var module in modules)
+            {
+                var names = module.Statements.OfType<Stmt.Import>()
+                    .Where(import => !import.IsTypeOnly && DotNetImports.IsDotNetSpecifier(import.ModulePath))
+                    .SelectMany(import => import.NamedImports ?? [])
+                    .Where(specifier => !specifier.IsTypeOnly)
+                    .Select(specifier => specifier.LocalName?.Lexeme ?? specifier.Imported.Lexeme)
+                    .ToHashSet(StringComparer.Ordinal);
+                if (names.Count == 0) continue;
+                moduleClrImports ??= new(ReferenceEqualityComparer.Instance);
+                foreach (var statement in module.Statements)
+                    moduleClrImports[statement] = names;
+            }
+        }
+        _closures.Analyzer.Analyze(statements, _typeMap, moduleClrImports);
     }
 
     /// <summary>
@@ -890,11 +907,10 @@ public partial class ILCompiler
     /// </summary>
     private void Phase4_DefineDeclarations(List<Stmt> statements)
     {
-        // A declaration can extend a class expression bound by an earlier top-level
-        // variable (`var Base = class {}; class Derived extends Base {}`).  CLR base
-        // types must be fixed while Derived's TypeBuilder is defined, before the normal
-        // phase-5 class-expression pass, so predefine just those heritage types now.
-        PredefineTopLevelClassExpressionTypes(statements);
+        // Register every expression identity and top-level binding before resolving
+        // checked heritage, but choose CLR bases in source order so declarations and
+        // expressions can both inherit an earlier generic parent's existing builder.
+        RegisterTopLevelClassExpressions(statements);
 
         // Define all declarations. Delegates to the shared per-statement helper so
         // single-file (script) mode unwraps `export`-wrapped declarations exactly like
@@ -902,6 +918,8 @@ public partial class ILCompiler
         // MethodBuilder and call sites can't resolve `f` (issue #417).
         foreach (var stmt in statements)
         {
+            if (GetTopLevelClassExpressionInitializer(stmt) is { } classExpr)
+                DefineClassExpression(classExpr);
             DefineDeclarationFromStatement(stmt);
         }
 
@@ -927,28 +945,27 @@ public partial class ILCompiler
 
     }
 
-    private void PredefineTopLevelClassExpressionTypes(IEnumerable<Stmt> statements)
+    private void RegisterTopLevelClassExpressions(IEnumerable<Stmt> statements)
     {
         var collector = new ClassExpressionTemplateCollector(CollectClassExpression);
         foreach (var statement in statements) collector.Visit(statement);
         foreach (var stmt in statements)
         {
-            Expr.ClassExpr? classExpr = stmt switch
-            {
-                Stmt.Var { Initializer: Expr.ClassExpr ce } => ce,
-                Stmt.Const { Initializer: Expr.ClassExpr ce } => ce,
-                _ => null
-            };
-            if (classExpr == null)
+            if (GetTopLevelClassExpressionInitializer(stmt) is not { } classExpr)
                 continue;
 
             string bindingName = stmt is Stmt.Var v ? v.Name.Lexeme : ((Stmt.Const)stmt).Name.Lexeme;
             _classExprs.VarToClassExpr[bindingName] = classExpr;
             CollectClassExpression(classExpr);
-            if (!_classExprs.Builders.ContainsKey(classExpr))
-                DefineClassExpression(classExpr);
         }
     }
+
+    private static Expr.ClassExpr? GetTopLevelClassExpressionInitializer(Stmt statement) => statement switch
+    {
+        Stmt.Var { Initializer: Expr.ClassExpr expression } => expression,
+        Stmt.Const { Initializer: Expr.ClassExpr expression } => expression,
+        _ => null
+    };
 
     private sealed class ClassExpressionTemplateCollector(Action<Expr.ClassExpr> collect) : Parsing.Visitors.AstVisitorBase
     {
@@ -993,6 +1010,7 @@ public partial class ILCompiler
         EmitTopLevelAsyncArrowBodies(); // Emit MoveNext for top-level async arrows
         EmitGeneratorStateMachineBodies();
         EmitAsyncGeneratorStateMachineBodies();
+        EmitGeneratorExpressionBodies();
     }
 
     /// <summary>
@@ -1617,6 +1635,7 @@ public partial class ILCompiler
         EmitTopLevelAsyncArrowBodies(); // Emit MoveNext for top-level async arrows
         EmitGeneratorStateMachineBodies();
         EmitAsyncGeneratorStateMachineBodies();
+        EmitGeneratorExpressionBodies();
     }
 
     /// <summary>

@@ -156,7 +156,7 @@ internal static class GlobalFunctionHandlers
         Interpreter interpreter)
     {
         if (arguments.Count < 1)
-            throw new InterpreterException($"{BuiltInNames.ParseInt}() requires at least one argument.");
+            return RuntimeValue.FromNumber(double.NaN);
 
         var strRV = await evaluateArg(arguments[0]);
         var str = strRV.IsString
@@ -178,7 +178,7 @@ internal static class GlobalFunctionHandlers
         Interpreter interpreter)
     {
         if (arguments.Count < 1)
-            throw new InterpreterException($"{BuiltInNames.ParseFloat}() requires at least one argument.");
+            return RuntimeValue.FromNumber(double.NaN);
 
         var strRV = await evaluateArg(arguments[0]);
         var str = strRV.ToObject()?.ToString() ?? "";

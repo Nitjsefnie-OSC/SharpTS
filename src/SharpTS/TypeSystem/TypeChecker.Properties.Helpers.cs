@@ -138,9 +138,15 @@ public partial class TypeChecker
             }
             if (staticProps != null && staticProps.TryGetValue(memberName.Lexeme, out var staticPropType))
             {
-                EnforceStaticMemberAccess(current, memberName);
+                if (TryGetAccessorSetterAccess(current, isStatic: true, memberName.Lexeme, out _))
+                    EnforceAccessorAccess(current, classType, memberName, isStatic: true, isWrite: false);
+                else
+                {
+                    EnforceStaticMemberAccess(current, memberName);
+                    ObservePendingGetterFieldRead(current, isStatic: true, memberName.Lexeme);
+                }
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Static);
-                return staticPropType;
+                return ResolveFieldStageGetter(current, isStatic: true, memberName.Lexeme, staticPropType);
             }
             current = GetSuperclass(current);
         }
@@ -277,6 +283,8 @@ public partial class TypeChecker
                     : member.Value;
             }
         }
+        if (ResolveApparentFunctionMember(itf, memberName.Lexeme) is { } functionMember)
+            return functionMember;
         if (ResolveObjectPrototypeMember(memberName.Lexeme) is { } protoMember)
         {
             return protoMember;
@@ -309,6 +317,8 @@ public partial class TypeChecker
                 ? CreateUnion(fieldType, TypeInfo.Undefined.Shared)
                 : fieldType;
         }
+        if (ResolveApparentFunctionMember(record, memberName.Lexeme) is { } functionMember)
+            return functionMember;
         if (record.StringIndexType != null)
         {
             return WithUncheckedUndefined(record.StringIndexType);
@@ -327,6 +337,14 @@ public partial class TypeChecker
     private TypeInfo CheckGetOnInstance(TypeInfo.Instance instance, Token memberName)
     {
         string memberNameStr = memberName.Lexeme;
+
+        if (TrySelectInstanceAccessor(instance, memberNameStr, out var accessor))
+        {
+            EnforceAccessorAccess(accessor.DeclaringType, instance.ResolvedClassType,
+                memberName, isStatic: false, isWrite: false);
+            ObserveSourceMemberSelection(memberName, accessor.DeclaringType, MemberFacet.Instance);
+            return SelectedInstanceAccessorReadType(accessor, memberNameStr);
+        }
 
         // Handle instantiated generic class (e.g., Box<number>)
         if (instance.ClassType is TypeInfo.InstantiatedGeneric ig &&
@@ -376,6 +394,9 @@ public partial class TypeChecker
         for (int i = 0; i < gc.TypeParams.Count; i++)
             subs[gc.TypeParams[i].Name] = typeArgs[i];
 
+        if (TryGetDefaultLibraryPromiseType(gc, out _))
+            return CheckGetOnRegularInstance(new TypeInfo.Class(gc.Core), memberToken, subs);
+
         // Check for getter first
         if (gc.Getters?.TryGetValue(memberName, out var getterType) == true)
         {
@@ -386,6 +407,7 @@ public partial class TypeChecker
         // Check for field
         if (gc.FieldTypes?.TryGetValue(memberName, out var fieldType) == true)
         {
+            ObservePendingGetterFieldRead(gc, isStatic: false, memberName);
             ObserveSourceMemberSelection(memberToken, gc, MemberFacet.Instance);
             return Substitute(fieldType, subs);
         }
@@ -401,8 +423,10 @@ public partial class TypeChecker
         if (gc.Superclass != null)
         {
             TypeInfo? currentSuper = gc.Superclass;
+            var fieldSubstitutions = subs;
             while (currentSuper != null)
             {
+                fieldSubstitutions = ComposeInheritedFieldReadSubstitutions(currentSuper, fieldSubstitutions);
                 var superMethods = GetMethods(currentSuper);
                 var superFields = GetFieldTypes(currentSuper);
                 if (superMethods != null && superMethods.TryGetValue(memberName, out var superMethod))
@@ -412,14 +436,26 @@ public partial class TypeChecker
                 }
                 if (superFields != null && superFields.TryGetValue(memberName, out var superField))
                 {
+                    ObservePendingGetterFieldRead(currentSuper, isStatic: false, memberName);
                     ObserveSourceMemberSelection(memberToken, currentSuper, MemberFacet.Instance);
-                    return superField;
+                    return SubstituteConstructorMember(superField, fieldSubstitutions);
                 }
                 currentSuper = GetSuperclass(currentSuper);
             }
         }
 
         return TypeInfo.Any.Shared;
+    }
+
+    private Dictionary<string, TypeInfo> ComposeInheritedFieldReadSubstitutions(
+        TypeInfo current, Dictionary<string, TypeInfo> substitutions)
+    {
+        if (current is not TypeInfo.InstantiatedGeneric
+            { GenericDefinition: TypeInfo.GenericClass generic } instantiated)
+            return substitutions;
+        var arguments = instantiated.TypeArguments
+            .Select(argument => SubstituteConstructorMember(argument, substitutions)).ToList();
+        return GenericClassSubs(generic, arguments);
     }
 
     /// <summary>
@@ -454,11 +490,18 @@ public partial class TypeChecker
     /// <summary>
     /// Type checks member access on a regular (non-generic) class instance.
     /// </summary>
-    private TypeInfo CheckGetOnRegularInstance(TypeInfo.Class startClass, Token memberName)
+    private TypeInfo CheckGetOnRegularInstance(
+        TypeInfo.Class startClass, Token memberName,
+        Dictionary<string, TypeInfo>? promiseSubstitutions = null)
     {
         string memberNameStr = memberName.Lexeme;
         TypeInfo? current = startClass;
-        Dictionary<string, TypeInfo> substitutions = [];
+        bool promiseHeritage = TryGetDefaultLibraryPromiseType(startClass, out _);
+        Dictionary<string, TypeInfo> substitutions = promiseSubstitutions ?? [];
+        Dictionary<string, TypeInfo> fieldSubstitutions = [];
+        TypeInfo Sub(TypeInfo type) => promiseHeritage
+            ? SubstituteConstructorMember(type, substitutions)
+            : substitutions.Count > 0 ? Substitute(type, substitutions) : type;
 
         while (current != null)
         {
@@ -472,13 +515,19 @@ public partial class TypeChecker
                 return builtInMember;
             }
 
+            if (!promiseHeritage)
+                fieldSubstitutions = ComposeInheritedFieldReadSubstitutions(current, fieldSubstitutions);
+
             // If current is an InstantiatedGeneric, build/extend the substitution map
             if (current is TypeInfo.InstantiatedGeneric igCurrent &&
                 igCurrent.GenericDefinition is TypeInfo.GenericClass gcCurrent)
             {
-                for (int i = 0; i < gcCurrent.TypeParams.Count && i < igCurrent.TypeArguments.Count; i++)
+                if (promiseHeritage)
+                    substitutions = ComposePromiseHeritageSubstitutions(current, substitutions);
+                else
                 {
-                    substitutions[gcCurrent.TypeParams[i].Name] = igCurrent.TypeArguments[i];
+                    for (int i = 0; i < gcCurrent.TypeParams.Count && i < igCurrent.TypeArguments.Count; i++)
+                        substitutions[gcCurrent.TypeParams[i].Name] = igCurrent.TypeArguments[i];
                 }
             }
 
@@ -487,7 +536,7 @@ public partial class TypeChecker
             if (getters != null && getters.TryGetValue(memberNameStr, out var getterType))
             {
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Instance);
-                return substitutions.Count > 0 ? Substitute(getterType, substitutions) : getterType;
+                return Sub(getterType);
             }
 
             // Check access modifier
@@ -514,15 +563,16 @@ public partial class TypeChecker
             if (methods != null && methods.TryGetValue(memberNameStr, out var methodType))
             {
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Instance);
-                return substitutions.Count > 0 ? Substitute(methodType, substitutions) : methodType;
+                return Sub(methodType);
             }
 
             // Check for field
             var fieldTypes = GetFieldTypes(current);
             if (fieldTypes != null && fieldTypes.TryGetValue(memberNameStr, out var fieldType))
             {
+                ObservePendingGetterFieldRead(current, isStatic: false, memberNameStr);
                 ObserveSourceMemberSelection(memberName, current, MemberFacet.Instance);
-                return substitutions.Count > 0 ? Substitute(fieldType, substitutions) : fieldType;
+                return promiseHeritage ? Sub(fieldType) : SubstituteConstructorMember(fieldType, fieldSubstitutions);
             }
 
             current = GetSuperclass(current);

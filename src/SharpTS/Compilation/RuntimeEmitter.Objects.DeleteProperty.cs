@@ -628,6 +628,30 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Castclass, _types.Type);
             il.Emit(OpCodes.Stloc, typeDelLocal);
+            if (_features.UsesUserClasses)
+            {
+                // The complete own descriptor above has already enforced
+                // configurability. User static fields are ordinary properties,
+                // even though their backing slot remains a reflected CLR field.
+                var nativeTypeDeletion = il.DefineLabel();
+                il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+                il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+                il.Emit(OpCodes.Ldloc, typeDelLocal);
+                il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+                il.Emit(OpCodes.Brfalse, nativeTypeDeletion);
+                // An inherited or previously deleted field is not an own slot.
+                // Deleting it succeeds without changing an ancestor or its ledger.
+                il.Emit(OpCodes.Ldloc, ordinaryDeleteDescriptorLocal);
+                il.Emit(OpCodes.Brfalse, trueLabel);
+                il.Emit(OpCodes.Ldloc, ordinaryDeleteDescriptorLocal);
+                il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+                il.Emit(OpCodes.Brtrue, trueLabel);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Call, inputs.ObjectState.MarkBuiltinDeleted);
+                il.Emit(OpCodes.Br, trueLabel);
+                il.MarkLabel(nativeTypeDeletion);
+            }
             il.Emit(OpCodes.Ldloc, typeDelLocal);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldc_I4, (int)typeDelStaticPub);

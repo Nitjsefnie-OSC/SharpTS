@@ -219,9 +219,39 @@ public partial class RuntimeEmitter
         var metadata = il.DeclareLocal(functionValues.Type);
         var missing = il.DefineLabel();
 
-        // FindMethod has already closed generic declaring types. Preserve both
-        // that identity and the evaluated symbol key without computing metadata.
+        // CLR instantiations of one source class share its JavaScript methods.
+        // Canonicalize only their cache identity: invocation still needs the
+        // valid closed MethodInfo returned by FindMethod. External CLR types
+        // retain their separate constructed-generic method identities.
+        var keyMethod = il.DeclareLocal(_types.MethodInfo);
+        var declaringType = il.DeclareLocal(_types.Type);
+        var haveKeyMethod = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, keyMethod);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(MemberInfo), "DeclaringType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, declaringType);
+        il.Emit(OpCodes.Ldloc, declaringType);
+        il.Emit(OpCodes.Brfalse, haveKeyMethod);
+        il.Emit(OpCodes.Ldloc, declaringType);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsConstructedGenericType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, haveKeyMethod);
+        il.Emit(OpCodes.Ldloc, declaringType);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(MemberInfo), "Module")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldtoken, symbolAccessors.GetOrCreateStaticMethod.DeclaringType!);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(MemberInfo), "Module")!.GetGetMethod()!);
+        il.Emit(OpCodes.Bne_Un, haveKeyMethod);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.MethodBase, "MethodHandle")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, declaringType);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "TypeHandle")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.MethodBaseGetMethodFromHandleWithType);
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Stloc, keyMethod);
+        il.MarkLabel(haveKeyMethod);
+        il.Emit(OpCodes.Ldloc, keyMethod);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Newobj, _types.GetConstructor(keyType, _types.MethodInfo, _types.Object));
         il.Emit(OpCodes.Stloc, key);
@@ -348,9 +378,6 @@ public partial class RuntimeEmitter
         var isConstructedGeneric = _types.GetProperty(_types.Type, "IsConstructedGenericType")!.GetGetMethod()!;
         var isGenericType = _types.GetProperty(_types.Type, "IsGenericType")!.GetGetMethod()!;
         var getGenericTypeDef = _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition");
-        var getGenericArgs = _types.GetMethodNoParams(_types.Type, "GetGenericArguments");
-        var makeGenericType = _types.GetMethod(_types.Type, "MakeGenericType", _types.MakeArrayType(_types.Type));
-        var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
         var getTypeHandle = _types.GetProperty(_types.Type, "TypeHandle").GetGetMethod()!;
         var getMethodHandle = _types.GetProperty(_types.MethodBase, "MethodHandle").GetGetMethod()!;
         var getDeclaringType = _types.GetProperty(typeof(System.Reflection.MemberInfo), "DeclaringType").GetGetMethod()!;
@@ -376,60 +403,25 @@ public partial class RuntimeEmitter
         // ---- SymbolClosedOwner(Type owner) ----
         // Open definitions and partially open base types (Base<T> reached from
         // Derived<T>) need a closed owner for initialization and invocation.
-        // Normalize both to their definition before erasing type parameters.
+        // Use the same constraint-compatible closure as ordinary static lookup.
         // Closed/non-generic owners pass through.
         {
             var il = symbolAccessors.ClosedOwner.GetILGenerator();
             var closedOwner = il.DefineLabel();
-            var argsLocal = il.DeclareLocal(_types.MakeArrayType(_types.Type));
-            var iLocal = il.DeclareLocal(_types.Int32);
+            var owner = il.DeclareLocal(_types.Type);
 
             il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Stloc, owner);
+            il.Emit(OpCodes.Ldloc, owner);
             il.Emit(OpCodes.Callvirt, isGenericType);
             il.Emit(OpCodes.Brfalse, closedOwner);
-            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, owner);
             il.Emit(OpCodes.Callvirt, containsGenericParams);
             il.Emit(OpCodes.Brfalse, closedOwner);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Callvirt, getGenericTypeDef);
-            il.Emit(OpCodes.Starg_S, (byte)0);
-
-            // var args = owner.GetGenericArguments();
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Callvirt, getGenericArgs);
-            il.Emit(OpCodes.Stloc, argsLocal);
-
-            // for (i = 0; i < args.Length; i++) args[i] = typeof(object);
-            var loopTop = il.DefineLabel();
-            var loopCheck = il.DefineLabel();
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Stloc, iLocal);
-            il.Emit(OpCodes.Br, loopCheck);
-            il.MarkLabel(loopTop);
-            il.Emit(OpCodes.Ldloc, argsLocal);
-            il.Emit(OpCodes.Ldloc, iLocal);
-            il.Emit(OpCodes.Ldtoken, _types.Object);
-            il.Emit(OpCodes.Call, getTypeFromHandle);
-            il.Emit(OpCodes.Stelem_Ref);
-            il.Emit(OpCodes.Ldloc, iLocal);
-            il.Emit(OpCodes.Ldc_I4_1);
-            il.Emit(OpCodes.Add);
-            il.Emit(OpCodes.Stloc, iLocal);
-            il.MarkLabel(loopCheck);
-            il.Emit(OpCodes.Ldloc, iLocal);
-            il.Emit(OpCodes.Ldloc, argsLocal);
-            il.Emit(OpCodes.Ldlen);
-            il.Emit(OpCodes.Conv_I4);
-            il.Emit(OpCodes.Blt, loopTop);
-
-            // return owner.MakeGenericType(args);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldloc, argsLocal);
-            il.Emit(OpCodes.Callvirt, makeGenericType);
-            il.Emit(OpCodes.Ret);
+            EmitCloseOpenGenericOwner(il, owner);
 
             il.MarkLabel(closedOwner);
-            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, owner);
             il.Emit(OpCodes.Ret);
         }
 

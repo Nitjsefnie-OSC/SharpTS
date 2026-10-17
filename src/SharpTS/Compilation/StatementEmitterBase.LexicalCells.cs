@@ -1,0 +1,204 @@
+using System.Reflection.Emit;
+using SharpTS.Parsing;
+
+namespace SharpTS.Compilation;
+
+public abstract partial class StatementEmitterBase
+{
+    protected sealed record LoopBodyCellScopeEntry(string Name, Token Token, LocalBuilder? Cell, FieldBuilder? Field, FieldBuilder? ShadowField, Token? Declaration, Token? Shadow);
+    private int _lexicalCellCount;
+    protected virtual FieldBuilder? DefineLexicalCellField(string name) => null;
+
+    protected void EnterLoopBodyCellScope(IEnumerable<Stmt> statements, List<LoopBodyCellScopeEntry> prior)
+    {
+        foreach (var (declaration, token) in DirectLexicalDeclarations(statements))
+            EnterLexicalCellBinding(declaration, token, prior);
+    }
+
+    protected void EnterLexicalCellBinding(object declaration, Token token, List<LoopBodyCellScopeEntry> prior)
+    {
+            string name = GetBindingStorageName(declaration, token.Lexeme);
+            bool selected = Ctx.ClosureAnalyzer?.IsLoopBodyCellDeclaration(token) == true;
+            if (!selected && !Ctx.CellBindingLocals.ContainsKey(name)
+                && !Ctx.LoopBodyCellFields.ContainsKey(name)
+                && !Ctx.LoopBodyCellShadows.ContainsKey(name)
+                && Ctx.LoopBodyCellCaptures?.ContainsKey(name) != true)
+                return;
+
+            prior.Add(new(name, token, Ctx.CellBindingLocals.GetValueOrDefault(name), Ctx.LoopBodyCellFields.GetValueOrDefault(name),
+                Ctx.LoopBodyCellShadowFields.GetValueOrDefault(name),
+                Ctx.LoopBodyCellDeclarations.GetValueOrDefault(name),
+                Ctx.LoopBodyCellShadows.GetValueOrDefault(name)));
+            Ctx.CellBindingLocals.Remove(name);
+            Ctx.LoopBodyCellFields.Remove(name);
+            Ctx.LoopBodyCellShadowFields.Remove(name);
+            Ctx.LoopBodyCellDeclarations.Remove(name);
+            Ctx.LoopBodyCellShadows.Remove(name);
+
+            Ctx.LexicalCellStorageNames[token] = name;
+            if (selected)
+            {
+                var field = DefineLexicalCellField($"<>lexicalCell{_lexicalCellCount++}");
+                if (field is not null) IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Sentinels.LexicalUninitializedInstance);
+                IL.Emit(OpCodes.Newobj, Ctx.Types.StrongBoxOfObjectCtor);
+                if (field is not null)
+                {
+                    IL.Emit(OpCodes.Stfld, field);
+                    Ctx.LoopBodyCellFields[name] = field;
+                }
+                else
+                {
+                    var cell = Ctx.Locals.DeclareLocal(name, Ctx.Types.StrongBoxOfObject, token);
+                    IL.Emit(OpCodes.Stloc, cell);
+                    Ctx.CellBindingLocals[name] = cell;
+                }
+                Ctx.LoopBodyCellDeclarations[name] = token;
+            }
+            else
+            {
+                // A plain inner declaration masks the outer box from block entry,
+                // including reads before its textual initialization.
+                var field = DefineLexicalCellField($"<>lexicalShadow{_lexicalCellCount++}");
+                if (field is not null) IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Sentinels.LexicalUninitializedInstance);
+                if (field is not null)
+                {
+                    IL.Emit(OpCodes.Newobj, Ctx.Types.StrongBoxOfObjectCtor);
+                    IL.Emit(OpCodes.Stfld, field);
+                    Ctx.LoopBodyCellShadowFields[name] = field;
+                }
+                else
+                {
+                    var shadow = Ctx.Locals.DeclareLocal(name, Ctx.Types.Object, token);
+                    IL.Emit(OpCodes.Stloc, shadow);
+                }
+                Ctx.LoopBodyCellShadows[name] = token;
+            }
+    }
+
+    protected void ExitLoopBodyCellScope(List<LoopBodyCellScopeEntry> prior)
+    {
+        for (int i = prior.Count - 1; i >= 0; i--)
+        {
+            var entry = prior[i];
+            if (entry.Cell is { } cell) Ctx.CellBindingLocals[entry.Name] = cell;
+            else Ctx.CellBindingLocals.Remove(entry.Name);
+            if (entry.Field is { } field) Ctx.LoopBodyCellFields[entry.Name] = field;
+            else Ctx.LoopBodyCellFields.Remove(entry.Name);
+            if (entry.ShadowField is { } shadowField) Ctx.LoopBodyCellShadowFields[entry.Name] = shadowField;
+            else Ctx.LoopBodyCellShadowFields.Remove(entry.Name);
+            Ctx.LexicalCellStorageNames.Remove(entry.Token);
+            if (entry.Declaration is { } declaration) Ctx.LoopBodyCellDeclarations[entry.Name] = declaration;
+            else Ctx.LoopBodyCellDeclarations.Remove(entry.Name);
+            if (entry.Shadow is { } shadow) Ctx.LoopBodyCellShadows[entry.Name] = shadow;
+            else Ctx.LoopBodyCellShadows.Remove(entry.Name);
+        }
+    }
+
+    private static IEnumerable<(Stmt Declaration, Token Token)> DirectLexicalDeclarations(IEnumerable<Stmt> statements)
+    {
+        foreach (var statement in statements)
+        {
+            switch (statement)
+            {
+                case Stmt.Var { IsVar: false } variable: yield return (statement, variable.Name); break;
+                case Stmt.Const constant: yield return (statement, constant.Name); break;
+                case Stmt.Sequence sequence:
+                    foreach (var item in DirectLexicalDeclarations(sequence.Statements)) yield return item;
+                    break;
+            }
+        }
+    }
+
+    protected bool TryInitializeLoopBodyBinding(Stmt.Var declaration)
+    {
+        string name = Ctx.LexicalCellStorageNames.GetValueOrDefault(declaration.Name) ?? declaration.Name.Lexeme;
+        bool cell = Ctx.LoopBodyCellDeclarations.TryGetValue(name, out var token)
+            && ReferenceEquals(token, declaration.Name);
+        bool shadow = Ctx.LoopBodyCellShadows.TryGetValue(name, out token)
+            && ReferenceEquals(token, declaration.Name);
+        if (!cell && !shadow) return false;
+
+        if (declaration.Initializer is { } initializer)
+        {
+            EmitExpression(initializer);
+            EnsureBoxed();
+        }
+        else IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Sentinels.UndefinedInstance);
+        var value = IL.DeclareLocal(Types.Object);
+        IL.Emit(OpCodes.Stloc, value);
+        if (cell)
+        {
+            IL.Emit(OpCodes.Ldloc, value);
+            TryInitializeLexicalCell(declaration.Name);
+        }
+        else
+        {
+            if (Ctx.LoopBodyCellShadowFields.TryGetValue(name, out var field))
+            {
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldfld, field);
+                IL.Emit(OpCodes.Ldloc, value);
+                IL.Emit(OpCodes.Stfld, Types.StrongBoxOfObjectValueField);
+            }
+            else
+            {
+                IL.Emit(OpCodes.Ldloc, value);
+                IL.Emit(OpCodes.Stloc, Ctx.Locals.GetLocal(name)!);
+            }
+            RefreshLexicalCaptureSnapshots(name, value);
+        }
+        return true;
+    }
+
+    protected bool TryInitializeLexicalCell(Token token, bool fresh = false)
+    {
+        if (!Ctx.LexicalCellStorageNames.TryGetValue(token, out var name)
+            || !Ctx.LoopBodyCellDeclarations.TryGetValue(name, out var declaration)
+            || !ReferenceEquals(token, declaration)) return false;
+        var value = IL.DeclareLocal(Types.Object);
+        IL.Emit(OpCodes.Stloc, value);
+        if (fresh)
+        {
+            bool hoisted = Ctx.LoopBodyCellFields.TryGetValue(name, out var field);
+            if (hoisted) IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldloc, value);
+            IL.Emit(OpCodes.Newobj, Types.StrongBoxOfObjectCtor);
+            if (hoisted) IL.Emit(OpCodes.Stfld, field!);
+            else IL.Emit(OpCodes.Stloc, Ctx.CellBindingLocals[name]);
+        }
+        else
+        {
+            if (Ctx.LoopBodyCellFields.TryGetValue(name, out var field))
+            {
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldfld, field);
+            }
+            else IL.Emit(OpCodes.Ldloc, Ctx.CellBindingLocals[name]);
+            IL.Emit(OpCodes.Ldloc, value);
+            IL.Emit(OpCodes.Stfld, Types.StrongBoxOfObjectValueField);
+        }
+        return true;
+    }
+
+    protected bool TryCopyLexicalCell(Token token)
+    {
+        if (!Ctx.LexicalCellStorageNames.TryGetValue(token, out var name)
+            || !Ctx.LoopBodyCellDeclarations.ContainsKey(name)) return false;
+        LexicalEnvironmentCellAccess.TryLoad(IL, Ctx, name);
+        return TryInitializeLexicalCell(token, fresh: true);
+    }
+
+    protected void RefreshLexicalCaptureSnapshots(string name, LocalBuilder binding)
+    {
+        if (!Ctx.LexicalCaptureWriteBacks.TryGetValue(name, out var writeBacks)) return;
+        foreach (var (displayClass, field) in writeBacks)
+        {
+            IL.Emit(OpCodes.Ldloc, displayClass);
+            IL.Emit(OpCodes.Ldloc, binding);
+            IL.Emit(OpCodes.Stfld, field);
+        }
+    }
+
+}

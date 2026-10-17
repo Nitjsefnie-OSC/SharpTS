@@ -40,7 +40,47 @@ internal static class ObjectReadTestSupport
             if (parameter.Name == "TSFunctionLengthGetter") return runtime.FunctionValues.LengthGetter;
             if (parameter.Name == "TSFunctionNameGetter") return runtime.FunctionValues.NameGetter;
             if (parameter.Name == "TSFunctionCachedCtor") return runtime.FunctionConstruction.CachedConstructor;
-            return (parameter.Name switch { "TSFunctionCtor" => runtime.FunctionConstruction.Constructor, "TSFunctionCtorWithCache" => runtime.FunctionConstruction.CachedConstructor, "TSFunctionGetOrCreate" => runtime.FunctionConstruction.GetOrCreate, _ => (parameter.Name switch { "ArgumentsLengthField" => runtime.Arguments.LengthField, "ArgumentsType" => runtime.Arguments.Type, "BoundAnyFunctionType" => runtime.FunctionBindings.AnyType, "BoundTSFunctionType" => runtime.FunctionBindings.BoundType, "FunctionApplyWrapperType" => runtime.FunctionBindings.ApplyType, "FunctionBindWrapperType" => runtime.FunctionBindings.BindType, "FunctionCallWrapperType" => runtime.FunctionBindings.CallType, "TSFunctionBindThis" => runtime.FunctionValues.BindThis, "TSFunctionExpectsThisField" => runtime.FunctionValues.ExpectsThisField, "TSFunctionInvokeWithThis" => runtime.FunctionValues.InvokeWithThis, "TSFunctionType" => runtime.FunctionValues.Type, _ => (parameter.Name switch { "FunctionPrototypeField" => runtime.FunctionPrototypes.Prototype, "FunctionPrototypePopulateMethod" => runtime.FunctionPrototypes.Populate, _ => (parameter.Name switch { "GetFunctionMethod" => runtime.FunctionIntrospection.GetProperty, _ => (parameter.Name switch { "InvokeMethodUnwrapped" => runtime.ReflectedMethods.InvokeUnwrapped, "SafeGetMethod" => runtime.ReflectedMethods.FindMethod, _ => (parameter.Name switch { "InvokeValue" => runtime.Invocation.Value, "InvokeMethodValue" => runtime.Invocation.Method, "InvokeMethodValue0" => runtime.Invocation.Method0, _ => (parameter.Name! switch { "IHasFieldsInterface" => runtime.ObjectFields.Interface, "IHasFieldsGetProperty" => runtime.ObjectFields.GetProperty, "IHasFieldsHasProperty" => runtime.ObjectFields.HasProperty, "UndefinedType" => runtime.Sentinels.UndefinedType, "UndefinedInstance" => runtime.Sentinels.UndefinedInstance, _ => typeof(EmittedRuntime).GetProperty(parameter.Name!)!.GetValue(runtime) }) }) }) }) }) }) });
+            if (parameter.Name == "GeneratorInterface") return runtime.Generators.Type;
+            if (parameter.Name == "AsyncGeneratorInterface") return runtime.AsyncGenerators?.Type;
+            if (parameter.Name == "ReadGeneratorProperty") return runtime.GeneratorPrototypes.ReadIteratorProperty;
+            if (parameter.Name == "ReflectGet") return runtime.Reflect.Get;
+            if (parameter.Name == "MethodCallableCtor") return runtime.ReflectedMethods.CallableConstructor;
+            if (parameter.Name == "ReflectedMethodCacheField") return runtime.ReflectedMethods.Cache;
+            if (parameter.Name == "ToPascalCase") return runtime.ReflectedMethods.ToPascalCase;
+            return parameter.Name switch
+            {
+                "TSFunctionCtor" => runtime.FunctionConstruction.Constructor,
+                "TSFunctionCtorWithCache" => runtime.FunctionConstruction.CachedConstructor,
+                "TSFunctionGetOrCreate" => runtime.FunctionConstruction.GetOrCreate,
+                "ArgumentsLengthField" => runtime.Arguments.LengthField,
+                "ArgumentsType" => runtime.Arguments.Type,
+                "BoundAnyFunctionType" => runtime.FunctionBindings.AnyType,
+                "BoundTSFunctionType" => runtime.FunctionBindings.BoundType,
+                "FunctionApplyWrapperType" => runtime.FunctionBindings.ApplyType,
+                "FunctionBindWrapperType" => runtime.FunctionBindings.BindType,
+                "FunctionCallWrapperType" => runtime.FunctionBindings.CallType,
+                "TSFunctionBindThis" => runtime.FunctionValues.BindThis,
+                "TSFunctionExpectsThisField" => runtime.FunctionValues.ExpectsThisField,
+                "TSFunctionInvokeWithThis" => runtime.FunctionValues.InvokeWithThis,
+                "TSFunctionType" => runtime.FunctionValues.Type,
+                "FunctionPrototypeField" => runtime.FunctionPrototypes.Prototype,
+                "FunctionPrototypePopulateMethod" => runtime.FunctionPrototypes.Populate,
+                "GetFunctionMethod" => runtime.FunctionIntrospection.GetProperty,
+                "InvokeMethodUnwrapped" => runtime.ReflectedMethods.InvokeUnwrapped,
+                "SafeGetMethod" => runtime.ReflectedMethods.FindMethod,
+                "InvokeValue" => runtime.Invocation.Value,
+                "InvokeMethodValue" => runtime.Invocation.Method,
+                "InvokeMethodValue0" => runtime.Invocation.Method0,
+                "IHasFieldsInterface" => runtime.ObjectFields.Interface,
+                "IHasFieldsGetProperty" => runtime.ObjectFields.GetProperty,
+                "IHasFieldsHasProperty" => runtime.ObjectFields.HasProperty,
+                "UndefinedType" => runtime.Sentinels.UndefinedType,
+                "UndefinedInstance" => runtime.Sentinels.UndefinedInstance,
+                _ => (typeof(EmittedRuntime).GetProperty(parameter.Name!)
+                    ?? throw new InvalidOperationException(
+                        $"Object-read fixture has no input mapping for {type.Name}.{parameter.Name}."))
+                    .GetValue(runtime)
+            };
         }).ToArray());
     }
 }

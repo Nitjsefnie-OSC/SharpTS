@@ -746,7 +746,67 @@ public partial class DebugSymbolsTests
                         "IteratorStateMachineAttribute");
             })
             .ToArray();
-        Assert.Equal(2, kickoffMethods.Length);
+        MethodDefinitionHandle[] userKickoffs = kickoffMethods
+            .Where(handle => metadata.GetString(metadata.GetTypeDefinition(
+                metadata.GetMethodDefinition(handle).GetDeclaringType()).Name) == "$Program")
+            .ToArray();
+        Assert.Equal(
+            ["sequence", "work"],
+            userKickoffs.Select(handle => metadata.GetString(
+                metadata.GetMethodDefinition(handle).Name)).Order(StringComparer.Ordinal).ToArray());
+
+        MetadataReader pdb = ReadPdb(first.Pdb!);
+        Assert.Equal(2, pdb.GetTableRowCount(TableIndex.StateMachineMethod));
+        Assert.Equal(["sequence", "work"], StateMachineKickoffNames(first));
+        foreach (MethodDefinitionHandle kickoff in userKickoffs)
+        {
+            MethodDefinition method = metadata.GetMethodDefinition(kickoff);
+            string name = metadata.GetString(method.Name);
+            Assert.True(HasAttribute(metadata, method.GetCustomAttributes(),
+                name == "work" ? "AsyncStateMachineAttribute" : "IteratorStateMachineAttribute"));
+            MethodDefinitionHandle moveNext = Assert.Single(metadata.MethodDefinitions, handle =>
+            {
+                MethodDefinition candidate = metadata.GetMethodDefinition(handle);
+                return metadata.GetString(candidate.Name) == "MoveNext" &&
+                    metadata.GetString(metadata.GetTypeDefinition(candidate.GetDeclaringType()).Name)
+                        .Contains($"<{name}>d__", StringComparison.Ordinal);
+            });
+            int moveNextRid = MetadataTokens.GetRowNumber(moveNext);
+            Assert.Equal(kickoff, pdb.GetMethodDebugInformation(
+                MetadataTokens.MethodDebugInformationHandle(moveNextRid)).GetStateMachineKickoffMethod());
+            int[] expectedLines = name == "work" ? [2, 3, 4, 5] : [8, 9, 10];
+            Assert.Equal(expectedLines, SequencePointLines(pdb, moveNextRid));
+        }
+
+        // #2139 also emits the empty intrinsic generator's iterator metadata.
+        // It has no user source or PDB kickoff mapping, unlike work and sequence.
+        MethodDefinition intrinsicKickoff = metadata.GetMethodDefinition(
+            Assert.Single(kickoffMethods.Except(userKickoffs)));
+        Assert.Equal("GeneratorEmptyFunction", metadata.GetString(intrinsicKickoff.Name));
+        Assert.Equal("$GeneratorPrototypes", metadata.GetString(metadata.GetTypeDefinition(
+            intrinsicKickoff.GetDeclaringType()).Name));
+        CustomAttribute intrinsicAttribute = metadata.GetCustomAttribute(Assert.Single(
+            intrinsicKickoff.GetCustomAttributes(), handle => AttributeTypeName(
+                metadata, metadata.GetCustomAttribute(handle)) == "IteratorStateMachineAttribute"));
+        BlobReader intrinsicAttributeBlob = metadata.GetBlobReader(intrinsicAttribute.Value);
+        Assert.Equal(1, intrinsicAttributeBlob.ReadUInt16());
+        Assert.Equal("$GeneratorPrototypes+EmptyGenerator", intrinsicAttributeBlob.ReadSerializedString());
+        Assert.Equal(0, intrinsicAttributeBlob.ReadUInt16());
+        Assert.Equal(0, intrinsicAttributeBlob.RemainingBytes);
+
+        TypeDefinition emptyIterator = metadata.GetTypeDefinition(Assert.Single(
+            metadata.TypeDefinitions, handle =>
+            {
+                TypeDefinition candidate = metadata.GetTypeDefinition(handle);
+                return metadata.GetString(candidate.Name) == "EmptyGenerator" &&
+                    candidate.GetDeclaringType() == intrinsicKickoff.GetDeclaringType();
+            }));
+        MethodDefinitionHandle intrinsicMoveNext = Assert.Single(emptyIterator.GetMethods(), handle =>
+            metadata.GetString(metadata.GetMethodDefinition(handle).Name) == "MoveNext");
+        int intrinsicMoveNextRid = MetadataTokens.GetRowNumber(intrinsicMoveNext);
+        Assert.True(pdb.GetMethodDebugInformation(MetadataTokens.MethodDebugInformationHandle(
+            intrinsicMoveNextRid)).GetStateMachineKickoffMethod().IsNil);
+        Assert.Empty(SequencePointLines(pdb, intrinsicMoveNextRid));
 
         Assert.Contains(
             metadata.MethodDefinitions.Select(metadata.GetMethodDefinition),

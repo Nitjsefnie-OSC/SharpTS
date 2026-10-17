@@ -186,9 +186,8 @@ public partial class GeneratorMoveNextEmitter
             _il.Emit(OpCodes.Ldloc, iterableLocal);
         }
 
-        // Get the enumerator from the (possibly converted) iterable
-        _il.Emit(OpCodes.Castclass, _types.IEnumerable);
-        _il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IEnumerable, "GetEnumerator"));
+        // Acquire the guest iterator from the (possibly converted) iterable once.
+        EmitSynchronousForOfEnumeratorFromStack();
 
         // Store enumerator to hoisted field (need temp local for the stack swap)
         var tempLocal = _il.DeclareLocal(_types.IEnumerator);

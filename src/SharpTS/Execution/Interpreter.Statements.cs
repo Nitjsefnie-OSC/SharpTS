@@ -12,6 +12,7 @@ using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
 using SharpTS.TypeSystem;
 using System.Collections.Frozen;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
@@ -735,7 +736,8 @@ public partial class Interpreter
             string s => StringBuiltIns.IterateCodePoints(s),
             List<object?> list => list,                    // plain List<object?>
             IEnumerable<object?> enumerable => enumerable, // IEnumerable<object?> (e.g., SharpTSIntlSegments)
-            _ => throw new InterpreterException("for...of requires an iterable (array, Map, Set, or iterator).")
+            _ => throw new ThrowException(new SharpTSTypeError(
+                "for...of requires an iterable (array, Map, Set, or iterator)."))
         };
 
         return IterateWithBreakContinue(elements, forOf.Variable.Lexeme, forOf.Body, labels);
@@ -1203,15 +1205,27 @@ public partial class Interpreter
     /// <exception cref="Exception">Thrown if the value is not iterable.</exception>
     internal IEnumerable<object?> GetIterableElements(object? value)
     {
-        // First, check for Symbol.iterator protocol on objects/instances
-        IEnumerable<object?>? customIterator = TryGetSymbolIterator(value);
-        if (customIterator != null)
-        {
-            return customIterator;
-        }
+        if (TryGetIterableElements(value, out var elements))
+            return elements;
+
+        throw new ThrowException(new SharpTSTypeError(value == null
+            ? "Cannot spread null or undefined."
+            : $"Value of type '{value.GetType().Name}' is not iterable. Expected an array, string, Map, Set, generator, or object with [Symbol.iterator]."));
+    }
+
+    /// <summary>
+    /// Acquires iterable elements once, retaining any selected Symbol.iterator method.
+    /// Returns false for noniterable sources so Array.from can use its array-like fallback.
+    /// </summary>
+    internal bool TryGetIterableElements(object? value, [NotNullWhen(true)] out IEnumerable<object?>? elements)
+    {
+        // Prefer the guest protocol before falling back to known native carriers.
+        elements = TryGetSymbolIterator(value);
+        if (elements != null)
+            return true;
 
         // Fall back to known iterable types
-        return value switch
+        elements = value switch
         {
             SharpTSArray array => array,
             SharpTSMap map => map.Entries().Elements,      // yields [key, value] arrays
@@ -1227,21 +1241,10 @@ public partial class Interpreter
             string s => StringBuiltIns.IterateCodePoints(s),
             List<object?> list => list,                    // plain List<object?>
             IEnumerable<object?> enumerable => enumerable, // IEnumerable<object?> (e.g., SharpTSIntlSegments)
-            null => throw new InterpreterException("Cannot spread null or undefined."),
-            _ => throw new InterpreterException($"Value of type '{value.GetType().Name}' is not iterable. Expected an array, string, Map, Set, generator, or object with [Symbol.iterator].")
+            _ => null
         };
+        return elements != null;
     }
-
-    /// <summary>
-    /// True when <paramref name="value"/> is iterable via <see cref="GetIterableElements"/>
-    /// (a known iterable type or carrying a Symbol.iterator). Lets Array.from choose the
-    /// iterator protocol vs the array-like (length + indices) path without catching a throw.
-    /// </summary>
-    internal bool IsIterableSource(object? value) =>
-        value is SharpTSArray or SharpTSMap or SharpTSSet or SharpTSIterator or SharpTSGenerator
-            or SharpTSTypedArray or SharpTSBuffer
-            or string or List<object?> or IEnumerable<object?>
-        || TryGetSymbolIterator(value) != null;
 
     /// <summary>
     /// ECMA-262 array-like read (Array.from on a non-iterable): ToLength(Get(src,"length")),
@@ -2168,6 +2171,7 @@ public partial class Interpreter
         // Symbol-keyed computed methods (`[Symbol.iterator]() {...}`) can't go into the string
         // dictionaries; collected here and attached to the class after construction.
         List<(SharpTSSymbol Symbol, ISharpTSCallable Func, bool IsStatic)>? symbolMethods = null;
+        List<(int Position, ISharpTSCallable Function, bool? IsGetter)>? constructorProperties = null;
 
         // Separate static and instance methods (skip overload signatures with no body)
         foreach (Stmt.Function method in classStmt.Methods.Where(m => m.Body != null))
@@ -2195,6 +2199,12 @@ public partial class Interpreter
                     continue;
                 }
                 string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
+                SharpTSClass.SetComputedMethodName(func, keyStr);
+                if (!method.IsStatic && keyStr == "constructor")
+                {
+                    (constructorProperties ??= []).Add((method.Name.Start, func, null));
+                    continue;
+                }
                 (method.IsStatic ? staticMethods : methods)[keyStr] = func;
                 continue;
             }
@@ -2259,6 +2269,8 @@ public partial class Interpreter
                         continue;
                     }
                     string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
+                    if (!accessor.IsStatic && keyStr == "constructor")
+                        (constructorProperties ??= []).Add((accessor.Name.Start, func, isGetter));
                     if (isGetter) (accessor.IsStatic ? staticGetters : getters)[keyStr] = func;
                     else (accessor.IsStatic ? staticSetters : setters)[keyStr] = func;
                     continue;
@@ -2266,6 +2278,8 @@ public partial class Interpreter
 
                 var targetGet = accessor.IsStatic ? staticGetters : getters;
                 var targetSet = accessor.IsStatic ? staticSetters : setters;
+                if (!accessor.IsStatic && accessor.Name.Lexeme == "constructor")
+                    (constructorProperties ??= []).Add((accessor.Name.Start, func, isGetter));
 
                 if (isGetter)
                 {
@@ -2388,6 +2402,7 @@ public partial class Interpreter
         klass.OrderedInstanceFields = classStmt.Fields.Where(field => !field.IsStatic)
             .SelectMany(field => (field.IsPrivate ? instancePrivateFields : instanceFields)
                 .Where(captured => captured.Name == field.Name)).ToList();
+        InstallInstanceConstructorProperties(klass, constructorProperties);
 
         if (symbolAccessors != null)
         {
@@ -2437,7 +2452,7 @@ public partial class Interpreter
                                     new SharpTSPropertyDescriptor(fieldValue, writable: true,
                                         enumerable: true, configurable: true) { HasValue = true });
                             else
-                                klass.SetStaticProperty(field.ComputedKey != null
+                                klass.InitializeStaticProperty(field.ComputedKey != null
                                     ? (string)computedMemberKeys[field.ComputedKey]! : field.Name.Lexeme, fieldValue);
                             break;
 
@@ -2480,6 +2495,39 @@ public partial class Interpreter
     internal ExecutionResult VisitTypeAlias(Stmt.TypeAlias typeAlias) =>
         // Type-only declarations - compile-time only, no runtime effect
         ExecutionResult.Success();
+
+    private static void InstallInstanceConstructorProperties(SharpTSClass klass,
+        List<(int Position, ISharpTSCallable Function, bool? IsGetter)>? members)
+    {
+        if (members == null) return;
+        foreach (var (_, function, isGetter) in members.OrderBy(member => member.Position))
+        {
+            klass.BindPrivateMemberOwner(function);
+            if (isGetter == null)
+            {
+                klass.Prototype.DefineExtraProperty("constructor", SharpTSPropertyDescriptor.ForMethod(function));
+                continue;
+            }
+            if (function is SharpTSFunction accessor)
+                accessor.DefineProperty("name", new SharpTSPropertyDescriptor(
+                    isGetter.Value ? "get constructor" : "set constructor",
+                    writable: false, enumerable: false, configurable: true) { HasValue = true });
+            var descriptor = new SharpTSPropertyDescriptor
+            {
+                Enumerable = false, HasEnumerable = true,
+                Configurable = true, HasConfigurable = true,
+            };
+            if (isGetter.Value)
+            {
+                descriptor.Get = function; descriptor.RawGet = function; descriptor.HasGet = true;
+            }
+            else
+            {
+                descriptor.Set = function; descriptor.RawSet = function; descriptor.HasSet = true;
+            }
+            klass.Prototype.DefineExtraProperty("constructor", descriptor);
+        }
+    }
 
     internal ExecutionResult VisitInterface(Stmt.Interface iface) =>
         // Type-only declarations - compile-time only, no runtime effect

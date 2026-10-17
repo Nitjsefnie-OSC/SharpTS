@@ -757,6 +757,11 @@ public partial class RuntimeEmitter
                 MethodAttributes.Public | MethodAttributes.Static,
                 _types.TaskOfObject,
                 [_types.Object]);
+            runtime.RequirePromise().AwaitValueToTaskMethod = typeBuilder.DefineMethod(
+                "AwaitValueToTask",
+                MethodAttributes.Public | MethodAttributes.Static,
+                _types.TaskOfObject,
+                [_types.Object]);
             runtime.RequirePromise().ResolveValueMethod = typeBuilder.DefineMethod(
                 "PromiseResolveValue",
                 MethodAttributes.Public | MethodAttributes.Static,
@@ -914,6 +919,9 @@ public partial class RuntimeEmitter
                 runtime.FunctionConstruction,
                 runtime.FunctionPrototypes,
                 runtime.FunctionValues,
+                runtime.GeneratorPrototypes.Kind,
+                runtime.GeneratorPrototypes.EnsureOwnPrototype,
+                runtime.GeneratorPrototypes.ReadInherited,
                 runtime.ObjectOwnProperties,
                 runtime.ObjectPrototypes,
                 runtime.ObjectState,
@@ -1045,6 +1053,9 @@ public partial class RuntimeEmitter
                 runtime.Dates,
                 runtime.DescriptorStorage,
                 runtime.Errors,
+                runtime.Generators.Type,
+                runtime.AsyncGenerators?.Type,
+                runtime.GeneratorPrototypes.ReadIteratorProperty,
                 runtime.ObjectFields.GetProperty,
                 runtime.ObjectFields.HasProperty,
                 runtime.ObjectFields.Interface,
@@ -1507,6 +1518,7 @@ public partial class RuntimeEmitter
                 runtime.ObjectDescriptors,
                 runtime.ObjectPrototypes,
                 runtime.ObjectStorage,
+                runtime.Reflect.Get,
                 runtime.RegExps,
                 runtime.StringCoercion,
                 runtime.Strings,
@@ -1877,7 +1889,8 @@ public partial class RuntimeEmitter
         EmitObjectFromEntries(
             typeBuilder,
             runtime.ObjectOperations,
-            new ObjectFromEntriesInputs(runtime.Errors, runtime.IteratorCollection.ToList, runtime.Symbols, runtime.Sentinels.UndefinedType)
+            new ObjectFromEntriesInputs(runtime.Errors, runtime.Reflect.Get,
+                GetCollectionConsumerInputs(runtime), runtime.Symbols, runtime.Sentinels.UndefinedType)
         );
         EmitObjectHasOwn(
             typeBuilder,
@@ -1912,7 +1925,10 @@ public partial class RuntimeEmitter
                 runtime.Sentinels.UndefinedType
             )
         );
-        EmitObjectFreeze(typeBuilder, runtime.ObjectState, new ObjectIntegrityInputs(runtime.ArrayStorage, runtime.DescriptorStorage, runtime.ObjectStorage));
+        EmitObjectFreeze(typeBuilder, runtime.ObjectState,
+            new ObjectIntegrityInputs(runtime.ArrayStorage, runtime.DescriptorStorage, runtime.ObjectStorage),
+            new GeneratorIntegrityInputs(runtime.FunctionValues.Type, runtime.FunctionValues.GetMethodInfo,
+                runtime.GeneratorPrototypes.Kind, runtime.GeneratorPrototypes.EnsureOwnPrototype));
         EmitObjectSeal(typeBuilder, runtime.ObjectState, new ObjectIntegrityInputs(runtime.ArrayStorage, runtime.DescriptorStorage, runtime.ObjectStorage));
         EmitObjectIsFrozen(typeBuilder, runtime.ObjectState);
         EmitObjectIsSealed(typeBuilder, runtime.ObjectState);
@@ -2060,6 +2076,9 @@ public partial class RuntimeEmitter
                 runtime.Errors,
                 runtime.FunctionPrototypes.Prototype,
                 runtime.FunctionPrototypes.Populate,
+                runtime.FunctionValues.GetMethodInfo,
+                runtime.GeneratorPrototypes.Kind,
+                runtime.GeneratorPrototypes.FunctionPrototype,
                 runtime.ObjectRead.Property,
                 runtime.ObjectFields.Interface,
                 runtime.ReflectedMethods.InvokeUnwrapped,
@@ -2140,13 +2159,9 @@ public partial class RuntimeEmitter
                 runtime.ArrayStorage,
                 runtime.DescriptorStorage,
                 runtime.Errors,
-                runtime.IteratorProtocol.Function,
                 runtime.Invocation.Value,
-                runtime.IteratorCollection.ToList,
-                runtime.RuntimeClass.Type,
-                runtime.Symbols,
-                runtime.FunctionValues.Type,
-                runtime.Sentinels.UndefinedType
+                GetCollectionConsumerInputs(runtime),
+                runtime.FunctionValues.Type
             )
         );
         // Reflect.set / setPrototypeOf / defineProperty / ownKeys / apply /
@@ -2229,11 +2244,16 @@ public partial class RuntimeEmitter
                 new ReflectDeletePropertyInputs(
                     runtime.ReflectedMethods.InvokeUnwrapped,
                     runtime.ObjectDescriptors.GetOwnPropertyDescriptor,
-                    runtime.StringCoercion.ToJsString,
+                    runtime.Reflect.ToPropertyKey,
                     runtime.ObjectState.IsExtensible,
                     runtime.ObjectDeletion.Property,
+                    runtime.ObjectDeletion.Index,
+                    runtime.Symbols.IsSymbol,
                     runtime.Sentinels.UndefinedType,
                     runtime.ObjectRead.Property,
+                    runtime.Operators.TypeOf,
+                    runtime.Errors.CreateException,
+                    runtime.Errors.TypeErrorConstructor,
                     runtime.FunctionBindings
                 )
             );
@@ -2599,7 +2619,7 @@ public partial class RuntimeEmitter
         // EmitRandom moved to before gOPD (see line ~660). The original site
         // here is now empty.
         EmitMathSumPrecise(typeBuilder, runtime.Math, new MathSumInputs(
-            runtime.ArrayStorage, runtime.Symbols.GetStorage, runtime.Symbols.Iterator, runtime.IteratorProtocol.Function, runtime.Sentinels.UndefinedType, runtime.Invocation.Method, runtime.IteratorRecords.NextMethod, runtime.IteratorRecords.InvokeNext, runtime.IteratorProtocol.Done, runtime.IteratorProtocol.Value, runtime.ObjectRead.Property, runtime.Errors.CreateException, runtime.Errors.TypeErrorConstructor));
+            runtime.ArrayStorage, runtime.Symbols.GetStorage, runtime.Symbols.Iterator, runtime.IteratorProtocol.Function, runtime.Sentinels.UndefinedType, runtime.Invocation.Method, runtime.IteratorRecords.NextMethod, runtime.IteratorRecords.InvokeNext, runtime.IteratorProtocol.Done, runtime.IteratorProtocol.Value, runtime.IteratorProtocol.Close, runtime.Errors.CreateException, runtime.Errors.TypeErrorConstructor));
         EmitDefineSymbolAccessor(
             typeBuilder,
             runtime.ObjectConstruction,
@@ -2941,6 +2961,16 @@ public partial class RuntimeEmitter
             )
         );
         runtime.FunctionPrototypes.CompleteEmission();
+        EmitGeneratorPrototypeBodies(runtime.GeneratorPrototypes,
+            new GeneratorPrototypeGraphInputs(runtime.DescriptorStorage, runtime.ObjectStorage,
+                runtime.FunctionValues, runtime.FunctionConstruction, runtime.FunctionAttributes,
+                runtime.FunctionPrototypes, runtime.ObjectPrototypes, runtime.Symbols),
+            new GeneratorPrototypeProtocolInputs(runtime.Generators, runtime.AsyncGenerators, runtime.Errors,
+                runtime.Promise?.CoerceAwaitableToTaskMethod),
+            new GeneratorPrototypeAccessInputs(runtime.DescriptorStorage, runtime.ObjectStorage,
+                runtime.FunctionValues, runtime.FunctionConstruction, runtime.ObjectPrototypes.GetPrototypeOf,
+                runtime.Reflect.Get, runtime.Invocation.Method, runtime.Symbols.Type,
+                runtime.Sentinels.UndefinedType, runtime.Sentinels.UndefinedInstance));
         // RegExp.prototype populate body — must come after $RegExp's
         // TSRegExpSym* helpers are emitted (they're referenced from the
         // populate IL). Emitted gated on UsesRegExp; otherwise the helpers

@@ -252,10 +252,11 @@ public partial class Interpreter
     {
         object? value = (await EvaluateAsync(awaitExpr.Expression)).ToObject();
 
-        // Unwrap Promise
+        // Await reuses a native Promise only when its live constructor has
+        // intrinsic Promise identity; subclass promises otherwise assimilate.
         if (value is SharpTSPromise promise)
         {
-            return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(promise.GetValueAsync()));
+            return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(NormalizePromiseForAwait(promise)));
         }
 
         // Raw Task<object?> — returned by runtime methods (e.g., Web Streams
@@ -1642,12 +1643,14 @@ public partial class Interpreter
         }
         if (obj is SharpTSFunction fn)
         {
-            fn.SetProperty(index?.ToString() ?? "", value);
+            SetOrdinaryFunctionOwnProperty(
+                fn, fn.OwnPropertyStorage, index?.ToString() ?? "", value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
         if (obj is SharpTSArrowFunction afn)
         {
-            afn.SetProperty(index?.ToString() ?? "", value);
+            SetOrdinaryFunctionOwnProperty(
+                afn, afn.OwnPropertyStorage, index?.ToString() ?? "", value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
 
@@ -1969,7 +1972,7 @@ public partial class Interpreter
                     staticSymSetter.BindStatic(t.Target).Call(this, [value]);
                     break;
                 }
-                t.Target.SetStaticBySymbol(t.Key, value);
+                t.Target.SetStaticBySymbol(t.Key, value, strictMode);
                 break;
 
             case IndexTarget.ClassPrototypeSymbol t:
@@ -2228,6 +2231,7 @@ public partial class Interpreter
 
             // Symbol-keyed computed methods (`[Symbol.iterator]() {...}`) attach to the class after construction.
             List<(SharpTSSymbol Symbol, ISharpTSCallable Func, bool IsStatic)>? symbolMethods = null;
+            List<(int Position, ISharpTSCallable Function, bool? IsGetter)>? constructorProperties = null;
 
             // Process methods (skip overload signatures with no body)
             foreach (Stmt.Function method in classExpr.Methods.Where(m => m.Body != null))
@@ -2254,6 +2258,12 @@ public partial class Interpreter
                         continue;
                     }
                     string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
+                    SharpTSClass.SetComputedMethodName(func, keyStr);
+                    if (!method.IsStatic && keyStr == "constructor")
+                    {
+                        (constructorProperties ??= []).Add((method.Name.Start, func, null));
+                        continue;
+                    }
                     (method.IsStatic ? staticMethods : methods)[keyStr] = func;
                     continue;
                 }
@@ -2305,6 +2315,9 @@ public partial class Interpreter
                         }
                         nameKey = PropertyKeyConverter.ToPropertyKeyString(key);
                     }
+
+                    if (!accessor.IsStatic && nameKey == "constructor")
+                        (constructorProperties ??= []).Add((accessor.Name.Start, func, isGetter));
 
                     if (isGetter)
                     {
@@ -2376,6 +2389,7 @@ public partial class Interpreter
             klass.OrderedInstanceFields = classExpr.Fields.Where(field => !field.IsStatic)
                 .SelectMany(field => (field.IsPrivate ? instancePrivateFields : instanceFields)
                     .Where(captured => captured.Name == field.Name)).ToList();
+            InstallInstanceConstructorProperties(klass, constructorProperties);
 
             if (symbolAccessors != null)
             {
@@ -2431,7 +2445,7 @@ public partial class Interpreter
                                         new SharpTSPropertyDescriptor(fieldValue, writable: true,
                                             enumerable: true, configurable: true) { HasValue = true });
                                 else
-                                    klass.SetStaticProperty(field.ComputedKey != null
+                                    klass.InitializeStaticProperty(field.ComputedKey != null
                                         ? (string)computedMemberKeys[field.ComputedKey]! : field.Name.Lexeme, fieldValue);
                                 break;
 

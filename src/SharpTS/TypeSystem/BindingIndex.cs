@@ -222,6 +222,11 @@ public sealed class BindingIndex
         }
     }
 
+    // Post-check initializer inference must use the original lexical binding even
+    // after a callback's local environment has been restored.
+    internal BindingSymbol? GetSymbol(Token token, BindingNamespace bindingNamespace = BindingNamespace.Value) =>
+        _tokens.TryGetValue(token, out var facets) ? facets.GetValueOrDefault(bindingNamespace) : null;
+
     private void RecordOccurrence(
         BindingSymbol symbol,
         Token token,

@@ -125,47 +125,48 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         IL.BeginExceptionBlock();
 
         // Emit try block statements
-        foreach (var stmt in t.TryBlock)
-            EmitStatement(stmt);
+        EmitGeneratorScopedStatements(t.TryBlock);
 
         // Emit catch block if present
         if (t.CatchBlock != null)
         {
             IL.BeginCatchBlock(typeof(Exception));
-
+            var caught = IL.DeclareLocal(Types.Object);
             if (t.CatchParam != null)
             {
-                // Create local for the exception parameter
-                var exLocal = IL.DeclareLocal(typeof(object));
-                Ctx.Locals.RegisterLocal(GetBindingStorageName(t, t.CatchParam.Lexeme), exLocal);
-                RegisterLoopLocal(GetBindingStorageName(t, t.CatchParam.Lexeme), exLocal);
-
-                // Wrap the .NET exception to TypeScript exception object
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.Errors.WrapException);
-                EmitStoreVariable(GetBindingStorageName(t, t.CatchParam.Lexeme));
+                IL.Emit(OpCodes.Stloc, caught);
             }
-            else
+            else IL.Emit(OpCodes.Pop);
+            WithGeneratorLexicalScope(t.CatchBlock, () =>
             {
-                // No catch parameter - just pop the exception
-                IL.Emit(OpCodes.Pop);
-            }
-
-            // Emit catch block statements
-            foreach (var stmt in t.CatchBlock)
-                EmitStatement(stmt);
+                EmitGeneratorCatchBinding(t, caught);
+                foreach (var statement in t.CatchBlock) EmitStatement(statement);
+            }, t, t.CatchParam);
         }
 
         // Emit finally block if present
         if (t.FinallyBlock != null)
         {
             IL.BeginFinallyBlock();
-            foreach (var stmt in t.FinallyBlock)
-                EmitStatement(stmt);
+            EmitGeneratorScopedStatements(t.FinallyBlock);
         }
 
         IL.EndExceptionBlock();
         Ctx.ExceptionBlockDepth--;
         _throwRoutingGuardDepth--;
+    }
+
+    private void EmitGeneratorCatchBinding(Stmt.TryCatch declaration, LocalBuilder caught)
+    {
+        if (declaration.CatchParam is not { } parameter) return;
+        IL.Emit(OpCodes.Ldloc, caught);
+        if (TryInitializeLexicalCell(parameter)) return;
+        string name = GetBindingStorageName(declaration, parameter.Lexeme);
+        var local = IL.DeclareLocal(Types.Object);
+        Ctx.Locals.RegisterLocal(name, local);
+        RegisterLoopLocal(name, local);
+        EmitStoreVariable(name);
     }
 
     private void EmitTryCatchWithAwaits(Stmt.TryCatch t, bool hasAwaitsInTry, bool hasAwaitsInCatch, bool hasAwaitsInFinally)
@@ -210,8 +211,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             Ctx.ExceptionBlockDepth++;
             _throwRoutingGuardDepth++;
             IL.BeginExceptionBlock();
-            foreach (var stmt in t.TryBlock)
-                EmitStatement(stmt);
+            EmitGeneratorScopedStatements(t.TryBlock);
 
             // Always catch to capture exception for finally handling
             IL.BeginCatchBlock(typeof(Exception));
@@ -229,8 +229,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             Ctx.ExceptionBlockDepth++;
             _throwRoutingGuardDepth++;
             IL.BeginExceptionBlock();
-            foreach (var stmt in t.TryBlock)
-                EmitStatement(stmt);
+            EmitGeneratorScopedStatements(t.TryBlock);
 
             if (t.CatchBlock != null)
             {
@@ -255,24 +254,19 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
             IL.Emit(OpCodes.Brfalse, skipCatchLabel);
 
-            // Store exception in catch param if needed
-            if (t.CatchParam != null)
+            WithGeneratorLexicalScope([], () =>
             {
-                var exLocal = IL.DeclareLocal(typeof(object));
-                Ctx.Locals.RegisterLocal(GetBindingStorageName(t, t.CatchParam.Lexeme), exLocal);
-                RegisterLoopLocal(GetBindingStorageName(t, t.CatchParam.Lexeme), exLocal);
-                IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                EmitStoreVariable(GetBindingStorageName(t, t.CatchParam.Lexeme));
-            }
+                EmitGeneratorCatchBinding(t, caughtExceptionLocal);
 
-            // Clear the exception local since catch handled it
-            IL.Emit(OpCodes.Ldnull);
-            IL.Emit(OpCodes.Stloc, caughtExceptionLocal);
+                // Clear the exception local since catch handled it
+                IL.Emit(OpCodes.Ldnull);
+                IL.Emit(OpCodes.Stloc, caughtExceptionLocal);
 
-            // A catch-body failure must run this try's finally before it
-            // propagates, without re-entering this same catch. Resume gateways
-            // protect its operand evaluation just as they protect the try body.
-            EmitTryBodyWithAwaits(t.CatchBlock, caughtExceptionLocal);
+                // A catch-body failure must run this try's finally before it
+                // propagates, without re-entering this same catch. Resume gateways
+                // protect its operand evaluation just as they protect the try body.
+                EmitTryBodyWithAwaits(t.CatchBlock, caughtExceptionLocal);
+            }, t, t.CatchParam);
 
             // Fall through to finally (don't skip it)
             IL.MarkLabel(skipCatchLabel);
@@ -296,8 +290,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             else
             {
                 // No awaits in finally - emit directly
-                foreach (var stmt in t.FinallyBlock)
-                    EmitStatement(stmt);
+                EmitGeneratorScopedStatements(t.FinallyBlock);
             }
 
             // Dispatch any pending non-local exit (return / break / continue) that routed through this
@@ -331,16 +324,16 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         IL.Emit(OpCodes.Ldarg_0);
         IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
         IL.Emit(OpCodes.Stfld, pendingException);
-        foreach (var stmt in finallyBody)
-        {
-            EmitStatement(stmt);
-        }
+        EmitGeneratorScopedStatements(finallyBody);
         IL.Emit(OpCodes.Ldarg_0);
         IL.Emit(OpCodes.Ldfld, pendingException);
         IL.Emit(OpCodes.Stloc, caughtExceptionLocal);
     }
 
     private void EmitTryBodyWithAwaits(List<Stmt> tryBody, LocalBuilder caughtExceptionLocal)
+        => WithGeneratorLexicalScope(tryBody, () => EmitTryBodyWithAwaitsCore(tryBody, caughtExceptionLocal));
+
+    private void EmitTryBodyWithAwaitsCore(List<Stmt> tryBody, LocalBuilder caughtExceptionLocal)
     {
         var previousExceptionLocal = _currentTryCatchExceptionLocal;
         var previousSkipLabel = _currentTryCatchSkipLabel;

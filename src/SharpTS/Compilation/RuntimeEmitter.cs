@@ -253,6 +253,9 @@ public partial class RuntimeEmitter
         EmitGeneratorInterface(moduleBuilder, runtime.Generators);
         runtime.Generators.CompleteEmission();
 
+        DefineGeneratorPrototypeRuntime(moduleBuilder, runtime.GeneratorPrototypes,
+            features.UsesAsyncGenerator || features.UsesForAwaitOf);
+
         // Emit $IAsyncGenerator only when async-generator or for-await support
         // can reference it.
         if (features.UsesAsyncGenerator || features.UsesForAwaitOf)
@@ -299,7 +302,8 @@ public partial class RuntimeEmitter
         // well as dense/sparse storage. The descriptor store itself depends
         // only on helper types emitted above.
         EmitPropertyDescriptorTypes(moduleBuilder, runtime.DescriptorStorage,
-            new DescriptorKeyInputs(runtime.FunctionValues.Type, runtime.FunctionValues.GetMethodInfo),
+            new DescriptorKeyInputs(runtime.FunctionValues.Type, runtime.FunctionValues.GetMethodInfo,
+                runtime.FunctionValues.PropertyIdentityField),
             runtime.Sentinels.UndefinedType);
 
         // Emit $Array class for standalone array support
@@ -732,6 +736,7 @@ public partial class RuntimeEmitter
                 runtime.ObjectRead,
                 runtime.ObjectStorage,
                 runtime.ReflectedMethods,
+                runtime.Symbols.Type,
                 runtime.Sentinels.UndefinedInstance,
                 runtime.Operators.TypeOf
             )
@@ -753,6 +758,7 @@ public partial class RuntimeEmitter
                 runtime.NumericCoercion,
                 runtime.RegExps,
                 runtime.StringCoercion,
+                runtime.ArrayOperations.Constructor,
                 runtime.Sentinels.UndefinedInstance,
                 runtime.Sentinels.UndefinedType
             )
@@ -956,6 +962,7 @@ public partial class RuntimeEmitter
             EmitTlsSocketFinalize(tls);
         }
 
+        runtime.GeneratorPrototypes.Type.CreateType();
         EmitRuntimeClassFinalize(runtime.RuntimeClass);     // Finalize $Runtime after all method bodies
 
         if (features.UsesTls)
@@ -1006,6 +1013,7 @@ public partial class RuntimeEmitter
         runtime.NumericCoercion.CompleteEmission();
         runtime.ObjectStorage.CompleteEmission();
         runtime.DescriptorStorage.CompleteEmission();
+        runtime.GeneratorPrototypes.CompleteEmission();
         runtime.ObjectState.CompleteEmission();
         runtime.Errors.CompleteEmission();
         runtime.ObjectDescriptors.CompleteEmission();

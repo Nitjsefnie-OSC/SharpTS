@@ -94,7 +94,7 @@ public partial class AsyncStateAnalyzer
             _usesThis = true;
 
         // If this is an async arrow, collect it for separate state machine generation
-        if (expr.IsAsync)
+        if (expr.IsAsync && !expr.IsGenerator)
         {
             var captures = AnalyzeAsyncArrowCapturesWithVisitor(expr);
             var capturesThis = captures.Contains("this");

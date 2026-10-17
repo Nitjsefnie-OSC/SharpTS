@@ -295,6 +295,9 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Stloc, objLocal);
 
                 // Brand check: verify object is in the ConditionalWeakTable
+                var invalidLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Ldloc, objLocal);
+                IL.Emit(OpCodes.Brfalse, invalidLabel);
                 var dictLocal = IL.DeclareLocal(dictType);
                 IL.Emit(OpCodes.Ldsfld, callStorageField);
                 IL.Emit(OpCodes.Ldloc, objLocal);
@@ -310,6 +313,7 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Brtrue, validLabel);
 
                 // Brand check failed
+                IL.MarkLabel(invalidLabel);
                 GuestErrorEmitter.ThrowTypeError(IL, _ctx.Runtime!,
                     $"Cannot call private method #{methodName} on an object whose class did not declare it");
 

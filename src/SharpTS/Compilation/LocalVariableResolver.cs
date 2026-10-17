@@ -37,6 +37,7 @@ public class LocalVariableResolver : IVariableResolver
     /// <inheritdoc />
     public StackType? TryLoadVariable(string name)
     {
+        if (TryLoadLoopBodyBinding(name)) return StackType.Unknown;
         // 0. Per-iteration loop-binding cell (#650): in the loop body / condition /
         //    increment the binding is accessed through its StrongBox so closures that
         //    captured the cell observe end-of-iteration mutations. Takes precedence
@@ -297,6 +298,7 @@ public class LocalVariableResolver : IVariableResolver
     /// <inheritdoc />
     public bool TryStoreVariable(string name)
     {
+        if (TryStoreLoopBodyBinding(name)) return true;
         // 0. Per-iteration loop-binding cell (#650): write through the StrongBox so the
         //    mutation is visible to closures that captured this iteration's cell.
         if (_ctx.CellBindingLocals.TryGetValue(name, out var storeCell))
@@ -569,6 +571,10 @@ public class LocalVariableResolver : IVariableResolver
 
         return false;
     }
+
+    private bool TryLoadLoopBodyBinding(string name) => LexicalEnvironmentCellAccess.TryLoad(_il, _ctx, name);
+
+    private bool TryStoreLoopBodyBinding(string name) => LexicalEnvironmentCellAccess.TryStore(_il, _ctx, name);
 
     private void EmitCapturedLexicalStoreGuard(string name, Action emitCurrentValue)
     {

@@ -134,7 +134,7 @@ public partial class ILCompiler
         // which don't support arrow scope DC instantiation
         foreach (var (arrow, _) in _collectedArrows)
         {
-            if (!arrow.IsAsync)
+            if (!arrow.IsAsync || arrow.IsGenerator)
             {
                 DefineScopeDisplayClass(arrow, "ArrowScopeDC");
             }
@@ -169,7 +169,7 @@ public partial class ILCompiler
         {
             // Skip async arrows - they're handled via DefineTopLevelAsyncArrows() or
             // DefineAsyncArrowStateMachines() (if inside an async function)
-            if (arrow.IsAsync)
+            if (arrow.IsAsync && !arrow.IsGenerator)
             {
                 continue;
             }
@@ -180,6 +180,8 @@ public partial class ILCompiler
             // runtime entry prologue can detect the missing/undefined argument and fire the default.
             var resolvedParamTypes = ParameterTypeResolver.ResolveParameters(
                 arrow.Parameters, _typeMapper, null, _typeMap); // null funcType - use annotations only
+            if (arrow.IsGenerator)
+                resolvedParamTypes = arrow.Parameters.Select(p => p.IsRest ? _types.ListOfObject : _types.Object).ToArray();
 
             // Store resolved types for use during arrow body emission
             _closures.ArrowParameterTypes[arrow] = resolvedParamTypes;
@@ -230,6 +232,8 @@ public partial class ILCompiler
             if (_arrowsInStaticClassContext.Contains(arrow) && captures.Contains("this")
                 && (returnType is TypeBuilder || returnType.IsConstructedGenericType))
                 returnType = _types.Object;
+            if (arrow.IsGenerator)
+                returnType = arrow.IsAsync ? _types.IAsyncEnumerableOfObject : _types.IEnumerableOfObject;
             _closures.ArrowReturnTypes[arrow] = returnType;
 
             // For object methods, add __this as the first parameter
@@ -251,7 +255,7 @@ public partial class ILCompiler
             // Check if arrow needs function DC or arrow DC (for itself or to pass to inner arrows)
             bool needsFunctionDCForArrow = _arrowsNeedingFunctionDC.Contains(arrow);
             bool needsArrowDCForArrow = _arrowsNeedingArrowDC.Contains(arrow);
-            if (captures.Count == 0 && !needsFunctionDCForArrow && !needsArrowDCForArrow)
+            if (!arrow.IsGenerator && captures.Count == 0 && !needsFunctionDCForArrow && !needsArrowDCForArrow)
             {
                 // Non-capturing and doesn't need function DC: static method on $Program
                 // Use typed return when available - reflection automatically boxes at $TSFunction boundary
@@ -357,6 +361,12 @@ public partial class ILCompiler
 
                 foreach (var capturedVar in captures)
                 {
+                    if (_closures.Analyzer.TryGetLoopBodyCellCapture(arrow, capturedVar, out _))
+                    {
+                        fieldMap[capturedVar] = displayClass.DefineField(
+                            capturedVar, _types.Object, FieldAttributes.Public);
+                        continue;
+                    }
                     // A named function expression's own name is a distinct
                     // inner binding even when top-level code declares the same
                     // spelling. Always give it a capture field; wrapper
@@ -481,10 +491,12 @@ public partial class ILCompiler
             MarkPadsUndefined(_closures.ArrowMethods[arrow]);
             MarkFunctionLength(_closures.ArrowMethods[arrow], arrow.Parameters);
             MarkFunctionName(_closures.ArrowMethods[arrow], arrow.Name?.Lexeme ?? "");
-            if (!arrow.HasOwnThis || arrow.IsMethod)
+            if (arrow.IsGenerator || !arrow.HasOwnThis || arrow.IsMethod)
                 MarkNonConstructible(_closures.ArrowMethods[arrow]);
             else DefineNewTargetBody(_closures.ArrowMethods[arrow]);
         }
+
+        DefineGeneratorExpressionStateMachines();
     }
 
     /// <summary>
@@ -880,7 +892,7 @@ public partial class ILCompiler
                 _currentCollectStrict = previousStrict
                     || _currentCollectClassName != null
                     || BodyDeclaresUseStrict(af.BlockBody);
-                if (af.IsAsync)
+                if (af.IsAsync && !af.IsGenerator)
                     _currentEnclosingAsyncArrow = af;
 
                 // Entering an arrow body is the same as entering a function body for the
@@ -1220,7 +1232,8 @@ public partial class ILCompiler
         var visitor = new ArrowClassDefinitionVisitor(declaration =>
             _runtimeClassDeclarations.TryGetValue(declaration, out var expression)
                 && _classExprs.CaptureSlots.TryGetValue(expression, out var slots)
-                && slots.ContainsKey(CompilationContext.PrivateOwnerCaptureName));
+                && slots.ContainsKey(CompilationContext.PrivateOwnerCaptureName),
+            reference => _closures.Analyzer.TryGetClassSelfOwner(reference, out _));
         visitor.Visit(arrow);
         return visitor.UsesDefinition;
     }
@@ -1228,7 +1241,7 @@ public partial class ILCompiler
     private HashSet<string> GetArrowClassDefinitionCaptures(
         Expr.ArrowFunction arrow, HashSet<string> captures)
     {
-        if (arrow.IsAsync || _currentCollectClassName == null) return [];
+        if ((arrow.IsAsync && !arrow.IsGenerator) || _currentCollectClassName == null) return [];
         var expression = _classExprs.Names.FirstOrDefault(entry =>
             entry.Value == _currentCollectClassName).Key;
         if (expression == null) return [];
@@ -1241,13 +1254,16 @@ public partial class ILCompiler
             .ToHashSet(StringComparer.Ordinal);
     }
 
-    private sealed class ArrowClassDefinitionVisitor(Func<Stmt.Class, bool> capturesOwner) : Parsing.Visitors.ControlledAstVisitor
+    private sealed class ArrowClassDefinitionVisitor(
+        Func<Stmt.Class, bool> capturesOwner, Func<Expr.Variable, bool> referencesSelf)
+        : Parsing.Visitors.ControlledAstVisitor
     {
         public bool UsesDefinition { get; private set; }
 
         protected override void BeforeVisit(Expr expression)
         {
-            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CompoundSetPrivate or Expr.CallPrivate or Expr.PrivateIn)
+            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CompoundSetPrivate or Expr.CallPrivate or Expr.PrivateIn ||
+                expression is Expr.Variable variable && referencesSelf(variable))
             {
                 UsesDefinition = true;
                 StopTraversal();
@@ -1310,7 +1326,7 @@ public partial class ILCompiler
     {
         foreach (var (arrow, _) in _collectedArrows)
         {
-            if (!arrow.IsAsync) continue;
+            if (!arrow.IsAsync || arrow.IsGenerator) continue;
 
             var members = ComputeAsyncArrowSyncWriteCaptures(arrow);
             if (members.Count == 0) continue;
@@ -1343,7 +1359,7 @@ public partial class ILCompiler
         var writes = new HashSet<string>();
         foreach (var (arrow, _) in _collectedArrows)
         {
-            if (arrow.IsAsync) continue;   // only SYNC arrows share through the async arrow's function DC
+            if (arrow.IsAsync || arrow.IsGenerator) continue;   // only ordinary SYNC arrows share through the async arrow's function DC
             if (!_arrowEnclosingAsyncArrow.TryGetValue(arrow, out var encl) || !ReferenceEquals(encl, asyncArrow))
                 continue;
             var w = CapturedWriteAnalysis.CollectImmediateWrites(arrow);
@@ -1614,7 +1630,7 @@ public partial class ILCompiler
         {
             // Skip async arrows - they're handled separately via AsyncArrowMoveNextEmitter
             // in ILCompiler.Async.cs
-            if (arrow.IsAsync)
+            if (arrow.IsAsync || arrow.IsGenerator)
             {
                 continue;
             }
@@ -1747,6 +1763,7 @@ public partial class ILCompiler
             var arrowCellFields = _closures.Analyzer.GetClosureCellFields(arrow);
             if (arrowCellFields.Count > 0)
                 ctx.CellCapturedFieldNames = arrowCellFields;
+            ctx.LoopBodyCellCaptures = _closures.Analyzer.GetLoopBodyCellCaptures(arrow);
 
             // Set the $entryPointDC field if this arrow captures top-level variables
             if (_closures.ArrowEntryPointDCFields.TryGetValue(arrow, out var entryPointDCField))

@@ -1077,24 +1077,27 @@ public abstract partial class ExpressionEmitterBase
     /// <c>List&lt;object&gt;</c> rest marker receives the packed remainder.
     /// </summary>
     public void EmitStaticCallArguments(List<Expr> arguments, MethodBase targetMethod)
+        => EmitStaticCallArguments(arguments, targetMethod, targetMethod.GetParameters());
+
+    /// <summary>Uses guest slots for lowering and the canonical target for arguments capture.</summary>
+    public void EmitStaticCallArguments(List<Expr> arguments, MethodBase targetMethod, ParameterInfo[] guestParameters)
     {
-        var targetParams = targetMethod.GetParameters();
-        int paramCount = targetParams.Length;
+        int paramCount = guestParameters.Length;
 
         // Implicit `extends Array` constructors are represented by one internal
         // params object[] slot so their CLR signature can carry an arbitrary JS
         // argument list. Pack spreads and ordinary arguments through the normal
         // JS argument-array helper instead of treating the first value as object[].
         if (paramCount == 1
-            && targetParams[0].ParameterType == Types.ObjectArray
-            && targetParams[0].Name == "__jsArgs")
+            && guestParameters[0].ParameterType == Types.ObjectArray
+            && guestParameters[0].Name == "__jsArgs")
         {
             EmitArgsArrayWithSpread(arguments);
             return;
         }
 
         bool hasRestParam = paramCount > 0 &&
-            targetParams[paramCount - 1].ParameterType == typeof(List<object>);
+            guestParameters[paramCount - 1].ParameterType == typeof(List<object>);
 
         bool publishesArguments =
             Ctx.MethodsCapturingArguments?.Contains(targetMethod) == true &&
@@ -1102,7 +1105,7 @@ public abstract partial class ExpressionEmitterBase
 
         if (publishesArguments)
         {
-            EmitArgumentsObservingCall(arguments, targetParams, hasRestParam);
+            EmitArgumentsObservingCall(arguments, guestParameters, hasRestParam);
             return;
         }
 
@@ -1129,10 +1132,10 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Ldloc, expandedArguments);
                 IL.Emit(OpCodes.Ldc_I4, i);
                 IL.Emit(OpCodes.Ldelem_Ref);
-                EmitCoerceBoxedToType(targetParams[i].ParameterType);
+                EmitCoerceBoxedToType(guestParameters[i].ParameterType);
                 IL.Emit(OpCodes.Br, loaded);
                 IL.MarkLabel(missing);
-                EmitOmittedArgument(targetParams[i].ParameterType);
+                EmitOmittedArgument(guestParameters[i].ParameterType);
                 IL.MarkLabel(loaded);
             }
             return;
@@ -1140,7 +1143,7 @@ public abstract partial class ExpressionEmitterBase
 
         if (hasRestParam)
         {
-            EmitRestParameterCall(arguments, paramCount - 1, targetParams);
+            EmitRestParameterCall(arguments, paramCount - 1, guestParameters);
             return;
         }
 
@@ -1152,7 +1155,7 @@ public abstract partial class ExpressionEmitterBase
             for (int i = 0; i < arguments.Count; i++)
             {
                 if (i < paramCount)
-                    argLocals[i] = SpillConvertedArg(arguments[i], targetParams[i].ParameterType);
+                    argLocals[i] = SpillConvertedArg(arguments[i], guestParameters[i].ParameterType);
                 else
                     argLocals[i] = SpillBoxed(arguments[i]);
             }
@@ -1160,7 +1163,7 @@ public abstract partial class ExpressionEmitterBase
             for (int i = 0; i < Math.Min(arguments.Count, paramCount); i++)
             {
                 IL.Emit(OpCodes.Ldloc, argLocals[i]);
-                EmitCoerceBoxedToType(targetParams[i].ParameterType);
+                EmitCoerceBoxedToType(guestParameters[i].ParameterType);
             }
         }
         else
@@ -1170,7 +1173,7 @@ public abstract partial class ExpressionEmitterBase
                 EmitExpression(arguments[i]);
                 if (i < paramCount)
                 {
-                    EmitConversionForParameter(arguments[i], targetParams[i].ParameterType);
+                    EmitConversionForParameter(arguments[i], guestParameters[i].ParameterType);
                 }
                 else
                 {
@@ -1182,7 +1185,7 @@ public abstract partial class ExpressionEmitterBase
         }
 
         for (int i = arguments.Count; i < paramCount; i++)
-            EmitOmittedArgument(targetParams[i].ParameterType);
+            EmitOmittedArgument(guestParameters[i].ParameterType);
     }
 
     /// <summary>
@@ -1276,6 +1279,7 @@ public abstract partial class ExpressionEmitterBase
         Expr.ObjectLiteral ol => ol.Properties.Any(p =>
             (p.Key is Expr.ComputedKey ck && ExprContainsSuspension(ck.Expression)) || ExprContainsSuspension(p.Value)),
         Expr.TemplateLiteral tl => AnyContainsSuspension(tl.Expressions),
+        Expr.TaggedTemplateLiteral tagged => ExprContainsSuspension(tagged.Tag) || AnyContainsSuspension(tagged.Expressions),
         Expr.Spread sp => ExprContainsSuspension(sp.Expression),
         Expr.TypeAssertion ta => ExprContainsSuspension(ta.Expression),
         Expr.Satisfies sa => ExprContainsSuspension(sa.Expression),
@@ -1433,8 +1437,8 @@ public abstract partial class ExpressionEmitterBase
     /// Emits <c>Class.staticMethod()</c> (with generic class support) and the
     /// inherited Promise statics on Promise subclasses (#242/#309:
     /// MyP.resolve / reject / all / … are not user-declared statics, so the
-    /// static-method lookup misses them — emit the base Promise static and
-    /// wrap the result in the subclass). Shared by
+    /// static-method lookup misses them — retain the subclass constructor
+    /// through the receiver-aware Promise static wrapper). Shared by
     /// <see cref="TryEmitGetCalleeViaBaseClass"/> and ILEmitter's EmitCall;
     /// the ILEmitter copy of this block had previously drifted and omitted
     /// the Promise-subclass arm, so MyP.resolve(1) threw. Extra-arg boxing
@@ -1485,15 +1489,12 @@ public abstract partial class ExpressionEmitterBase
             return true;
         }
 
-        // Promise subclasses (#242) inherit the Promise static side:
-        // emit the base Promise static (leaves Task<object?> on the
-        // stack), then construct the subclass around it via its executor
-        // constructor — PromiseFromExecutor adopts a raw task, so the
-        // result is a subclass-typed promise (NewPromiseCapability-lite).
+        // Promise subclasses inherit the receiver-aware static capability
+        // operations, including constructor replacement and callback validation.
         if (methodGet.Name.Lexeme is "resolve" or "reject" or "all" or "allKeyed"
             or "race" or "allSettled" or "allSettledKeyed" or "any" or "withResolvers"
             && Ctx.ClassRegistry.IsPromiseSubclass(resolvedClassName)
-            && TryEmitDerivedPromiseStatic(resolvedClassName, classBuilder, methodGet.Name.Lexeme, c.Arguments))
+            && TryEmitDerivedPromiseStatic(classBuilder, methodGet.Name.Lexeme, c.Arguments))
         {
             return true;
         }
@@ -1674,6 +1675,7 @@ public abstract partial class ExpressionEmitterBase
     {
         LocalBuilder calleeLocal;
         var callReference = UnwrapCallReference(c.Callee);
+        bool originalOptionalValue = RequiresOriginalOptionalCallValue(c.Callee, callReference);
 
         // #923: a direct method-style value-call `o.m(...)` must bind `this` to the receiver. The
         // generic value-call below passes a null receiver (correct for a detached call like `f()`),
@@ -1688,7 +1690,7 @@ public abstract partial class ExpressionEmitterBase
         // the receiver is now preserved. Strategy-resolved callees, detached `f()` (Expr.Variable),
         // and `arr[i]()` (Expr.Index) keep the null-receiver path below.
         LocalBuilder? receiverLocal = null;
-        if (callReference is Expr.Get methodGet && !ReceiverHasGetStrategy(methodGet.Object))
+        if (!originalOptionalValue && callReference is Expr.Get methodGet && !ReceiverHasGetStrategy(methodGet.Object))
         {
             // Evaluate the receiver once, spill it (a MoveNext re-entry from a suspending argument
             // wipes plain IL locals, #400), enforce RequireObjectCoercible before the arguments'
@@ -1703,7 +1705,7 @@ public abstract partial class ExpressionEmitterBase
             IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Property);
             calleeLocal = _helpers.SpillStoreObject();
         }
-        else if (callReference is Expr.GetIndex methodIndex)
+        else if (!originalOptionalValue && callReference is Expr.GetIndex methodIndex)
         {
             // Computed member calls have the same Reference receiver semantics as
             // dot-member calls: `obj[key]()` invokes the resolved function with
@@ -1714,11 +1716,14 @@ public abstract partial class ExpressionEmitterBase
             EmitExpression(methodIndex.Object);
             EnsureBoxed();
             receiverLocal = _helpers.SpillStoreObject();
-            EmitThrowIfReceiverUndefined(receiverLocal, "[]");
+            if (methodIndex.Optional)
+                EmitThrowIfReceiverUndefined(receiverLocal, "[]");
 
             EmitExpression(methodIndex.Index);
             EnsureBoxed();
             var indexLocal = _helpers.SpillStoreObject();
+            if (!methodIndex.Optional && !IsNullPlaceholderGlobal(methodIndex.Object))
+                EmitThrowIfUndefinedIndexReceiver(receiverLocal, indexLocal);
             IL.Emit(OpCodes.Ldloc, receiverLocal);
             IL.Emit(OpCodes.Ldloc, indexLocal);
             IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Index);
@@ -1816,16 +1821,25 @@ public abstract partial class ExpressionEmitterBase
     };
 
     /// <summary>
-    /// Parentheses and type assertions preserve a member Reference for call
+    /// Grouping and type-only wrappers preserve a member Reference for call
     /// evaluation; peel only those transparent wrappers when selecting the
     /// receiver that becomes `this`.
     /// </summary>
-    private static Expr UnwrapCallReference(Expr expr) => expr switch
+    private static Expr UnwrapCallReference(Expr expr) => ExpressionUnwrapper.Unwrap(expr);
+
+    private static bool RequiresOriginalOptionalCallValue(Expr original, Expr reference)
     {
-        Expr.Grouping grouping => UnwrapCallReference(grouping.Expression),
-        Expr.TypeAssertion assertion => UnwrapCallReference(assertion.Expression),
-        _ => expr
-    };
+        // Preserve the old value path only when the newly supported wrapper
+        // exposes an optional chain. Already-recognized member References keep
+        // their established dispatch, including their receiver's own wrappers.
+        while (true)
+        {
+            if (original is Expr.Grouping grouping) original = grouping.Expression;
+            else if (original is Expr.TypeAssertion assertion) original = assertion.Expression;
+            else break;
+        }
+        return (original is Expr.NonNullAssertion or Expr.Satisfies) && ReferenceHasOptionalLink(reference);
+    }
 
     /// <summary>
     /// Intercepts a method call whose callee chain contains an optional link
@@ -2050,14 +2064,12 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Isinst, Ctx.Runtime!.Sentinels.UndefinedType);
                 IL.Emit(OpCodes.Brtrue, nullishLabel);
             }
-            else
-            {
-                EmitThrowIfReceiverUndefined(receiverLocal, "[]");
-            }
 
             EmitExpression(index.Index);
             EnsureBoxed();
             var indexLocal = _helpers.SpillStoreObject();
+            if (!index.Optional && !IsNullPlaceholderGlobal(index.Object))
+                EmitThrowIfUndefinedIndexReceiver(receiverLocal, indexLocal);
             IL.Emit(OpCodes.Ldloc, receiverLocal);
             IL.Emit(OpCodes.Ldloc, indexLocal);
             IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Index);
@@ -2379,52 +2391,53 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
-    /// Emits an inherited Promise static called off a Promise subclass (#242):
-    /// `MyPromise.resolve(v)` → base Promise static produces the Task&lt;object?&gt;,
-    /// then `newobj MyPromise(task)` — the subclass's executor constructor —
-    /// yields the subclass-typed promise (PromiseFromExecutor adopts a raw
-    /// task in place of an executor). Returns false (emitting nothing) when
-    /// the subclass constructor can't accept the task as its first argument.
+    /// Emits an inherited Promise static through its receiver-aware capability
+    /// wrapper, retaining the guest constructor's selected result and validation.
     /// </summary>
-    protected bool TryEmitDerivedPromiseStatic(string resolvedClassName, Type classBuilder, string methodName, List<Expr> arguments)
+    protected bool TryEmitDerivedPromiseStatic(Type classBuilder, string methodName, List<Expr> arguments)
     {
-        if (Ctx.TypeEmitterRegistry?.GetStaticStrategy("Promise") is not { } promiseStatics)
-            return false;
-
         // withResolvers returns a {promise, resolve, reject} object, not a
         // task — delegate to the base emitter without subclass wrapping.
         if (methodName == "withResolvers")
         {
+            if (Ctx.TypeEmitterRegistry?.GetStaticStrategy("Promise") is not { } promiseStatics)
+                return false;
             if (!promiseStatics.TryEmitStaticCall(this, methodName, arguments))
                 return false;
             SetStackUnknown();
             return true;
         }
 
-        var subclassCtor = Ctx.ClassRegistry!.GetConstructorByQualifiedName(resolvedClassName);
-        if (subclassCtor == null)
-            return false;
-        var ctorParams = subclassCtor.GetParameters();
-        if (ctorParams.Length == 0 || ctorParams[0].ParameterType != typeof(object))
-            return false;
+        var promise = Ctx.Runtime!.RequirePromise();
+        MethodInfo? wrapper = methodName switch
+        {
+            "resolve" => promise.ResolveStatic,
+            "reject" => promise.RejectStatic,
+            "all" => promise.AllStatic,
+            "allKeyed" => promise.AllKeyedStatic,
+            "race" => promise.RaceStatic,
+            "allSettled" => promise.AllSettledStatic,
+            "allSettledKeyed" => promise.AllSettledKeyedStatic,
+            "any" => promise.AnyStatic,
+            _ => null
+        };
+        if (wrapper is null) return false;
 
-        if (!promiseStatics.TryEmitStaticCall(this, methodName, arguments))
-            return false;
-
-        // Stack: Task<object?> — the constructor's first (executor) argument.
-        // Generic subclasses (MyPromise<T>) need the constructor token bound
-        // to a constructed instantiation; type args are erased to object.
-        System.Reflection.ConstructorInfo ctorToCall = subclassCtor;
+        // The synthetic receiver is not a guest argument. Lower the original
+        // list first so spreads, surplus effects and suspension retain normal
+        // call order before the static wrapper constructs its capability.
+        EmitStaticCallArguments(arguments, wrapper, wrapper.GetParameters()[1..]);
+        var value = _helpers.SpillStoreObject();
+        Type constructorType = classBuilder;
         if (classBuilder.IsGenericTypeDefinition)
         {
-            var typeArgs = classBuilder.GetGenericArguments().Select(_ => typeof(object)).ToArray();
-            ctorToCall = TypeBuilder.GetConstructor(EmitGenerics.MakeGenericType(classBuilder, typeArgs), subclassCtor);
+            var typeArgs = classBuilder.GetGenericArguments().Select(_ => Types.Object).ToArray();
+            constructorType = EmitGenerics.MakeGenericType(classBuilder, typeArgs);
         }
-
-        for (int i = 1; i < ctorParams.Length; i++)
-            EmitOmittedArgument(ctorParams[i].ParameterType);
-
-        IL.Emit(OpCodes.Newobj, ctorToCall);
+        IL.Emit(OpCodes.Ldtoken, constructorType);
+        IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Ldloc, value);
+        IL.Emit(OpCodes.Call, wrapper);
         SetStackUnknown();
         return true;
     }
@@ -2585,34 +2598,38 @@ public abstract partial class ExpressionEmitterBase
         // state machines.
         EmitExpression(promise);
         EnsureBoxed();
-        var promiseReceiverLocal = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, promiseReceiverLocal);
+        var promiseReceiverLocal = _helpers.SpillStoreObject();
         // Promise.prototype.catch/finally are specified in terms of an
         // observable Get(promise, "then") followed by Invoke. Keep compiled
         // instance calls on their prototype-helper paths so own accessors or
         // replacements are not bypassed by the Task fast path.
         if (methodName is "catch" or "finally")
         {
-            IL.Emit(OpCodes.Ldloc, promiseReceiverLocal);
-            EmitBoxedArgOrNull(arguments, 0);
-            IL.Emit(OpCodes.Call, methodName == "catch"
+            var helper = methodName == "catch"
                 ? Ctx.Runtime!.RequirePromise().CatchHelperMethod
-                : Ctx.Runtime!.RequirePromise().FinallyHelperMethod);
+                : Ctx.Runtime!.RequirePromise().FinallyHelperMethod;
+            EmitStaticCallArguments(arguments, helper, helper.GetParameters()[1..]);
+            var handler = _helpers.SpillStoreObject();
+            IL.Emit(OpCodes.Ldloc, promiseReceiverLocal);
+            IL.Emit(OpCodes.Ldloc, handler);
+            IL.Emit(OpCodes.Call, helper);
             SetStackUnknown();
             return;
         }
 
+        var preparedCapability = IL.DeclareLocal(Types.Object);
         switch (methodName)
         {
             case "then":
                 var onFulfilledLocal = IL.DeclareLocal(typeof(object));
-                EmitBoxedArgOrNull(arguments, 0);
-                IL.Emit(OpCodes.Stloc, onFulfilledLocal);
                 var onRejectedLocal = IL.DeclareLocal(typeof(object));
-                EmitBoxedArgOrNull(arguments, 1);
+                var thenHelper = Ctx.Runtime!.RequirePromise().ThenHelperMethod;
+                EmitStaticCallArguments(arguments, thenHelper, thenHelper.GetParameters()[1..]);
                 IL.Emit(OpCodes.Stloc, onRejectedLocal);
+                IL.Emit(OpCodes.Stloc, onFulfilledLocal);
                 IL.Emit(OpCodes.Ldloc, promiseReceiverLocal);
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.RequirePromise().ObservePromiseConstructorMethod);
+                IL.Emit(OpCodes.Call, Ctx.Runtime.RequirePromise().PrepareDerivedPromiseCapabilityMethod);
+                IL.Emit(OpCodes.Stloc, preparedCapability);
                 IL.Emit(OpCodes.Ldloc, promiseReceiverLocal);
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.RequirePromise().UnwrapPromiseReceiverMethod);
                 IL.Emit(OpCodes.Ldloc, onFulfilledLocal);
@@ -2621,8 +2638,7 @@ public abstract partial class ExpressionEmitterBase
                 break;
         }
 
-        // Subclass receivers get subclass-typed results (species-lite, #242).
-        IL.Emit(OpCodes.Ldloc, promiseReceiverLocal);
+        IL.Emit(OpCodes.Ldloc, preparedCapability);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.RequirePromise().WrapDerivedPromiseResultMethod);
         SetStackUnknown();
     }

@@ -50,6 +50,10 @@ public static class DotNetTypeSynthesizer
         _cache.Reset();
     }
 
+    /// <summary>Resolves an imported class value without treating it as an instance.</summary>
+    internal static bool TryGetClrClassType(TypeInfo.Class declaration, out Type clrType)
+        => _cache.TryGetClrType(declaration, out clrType);
+
     /// <summary>Resolves a synthesized imported instance type back to its CLR type.</summary>
     public static bool TryGetClrType(TypeInfo type, out Type clrType)
     {

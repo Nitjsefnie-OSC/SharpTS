@@ -1,0 +1,27 @@
+using SharpTS.Tests.SharedTests;
+using Xunit;
+
+namespace SharpTS.Tests.CompilerTests;
+
+public partial class StandaloneDllTests
+{
+    [Theory, MemberData(nameof(PromiseAwaitConstructorTests.Cases), MemberType = typeof(PromiseAwaitConstructorTests))]
+    public void Isolated_Issue2168PromiseAwait_ObservesConstructorAndLiveThenProtocol(
+        string name, string source, string expected)
+    {
+        using var directory = IntegrationTests.CliTestHelper.CreateTempDirectory();
+        var path = directory.CreateFile("main.ts", source);
+        var output = directory.GetPath("promise-await-constructor-" + name + ".dll");
+        // Match the shared harness's built-in Promise declarations; #2169 owns
+        // the separate default-library generic Promise heritage boundary.
+        var compile = IntegrationTests.CliTestHelper.RunCli(
+            $"--no-tsconfig --noLib --compile \"{path}\" -o \"{output}\" --standalone --verify",
+            directory.Path, TimeSpan.FromSeconds(60));
+        Assert.True(compile.ExitCode == 0, compile.StandardOutput + compile.StandardError);
+        Assert.Contains("IL verification passed.", compile.StandardOutput);
+        Assert.DoesNotContain("SharpTS", GetAssemblyReferences(output));
+        Assert.False(File.Exists(directory.GetPath("SharpTS.dll")));
+        Assert.Equal(expected, ExecuteCompiledDllIsolated(output, timeoutMs: 30000,
+            verifyStandardError: error => Assert.Empty(error), standardInput: ""));
+    }
+}

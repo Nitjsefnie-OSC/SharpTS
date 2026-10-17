@@ -139,6 +139,11 @@ public partial class ILCompiler
             emitter = new ILEmitter(ctx);
         }
 
+        // Methods exist before user static fields/blocks execute. Publish once
+        // here, so a guest replacement or deletion during initialization remains
+        // authoritative. Deferred keys were already published by the registrar.
+        EmitComputedMemberRegistrations(emitter, il, typeBuilder);
+
         // Use StaticInitializers for proper declaration order if available
         if (hasStaticInitializers)
         {
@@ -232,11 +237,6 @@ public partial class ILCompiler
             EmitAutoAccessorInitializer(emitter, autoAccessor, qualifiedClassName, isStatic: true);
         }
 
-        // Register symbol-keyed computed accessors (#266) in the runtime registry,
-        // keyed by this class's Type so dynamic bracket get/set can dispatch them.
-        EmitSymbolAccessorRegistrations(emitter, il, typeBuilder);
-        EmitSymbolMethodRegistrations(emitter, il, typeBuilder);
-
         il.Emit(OpCodes.Ret);
         if (deferredDefinition != null)
             _classes.DeferredDefinitions.MarkInitializerEmitted(deferredDefinition);
@@ -251,67 +251,46 @@ public partial class ILCompiler
     }
 
     /// <summary>
-    /// Installs live descriptors for each computed accessor on its constructor/prototype.
+    /// Installs computed method/accessor descriptors in definition order.
     /// </summary>
-    private void EmitSymbolAccessorRegistrations(ILEmitter emitter, ILGenerator il, TypeBuilder typeBuilder)
+    private void EmitComputedMemberRegistrations(ILEmitter emitter, ILGenerator il, TypeBuilder typeBuilder)
     {
-        var list = _classes.ComputedMembers.GetAccessors(typeBuilder);
-        if (list.Count == 0)
-            return;
-
-        foreach (var (accessor, method) in list)
-        {
-            if (_classes.DeferredDefinitions.TryGet(typeBuilder, out _))
-                continue;
-            // Literal static keys are installed before user initialization by
-            // EmitKnownDeclaredAccessorDescriptors, with no key evaluation.
-            if (accessor.IsStatic && GetConstantComputedAccessorName(accessor.ComputedKey) != null
-                && GetNominalClassDeclaration(typeBuilder) != null)
-                continue;
-            // property key: preserve Symbols; coerce every other value exactly as bracket
-            // access does (notably null -> "null") before using it as a registry key.
-            EmitComputedPropertyKey(emitter, il, accessor.ComputedKey!);
-            var evaluatedKey = il.DeclareLocal(_types.Object);
-            il.Emit(OpCodes.Stloc, evaluatedKey);
-            EmitDeclaredAccessorDescriptor(il, typeBuilder, accessor, method,
-                () => il.Emit(OpCodes.Ldloc, evaluatedKey));
-        }
-    }
-
-    /// <summary>
-    /// Emits <c>$Runtime.RegisterSymbolMethod(typeof(ThisClass), symbol, methodInfo, isStatic)</c>
-    /// for each computed symbol-keyed method recorded for this class (#647), mirroring
-    /// <see cref="EmitSymbolAccessorRegistrations"/>.
-    /// </summary>
-    private void EmitSymbolMethodRegistrations(ILEmitter emitter, ILGenerator il, TypeBuilder typeBuilder)
-    {
-        var list = _classes.ComputedMembers.GetMethods(typeBuilder);
-        if (list.Count == 0)
-            return;
+        if (_classes.DeferredDefinitions.TryGet(typeBuilder, out _)) return;
+        var members = new List<(Stmt.Function? Method, Stmt.Accessor? Accessor, Expr Key, MethodBuilder Builder, int Position)>();
+        foreach (var (method, key, builder) in _classes.ComputedMembers.GetMethods(typeBuilder))
+            members.Add((method, null, key, builder, method.Name.Start));
+        foreach (var (accessor, builder) in _classes.ComputedMembers.GetAccessors(typeBuilder))
+            members.Add((null, accessor, accessor.ComputedKey!, builder, accessor.Name.Start));
 
         var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
-
-        foreach (var (method, key, builder) in list)
+        foreach (var (method, accessor, key, builder, _) in members.OrderBy(member => member.Position))
         {
-            if (_classes.DeferredDefinitions.TryGet(typeBuilder, out _))
+            if (accessor != null)
+            {
+                // These descriptors were installed before user initialization;
+                // do not restore a value that a static field/block changed.
+                if (accessor.IsStatic && GetConstantComputedAccessorName(key) != null
+                    && GetNominalClassDeclaration(typeBuilder) != null) continue;
+                var accessorKey = il.DeclareLocal(_types.Object);
+                EmitComputedPropertyKey(emitter, il, key); il.Emit(OpCodes.Stloc, accessorKey);
+                EmitDeclaredAccessorDescriptor(il, typeBuilder, accessor, builder,
+                    () => il.Emit(OpCodes.Ldloc, accessorKey));
                 continue;
+            }
             LocalBuilder? evaluatedKey = null;
             var registrationDone = il.DefineLabel();
-            if (!method.IsStatic && CanOwnDeclaredSymbolMethodValue(typeBuilder))
+            if (CanOwnDeclaredSymbolMethodValue(typeBuilder))
             {
-                // One evaluation supplies the data property's key and the legacy
-                // string-key registry fallback. Symbol methods are owned by the
-                // prototype, so a deleted value must not reappear from that registry.
+                // Publish the canonical method value under the evaluated key.
+                // Retain ordinary keys only as ownership metadata: their reads
+                // consult live descriptors rather than reconstructing a wrapper.
                 evaluatedKey = il.DeclareLocal(_types.Object);
                 EmitComputedPropertyKey(emitter, il, key);
                 il.Emit(OpCodes.Stloc, evaluatedKey);
-                var ordinaryKey = il.DefineLabel();
+                EmitDeclaredComputedMethodDescriptor(il, typeBuilder, method!, builder, evaluatedKey);
                 il.Emit(OpCodes.Ldloc, evaluatedKey);
                 il.Emit(OpCodes.Isinst, _runtime.Symbols.Type);
-                il.Emit(OpCodes.Brfalse, ordinaryKey);
-                EmitDeclaredSymbolMethodDescriptor(il, typeBuilder, method, builder, evaluatedKey);
-                il.Emit(OpCodes.Br, registrationDone);
-                il.MarkLabel(ordinaryKey);
+                il.Emit(OpCodes.Brtrue, registrationDone);
             }
             // owner: typeof(ThisClass)
             il.Emit(OpCodes.Ldtoken, typeBuilder);
@@ -326,7 +305,7 @@ public partial class ILCompiler
             EmitMethodInfoLiteral(il, builder, typeBuilder);
 
             // isStatic
-            il.Emit(method.IsStatic ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+            il.Emit(method!.IsStatic ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
 
             il.Emit(OpCodes.Call, _runtime.SymbolAccessors.RegisterMethod);
             il.MarkLabel(registrationDone);
@@ -395,20 +374,17 @@ public partial class ILCompiler
                 continue;
             }
             var registrationDone = il.DefineLabel();
-            if (!isStatic && CanOwnDeclaredSymbolMethodValue(typeBuilder))
+            if (CanOwnDeclaredSymbolMethodValue(typeBuilder))
             {
                 var evaluatedKey = il.DeclareLocal(_types.Object);
                 il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldc_I4, i); il.Emit(OpCodes.Ldelem_Ref);
                 il.Emit(OpCodes.Stloc, evaluatedKey);
-                var ordinaryKey = il.DefineLabel();
-                il.Emit(OpCodes.Ldloc, evaluatedKey); il.Emit(OpCodes.Isinst, _runtime.Symbols.Type);
-                il.Emit(OpCodes.Brfalse, ordinaryKey);
                 var methodSource = _classes.ComputedMembers.GetMethods(typeBuilder)
                     .First(entry => ReferenceEquals(entry.Builder, builder)).Method;
-                EmitDeclaredSymbolMethodDescriptor(il, typeBuilder, methodSource, builder!, evaluatedKey,
+                EmitDeclaredComputedMethodDescriptor(il, typeBuilder, methodSource, builder!, evaluatedKey,
                     CanonicalGenericClassOwner(typeBuilder));
-                il.Emit(OpCodes.Br, registrationDone);
-                il.MarkLabel(ordinaryKey);
+                il.Emit(OpCodes.Ldloc, evaluatedKey); il.Emit(OpCodes.Isinst, _runtime.Symbols.Type);
+                il.Emit(OpCodes.Brtrue, registrationDone);
             }
             il.Emit(OpCodes.Ldtoken, typeBuilder);
             il.Emit(OpCodes.Call, getTypeFromHandle);

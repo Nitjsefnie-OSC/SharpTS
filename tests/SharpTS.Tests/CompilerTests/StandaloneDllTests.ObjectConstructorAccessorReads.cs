@@ -9,6 +9,8 @@ public partial class StandaloneDllTests
     [InlineData("issue")]
     [InlineData("receivers")]
     [InlineData("missing-values")]
+    [InlineData("getterless-issue")]
+    [InlineData("undefined-getter")]
     public void Isolated_Issue2047ObjectConstructorAccessorReads(string name)
     {
         var row = ObjectConstructorAccessorReadTests.Cases().Single(row => (string)row[0] == name);

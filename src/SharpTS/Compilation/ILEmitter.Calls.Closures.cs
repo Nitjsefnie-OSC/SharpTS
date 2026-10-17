@@ -351,12 +351,13 @@ public partial class ILEmitter
         foreach (var (capturedVar, field) in fieldMap)
         {
             if (selfRefSkipName != null && capturedVar == selfRefSkipName) continue;
+            bool bodyCell = _ctx.ClosureAnalyzer?.TryGetLoopBodyCellCapture(af, capturedVar, out _) == true;
 
             // A block lexical predeclared with the TDZ sentinel is captured by
             // value when this display instance is created. Retain the instance
             // so declaration emission can refresh the snapshot with the
             // initialized value, preserving the binding after the TDZ ends.
-            if (_ctx.Locals.TryGetTag(capturedVar, out var lexicalTag)
+            if (!bodyCell && _ctx.Locals.TryGetTag(capturedVar, out var lexicalTag)
                 && lexicalTag is Token or Stmt.Class)
             {
                 var lexicalDcInstance = IL.DeclareLocal(displayClass);
@@ -375,7 +376,7 @@ public partial class ILEmitter
             // the display-class instance so the declaration emitter can write the
             // post-initializer value back into this field. Per-iteration freshness
             // is preserved: each iteration builds a distinct DC instance.
-            if (_ctx.SelfCaptureVarName != null && capturedVar == _ctx.SelfCaptureVarName
+            if (!bodyCell && _ctx.SelfCaptureVarName != null && capturedVar == _ctx.SelfCaptureVarName
                 && _ctx.SelfCaptureWriteBacks != null)
             {
                 var dcInstanceLocal = IL.DeclareLocal(displayClass);
@@ -413,6 +414,7 @@ public partial class ILEmitter
                 // parent arrow; class-method arg0 for the outermost).
                 if (!_resolver.TryLoadThisBindingCell()) _resolver.LoadThis();
             }
+            else if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(IL, _ctx, af, capturedVar)) { }
             else if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
             {
                 // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE

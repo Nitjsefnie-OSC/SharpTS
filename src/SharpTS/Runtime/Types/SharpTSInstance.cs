@@ -131,7 +131,6 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         Field,       // Resolved to an instance field (read from _fields)
         Method,      // Resolved to the canonical prototype method
         AutoAccessor,// Resolved to an auto-accessor (TypeScript 4.9+)
-        ClassSelf,   // The special `constructor` property — returns the class
         NotFound     // Property doesn't exist (cache negative lookups)
     }
 
@@ -145,17 +144,6 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
     private PropertyResolution ResolveProperty(string name)
     {
-        // JS spec: instance.constructor returns the class (function) itself,
-        // not whatever was registered as a "constructor" method on the class.
-        // Without this short-circuit, `err.constructor === TypeError` fails
-        // because FindMethod returns ErrorConstructorCallable (a distinct
-        // callable per access), breaking Test262's assert.throws identity
-        // check.
-        if (name == "constructor")
-        {
-            return new PropertyResolution { Type = ResolutionType.ClassSelf };
-        }
-
         if ((_getters?.ContainsKey(name) ?? false) || (_setters?.ContainsKey(name) ?? false))
             return new PropertyResolution { Type = ResolutionType.OwnAccessor };
 
@@ -201,6 +189,21 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public object? Get(Token name)
     {
         string propName = name.Lexeme;
+        if (propName == "constructor")
+        {
+            // Constructor is an ordinary live prototype property. Its default
+            // back-reference must not hide own data/accessors or be cached over
+            // a computed method, replacement, deletion, or changed prototype.
+            if (_getters?.TryGetValue(propName, out var getter) == true)
+                return InvokeOwnAccessor(getter, []);
+            if (_setters?.ContainsKey(propName) == true) return SharpTSUndefined.Instance;
+            if (_fields.TryGetValue(propName, out var value)) return value;
+            if (_interpreter != null) return _interpreter.GetInstancePrototypeProperty(this, propName);
+            // Native errors can expose their canonical constructor before an
+            // interpreter is attached. Preserve that default without a null call.
+            return Prototype is SharpTSClassPrototype prototype
+                ? prototype.GetMember(propName) ?? SharpTSUndefined.Instance : SharpTSUndefined.Instance;
+        }
         if (UsesDynamicPrototypeChain)
         {
             if (_getters?.TryGetValue(propName, out var getter) == true)
@@ -239,7 +242,6 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
                 : SharpTSUndefined.Instance,
             ResolutionType.Field => _fields[propName],
             ResolutionType.Method => resolution.Function,
-            ResolutionType.ClassSelf => _klass,
             ResolutionType.NotFound => SharpTSUndefined.Instance, // JavaScript semantics: missing properties return undefined
             _ => throw new InvalidOperationException("Unknown resolution type")
         };
@@ -414,6 +416,12 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
     public bool HasProperty(string name)
     {
+        if (name == "constructor")
+        {
+            if (GetOwnPropertyDescriptor(name) != null) return true;
+            return _interpreter?.HasProperty(Prototype, name)
+                ?? (Prototype is SharpTSClassPrototype prototype && prototype.HasOwnProperty(name));
+        }
         if (UsesDynamicPrototypeChain)
             return GetOwnPropertyDescriptor(name) is not null || _interpreter!.HasProperty(Prototype, name);
         if (!_lookupCache.TryGetValue(name, out PropertyResolution? resolution))

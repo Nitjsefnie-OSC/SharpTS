@@ -53,16 +53,18 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brtrue, isPromiseOkLabel);
             GuestErrorEmitter.ThrowTypeError(il, runtime, "Promise.prototype.then called on non-Promise");
             il.MarkLabel(isPromiseOkLabel);
+            var capabilityLocal = il.DeclareLocal(_types.Object);
             il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Call, runtime.RequirePromise().ObservePromiseConstructorMethod);
+            il.Emit(OpCodes.Call, runtime.RequirePromise().PrepareDerivedPromiseCapabilityMethod);
+            il.Emit(OpCodes.Stloc, capabilityLocal);
             var taskLocal = il.DeclareLocal(_types.TaskOfObject);
             EmitUnwrapToTask(il, runtime, taskLocal);
             il.Emit(OpCodes.Ldloc, taskLocal);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldarg_2);
             il.Emit(OpCodes.Call, runtime.RequirePromise().Then);
-            // Promise-subclass receivers get subclass-typed results (#242).
-            il.Emit(OpCodes.Ldarg_0);
+            // Construction and callback validation precede reaction registration.
+            il.Emit(OpCodes.Ldloc, capabilityLocal);
             il.Emit(OpCodes.Call, runtime.RequirePromise().WrapDerivedPromiseResultMethod);
             il.Emit(OpCodes.Ret);
         }
@@ -406,13 +408,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, fastPathLabel);
 
         il.MarkLabel(fastPathLabel);
+        var capabilityLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.RequirePromise().ObservePromiseConstructorMethod);
+        il.Emit(OpCodes.Call, runtime.RequirePromise().PrepareDerivedPromiseCapabilityMethod);
+        il.Emit(OpCodes.Stloc, capabilityLocal);
         il.Emit(OpCodes.Ldloc, taskLocal);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, isCatch ? runtime.RequirePromise().Catch : runtime.RequirePromise().Finally);
-        // Promise-subclass receivers get subclass-typed results (#242).
-        il.Emit(OpCodes.Ldarg_0);
+        // Return the prepared constructor's result, including a replacement.
+        il.Emit(OpCodes.Ldloc, capabilityLocal);
         il.Emit(OpCodes.Call, runtime.RequirePromise().WrapDerivedPromiseResultMethod);
         il.Emit(OpCodes.Br, endLabel);
 

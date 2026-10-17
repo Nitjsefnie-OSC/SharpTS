@@ -228,10 +228,6 @@ public partial class ILCompiler
             }
             else
             {
-                var ordinaryKey = il.DefineLabel();
-                il.Emit(OpCodes.Ldloc, key);
-                il.Emit(OpCodes.Isinst, _runtime.Symbols.Type);
-                il.Emit(OpCodes.Brfalse, ordinaryKey);
                 il.Emit(OpCodes.Ldloc, target);
                 il.Emit(OpCodes.Ldloc, methodInfo);
                 il.Emit(OpCodes.Ldloc, key);
@@ -242,7 +238,6 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Callvirt, _runtime.FunctionValues.LengthGetter);
                 il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.CachedConstructor);
                 il.Emit(OpCodes.Stloc, function);
-                il.MarkLabel(ordinaryKey);
             }
             il.Emit(OpCodes.Ldloc, descriptor);
             il.Emit(OpCodes.Ldloc, function);

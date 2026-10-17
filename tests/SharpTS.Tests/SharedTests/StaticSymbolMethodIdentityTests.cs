@@ -97,6 +97,82 @@ public sealed class StaticSymbolMethodIdentityTests
 
     public const string CacheKeyExpected = "true true false\nretained changed 1 [same]\ntrue 42 2 2\n";
 
+    public const string ClosedGenericIssueSource = """
+        const key = Symbol("method");
+        class Base<T> { static [key]() { return 42; } }
+        class Closed extends Base<number> {}
+        const base: any = Base, closed: any = Closed;
+        console.log(base[key] === closed[key]);
+        base[key].tag = "shared";
+        console.log(closed[key].tag);
+        console.log(base[key](), closed[key]());
+        """;
+
+    public static string ClosedGenericControlsSource(bool closedFirst) => $$"""
+        const key = Symbol("same"), other = Symbol("same");
+        class Base<T> {
+            static [key](value: any, fallback: any = 2, ...rest: any[]) {
+                return [this, value, fallback, rest.length];
+            }
+            static [other]() { return "other"; }
+        }
+        class Derived<T> extends Base<T> {}
+        class Closed extends Base<number> {}
+        class TextClosed extends Base<string> {}
+        class Override extends Base<number> { static [key](value: any) { return [this, value]; } }
+        class Peer<T> { static [key]() { return "peer"; } }
+        const base: any = Base, derived: any = Derived, closed: any = Closed;
+        const text: any = TextClosed, overridden: any = Override, peer: any = Peer;
+        const method: any = {{(closedFirst ? "text" : "base")}}[key];
+        method.tag = "shared";
+        Object.defineProperty(method, "name", { value: "changed", configurable: true });
+        const bound: any = method.bind(closed, 5);
+        console.log(method === base[key], method === derived[key], method === closed[key], method === text[key]);
+        console.log(base[key].tag, closed[key].tag, text[key].tag, base[key].name, closed[key].length);
+        const result: any = closed[key](3, undefined, 4, 5);
+        console.log(result[0] === closed, result[1], result[2], result[3]);
+        console.log(method.call(text, 4)[0] === text, method.apply(derived, [5])[1],
+            bound()[0] === closed, bound()[1]);
+        console.log(method !== base[other], method !== overridden[key], method !== peer[key],
+            overridden[key](6)[0] === overridden);
+        """;
+
+    public const string ClosedGenericControlsExpected = "true true true true\nshared shared shared changed 1\n"
+        + "true 3 2 2\ntrue 5 true 5\ntrue true true true\n";
+
+    public static IEnumerable<object[]> ClosedGenericCases()
+    {
+        yield return ["issue", ClosedGenericIssueSource, "true\nshared\n42 42\n"];
+        yield return ["base-first", ClosedGenericControlsSource(false), ClosedGenericControlsExpected];
+        yield return ["closed-first", ClosedGenericControlsSource(true), ClosedGenericControlsExpected];
+        yield return ["constrained", """
+            const key = Symbol("method");
+            class Marker { marker = 1; }
+            class DerivedMarker extends Marker {}
+            class Base<T extends Marker> { static [key]() { return this; } }
+            class Open<U extends Marker> extends Base<U> {}
+            class Closed extends Base<DerivedMarker> {}
+            const baseOwner: any = Base, openOwner: any = Open, closedOwner: any = Closed;
+            const method: any = closedOwner[key];
+            method.tag = "shared";
+            console.log(method === baseOwner[key], method === openOwner[key], baseOwner[key].tag);
+            console.log(baseOwner[key]() === baseOwner, openOwner[key]() === openOwner,
+                closedOwner[key]() === closedOwner);
+            """, "true true shared\ntrue true true\n"];
+    }
+
+    public static IEnumerable<object[]> ClosedGenericModeCases()
+        => ClosedGenericCases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            .Select(mode => new object[] { row[0], row[1], row[2], mode }));
+
+    [Theory, MemberData(nameof(ClosedGenericModeCases))]
+    public void ClosedGenericOwnersShareStaticSymbolMethodValues(
+        string name, string source, string expected, ExecutionMode mode)
+    {
+        Assert.NotEmpty(name);
+        Assert.Equal(expected, TestHarness.Run(source, mode));
+    }
+
     [Theory, ModeData]
     public void CachedReadsKeepDistinctEvaluatedSymbolsAndRetainMutableMetadata(ExecutionMode mode)
         => Assert.Equal(CacheKeyExpected, TestHarness.Run(CacheKeySource, mode));
@@ -164,12 +240,14 @@ public sealed class StaticSymbolMethodIdentityTests
             class Closed extends Base<number> {}
             const base: any = Base, derived: any = Derived, closed: any = Closed;
             const method: any = derived[key];
-            console.log(method === base[key]);
+            console.log(method === base[key], method === closed[key]);
+            method.tag = "shared";
+            console.log(base[key].tag, closed[key].tag);
             console.log(base[key](1)[0] === base, derived[key](2)[0] === derived,
                 closed[key](3)[0] === closed, method.call(derived, 4)[0] === derived);
             console.log(method.apply(closed, [5])[1], method.bind(derived, 6)()[1]);
             """;
-        Assert.Equal("true\ntrue true true true\n5 6\n", TestHarness.Run(source, mode));
+        Assert.Equal("true true\nshared shared\ntrue true true true\n5 6\n", TestHarness.Run(source, mode));
     }
 
     [Theory, ModeData]

@@ -2287,7 +2287,7 @@ public partial class RuntimeEmitter
             EmitProxyTypeCheck(il, () => il.Emit(OpCodes.Ldloc, prototype), isProxy, notProxy);
             il.MarkLabel(isProxy);
             // Inherited assignment enters Proxy [[Set]], with the original
-            // constructor as Receiver, instead of running descriptor traps.
+            // object as Receiver, instead of running descriptor traps.
             EmitProxySetCompiledCall(
                 il, new ProxySetCallInputs(inputs.ReflectAssignment!.Set, inputs.ObjectDescriptors.GetOwnPropertyDescriptor,
                     inputs.ObjectRead.Property, inputs.InvokeMethodUnwrapped),
@@ -2346,6 +2346,39 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, prototype);
         il.Emit(OpCodes.Br, prototypeLoop);
 
+    }
+
+    private void EmitClassInstanceSetStrict(ILGenerator il, SetPropertyStrictInputs inputs)
+    {
+        var carrierFallback = il.DefineLabel();
+        var reject = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Brfalse, carrierFallback);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.IHasFieldsInterface);
+        il.Emit(OpCodes.Brfalse, carrierFallback);
+
+        // Own fields/descriptors shadow prototype accessors. Their existing
+        // strict storage path handles writability and an own accessor setter.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.ObjectDescriptors.GetOwnPropertyDescriptor);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brfalse, carrierFallback);
+
+        // The carrier's void SetProperty intentionally ignores getter-only
+        // writes in sloppy mode. Strict writes must first resolve the nearest
+        // actual prototype descriptor, without invoking a getter or a farther setter.
+        EmitConstructorPrototypeSetGuard(il, inputs, () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+        }, carrierFallback, reject);
+
+        il.MarkLabel(reject);
+        EmitThrowTypeErrorWithName(il, inputs.Errors,
+            "Cannot assign to read only property '", "' of object");
+        il.MarkLabel(carrierFallback);
     }
 
     // A descriptor claims its key even when it has no callable setter. This
@@ -2653,6 +2686,9 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(nominalClassWrite);
         }
+
+        if (_features.UsesUserClasses)
+            EmitClassInstanceSetStrict(il, inputs);
 
         // Not a dict or $Object or $TSFunction or $CJSModule or array - fall back to SetFieldsPropertyStrict.
         // Native Type and other receiver kinds retain their existing fallback.

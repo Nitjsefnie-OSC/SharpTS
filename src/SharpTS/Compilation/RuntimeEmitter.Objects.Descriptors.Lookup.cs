@@ -65,10 +65,12 @@ public partial class RuntimeEmitter
 
     private readonly record struct GetOwnDescriptorConstructorReceiverInputs(
         EmittedDateRuntime Dates,
+        EmittedDescriptorStorageRuntime DescriptorStorage,
         MethodBuilder GetEntries,
         MethodBuilder GetKeys,
         MethodBuilder GetOwnPropertyNames,
         MethodBuilder GetProperty,
+        Type IHasFieldsInterface,
         MethodBuilder LookupBuiltInStaticMember,
         MethodBuilder ObjectAssign,
         MethodBuilder ObjectFromEntries,
@@ -103,6 +105,13 @@ public partial class RuntimeEmitter
 
     private readonly record struct GetOwnDescriptorArrayConstructorInputs(
         FieldInfo UndefinedInstance, MethodBuilder LookupBuiltInStaticMember);
+
+    private readonly record struct GetOwnDescriptorUserStaticFieldInputs(
+        EmittedDescriptorStorageRuntime DescriptorStorage,
+        MethodBuilder GetProperty,
+        Type IHasFieldsInterface,
+        MethodBuilder ObjectHasOwn
+    );
 
     private readonly record struct GetOwnDescriptorConstructorFallbackInputs(
         MethodBuilder GetProperty,
@@ -526,7 +535,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Brfalse, notTypeForDescLabel);
-        EmitGetOwnDescriptorConstructorMetadata(il, inputs.GetProperty, propNameLocal, resultDictLocal, endLabel);
+        EmitGetOwnDescriptorConstructorMetadata(il, inputs.GetProperty, inputs.ObjectState.IsBuiltinDeleted,
+            propNameLocal, resultDictLocal, returnNullLabel, endLabel);
 
         EmitGetOwnDescriptorRegExpConstructor(
             il,
@@ -553,6 +563,7 @@ public partial class RuntimeEmitter
             ),
             propNameLocal,
             resultDictLocal,
+            returnNullLabel,
             endLabel
         );
 
@@ -579,6 +590,23 @@ public partial class RuntimeEmitter
             endLabel
         );
 
+        if (_features.UsesUserClasses)
+        {
+            EmitGetOwnDescriptorUserStaticField(
+                il,
+                new GetOwnDescriptorUserStaticFieldInputs(
+                    inputs.DescriptorStorage,
+                    inputs.GetProperty,
+                    inputs.IHasFieldsInterface,
+                    inputs.ObjectHasOwn
+                ),
+                propNameLocal,
+                resultDictLocal,
+                returnNullLabel,
+                endLabel
+            );
+        }
+
         EmitGetOwnDescriptorConstructorFallback(
             il,
             new GetOwnDescriptorConstructorFallbackInputs(
@@ -596,12 +624,15 @@ public partial class RuntimeEmitter
     }
 
     // Called only for Type receivers. Handles prototype/name/length; entry/fallthrough
-    // are empty, and matches branch to the caller-owned endLabel with one result object.
+    // are empty. Matches branch to endLabel with one result object, or to
+    // returnNullLabel with an empty stack for deleted configurable metadata.
     private void EmitGetOwnDescriptorConstructorMetadata(
         ILGenerator il,
         MethodBuilder getProperty,
+        MethodBuilder isBuiltinDeleted,
         LocalBuilder propNameLocal,
         LocalBuilder resultDictLocal,
+        Label returnNullLabel,
         Label endLabel
     )
     {
@@ -631,6 +662,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "name");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, typeIsNameLabel);
+        // Explicit descriptors were checked by the caller before synthesis.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Call, isBuiltinDeleted);
+        il.Emit(OpCodes.Brtrue, returnNullLabel);
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultDictLocal);
         il.Emit(OpCodes.Ldloc, resultDictLocal);
@@ -651,6 +687,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "length");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, typeIsLengthLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, isBuiltinDeleted);
+        il.Emit(OpCodes.Brtrue, returnNullLabel);
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultDictLocal);
         il.Emit(OpCodes.Ldloc, resultDictLocal);
@@ -703,13 +743,15 @@ public partial class RuntimeEmitter
     }
 
     // Type receiver stage. Entry/fallthrough are empty; a matched static method
-    // branches to the caller-owned endLabel with one result object. Owns dispatch labels.
+    // branches to the caller-owned endLabel with one result object, or returnNullLabel
+    // for a deleted intrinsic. Owns dispatch labels.
     private void EmitGetOwnDescriptorObjectConstructor(
         ILGenerator il,
         EmittedObjectDescriptorRuntime descriptors,
         GetOwnDescriptorObjectConstructorInputs inputs,
         LocalBuilder propNameLocal,
         LocalBuilder resultDictLocal,
+        Label returnNullLabel,
         Label endLabel
     )
     {
@@ -724,6 +766,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldtoken, _types.Object);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle")!);
         il.Emit(OpCodes.Bne_Un, objTypeNotObjectLabel);
+        // User-defined descriptors were checked before constructor synthesis.
+        // A deleted intrinsic must not acquire a synthetic descriptor again.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+        il.Emit(OpCodes.Brtrue, returnNullLabel);
         void EmitObjectMethodValueDescCheck(string n, MethodBuilder targetMethod, int specLength)
         {
             var skipLabel = il.DefineLabel();
@@ -994,6 +1042,83 @@ public partial class RuntimeEmitter
         EmitNumberStaticCheck("isInteger", true);
         EmitNumberStaticCheck("isSafeInteger", true);
         il.MarkLabel(notDoubleTypeLabel);
+    }
+
+    // Type-only field stage. Empty entry/fallthrough; a handled field branches
+    // to endLabel with one descriptor, and a missing own slot exits empty.
+    private void EmitGetOwnDescriptorUserStaticField(
+        ILGenerator il,
+        GetOwnDescriptorUserStaticFieldInputs inputs,
+        LocalBuilder propNameLocal,
+        LocalBuilder resultDictLocal,
+        Label returnNullLabel,
+        Label endLabel
+    )
+    {
+        var unhandled = il.DefineLabel();
+        var owner = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.Type);
+        il.Emit(OpCodes.Stloc, owner);
+        il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ldloc, owner);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+        il.Emit(OpCodes.Brfalse, unhandled);
+
+        // Presence is independent of the current value, and respects deletion.
+        // Classify only declared public fields; inherited statics are not own.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Call, inputs.ObjectHasOwn);
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+        var fieldOwner = EmitStaticMemberLookupOwner(il, owner, inputs.IHasFieldsInterface);
+        il.Emit(OpCodes.Ldloc, fieldOwner);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetField", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Brfalse, unhandled);
+
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Stloc, resultDictLocal);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        // Read the original guest owner live. No second value store is created,
+        // and null, undefined and callable values are all ordinary field values.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Call, inputs.GetProperty);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+
+        var isFrozen = il.DeclareLocal(_types.Boolean);
+        var isSealed = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.IsFrozen);
+        il.Emit(OpCodes.Stloc, isFrozen);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.IsSealed);
+        il.Emit(OpCodes.Stloc, isSealed);
+
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "writable");
+        il.Emit(OpCodes.Ldloc, isFrozen);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        EmitDescriptorBoolField(il, resultDictLocal, "enumerable", true);
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Ldstr, "configurable");
+        il.Emit(OpCodes.Ldloc, isFrozen);
+        il.Emit(OpCodes.Ldloc, isSealed);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(unhandled);
     }
 
     // Final Type receiver stage. Empty entry; every path branches to a caller exit:

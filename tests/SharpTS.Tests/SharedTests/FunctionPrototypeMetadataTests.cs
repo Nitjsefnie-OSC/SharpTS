@@ -162,10 +162,9 @@ public sealed class FunctionPrototypeMetadataTests
         Assert.Equal("true true\n", TestHarness.Run(OriginalSource, mode));
     }
 
-    [Fact]
-    public void NumberOwnMetadataDeletionFallsBackToLivePrototypeMetadata()
+    [Theory, ModeData]
+    public void NumberOwnMetadataDeletionFallsBackToLivePrototypeMetadata(ExecutionMode mode)
     {
-        // #2164 separately tracks the compiled Number inherited-name path.
         const string source = """
             const constructor: any = Number, prototype: any = Function.prototype;
             delete constructor.name; delete constructor.length;
@@ -181,6 +180,6 @@ public sealed class FunctionPrototypeMetadataTests
                 Object.hasOwn(constructor, "name"), Object.hasOwn(constructor, "length"));
             """;
         Assert.Equal("true true false false\ninherited 19 false false\ntrue true false false\n",
-            TestHarness.RunInterpreted(source));
+            TestHarness.Run(source, mode));
     }
 }

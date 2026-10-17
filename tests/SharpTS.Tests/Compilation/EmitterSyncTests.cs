@@ -51,6 +51,7 @@ public class EmitterSyncTests
             // variables; resolve analyzed binding storage while retaining the shared lowering.
             "GetBindingStorageName",
             "GetClassStorageName",  // Use analyzed per-binding class storage across suspension without changing the AST node used for class-builder lookup
+            "DefineLexicalCellField", // #2148/#2149: retain shared lexical cells in state-machine fields across await/yield
             "EmitCompoundAssign",   // Route a shadowing compound assignment to its own slot
             "EmitLogicalAssign",    // Route a shadowing logical assignment to its own slot
             "EmitPrefixIncrement",  // Route a shadowing prefix ++/-- to its own slot
@@ -147,6 +148,7 @@ public class EmitterSyncTests
             "EmitStoreVariable",    // Capture indirection
             "EmitThis",             // Outer state machine capture
             "TryEmitNewTargetCapture", // #2082: standalone async arrows retain lexical new.target in a state-machine capture field
+            "TryEmitGeneratorCaptureOwner", // #2149: relay the actual display/state-machine owner to a nested generator expression
             // (EmitAwait is inherited from AsyncFunctionMoveNextEmitter since #1122 — see above.)
             "EmitArrowFunction",    // Nested async arrows in state machine
             "EmitExpressionAsDouble", // Literal optimization

@@ -110,16 +110,6 @@ public sealed class FunctionPrototypeSymbolDescriptorTests
     }
 
     [Fact]
-    public void InterpretedDeletingMissingFunctionPrototypeSymbolSucceeds()
-    {
-        // Compiled indexed deletion of absent Symbols is tracked in #2220.
-        Assert.Equal("true\n", TestHarness.RunInterpreted("""
-            const prototype: any = Function.prototype;
-            console.log(delete prototype[Symbol("missing")]);
-            """));
-    }
-
-    [Fact]
     public void InterpretedFunctionPrototypeSymbolDefinitionsStayWithinTheirRealm()
     {
         const string first = """

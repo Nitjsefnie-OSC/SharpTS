@@ -2583,14 +2583,28 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
-        // Symbol key handler: honor frozen/sealed (same rationale as the
-        // string-key dict path) before falling through to GetSymbolDict.Remove.
+        // Symbol key handler: deleting a missing own property succeeds even
+        // when the receiver is frozen/sealed or inherits the same Symbol.
+        // Look up the own entry before checking its configurability.
         // ECMA-262 §10.1.10 OrdinaryDelete: a non-configurable own property
         // refuses [[Delete]] — Object.seal/freeze mark every own descriptor
         // non-configurable, so symbol-keyed entries on a sealed/frozen object
         // must also reject delete. Pre-fix `delete obj[sym]` returned true
         // for sealed objects with symbol props.
         il.MarkLabel(symbolKeyLabel);
+        var symDeleteDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        var symDeleteValueLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.Symbols.TryGetStorage);
+        il.Emit(OpCodes.Stloc, symDeleteDictLocal);
+        il.Emit(OpCodes.Ldloc, symDeleteDictLocal);
+        il.Emit(OpCodes.Brfalse, trueLabel);
+        il.Emit(OpCodes.Ldloc, symDeleteDictLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, symDeleteValueLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+        il.Emit(OpCodes.Brfalse, trueLabel);
+
         var symDelObjLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
         il.Emit(OpCodes.Ldarg_0);
@@ -2610,18 +2624,8 @@ public partial class RuntimeEmitter
         il.MarkLabel(symDelNotSealedLabel);
         // A symbol descriptor can itself be non-configurable even when the
         // containing object is not sealed or frozen.
-        var symDeleteDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
-        var symDeleteValueLocal = il.DeclareLocal(_types.Object);
         var symDeleteDescriptorLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
         var symDeleteAllowedLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, inputs.Symbols.GetStorage);
-        il.Emit(OpCodes.Stloc, symDeleteDictLocal);
-        il.Emit(OpCodes.Ldloc, symDeleteDictLocal);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloca, symDeleteValueLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
-        il.Emit(OpCodes.Brfalse, symDeleteAllowedLabel);
         il.Emit(OpCodes.Ldloc, symDeleteValueLocal);
         il.Emit(OpCodes.Isinst, inputs.DescriptorStorage.DescriptorType);
         il.Emit(OpCodes.Stloc, symDeleteDescriptorLocal);
@@ -2678,7 +2682,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Blt, compactLoop);
         il.MarkLabel(symbolDeleteDone);
-        il.Emit(OpCodes.Ldloc, symbolRemoved);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(dictLabel);

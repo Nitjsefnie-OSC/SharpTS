@@ -161,6 +161,16 @@ public class ClosureAnalyzer : AstVisitorBase
         _bodyCells.TryGetCaptureDeclaration(closure, name, out declaration);
     internal IReadOnlyDictionary<string, Token>? GetLoopBodyCellCaptures(object closure) =>
         _bodyCells.ClosureCaptures.GetValueOrDefault(closure);
+    internal bool TryGetClassSelfOwner(Expr.Variable reference, out Expr.ClassExpr owner)
+    {
+        if (_bodyCells.CanTransportClassSelf(reference))
+            return _bodyCells.TryGetClassSelfOwner(reference, out owner);
+        // Ordinary nested declarations do not yet carry an evaluated class
+        // owner. Preserve their previous capture/emission path; the raw lexical
+        // identity remains available in the independent analysis.
+        owner = null!;
+        return false;
+    }
 
     /// <summary>
     /// The <c>for (let/const …)</c> binding names in <paramref name="loop"/> that need
@@ -294,6 +304,10 @@ public class ClosureAnalyzer : AstVisitorBase
         TypeMap? checkedTypes,
         IReadOnlyDictionary<Stmt, IReadOnlySet<string>>? moduleClrImports)
     {
+        // Resolve lexical declaration identities before ordinary capture discovery.
+        // A named class expression's immutable self is carried by its evaluated
+        // definition, independently of any same-spelled outer variable storage.
+        _bodyCells.Analyze(statements);
         _checkedTypes = checkedTypes;
         _scopeStack.Push([]);
         HoistFunctionDeclarations(statements);
@@ -313,7 +327,6 @@ public class ClosureAnalyzer : AstVisitorBase
         // Per-iteration cell analysis (#650) is independent of capture-source state,
         // so run it as its own pass over the same statements.
         _cells.Analyze(statements);
-        _bodyCells.Analyze(statements);
         foreach (var (closure, captures) in _bodyCells.ClosureCaptures)
         {
             if (!_captures.TryGetValue(closure, out var names)) _captures[closure] = names = [];
@@ -940,6 +953,7 @@ public class ClosureAnalyzer : AstVisitorBase
 
     protected override void VisitVariable(Expr.Variable expr)
     {
+        if (TryGetClassSelfOwner(expr, out _)) return;
         if (IsModuleClrImportReference(expr)) return;
         ReferenceVariable(expr.Name.Lexeme);
     }

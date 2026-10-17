@@ -1232,7 +1232,8 @@ public partial class ILCompiler
         var visitor = new ArrowClassDefinitionVisitor(declaration =>
             _runtimeClassDeclarations.TryGetValue(declaration, out var expression)
                 && _classExprs.CaptureSlots.TryGetValue(expression, out var slots)
-                && slots.ContainsKey(CompilationContext.PrivateOwnerCaptureName));
+                && slots.ContainsKey(CompilationContext.PrivateOwnerCaptureName),
+            reference => _closures.Analyzer.TryGetClassSelfOwner(reference, out _));
         visitor.Visit(arrow);
         return visitor.UsesDefinition;
     }
@@ -1253,13 +1254,16 @@ public partial class ILCompiler
             .ToHashSet(StringComparer.Ordinal);
     }
 
-    private sealed class ArrowClassDefinitionVisitor(Func<Stmt.Class, bool> capturesOwner) : Parsing.Visitors.ControlledAstVisitor
+    private sealed class ArrowClassDefinitionVisitor(
+        Func<Stmt.Class, bool> capturesOwner, Func<Expr.Variable, bool> referencesSelf)
+        : Parsing.Visitors.ControlledAstVisitor
     {
         public bool UsesDefinition { get; private set; }
 
         protected override void BeforeVisit(Expr expression)
         {
-            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CompoundSetPrivate or Expr.CallPrivate or Expr.PrivateIn)
+            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CompoundSetPrivate or Expr.CallPrivate or Expr.PrivateIn ||
+                expression is Expr.Variable variable && referencesSelf(variable))
             {
                 UsesDefinition = true;
                 StopTraversal();

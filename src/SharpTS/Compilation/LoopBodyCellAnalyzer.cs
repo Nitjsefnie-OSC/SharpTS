@@ -11,12 +11,14 @@ namespace SharpTS.Compilation;
 /// </summary>
 internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 {
-    private sealed class Owner(object node, bool canOwnCells, bool canForward, bool canOwnGeneratorCells = true)
+    private sealed class Owner(object node, bool canOwnCells, bool canForward,
+        bool canOwnGeneratorCells = true, bool canRelayClassSelf = true)
     {
         public object Node { get; } = node;
         public bool CanOwnCells { get; } = canOwnCells;
         public bool CanForward { get; } = canForward;
         public bool CanOwnGeneratorCells { get; } = canOwnGeneratorCells;
+        public bool CanRelayClassSelf { get; } = canRelayClassSelf;
     }
 
     private sealed class Binding(Token name, Owner owner, bool candidate, Binding? shadowOf, bool lexical)
@@ -37,12 +39,18 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     private readonly Dictionary<Token, Binding> _declarations = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<object, Dictionary<string, Binding>> _tentative = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _cells = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Token, Expr.ClassExpr> _classSelfDeclarations = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Expr.Variable, Expr.ClassExpr> _classSelfReferences = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Expr.Variable> _transportedClassSelfReferences = new(ReferenceEqualityComparer.Instance);
     private int _loopBodyDepth;
     private int _classDepth;
 
     public Dictionary<object, Dictionary<string, Token>> ClosureCaptures { get; } = new(ReferenceEqualityComparer.Instance);
     public IEnumerable<Token> CellDeclarations => _cells;
     public bool IsCellDeclaration(Token token) => _cells.Contains(token);
+    public bool TryGetClassSelfOwner(Expr.Variable reference, out Expr.ClassExpr owner) =>
+        _classSelfReferences.TryGetValue(reference, out owner!);
+    public bool CanTransportClassSelf(Expr.Variable reference) => _transportedClassSelfReferences.Contains(reference);
 
     public bool TryGetCaptureDeclaration(object closure, string name, out Token declaration)
     {
@@ -55,6 +63,9 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     public void Analyze(List<Stmt> statements)
     {
         _owners.Clear(); _scopes.Clear(); _declarations.Clear(); _tentative.Clear(); _cells.Clear(); ClosureCaptures.Clear();
+        _classSelfDeclarations.Clear();
+        _classSelfReferences.Clear();
+        _transportedClassSelfReferences.Clear();
         _loopBodyDepth = 0;
         _classDepth = 0;
         _owners.Add(new(new object(), !HasDirectSuspension(statements), false));
@@ -228,7 +239,21 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         else captures[name] = binding;
     }
 
-    protected override void VisitVariable(Expr.Variable expr) => Reference(expr.Name.Lexeme);
+    protected override void VisitVariable(Expr.Variable expr)
+    {
+        if (VisibleBinding(expr.Name.Lexeme) is { } binding &&
+            _classSelfDeclarations.TryGetValue(binding.Name, out var owner))
+        {
+            _classSelfReferences[expr] = owner;
+            bool canTransport = true;
+            for (int index = _owners.Count - 1;
+                 index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
+                canTransport &= _owners[index].CanRelayClassSelf;
+            if (canTransport) _transportedClassSelfReferences.Add(expr);
+            return;
+        }
+        Reference(expr.Name.Lexeme);
+    }
     protected override void VisitAssign(Expr.Assign expr) { Reference(expr.Name.Lexeme); base.VisitAssign(expr); }
     protected override void VisitCompoundAssign(Expr.CompoundAssign expr) { Reference(expr.Name.Lexeme); base.VisitCompoundAssign(expr); }
     protected override void VisitLogicalAssign(Expr.LogicalAssign expr) { Reference(expr.Name.Lexeme); base.VisitLogicalAssign(expr); }
@@ -331,17 +356,19 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     {
         if (stmt.ComputedKey is { } key) Visit(key);
         VisitCallable(stmt, stmt.Parameters, stmt.Body ?? [], null,
-            !stmt.IsAsync && !stmt.IsGenerator, stmt.Name);
+            !stmt.IsAsync && !stmt.IsGenerator, stmt.Name, canRelayClassSelf: false);
     }
 
     private void VisitCallable(object node, List<Stmt.Parameter> parameters, List<Stmt> body,
-        Expr? expressionBody, bool synchronous, Token? self)
+        Expr? expressionBody, bool synchronous, Token? self, bool canOwnGeneratorCells = true,
+        bool canRelayClassSelf = true)
     {
         int previousDepth = _loopBodyDepth;
         _loopBodyDepth = 0;
         bool directSuspension = HasDirectSuspension(body, expressionBody);
         _owners.Add(new(node, synchronous && _classDepth == 0 && !directSuspension,
-            node is Expr.ArrowFunction && synchronous && _classDepth == 0));
+            node is Expr.ArrowFunction && synchronous && _classDepth == 0,
+            canOwnGeneratorCells, canRelayClassSelf));
         EnterScope([], allowCandidates: false);
         try
         {
@@ -367,7 +394,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         VisitClassBody(stmt.Name, () =>
         {
             foreach (var field in stmt.Fields) VisitField(field);
-            foreach (var method in stmt.Methods) VisitFunction(method);
+            foreach (var method in stmt.Methods) VisitClassMethod(method);
             if (stmt.Accessors is { } accessors) foreach (var accessor in accessors) VisitAccessor(accessor);
             if (stmt.AutoAccessors is { } autoAccessors) foreach (var accessor in autoAccessors) VisitAutoAccessor(accessor);
             if (stmt.StaticInitializers is { } initializers) foreach (var initializer in initializers) Visit(initializer);
@@ -377,14 +404,40 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     protected override void VisitClassExpr(Expr.ClassExpr expr)
     {
         if (expr.SuperclassExpr is { } parent) Visit(parent);
+        if (expr.Name is { } name) _classSelfDeclarations[name] = expr;
         VisitClassBody(expr.Name, () =>
         {
             foreach (var field in expr.Fields) VisitField(field);
-            foreach (var method in expr.Methods) VisitFunction(method);
+            foreach (var method in expr.Methods) VisitClassMethod(method);
             if (expr.Accessors is { } accessors) foreach (var accessor in accessors) VisitAccessor(accessor);
             if (expr.AutoAccessors is { } autoAccessors) foreach (var accessor in autoAccessors) VisitAutoAccessor(accessor);
             if (expr.StaticInitializers is { } initializers) foreach (var initializer in initializers) Visit(initializer);
         });
+    }
+
+    private void VisitClassMethod(Stmt.Function method)
+    {
+        if (method.ComputedKey is { } key) Visit(key);
+        // A method's property name does not introduce a callable self binding.
+        VisitCallable(method, method.Parameters, method.Body ?? [], null,
+            !method.IsAsync && !method.IsGenerator, self: null, canRelayClassSelf: true);
+    }
+
+    protected override void VisitAccessor(Stmt.Accessor accessor)
+    {
+        if (accessor.ComputedKey is { } key) Visit(key);
+        VisitCallable(accessor, accessor.SetterParam is { } parameter ? [parameter] : [],
+            accessor.Body, null, synchronous: true, self: null, canOwnGeneratorCells: false);
+    }
+
+    protected override void VisitStaticBlock(Stmt.StaticBlock block)
+    {
+        // Static-block vars belong to this block, independently of the enclosing
+        // function and other static blocks. These new bindings remain metadata
+        // only under the existing class cell-eligibility barrier.
+        EnterScope(block.Body, allowCandidates: false, hoistVars: true);
+        try { foreach (var statement in block.Body) Visit(statement); }
+        finally { _scopes.Pop(); }
     }
 
     protected override void VisitNamespace(Stmt.Namespace stmt) =>

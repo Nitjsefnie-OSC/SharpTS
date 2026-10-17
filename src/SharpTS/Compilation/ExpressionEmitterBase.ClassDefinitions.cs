@@ -264,6 +264,19 @@ public abstract partial class ExpressionEmitterBase
 
     protected bool TryEmitClassDefinitionSelf(Expr.Variable variable)
     {
+        if (Ctx.ClosureAnalyzer?.TryGetClassSelfOwner(variable, out var selfOwner) == true &&
+            Ctx.ClassExprBuilders?.TryGetValue(selfOwner, out var selfBuilder) == true)
+        {
+            // This occurrence resolves to the immutable inner binding, even if
+            // a shared display class also stores an unrelated outer namesake.
+            // The builder identifies a link; the value is its actual evaluation.
+            bool currentOwner = ReferenceEquals(Ctx.CurrentClassExpr, selfOwner) ||
+                ReferenceEquals(Ctx.CurrentClassBuilder, selfBuilder);
+            if (!(currentOwner ? TryEmitOwnedClassDefinition()
+                : TryEmitPrivateInOwnerDefinition(selfBuilder.FullName!))) return false;
+            SetStackUnknown();
+            return true;
+        }
         string name = variable.Name.Lexeme;
         var expression = Ctx.CurrentClassExpr ?? Ctx.ClassExprBuilders?
             .FirstOrDefault(entry => ReferenceEquals(entry.Value, Ctx.CurrentClassBuilder)).Key;

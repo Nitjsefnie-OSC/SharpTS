@@ -51,9 +51,7 @@ public sealed class ClassExpressionStaticSelfTests
             const saved: any[] = [];
             function make() {
                 return class Named {
-                    // Capture the getter's read; #2208 separately tracks an
-                    // arrow reading the expression's self name directly.
-                    static get self() { const owner = Named; return () => owner; }
+                    static get self() { return () => Named; }
                     static escaped = this.self;
                     static during = this.escaped();
                     static { saved.push(this.self); }

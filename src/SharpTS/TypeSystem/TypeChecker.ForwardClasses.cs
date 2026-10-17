@@ -23,15 +23,30 @@ public partial class TypeChecker
     // particular a parameter/local class named Later must not select an outer Later's constructor.
     private readonly Dictionary<BindingSymbol, ForwardClassDeclaration> _forwardClassDeclarations =
         new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<TypeInfo.MutableClass, ForwardClassDeclaration> _forwardClassTypeShadows =
+        new(ReferenceEqualityComparer.Instance);
     private int _forwardClassSignatureDepth;
 
     private BindingSymbol RegisterForwardClassDeclaration(Stmt.Class declaration)
     {
         BindingSymbol symbol = RegisterValueDeclaration(declaration.Name);
-        if (!declaration.IsDeclare && (!_forwardClassDeclarations.TryGetValue(symbol, out var forward) ||
-            !ReferenceEquals(forward.Environment, _environment)))
-            _forwardClassDeclarations[symbol] = new(declaration, _environment, -symbol.Id,
-                _currentModule, _filePath, _standaloneSourceDocument);
+        if (!declaration.IsDeclare)
+        {
+            if (!_forwardClassDeclarations.TryGetValue(symbol, out var forward) ||
+                !ReferenceEquals(forward.Environment, _environment))
+                _forwardClassDeclarations[symbol] = forward = new(declaration, _environment, -symbol.Id,
+                    _currentModule, _filePath, _standaloneSourceDocument);
+            // Shadow an existing outer type with this declaration's shell, so
+            // annotations and deferred constructor reads select the same class.
+            // Preserve existing unresolved annotation and generic handling.
+            if (declaration.TypeParams is not { Count: > 0 } &&
+                !_environment.IsTypeDefinedLocally(declaration.Name.Lexeme) &&
+                _environment.GetTypeBinding(declaration.Name.Lexeme) is not null)
+            {
+                _environment.DefineType(declaration.Name.Lexeme, forward.Shape);
+                _forwardClassTypeShadows[forward.Shape] = forward;
+            }
+        }
         return symbol;
     }
 
@@ -45,6 +60,18 @@ public partial class TypeChecker
             !_forwardClassDeclarations.TryGetValue(binding, out var forward))
             return declared;
 
+        return ResolveForwardClassSignature(forward);
+    }
+
+    private void EnsureForwardClassTypeSignature(TypeInfo declared)
+    {
+        if (declared is TypeInfo.MutableClass shape &&
+            _forwardClassTypeShadows.TryGetValue(shape, out var forward))
+            ResolveForwardClassSignature(forward);
+    }
+
+    private TypeInfo ResolveForwardClassSignature(ForwardClassDeclaration forward)
+    {
         if (forward.Constructor is { } completed) return completed;
         if (forward.IsResolving) return forward.Shape.Freeze();
 
@@ -151,9 +178,13 @@ public partial class TypeChecker
             string name = accessor.Name.Lexeme;
             TypeInfo type = ResolveAnnotation(accessor.TypeAnnotation, accessor.TypeAnnotationNode, accessor)
                 ?? (accessor.Initializer is Expr.Literal literal ? WidenLiteralType(GetLiteralType(literal.Value)) : TypeInfo.Any.Shared);
-            (accessor.IsStatic ? shape.StaticProperties : shape.FieldTypes)[name] = type;
+            (accessor.IsStatic ? shape.StaticGetters : shape.Getters)[name] = type;
+            if (!accessor.IsReadonly)
+                (accessor.IsStatic ? shape.StaticSetters : shape.Setters)[name] = type;
             (accessor.IsStatic ? shape.StaticFieldAccess : shape.FieldAccess)[name] = accessor.Access;
+            shape.AutoAccessors.Add(name);
         }
+        PublishStaticAccessorTypes(shape);
     }
 
     private TypeInfo BuildForwardClassMethodSignature(Stmt.Function method) =>

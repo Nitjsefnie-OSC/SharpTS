@@ -19,6 +19,7 @@ public partial class TypeChecker
     {
         _completedBodylessFunctions.Clear();
         _forwardClassDeclarations.Clear();
+        _forwardClassTypeShadows.Clear();
         _forwardClassSignatureDepth = 0;
         _classDeclarationLines.Clear();
         _classMethodSignatures.Clear();

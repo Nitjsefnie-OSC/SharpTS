@@ -141,9 +141,9 @@ public static class NumberBuiltIns
         var str = args[0].Kind == ValueKind.String
             ? args[0].AsString()
             : interpreter.ToStringForBuiltInArgument(args[0].ToObject());
-        var radix = args.Length > 1 && args[1].Kind == ValueKind.Number
-            ? (int)Interpreter.ToNumber(args[1])
-            : 10;
+        int radix = args.Length > 1
+            ? unchecked((int)interpreter.ToUint32(args[1].ToObject()))
+            : 0;
         return RuntimeValue.FromNumber(ParseInt(str, radix));
     }
 
@@ -309,14 +309,15 @@ public static class NumberBuiltIns
         if (radix == 10 || (radix == 0 && !HasHexPrefixAfterSign(str)))
             return ParseIntDecimal(str);
 
-        str = str.Trim();
-        if (string.IsNullOrEmpty(str)) return double.NaN;
-
-        // Handle sign
-        int sign = 1;
         int startIndex = 0;
-        if (str[0] == '-') { sign = -1; startIndex = 1; }
-        else if (str[0] == '+') { startIndex = 1; }
+        while (startIndex < str.Length && IsEcmaParseWhitespace(str[startIndex]))
+            startIndex++;
+        if (startIndex == str.Length) return double.NaN;
+
+        // Handle sign after the same whitespace scan used for radix inference.
+        int sign = 1;
+        if (str[startIndex] == '-') { sign = -1; startIndex++; }
+        else if (str[startIndex] == '+') { startIndex++; }
 
         // Auto-detect radix from prefix if radix is 0 or 16
         if (startIndex < str.Length)
@@ -340,7 +341,7 @@ public static class NumberBuiltIns
             var numPart = str.Substring(startIndex);
             var validDigits = GetValidDigits(numPart, radix);
             if (string.IsNullOrEmpty(validDigits)) return double.NaN;
-            return sign * Convert.ToInt64(validDigits, radix);
+            return sign * (double)Convert.ToInt64(validDigits, radix);
         }
         catch
         {

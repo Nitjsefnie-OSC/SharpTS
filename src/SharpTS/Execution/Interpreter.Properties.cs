@@ -2269,6 +2269,14 @@ public partial class Interpreter
         FunctionObjectProperties.GetProperties(function, this).SetPropertyStrict(name, value, strictMode);
     }
 
+    private void SetOrdinaryFunctionOwnProperty(
+        object function, SharpTSObject properties, string name, object? value, bool strictMode)
+    {
+        if (!TryAssignThroughDescriptor(
+                properties.GetOwnPropertyDescriptor(name), function, name, value, strictMode))
+            properties.SetPropertyStrict(name, value, strictMode);
+    }
+
     private bool TrySetExplicitFunctionPrototypeProperty(
         object function, string name, object? value, bool strictMode)
     {
@@ -2738,23 +2746,14 @@ public partial class Interpreter
         }
         if (obj is SharpTSFunction userFn)
         {
-            // Accessor set path (Object.defineProperty setter).
-            if (userFn.TryGetAccessor(set.Name.Lexeme, out _, out var setter) && setter != null)
-            {
-                setter.CallBoxed(this, [value]);
-                return value;
-            }
-            userFn.SetProperty(set.Name.Lexeme, value);
+            SetOrdinaryFunctionOwnProperty(
+                userFn, userFn.OwnPropertyStorage, set.Name.Lexeme, value, strictMode);
             return value;
         }
         if (obj is SharpTSArrowFunction arrowFn)
         {
-            if (arrowFn.TryGetAccessor(set.Name.Lexeme, out _, out var arrowSetter) && arrowSetter != null)
-            {
-                arrowSetter.CallBoxed(this, [value]);
-                return value;
-            }
-            arrowFn.SetProperty(set.Name.Lexeme, value);
+            SetOrdinaryFunctionOwnProperty(
+                arrowFn, arrowFn.OwnPropertyStorage, set.Name.Lexeme, value, strictMode);
             return value;
         }
         if (obj is SharpTSAsyncFunction asyncFn)

@@ -1355,7 +1355,6 @@ public partial class TypeChecker
         IndexNewTargetContexts(statements);
         _globalDeclarationEnvironment = _environment;
         Bindings.Clear();
-        _ordinaryConstructorOptionalMembers.Clear();
         _members?.Clear();
         _sourceClassNesting = null;
         ResetEditorMetadata();
@@ -1448,7 +1447,6 @@ public partial class TypeChecker
         IndexNewTargetContexts(statements);
         _globalDeclarationEnvironment = _environment;
         Bindings.Clear();
-        _ordinaryConstructorOptionalMembers.Clear();
         _members?.Clear();
         _sourceClassNesting = null;
         ResetEditorMetadata();
@@ -1746,7 +1744,6 @@ public partial class TypeChecker
         _diagnostics.Clear();
         IndexNewTargetContexts(modules.SelectMany(module => module.Statements));
         Bindings.Clear();
-        _ordinaryConstructorOptionalMembers.Clear();
         _members?.Clear();
         _sourceClassNesting = null;
         ResetEditorMetadata();

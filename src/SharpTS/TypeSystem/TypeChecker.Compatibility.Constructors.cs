@@ -9,15 +9,11 @@ public partial class TypeChecker
     private readonly HashSet<OrdinaryConstructorPair> _ordinaryConstructorPairs = new(new OrdinaryConstructorPairComparer());
     private readonly HashSet<OrdinaryCompatibilityPair> _ordinaryCompatibilityPairs = new(new OrdinaryCompatibilityPairComparer());
     private readonly HashSet<OrdinaryInstancePair> _ordinaryInstancePairs = new(new OrdinaryInstancePairComparer());
-    // Source optionality survives refrozen metadata and inherited generic substitution.
-    // Declaration IDs are checker-owned; every new check clears this provenance table.
-    private readonly Dictionary<int, HashSet<(bool IsStatic, string Name)>> _ordinaryConstructorOptionalMembers = [];
-
-    private void RegisterOrdinaryConstructorOptionalMembers(int declarationId,
+    private void RegisterOrdinaryConstructorOptionalMembers(TypeInfo.MutableClass owner,
         IReadOnlyList<Stmt.Field> fields, IReadOnlyList<Stmt.Function> methods)
     {
-        if (declarationId == 0) return;
-        var optional = new HashSet<(bool, string)>();
+        var optional = owner.OrdinaryOptionalMembers;
+        optional.Clear();
         foreach (var field in fields.Where(field => field.IsOptional && !field.IsPrivate))
             optional.Add((field.IsStatic, GetFieldMemberName(field)));
         foreach (var method in methods.Where(method => method.IsOptional && !method.IsPrivate))
@@ -26,7 +22,7 @@ public partial class TypeChecker
                 : TryGetWellKnownSymbolMemberName(method.ComputedKey);
             if (name != null) optional.Add((method.IsStatic, name));
         }
-        _ordinaryConstructorOptionalMembers[declarationId] = optional;
+        owner.ResetFrozenCache();
     }
 
     private readonly record struct OrdinaryCompatibilityPair(TypeInfo Target, TypeInfo Source, bool Method, bool Callback);
@@ -233,8 +229,7 @@ public partial class TypeChecker
             var methods = isStatic ? core.StaticMethods : core.Methods;
             var fieldAccess = isStatic ? core.StaticFieldAccessMap : core.FieldAccess;
             var methodAccess = isStatic ? core.StaticMethodAccessMap : core.MethodAccess;
-            bool Optional(string name) => _ordinaryConstructorOptionalMembers.TryGetValue(core.DeclarationId, out var optional)
-                && optional.Contains((isStatic, name));
+            bool Optional(string name) => core.OrdinaryOptionalMembers?.Contains((isStatic, name)) == true;
             foreach (var (name, type) in fields)
                 members.TryAdd(name, new(SubstituteConstructorMember(type, level.Substitutions), false,
                     fieldAccess.GetValueOrDefault(name, AccessModifier.Public), core, Optional(name)));

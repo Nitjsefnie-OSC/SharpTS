@@ -40,6 +40,9 @@ public sealed record ClassMetadataCore(
     /// <summary>Independent accessor write visibility; null entries identify getter-only members.</summary>
     public FrozenDictionary<(bool IsStatic, string Name), AccessModifier?>? AccessorSetterAccess { get; init; }
 
+    /// <summary>Source optionality retained with its class across checker inputs and generic projections.</summary>
+    public FrozenSet<(bool IsStatic, string Name)>? OrdinaryOptionalMembers { get; init; }
+
     /// <summary>True when the class declares any index signature.</summary>
     public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
 

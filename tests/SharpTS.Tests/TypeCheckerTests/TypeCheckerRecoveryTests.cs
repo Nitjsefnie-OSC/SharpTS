@@ -14,6 +14,97 @@ namespace SharpTS.Tests.TypeCheckerTests;
 public class TypeCheckerRecoveryTests
 {
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void RetainedOptionalConstructorSourceCannotSatisfyRequiredMember(bool recovery, bool isStatic)
+    {
+        string modifier = isStatic ? "static " : "";
+        string declarations = $$"""
+            class RetainedRequired { {{modifier}}value: number | undefined = 1; }
+            class RetainedOptional { {{modifier}}value?: number; }
+            """;
+        const string assignment = "\nconst invalid: typeof RetainedRequired = RetainedOptional;";
+        var checker = new TypeChecker(strictNullChecks: true, maxErrors: 20);
+        CheckAcceptedInput(checker, declarations, recovery);
+        CheckAcceptedInput(checker, "", recovery);
+
+        if (recovery)
+        {
+            var diagnostic = Assert.Single(checker.CheckWithRecovery(ParseStatements(assignment)).Diagnostics);
+            Assert.Equal("TS2322", diagnostic.TsCode);
+            Assert.Equal(2, diagnostic.Line);
+        }
+        else
+        {
+            var failure = Assert.Throws<TypeMismatchException>(() => checker.Check(ParseStatements(assignment)));
+            Assert.Equal("TS2322", failure.Diagnostic.TsCode);
+            Assert.Equal(2, failure.Diagnostic.Line);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void RetainedOptionalConstructorTargetAcceptsMissingMember(bool recovery, bool isStatic)
+    {
+        string modifier = isStatic ? "static " : "";
+        string declarations = $$"""
+            class RetainedOptional { {{modifier}}value?: number; }
+            class RetainedEmpty {}
+            """;
+        var checker = new TypeChecker(strictNullChecks: true, maxErrors: 20);
+        CheckAcceptedInput(checker, declarations, recovery);
+        CheckAcceptedInput(checker, "", recovery);
+
+        CheckAcceptedInput(checker, "const valid: typeof RetainedOptional = RetainedEmpty;", recovery);
+    }
+
+    [Fact]
+    public void ModuleChecksPreserveRetainedInheritedAndMethodOptionality()
+    {
+        var checker = new TypeChecker(strictNullChecks: true, maxErrors: 20);
+        CheckAcceptedInput(checker, """
+            class RetainedBase<T> { value?: T; }
+            class RetainedDerived extends RetainedBase<number> {}
+            class RetainedRequired { value: number | undefined = 1; }
+            declare class RetainedMethods { static read?(): number; }
+            declare class RequiredMethods { static read(): number; }
+            class RetainedEmpty {}
+            """, recovery: false);
+        string directory = Path.GetFullPath("optional-constructor-reuse-test");
+        var module = new ParsedModule(Path.Combine(directory, "main.ts"), ParseStatements("""
+            class RetainedBase { value: string = 'module-local'; }
+            class RetainedMethods { static read(): string { return 'module-local'; } }
+            """));
+        checker.CheckModules([module], new ModuleResolver(directory));
+        Assert.Empty(checker.GetDiagnostics());
+
+        CheckAcceptedInput(checker, """
+            const missingField: typeof RetainedDerived = RetainedEmpty;
+            const missingMethod: typeof RetainedMethods = RetainedEmpty;
+            """, recovery: true);
+        var diagnostics = checker.CheckWithRecovery(ParseStatements("""
+            const invalidField: typeof RetainedRequired = RetainedDerived;
+            const invalidMethod: typeof RequiredMethods = RetainedMethods;
+            """)).Diagnostics;
+        Assert.Equal(2, diagnostics.Count);
+        Assert.Equal(new[] { "TS2741", "TS2322" }, diagnostics.Select(diagnostic => diagnostic.TsCode));
+        Assert.Equal(new[] { 1, 2 }, diagnostics.Select(diagnostic => diagnostic.Line));
+    }
+
+    private static void CheckAcceptedInput(TypeChecker checker, string source, bool recovery)
+    {
+        if (recovery)
+            Assert.Empty(checker.CheckWithRecovery(ParseStatements(source)).Diagnostics);
+        else
+            checker.Check(ParseStatements(source));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void UnexpectedFailure_PropagatesWithoutBecomingDiagnostic(bool defaultLibrary)

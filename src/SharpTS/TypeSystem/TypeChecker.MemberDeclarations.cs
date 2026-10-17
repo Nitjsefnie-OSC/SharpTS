@@ -26,19 +26,20 @@ public partial class TypeChecker
         RecordEditorBinding(environment, parameter.Name, symbol, BindingNamespace.Value, type, EditorFactAvailability.Available);
     }
 
-    private void RegisterSourceClassMembers(Stmt.Class declaration, int declarationId) =>
-        RegisterSourceClassMembers(declarationId, declaration, declaration.Fields, declaration.Methods,
+    private void RegisterSourceClassMembers(Stmt.Class declaration, TypeInfo.MutableClass classType) =>
+        RegisterSourceClassMembers(classType, declaration, declaration.Fields, declaration.Methods,
             declaration.Accessors, declaration.AutoAccessors);
 
-    private void RegisterSourceClassMembers(Expr.ClassExpr declaration, int declarationId) =>
-        RegisterSourceClassMembers(declarationId, declaration, declaration.Fields, declaration.Methods,
+    private void RegisterSourceClassMembers(Expr.ClassExpr declaration, TypeInfo.MutableClass classType) =>
+        RegisterSourceClassMembers(classType, declaration, declaration.Fields, declaration.Methods,
             declaration.Accessors, declaration.AutoAccessors);
 
-    private void RegisterSourceClassMembers(int declarationId, object owner, IReadOnlyList<Stmt.Field> fields,
+    private void RegisterSourceClassMembers(TypeInfo.MutableClass classType, object owner, IReadOnlyList<Stmt.Field> fields,
         IReadOnlyList<Stmt.Function> methods, IReadOnlyList<Stmt.Accessor>? accessors,
         IReadOnlyList<Stmt.AutoAccessor>? autoAccessors)
     {
-        RegisterOrdinaryConstructorOptionalMembers(declarationId, fields, methods);
+        RegisterOrdinaryConstructorOptionalMembers(classType, fields, methods);
+        int declarationId = classType.DeclarationId;
         if (!Members.IsEnabled || declarationId == 0 || CurrentSourceDocument is not { IsVirtual: false } document)
             return;
         ThrowIfCancellationRequested();

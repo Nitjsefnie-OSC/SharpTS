@@ -630,7 +630,7 @@ public partial class TypeChecker
             mutableClass.Superclass = superclass;
             _newTargetSourceTypes[classStmt] = mutableClass;
             mutableClass.IsAbstract = classStmt.IsAbstract;
-            RegisterSourceClassMembers(classStmt, mutableClass.DeclarationId);
+            RegisterSourceClassMembers(classStmt, mutableClass);
             MarkEditorBodyEntered(classStmt);
             classTypeEnv.Define(classStmt.Name.Lexeme, mutableClass);
             BindEditorClassSelf(classStmt, classTypeEnv, mutableClass);
@@ -1320,7 +1320,7 @@ public partial class TypeChecker
             Superclass = superclass,
             IsAbstract = classStmt.IsAbstract
         };
-        RegisterSourceClassMembers(classStmt, mutableClass.DeclarationId);
+        RegisterSourceClassMembers(classStmt, mutableClass);
         classTypeEnv.Define(classStmt.Name.Lexeme, mutableClass);
         BindEditorClassSelf(classStmt, classTypeEnv, mutableClass);
         classTypeEnv.Define("this", new TypeInfo.Instance(mutableClass));

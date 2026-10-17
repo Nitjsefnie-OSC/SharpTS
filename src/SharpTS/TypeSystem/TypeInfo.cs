@@ -387,6 +387,7 @@ public abstract record TypeInfo
         // Accessor write visibility belongs to its checked owner, independently
         // of the getter-selected read map. Null marks a getter-only accessor.
         internal Dictionary<(bool IsStatic, string Name), AccessModifier?> AccessorSetterAccess { get; } = [];
+        internal HashSet<(bool IsStatic, string Name)> OrdinaryOptionalMembers { get; } = [];
         public Dictionary<string, TypeInfo> FieldTypes { get; } = [];
         public bool IsAbstract { get; set; }
         public HashSet<string> AbstractMethods { get; } = [];
@@ -441,7 +442,8 @@ public abstract record TypeInfo
                 StaticReadonlyFields.ToFrozenSet(),
                 StaticSetters.Count > 0 ? StaticSetters.ToFrozenDictionary() : null)
             {
-                AccessorSetterAccess = AccessorSetterAccess.Count > 0 ? AccessorSetterAccess.ToFrozenDictionary() : null
+                AccessorSetterAccess = AccessorSetterAccess.Count > 0 ? AccessorSetterAccess.ToFrozenDictionary() : null,
+                OrdinaryOptionalMembers = OrdinaryOptionalMembers.Count > 0 ? OrdinaryOptionalMembers.ToFrozenSet() : null
             };
             return _frozenCore;
         }

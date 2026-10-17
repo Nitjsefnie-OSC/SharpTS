@@ -2560,7 +2560,7 @@ public partial class TypeChecker
         _newTargetSourceTypes[classExpr] = mutableClass;
         mutableClass.Superclass = superclass;
         mutableClass.IsAbstract = classExpr.IsAbstract;
-        RegisterSourceClassMembers(classExpr, mutableClass.DeclarationId);
+        RegisterSourceClassMembers(classExpr, mutableClass);
 
         // If named, define the name in class body scope for self-reference
         if (classExpr.Name != null)

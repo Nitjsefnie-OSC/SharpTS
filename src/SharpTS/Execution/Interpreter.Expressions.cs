@@ -1970,7 +1970,7 @@ public partial class Interpreter
                     staticSymSetter.BindStatic(t.Target).Call(this, [value]);
                     break;
                 }
-                t.Target.SetStaticBySymbol(t.Key, value);
+                t.Target.SetStaticBySymbol(t.Key, value, strictMode);
                 break;
 
             case IndexTarget.ClassPrototypeSymbol t:
@@ -2443,7 +2443,7 @@ public partial class Interpreter
                                         new SharpTSPropertyDescriptor(fieldValue, writable: true,
                                             enumerable: true, configurable: true) { HasValue = true });
                                 else
-                                    klass.SetStaticProperty(field.ComputedKey != null
+                                    klass.InitializeStaticProperty(field.ComputedKey != null
                                         ? (string)computedMemberKeys[field.ComputedKey]! : field.Name.Lexeme, fieldValue);
                                 break;
 

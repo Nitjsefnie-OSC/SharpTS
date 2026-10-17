@@ -2452,7 +2452,7 @@ public partial class Interpreter
                                     new SharpTSPropertyDescriptor(fieldValue, writable: true,
                                         enumerable: true, configurable: true) { HasValue = true });
                             else
-                                klass.SetStaticProperty(field.ComputedKey != null
+                                klass.InitializeStaticProperty(field.ComputedKey != null
                                     ? (string)computedMemberKeys[field.ComputedKey]! : field.Name.Lexeme, fieldValue);
                             break;
 

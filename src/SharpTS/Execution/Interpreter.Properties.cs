@@ -563,6 +563,22 @@ public partial class Interpreter
                     : arrowDescriptor.Value;
             }
 
+            if (current is SharpTSAsyncFunction asyncFunction)
+            {
+                if (asyncFunction.TryGetProperty(name, out var asyncValue))
+                    return asyncValue;
+                if (name is "name" or "length")
+                    return FunctionBuiltIns.GetMember(asyncFunction, name, this);
+            }
+
+            if (current is SharpTSAsyncArrowFunction asyncArrow)
+            {
+                if (asyncArrow.TryGetProperty(name, out var asyncArrowValue))
+                    return asyncArrowValue;
+                if (name is "name" or "length")
+                    return FunctionBuiltIns.GetMember(asyncArrow, name, this);
+            }
+
             if (current is SharpTSClass klass
                 && TryReadDescriptor(klass.FindStaticPropertyDescriptor(name), receiver, out var classValue))
                 return classValue;

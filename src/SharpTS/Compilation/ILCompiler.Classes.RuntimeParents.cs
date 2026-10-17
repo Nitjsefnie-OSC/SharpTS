@@ -121,12 +121,12 @@ public partial class ILCompiler
     private static bool SupportsReceiverInitialization(Stmt.Class declaration)
     {
         // The finite runtime-parent path supports ordinary fields, synchronous
-        // methods and accessors through explicit guest-receiver adapters.
+        // methods (including generators) and accessors through guest-receiver adapters.
         // Other templates keep their existing CLR construction path.
         if (declaration.TypeParams is { Count: > 0 }
             || declaration.AutoAccessors is { Count: > 0 }
             || declaration.Fields.Any(field => field.IsPrivate || field.ComputedKey != null)
-            || declaration.Methods.Any(method => method.IsPrivate || method.IsAsync || method.IsGenerator
+            || declaration.Methods.Any(method => method.IsPrivate || method.IsAsync
                 || method.TypeParams is { Count: > 0 } || method.ComputedKey != null
                 || method.Parameters.Any(parameter => parameter.IsParameterProperty || parameter.DestructuredProperties != null))) return false;
         return true;
@@ -269,6 +269,14 @@ public partial class ILCompiler
             MarkNonConstructible(method);
         MarkPadsUndefined(method);
         MarkFunctionLength(method, source.Parameters); MarkFunctionName(method, original.Name);
+        if (source.IsGenerator)
+        {
+            // Generator emission restores its context from owner metadata rather
+            // than the synchronous createContext callback below.
+            _declarationMethodValueOwners.Add(method, (owner, source));
+            var collector = new GuestReceiverArrowCollector(_guestReceiverArrows);
+            foreach (var statement in source.Body ?? []) collector.Visit(statement);
+        }
         EmitGuestMethodValueBody(method, source, () =>
         {
             var ctx = CreateModuleMemberContext(method.GetILGenerator(), method);

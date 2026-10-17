@@ -29,4 +29,48 @@ public class ClassBodyInferenceTests
         Assert.Equal("TS2322", diagnostic.TsCode);
         Assert.Equal(6, diagnostic.Line);
     }
+
+    [Fact]
+    public void InferredClassExpressionGetter_RejectsTheIssue2205StringAssignment()
+    {
+        const string source = """
+            const C = class { get value() { return 7; } };
+            const value: string = new C().value;
+            console.log(value);
+            """;
+
+        var statements = new Parser(new Lexer(source).ScanTokens()).ParseOrThrow();
+        var result = new TypeChecker(strictNullChecks: true).CheckWithRecovery(statements);
+
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal("TS2322", diagnostic.TsCode);
+        Assert.Equal(2, diagnostic.Line);
+    }
+
+    public static IEnumerable<object[]> ClassExpressionGetterCases()
+    {
+        yield return ["inferred-number", """
+            const C = class { get value() { return 7; } };
+            const value: number = new C().value;
+            console.log(value);
+            """];
+        yield return ["annotated-number", """
+            const C = class { get value(): number { return 7; } };
+            const value: number = new C().value;
+            console.log(value);
+            """];
+        yield return ["explicit-any", """
+            const C = class { get value(): any { return 7; } };
+            const value: string = new C().value;
+            console.log(value);
+            """];
+    }
+
+    [Theory, MemberData(nameof(ClassExpressionGetterCases))]
+    public void ClassExpressionGetter_PreservesInferenceAnnotationsAndExplicitAny(string name, string source)
+    {
+        Assert.NotEmpty(name);
+        var statements = new Parser(new Lexer(source).ScanTokens()).ParseOrThrow();
+        Assert.Empty(new TypeChecker(strictNullChecks: true).CheckWithRecovery(statements).Diagnostics);
+    }
 }

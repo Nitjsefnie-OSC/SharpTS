@@ -23,11 +23,22 @@ public sealed class ConstructorStaticMemberTests
         Assert.Equal("True False True\n", TestHarness.Run(source, mode, DecoratorMode.Legacy));
     }
 
+    [Theory, ModeData]
+    public void PartialDotNetDeclarationsAllowUndeclaredClrStaticMembers(ExecutionMode mode)
+    {
+        string source = DotNetConvertDeclaration + """
+            const Alias = Convert;
+            const one: number = Convert.ToInt32(true);
+            const zero: number = Alias.ToInt32(false);
+            console.log(one, zero);
+            """;
+        Assert.Equal("1 0\n", TestHarness.Run(source, mode, DecoratorMode.Legacy));
+    }
+
     [Theory]
     [InlineData("Convert.ToString(1);", "TS2345")]
     [InlineData("const value: number = Convert.ToString(true);", "TS2322")]
-    [InlineData("Convert.missing();", "TS2339")]
-    public void DotNetStaticAliasesKeepArgumentReturnAndMemberChecks(string use, string code)
+    public void DotNetStaticAliasesKeepArgumentAndReturnChecks(string use, string code)
     {
         var checker = new TypeChecker();
         checker.SetDecoratorMode(DecoratorMode.Legacy);

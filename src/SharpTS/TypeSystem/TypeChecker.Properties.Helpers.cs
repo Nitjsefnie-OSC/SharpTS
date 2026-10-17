@@ -128,6 +128,7 @@ public partial class TypeChecker
         TypeInfo? current = classType;
         TypeInfo? staticStringIndex = null;
         bool dynamicSuperclass = false;
+        bool dotNetMappedSurface = false;
         while (current != null)
         {
             // A class extending an any-valued constructor keeps that dynamic
@@ -137,6 +138,7 @@ public partial class TypeChecker
                 dynamicSuperclass = true;
                 break;
             }
+            dotNetMappedSurface |= IsDotNetMappedConstructor(current);
             staticStringIndex ??= ClassInfoAccessor.Get(current,
                 c => c.Core.StaticStringIndexType, gc => gc.Core.StaticStringIndexType);
             var staticMethods = GetStaticMethods(current);
@@ -189,6 +191,11 @@ public partial class TypeChecker
             return WithUncheckedUndefined(staticStringIndex);
         if (dynamicSuperclass)
             return TypeInfo.Any.Shared;
+        // A DotNetType declaration can describe only part of the CLR surface.
+        // The native binder resolves undeclared members, while declared members
+        // above retain their argument, return, and access checks.
+        if (dotNetMappedSurface)
+            return TypeInfo.Any.Shared;
 
         throw new TypeCheckException(
             $"Property '{memberName.Lexeme}' does not exist on type 'typeof {GetClassName(classType)}'.",
@@ -198,11 +205,8 @@ public partial class TypeChecker
     private static string ResolveDotNetStaticMemberName(TypeInfo owner, string requested,
         IReadOnlyDictionary<string, TypeInfo>? methods, IReadOnlyDictionary<string, TypeInfo>? properties)
     {
-        bool isDotNetMapped = owner is TypeInfo.MutableClass mutable
-            ? mutable.IsDotNetMapped
-            : ClassInfoAccessor.Get(owner, c => c.Core.IsDotNetMapped, gc => gc.Core.IsDotNetMapped);
         if (methods?.ContainsKey(requested) == true || properties?.ContainsKey(requested) == true
-            || !isDotNetMapped)
+            || !IsDotNetMappedConstructor(owner))
             return requested;
 
         string clrName = Runtime.DotNet.DotNetTypeRegistry.ToPascalCase(requested);
@@ -210,6 +214,10 @@ public partial class TypeChecker
             .FirstOrDefault(name => Runtime.DotNet.DotNetTypeRegistry.ToPascalCase(name) == clrName)
             ?? requested;
     }
+
+    private static bool IsDotNetMappedConstructor(TypeInfo owner) => owner is TypeInfo.MutableClass mutable
+        ? mutable.IsDotNetMapped
+        : ClassInfoAccessor.Get(owner, c => c.Core.IsDotNetMapped, gc => gc.Core.IsDotNetMapped);
 
     private static TypeInfo? GetConstructorStringIndexType(TypeInfo classType)
     {

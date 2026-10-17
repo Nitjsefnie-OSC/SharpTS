@@ -305,7 +305,7 @@ public sealed class EditorInvocationQueryTests
                 }
             }
             """);
-        Clean(value);
+        Assert.Equal("TS2339", Assert.Single(value.Result.Diagnostics).TsCode);
         Selected(At(value, "valid"), 0);
         foreach (string marker in new[] { "any", "unrelated" })
         {

@@ -1400,12 +1400,14 @@ public partial class TypeChecker
         // Select the nearest lexical declaration before checking the member kind.
         if (owner.PrivateFieldTypes.TryGetValue(fieldName, out var fieldType))
         {
+            ValidatePrivateReceiver(objType, owner, isStatic: false, get.Name);
             ObservePendingGetterFieldRead(owner, isStatic: false, fieldName);
             ObservePrivateSourceMemberSelection(get.Name, objType, owner, MemberFacet.PrivateInstance);
             return fieldType;
         }
         if (owner.PrivateMethodTypes.TryGetValue(fieldName, out var methodType))
         {
+            ValidatePrivateReceiver(objType, owner, isStatic: false, get.Name);
             ObservePrivateSourceMemberSelection(get.Name, objType, owner, MemberFacet.PrivateInstance);
             return methodType;
         }
@@ -1456,6 +1458,7 @@ public partial class TypeChecker
         TypeInfo? fieldType = null;
         if (owner.PrivateFieldTypes.TryGetValue(fieldName, out var pf))
         {
+            ValidatePrivateReceiver(objType, owner, isStatic: false, set.Name);
             ObservePrivateSourceMemberSelection(set.Name, objType, owner, MemberFacet.PrivateInstance);
             fieldType = pf;
         }
@@ -1531,6 +1534,8 @@ public partial class TypeChecker
             throw new TypeCheckException($" Private method '{methodName}' does not exist on class '{_currentClass.Name}'.", tsCode: "TS2339");
         }
 
+        if (selectedFacet == MemberFacet.PrivateInstance)
+            ValidatePrivateReceiver(objType, owner, isStatic: false, call.Name);
         RecordPrivateSourceMemberRead(call, call.Name, objType, owner, selectedFacet);
         if (methodType is TypeInfo.Any || selectedFacet == MemberFacet.PrivateStatic && objType is TypeInfo.Any)
         {

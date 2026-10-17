@@ -72,10 +72,10 @@ public class PromiseRuntimeFeatureGatingTests
         for (var handle = MetadataTokens.UserStringHandle(1); !handle.IsNil; handle = metadata.GetNextHandle(handle))
             Assert.DoesNotContain(metadata.GetUserString(handle), optionalPrototypeCarrierNames);
 
-        // Shared collection dispatch and generator intrinsic prototype semantics
-        // measure 291,328 bytes on Windows, with optional native fallbacks and
-        // class-only bodies gated. Allow one 512-byte PE block for platform layout
-        // differences; the structural absence guards remain strict.
+        // Keep the fixed PE size ceiling while gating optional native fallbacks
+        // and class-only bodies, including generic static owner normalization.
+        // Platform layout differences must fit within the existing headroom;
+        // the structural absence guards remain strict.
         Assert.True(assemblyBytes.Length <= 291_840,
             $"Promise-free assembly grew beyond its size ratchet: {assemblyBytes.Length:N0} bytes.");
     }

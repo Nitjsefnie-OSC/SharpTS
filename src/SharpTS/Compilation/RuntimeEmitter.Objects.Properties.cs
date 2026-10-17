@@ -189,6 +189,9 @@ public partial class RuntimeEmitter
 
     private LocalBuilder EmitStaticMemberLookupOwner(ILGenerator il, LocalBuilder owner, Type userClassInterface)
     {
+        // Only source classes can be generic implementers of this output's own
+        // $IHasFields interface; its built-in carriers are non-generic.
+        if (!_features.UsesUserClasses) return owner;
         var methodOwnerLocal = il.DeclareLocal(_types.Type);
         il.Emit(OpCodes.Ldloc, owner);
         il.Emit(OpCodes.Stloc, methodOwnerLocal);

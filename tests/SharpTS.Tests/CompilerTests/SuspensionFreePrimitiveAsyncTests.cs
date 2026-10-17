@@ -421,7 +421,9 @@ public sealed class SuspensionFreePrimitiveAsyncTests
             .ToArray();
 
         Assert.Contains(calls, method => method.Name == "InvokeMethodValue");
-        Assert.Contains(calls, method => method.Name == "CoerceAwaitableToTask");
+        // #2168: actual awaits observe Promise constructor identity through the await-specific helper.
+        Assert.Contains(calls, method => method.Name == "AwaitValueToTask");
+        Assert.Equal("21\n", TestHarness.RunCompiled(source));
     }
 
     [Fact]
@@ -446,7 +448,9 @@ public sealed class SuspensionFreePrimitiveAsyncTests
             .ToArray();
 
         Assert.Contains(calls, method => method.Name == "InvokeMethodValue");
-        Assert.Contains(calls, method => method.Name == "CoerceAwaitableToTask");
+        // #2168: actual awaits observe Promise constructor identity through the await-specific helper.
+        Assert.Contains(calls, method => method.Name == "AwaitValueToTask");
+        Assert.Equal("31\n", TestHarness.RunCompiled(source));
     }
 
     [Fact]

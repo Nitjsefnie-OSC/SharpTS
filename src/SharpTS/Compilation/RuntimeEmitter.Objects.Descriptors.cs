@@ -1661,10 +1661,12 @@ public partial class RuntimeEmitter
             descriptors,
             new GetOwnDescriptorConstructorReceiverInputs(
                 inputs.Dates,
+                inputs.DescriptorStorage,
                 inputs.GetEntries,
                 inputs.GetKeys,
                 inputs.GetOwnPropertyNames,
                 inputs.GetProperty,
+                inputs.IHasFieldsInterface,
                 inputs.LookupBuiltInStaticMember,
                 inputs.ObjectAssign,
                 inputs.ObjectFromEntries,

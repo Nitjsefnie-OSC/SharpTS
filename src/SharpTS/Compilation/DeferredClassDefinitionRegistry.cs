@@ -32,7 +32,8 @@ public sealed class DeferredClassDefinitionRegistry
         => _fieldKeys.TryGetValue(field, out key);
 
     internal DeferredClassDefinition Declare(object source, TypeBuilder owner, MethodBuilder initializer,
-        MethodBuilder registrar, IEnumerable<Expr> keys, IReadOnlyDictionary<Stmt.Field, FieldBuilder> fieldKeys)
+        MethodBuilder registrar, IEnumerable<Expr> keys, IReadOnlyDictionary<Stmt.Field, FieldBuilder> fieldKeys,
+        FieldBuilder? capturedKeys = null)
     {
         EnsureMutable();
         ArgumentNullException.ThrowIfNull(source);
@@ -46,6 +47,8 @@ public sealed class DeferredClassDefinitionRegistry
             || _bySource.ContainsKey(source) || _byType.ContainsKey(owner)
             || initializer.DeclaringType != owner || !initializer.IsStatic || !registrar.IsStatic
             || (!owner.IsGenericTypeDefinition && registrar.DeclaringType != owner)
+            || capturedKeys != null && (!owner.IsGenericTypeDefinition || !capturedKeys.IsStatic
+                || capturedKeys.DeclaringType != registrar.DeclaringType)
             || registrar.Module != owner.Module || ReferenceEquals(initializer, registrar)
             || snapshot.Length == 0 || snapshot.Any(key => key is null))
             throw new InvalidOperationException("Invalid or duplicate deferred class declaration.");
@@ -61,7 +64,7 @@ public sealed class DeferredClassDefinitionRegistry
                 || !snapshot.Any(expression => ReferenceEquals(expression, field.ComputedKey)))
                 throw new InvalidOperationException("Invalid or duplicate computed field key declaration.");
         }
-        var definition = new DeferredClassDefinition(owner, initializer, registrar, Array.AsReadOnly(snapshot));
+        var definition = new DeferredClassDefinition(owner, initializer, registrar, Array.AsReadOnly(snapshot), capturedKeys);
         _byType.Add(owner, definition);
         _bySource.Add(source, definition);
         foreach (var (field, key) in fieldKeys)
@@ -98,16 +101,18 @@ public sealed class DeferredClassDefinitionRegistry
 public sealed class DeferredClassDefinition
 {
     internal DeferredClassDefinition(TypeBuilder owner, MethodBuilder initializer, MethodBuilder registrar,
-        IReadOnlyList<Expr> keys)
+        IReadOnlyList<Expr> keys, FieldBuilder? capturedKeys)
     {
         Owner = owner;
         Initializer = initializer;
         Registrar = registrar;
         Keys = keys;
+        CapturedKeys = capturedKeys;
     }
 
     public TypeBuilder Owner { get; }
     public MethodBuilder Initializer { get; }
     public MethodBuilder Registrar { get; }
     public IReadOnlyList<Expr> Keys { get; }
+    internal FieldBuilder? CapturedKeys { get; }
 }

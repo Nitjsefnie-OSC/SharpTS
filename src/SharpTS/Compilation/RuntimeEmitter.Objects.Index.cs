@@ -1952,7 +1952,12 @@ public partial class RuntimeEmitter
             il.MarkLabel(notProxy);
         }
         EmitInheritedSymbolSetter(il, inputs.ObjectPrototypes, inputs.Symbols, inputs.DescriptorStorage,
-            inputs.InvokeMethodValue, inputs.SymbolAccessors, inputs.Errors, inputs.UndefinedType);
+            inputs.InvokeMethodValue, inputs.SymbolAccessors, inputs.Errors, inputs.UndefinedType,
+            inputs.ProxySelected
+                ? new ProxySetCallInputs(inputs.ReflectAssignment!.Set,
+                    inputs.ObjectDescriptors.GetOwnPropertyDescriptor, inputs.ObjectRead.Property,
+                    inputs.InvokeMethodUnwrapped)
+                : null);
         // #266: symbol-keyed class accessor setter (`set [Symbol.x](v) {...}`).
         // A registered setter takes the write (accessor semantics) instead of
         // storing a data property. Found setter is a MethodInfo invoked with the
@@ -2123,7 +2128,8 @@ public partial class RuntimeEmitter
 
     private void EmitInheritedSymbolSetter(ILGenerator il, EmittedObjectPrototypeRuntime prototypes,
         EmittedSymbolRuntime symbols, EmittedDescriptorStorageRuntime storage, MethodBuilder invoke,
-        EmittedSymbolAccessorRuntime accessors, EmittedErrorRuntime errors, Type undefinedType)
+        EmittedSymbolAccessorRuntime accessors, EmittedErrorRuntime errors, Type undefinedType,
+        ProxySetCallInputs? proxySet)
     {
         var done = il.DefineLabel();
         var prototype = il.DeclareLocal(_types.Object);
@@ -2154,6 +2160,29 @@ public partial class RuntimeEmitter
         il.MarkLabel(loop);
         il.Emit(OpCodes.Ldloc, prototype);
         il.Emit(OpCodes.Brfalse, done);
+        if (proxySet is { } proxyInputs)
+        {
+            var isProxy = il.DefineLabel();
+            var notProxy = il.DefineLabel();
+            EmitProxyTypeCheck(il, () => il.Emit(OpCodes.Ldloc, prototype), isProxy, notProxy);
+            il.MarkLabel(isProxy);
+            // Enter the inherited Proxy's [[Set]] before consulting descriptors
+            // or its prototype. Keep both the Symbol key and original receiver.
+            EmitProxySetCompiledCall(il, proxyInputs,
+                () => il.Emit(OpCodes.Ldloc, prototype),
+                () => il.Emit(OpCodes.Ldarg_1),
+                () => il.Emit(OpCodes.Ldarg_2),
+                () => il.Emit(OpCodes.Ldarg_0));
+            var handled = il.DefineLabel();
+            il.Emit(OpCodes.Brtrue, handled);
+            il.Emit(OpCodes.Ldarg_3);
+            il.Emit(OpCodes.Brfalse, handled);
+            GuestErrorEmitter.ThrowError(il, errors.CreateException, errors.TypeErrorConstructor,
+                "Proxy set trap returned false");
+            il.MarkLabel(handled);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notProxy);
+        }
         il.Emit(OpCodes.Ldloc, prototype);
         il.Emit(OpCodes.Call, symbols.GetStorage);
         il.Emit(OpCodes.Ldarg_1);

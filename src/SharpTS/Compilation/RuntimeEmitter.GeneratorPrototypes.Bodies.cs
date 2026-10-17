@@ -219,7 +219,7 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Ldstr, "Async generator method called on incompatible receiver");
                 il.Emit(OpCodes.Newobj, errors.TypeErrorConstructor); il.Emit(OpCodes.Call, errors.CreateException);
                 var fromException = _types.GetMethods(_types.Task).Single(method => method.Name == "FromException" && method.IsGenericMethodDefinition);
-                il.Emit(OpCodes.Call, fromException.MakeGenericMethod(_types.Object)); il.Emit(OpCodes.Ret);
+                il.Emit(OpCodes.Call, EmitGenerics.MakeGenericMethod(fromException, _types.Object)); il.Emit(OpCodes.Ret);
             }
             else GuestErrorEmitter.ThrowError(il, errors.CreateException, errors.TypeErrorConstructor, "Generator method called on incompatible receiver");
             il.MarkLabel(valid); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Castclass, generatorType);

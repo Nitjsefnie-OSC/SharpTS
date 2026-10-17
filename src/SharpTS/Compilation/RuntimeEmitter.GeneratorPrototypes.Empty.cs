@@ -13,7 +13,7 @@ public partial class RuntimeEmitter
     {
         // Empty source needs no parser or runtime compiler. Its iterator implements
         // the same emitted protocol as ordinary generators and has no body state.
-        var iterator = prototypes.Type.DefineNestedType(isAsync ? "EmptyAsyncGenerator" : "EmptyGenerator",
+        var iterator = EmitTypeDefinitions.DefineNestedType(prototypes.Type, isAsync ? "EmptyAsyncGenerator" : "EmptyGenerator",
             TypeAttributes.NestedPublic | TypeAttributes.Sealed, _types.Object, [generatorInterface]);
         var ctor = iterator.DefineDefaultConstructor(MethodAttributes.Public);
         const MethodAttributes implementation = MethodAttributes.Public | MethodAttributes.Virtual
@@ -122,10 +122,10 @@ public partial class RuntimeEmitter
         void EmitAsyncRequests()
         {
             var tail = iterator.DefineField("_pending", _types.Task, FieldAttributes.Private);
-            var fromResult = _types.GetMethods(_types.Task).Single(method => method.Name == "FromResult" && method.IsGenericMethodDefinition)
-                .MakeGenericMethod(_types.Object);
-            var fromException = _types.GetMethods(_types.Task).Single(method => method.Name == "FromException" && method.IsGenericMethodDefinition)
-                .MakeGenericMethod(_types.Object);
+            var fromResult = EmitGenerics.MakeGenericMethod(
+                _types.GetMethods(_types.Task).Single(method => method.Name == "FromResult" && method.IsGenericMethodDefinition), _types.Object);
+            var fromException = EmitGenerics.MakeGenericMethod(
+                _types.GetMethods(_types.Task).Single(method => method.Name == "FromException" && method.IsGenericMethodDefinition), _types.Object);
             var completeReturn = iterator.DefineMethod("CompleteReturn", MethodAttributes.Private | MethodAttributes.Static,
                 _types.Object, [_types.TaskOfObject]);
             var body = completeReturn.GetILGenerator();
@@ -140,21 +140,21 @@ public partial class RuntimeEmitter
             });
             body.Emit(OpCodes.Ret);
             var resultCallbackType = _types.MakeGenericType(typeof(Func<,>), _types.TaskOfObject, _types.Object);
-            var completeResult = _types.GetMethods(_types.TaskOfObject).Single(method => method.Name == "ContinueWith"
+            var completeResult = EmitGenerics.MakeGenericMethod(_types.GetMethods(_types.TaskOfObject).Single(method => method.Name == "ContinueWith"
                 && method.IsGenericMethodDefinition && method.GetParameters() is { Length: 2 } parameters
                 && parameters[0].ParameterType.IsGenericType
                 && parameters[0].ParameterType.GetGenericTypeDefinition() == typeof(Func<,>)
                 && parameters[0].ParameterType.GetGenericArguments()[0] == _types.TaskOfObject
-                && parameters[1].ParameterType == typeof(TaskContinuationOptions)).MakeGenericMethod(_types.Object);
+                && parameters[1].ParameterType == typeof(TaskContinuationOptions)), _types.Object);
             var queueCallbackType = _types.MakeGenericType(typeof(Func<,,>), _types.Task, _types.Object, _types.TaskOfObject);
-            var queue = _types.GetMethods(_types.Task).Single(method => method.Name == "ContinueWith"
+            var queue = EmitGenerics.MakeGenericMethod(_types.GetMethods(_types.Task).Single(method => method.Name == "ContinueWith"
                 && method.IsGenericMethodDefinition && method.GetParameters() is { Length: 3 } parameters
                 && parameters[0].ParameterType.IsGenericType
                 && parameters[0].ParameterType.GetGenericTypeDefinition() == typeof(Func<,,>)
                 && parameters[1].ParameterType == _types.Object
-                && parameters[2].ParameterType == typeof(TaskContinuationOptions)).MakeGenericMethod(_types.TaskOfObject);
-            var unwrap = _types.GetMethods(typeof(TaskExtensions)).Single(method => method.Name == "Unwrap" && method.IsGenericMethodDefinition)
-                .MakeGenericMethod(_types.Object);
+                && parameters[2].ParameterType == typeof(TaskContinuationOptions)), _types.TaskOfObject);
+            var unwrap = EmitGenerics.MakeGenericMethod(
+                _types.GetMethods(typeof(TaskExtensions)).Single(method => method.Name == "Unwrap" && method.IsGenericMethodDefinition), _types.Object);
             var completionType = _types.MakeGenericType(typeof(TaskCompletionSource<>), _types.Object);
             var completionTask = _types.GetPropertyGetter(completionType, "Task");
             var settle = iterator.DefineMethod("SettleRequest", MethodAttributes.Private | MethodAttributes.Static,

@@ -7,6 +7,61 @@ namespace SharpTS.Tests.SharedTests;
 
 public sealed class ForwardClassTypeAnnotationTests
 {
+    private const string SelfReferencingSource = """
+        interface Base {}
+        function make() {
+            abstract class Base {
+                self(): Base { return this; }
+                abstract run(): number;
+            }
+            class Derived extends Base {
+                run(): number { return 7; }
+            }
+            return new Derived().run();
+        }
+        console.log(make());
+        """;
+
+    [Fact]
+    public void SelfAnnotationAllowsTheDerivedAbstractMemberImplementation()
+        => new TypeChecker().Check(TestHarness.ParseOrThrow(SelfReferencingSource));
+
+    [Fact]
+    public void SelfAnnotationPreservesTheLaterAbstractMemberRequirement()
+    {
+        string source = SelfReferencingSource.Replace("run(): number { return 7; }", "");
+        var error = Assert.ThrowsAny<TypeCheckException>(() =>
+            new TypeChecker().Check(TestHarness.ParseOrThrow(source)));
+        Assert.Equal("TS2515", error.Diagnostic.TsCode);
+    }
+
+    private const string SelfReferencingAccessorSource = """
+        interface C {}
+        function numberValue(): number { return 1; }
+        function make() {
+            class C {
+                self(): C { return this; }
+                accessor value = numberValue();
+                read(): number { return this.value; }
+            }
+            return new C().read();
+        }
+        console.log(make());
+        """;
+
+    [Theory, ModeData]
+    public void SelfAnnotationPreservesTheInferredAutoAccessorType(ExecutionMode mode)
+        => Assert.Equal("1\n", TestHarness.Run(SelfReferencingAccessorSource, mode));
+
+    [Fact]
+    public void SelfAnnotationDoesNotKeepAnAutoAccessorPreparatoryAny()
+    {
+        string source = SelfReferencingAccessorSource.Replace("read(): number", "read(): string");
+        var error = Assert.ThrowsAny<TypeCheckException>(() =>
+            new TypeChecker().Check(TestHarness.ParseOrThrow(source)));
+        Assert.Equal("TS2322", error.Diagnostic.TsCode);
+    }
+
     [Theory, ModeData]
     public void AnnotationCanReadMembersBeforeAnyConstructorReference(ExecutionMode mode)
     {

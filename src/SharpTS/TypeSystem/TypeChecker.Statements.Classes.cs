@@ -607,16 +607,31 @@ public partial class TypeChecker
             // and `value: this[K]` retain their indexed-access relationship.
             classTypeEnv.Define("this", new TypeInfo.Instance(mutableClass));
 
-            using (new EnvironmentScope(this, classTypeEnv))
+            _forwardClassTypeShadows.TryGetValue(mutableClass, out var ownedForward);
+            bool wasResolving = ownedForward?.IsResolving ?? false;
+            if (ownedForward is not null)
+                ownedForward.IsResolving = true;
+            try
             {
-                CollectClassIndexSignatures(classStmt, mutableClass);
-                CollectComputedClassMethodSignatures(classStmt, mutableClass);
-                CollectNamedClassMethodSignatures(classStmt, mutableClass);
-                CollectClassFieldTypes(classStmt, mutableClass);
-                CollectClassAccessorTypes(classStmt, mutableClass);
-                CollectClassAutoAccessorTypes(classStmt, mutableClass, superclass);
+                using (new EnvironmentScope(this, classTypeEnv))
+                {
+                    CollectClassIndexSignatures(classStmt, mutableClass);
+                    CollectComputedClassMethodSignatures(classStmt, mutableClass);
+                    CollectNamedClassMethodSignatures(classStmt, mutableClass);
+                    CollectClassFieldTypes(classStmt, mutableClass);
+                    CollectClassAccessorTypes(classStmt, mutableClass);
+                    CollectClassAutoAccessorTypes(classStmt, mutableClass, superclass);
+                }
+            }
+            finally
+            {
+                if (ownedForward is not null)
+                    ownedForward.IsResolving = wasResolving;
             }
 
+            // Recursive annotations can request a frozen view mid-collection.
+            // Publication must include every member added after that snapshot.
+            mutableClass.ResetFrozenCache();
             TypeInfo.Class classTypeForBody = PublishInitialClassType(classStmt, mutableClass, classTypeParams);
 
             bool anyInferredFieldTypeResolved = CheckClassFieldInitializers(

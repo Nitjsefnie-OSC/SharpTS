@@ -63,8 +63,8 @@ public sealed class PrivateInTests
                     let threw = false;
                     try { this.#later = next(); } catch (error) { threw = error instanceof TypeError; }
                     console.log(threw, #later in this, calls);
-                    try { this.#later = (() => { throw new Error("rhs"); })(); }
-                    catch (error) { console.log(error.message); }
+                    try { this.#later = ((): never => { throw new Error("rhs"); })(); }
+                    catch (error: any) { console.log(error.message); }
                 }
                 static after() {
                     const value = this.#later = next();

@@ -43,7 +43,8 @@ public partial class RuntimeEmitter
             foreach (var method in new[] { kind.Next, kind.Return, kind.Throw, kind.Identity })
                 method.DefineParameter(1, ParameterAttributes.None, "__this");
             kind.ConstructorMethod.DefineParameter(1, ParameterAttributes.None, "args")
-                .SetCustomAttribute(new CustomAttributeBuilder(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes)!, []));
+                .SetCustomAttribute(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes)!,
+                    CustomAttributeEncoder.EmptyBlob);
         }
     }
 }

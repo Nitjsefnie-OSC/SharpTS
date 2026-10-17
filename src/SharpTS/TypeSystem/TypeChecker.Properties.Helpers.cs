@@ -126,8 +126,19 @@ public partial class TypeChecker
     private TypeInfo CheckGetOnClass(TypeInfo classType, Token memberName)
     {
         TypeInfo? current = classType;
+        TypeInfo? staticStringIndex = null;
+        bool dynamicSuperclass = false;
         while (current != null)
         {
+            // A class extending an any-valued constructor keeps that dynamic
+            // constructor's unknown static surface.
+            if (current is TypeInfo.Any or TypeInfo.MutableClass { IsDynamicSuperclass: true })
+            {
+                dynamicSuperclass = true;
+                break;
+            }
+            staticStringIndex ??= ClassInfoAccessor.Get(current,
+                c => c.Core.StaticStringIndexType, gc => gc.Core.StaticStringIndexType);
             var staticMethods = GetStaticMethods(current);
             var staticProps = GetStaticProperties(current);
             if (staticMethods != null && staticMethods.TryGetValue(memberName.Lexeme, out var staticMethodType))
@@ -150,7 +161,45 @@ public partial class TypeChecker
             }
             current = GetSuperclass(current);
         }
-        return TypeInfo.Any.Shared;
+
+        // Constructors inherit Function and Object members independently of
+        // the source class's declared static members. Keep this surface finite:
+        // GetFunctionMemberType deliberately returns any for arbitrary names.
+        if (memberName.Lexeme == "prototype")
+            return TypeInfo.Any.Shared;
+        // A bound constructor remains constructable. An ordinary Function
+        // return type would make `new (C.bind(null))()` fail static checking.
+        if (memberName.Lexeme == "bind")
+            return new TypeInfo.Function([new TypeInfo.Array(TypeInfo.Any.Shared)],
+                TypeInfo.Any.Shared, RequiredParams: 0, HasRestParam: true);
+        if (_globalDeclarationEnvironment?.GetTypeBinding("Function") is { } declaredFunction &&
+            RefreshCompletedInterfaceBinding(declaredFunction) is TypeInfo.Interface function &&
+            ResolveNamedInterfaceMember(function, memberName.Lexeme) is { } declaredMember)
+            return declaredMember;
+        if (memberName.Lexeme is "call" or "apply" or "length" or "name")
+            return BuiltInTypes.GetFunctionMemberType(memberName.Lexeme, classType)!;
+        if (memberName.Lexeme is "caller" or "arguments")
+            return TypeInfo.Any.Shared;
+        if (ResolveObjectPrototypeMember(memberName.Lexeme) is { } objectMember)
+            return objectMember;
+        if (staticStringIndex is not null)
+            return WithUncheckedUndefined(staticStringIndex);
+        if (dynamicSuperclass)
+            return TypeInfo.Any.Shared;
+
+        throw new TypeCheckException(
+            $"Property '{memberName.Lexeme}' does not exist on type 'typeof {GetClassName(classType)}'.",
+            memberName.Line, tsCode: "TS2339");
+    }
+
+    private static TypeInfo? GetConstructorStringIndexType(TypeInfo classType)
+    {
+        TypeInfo? current = classType;
+        for (int depth = 0; current is not null && depth < 256; depth++, current = GetSuperclass(current))
+            if (ClassInfoAccessor.Get(current, c => c.Core.StaticStringIndexType,
+                    gc => gc.Core.StaticStringIndexType) is { } indexType)
+                return indexType;
+        return null;
     }
 
     /// <summary>

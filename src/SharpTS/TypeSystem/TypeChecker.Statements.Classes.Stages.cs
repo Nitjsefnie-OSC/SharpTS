@@ -43,7 +43,8 @@ public partial class TypeChecker
         // class's extends clause, before that class is textually declared, is TS2449 (class values
         // aren't hoisted for this position). Recorded (not thrown) so the body is still checked.
         if (classStmt.SuperclassExpr is Expr.Variable baseVar
-            && _classDeclarationLines.TryGetValue(baseVar.Name.Lexeme, out int baseLine)
+            && _environment.GetValueBinding(baseVar.Name.Lexeme) is { } baseBinding
+            && _classDeclarationLines.TryGetValue(baseBinding, out int baseLine)
             && baseLine > classStmt.Name.Line)
         {
             RecordTypeError(new TypeCheckException(
@@ -54,14 +55,22 @@ public partial class TypeChecker
 
     // Called within the declaration-owned class type environment; updates only index metadata.
     private void CollectClassIndexSignatures(Stmt.Class classStmt, TypeInfo.MutableClass mutableClass)
+        => CollectClassIndexSignatures(classStmt.IndexSignatures, mutableClass);
+
+    private void CollectClassIndexSignatures(IEnumerable<Stmt.IndexSignature>? indexSignatures, TypeInfo.MutableClass mutableClass)
     {
         // Index signatures: [key: string|number|symbol]: ValueType. Resolved inside the class
         // type-environment scope so value types can reference the class's own type parameters.
-        if (classStmt.IndexSignatures != null)
+        if (indexSignatures != null)
         {
-            foreach (var indexSig in classStmt.IndexSignatures)
+            foreach (var indexSig in indexSignatures)
             {
                 TypeInfo valueType = ResolveAnnotation(indexSig.ValueType, indexSig.ValueTypeNode)!;
+                if (indexSig.IsStatic && indexSig.KeyType == TokenType.TYPE_STRING)
+                {
+                    mutableClass.StaticStringIndexType = valueType;
+                    continue;
+                }
                 switch (indexSig.KeyType)
                 {
                     case TokenType.TYPE_STRING: mutableClass.StringIndexType = valueType; break;

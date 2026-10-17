@@ -43,6 +43,9 @@ public sealed record ClassMetadataCore(
     /// <summary>Source optionality retained with its class across checker inputs and generic projections.</summary>
     public FrozenSet<(bool IsStatic, string Name)>? OrdinaryOptionalMembers { get; init; }
 
+    /// <summary>String index signature on the constructor, independent of instance indices.</summary>
+    public TypeInfo? StaticStringIndexType { get; init; }
+
     /// <summary>True when the class declares any index signature.</summary>
     public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
 

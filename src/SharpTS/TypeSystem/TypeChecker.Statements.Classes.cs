@@ -54,6 +54,7 @@ public partial class TypeChecker
             _recoveryMode = true;
         try
         {
+            HoistClassDeclarations(statements);
             CheckStmtList(statements);
         }
         finally
@@ -628,6 +629,7 @@ public partial class TypeChecker
                     ? preregisteredClass
                     : new TypeInfo.MutableClass(classStmt.Name.Lexeme, declarationId);
             mutableClass.Superclass = superclass;
+            mutableClass.ResetFrozenCache();
             _newTargetSourceTypes[classStmt] = mutableClass;
             mutableClass.IsAbstract = classStmt.IsAbstract;
             RegisterSourceClassMembers(classStmt, mutableClass);
@@ -1196,7 +1198,7 @@ public partial class TypeChecker
                 // has no lexical leaf name. Its permissive placeholder must not
                 // masquerade as a named built-in or dereference a missing name.
                 var leafName = Expr.GetSuperclassLeafName(classStmt.SuperclassExpr) ?? "<dynamic superclass>";
-                var placeholder = new TypeInfo.MutableClass(leafName);
+                var placeholder = new TypeInfo.MutableClass(leafName) { IsDynamicSuperclass = true };
                 var permissiveConstructor = new TypeInfo.Function(
                     [TypeInfo.Any.Shared], TypeInfo.Void.Shared, RequiredParams: 0, HasRestParam: true);
                 placeholder.Methods["constructor"] = permissiveConstructor;
@@ -1353,6 +1355,11 @@ public partial class TypeChecker
                         () => ResolveAnnotation(indexSig.ValueType, indexSig.ValueTypeNode)!,
                         out TypeInfo valueType))
                     continue;
+                if (indexSig.IsStatic && indexSig.KeyType == TokenType.TYPE_STRING)
+                {
+                    mutableClass.StaticStringIndexType = valueType;
+                    continue;
+                }
                 switch (indexSig.KeyType)
                 {
                     case TokenType.TYPE_STRING: mutableClass.StringIndexType = valueType; break;

@@ -371,8 +371,14 @@ public partial class TypeChecker
         // Exclude<keyof T, symbol> remains a deferred conditional while T is open, but every
         // possible result is a string-or-number property key. Such a domain can safely read a
         // string index signature without inventing an implicit-any TS7053.
-        if (IsStringOrNumberIndexDomain(indexType) && StringIndexOf(objType) is { } domainIndex)
+        if (IsStringOrNumberIndexDomain(indexType) && ReadStringIndexOf(objType) is { } domainIndex)
+        {
+            if (objType is TypeInfo.Class or TypeInfo.GenericClass or TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass } &&
+                getIndex.Index is Expr.Literal { Value: string staticMemberName })
+                return CheckGetOnClass(objType, new Token(TokenType.IDENTIFIER, staticMemberName, null,
+                    TryGetExprLine(getIndex.Object) ?? _currentStatementLine ?? 0));
             return WithUncheckedUndefined(domainIndex);
+        }
 
         // Handle string index on objects/interfaces
         if (IsString(indexType) || indexType is TypeInfo.StringLiteral)
@@ -400,7 +406,8 @@ public partial class TypeChecker
                 return WithUncheckedUndefined(rec2.StringIndexType);
             if (objType is TypeInfo.Interface itf2 && itf2.StringIndexType != null)
                 return WithUncheckedUndefined(itf2.StringIndexType);
-            if (GetClassIndexType(objType, TokenType.TYPE_STRING) is { } clsStr)
+            if ((objType is TypeInfo.Class or TypeInfo.GenericClass or TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass }
+                    ? GetConstructorStringIndexType(objType) : GetClassIndexType(objType, TokenType.TYPE_STRING)) is { } clsStr)
                 return WithUncheckedUndefined(clsStr);
 
             // Allow bracket access on any object/interface (returns any for unknown keys)
@@ -1268,8 +1275,14 @@ public partial class TypeChecker
         if (getIndex.Index is Expr.Literal { Value: string functionMemberName } &&
             ResolveFunctionShapeMember(objType, functionMemberName) is { } apparentNamedMember)
             return apparentNamedMember;
-        if (IsStringOrNumberIndexDomain(indexType) && StringIndexOf(objType) is { } domainIndex)
+        if (IsStringOrNumberIndexDomain(indexType) && ReadStringIndexOf(objType) is { } domainIndex)
+        {
+            if (objType is TypeInfo.Class or TypeInfo.GenericClass or TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass } &&
+                getIndex.Index is Expr.Literal { Value: string staticMemberName })
+                return CheckGetOnClass(objType, new Token(TokenType.IDENTIFIER, staticMemberName, null,
+                    TryGetExprLine(getIndex.Object) ?? _currentStatementLine ?? 0));
             return WithUncheckedUndefined(domainIndex);
+        }
 
         // Handle string index
         if (IsString(indexType) || indexType is TypeInfo.StringLiteral)
@@ -1334,6 +1347,11 @@ public partial class TypeChecker
 
         return null;
     }
+
+    private TypeInfo? ReadStringIndexOf(TypeInfo receiver) =>
+        receiver is TypeInfo.Class or TypeInfo.GenericClass or TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass }
+            ? GetConstructorStringIndexType(receiver)
+            : StringIndexOf(receiver);
 
     /// <summary>
     /// Checks index assignment on a given type (used for delegating from Union types).

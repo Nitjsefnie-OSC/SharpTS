@@ -1938,6 +1938,7 @@ public partial class TypeChecker
                 // Hoist inner function declarations so forward references within
                 // an arrow body (incl. IIFEs like `(function runInContext() {…})()`)
                 // resolve. Matches the behavior in CheckFunctionDeclaration.
+                HoistClassDeclarations(arrow.BlockBody);
                 HoistFunctionDeclarations(arrow.BlockBody);
 
                 // Likewise hoist the body's own let/const (as `any`) so an inner function declared
@@ -2309,6 +2310,7 @@ public partial class TypeChecker
             // Values may retain an interface from before later declarations merged.
             // Follow that exact interface's completion, never a same-named type in
             // the use site's scope (which may shadow the original declaration).
+            declared = ResolveForwardClassConstructor(name, declared);
             declared = RefreshCompletedInterfaceBinding(declared);
             var declaredPath = new Narrowing.NarrowingPath.Variable(name.Lexeme);
             return GetNarrowing(declaredPath) ?? declared;
@@ -2546,7 +2548,7 @@ public partial class TypeChecker
                 // the superclass so that `super(...)` calls inside this
                 // class body type-check as `any` instead of erroring with
                 // "does not have a superclass".
-                superclass = new TypeInfo.MutableClass("$AnySuperclass");
+                superclass = new TypeInfo.MutableClass("$AnySuperclass") { IsDynamicSuperclass = true };
             }
             else
                 throw new TypeCheckException("Superclass must be a class", tsCode: "TS2507");
@@ -2570,6 +2572,7 @@ public partial class TypeChecker
 
         using (new EnvironmentScope(this, classTypeEnv))
         {
+            CollectClassIndexSignatures(classExpr.IndexSignatures, mutableClass);
             // Helper to build a TypeInfo.Function from a method declaration
             TypeInfo.Function BuildMethodFuncType(Stmt.Function method)
             {
@@ -2964,6 +2967,7 @@ public partial class TypeChecker
                         // expression lifting appends __genArrow_N at the body end while its binding is
                         // referenced earlier, so declarations and lexical bindings must be visible
                         // before the sequential pass.
+                        HoistClassDeclarations(method.Body);
                         HoistFunctionDeclarations(method.Body);
                         HoistLexicalDeclarations(method.Body);
                         CheckStmtList(method.Body);

@@ -39,7 +39,9 @@ public partial class ILCompiler
         MethodAttributes attrs = MethodAttributes.Public | MethodAttributes.HideBySig;
         if (accessor.IsStatic) attrs |= MethodAttributes.Static;
         Type[] paramTypes = isGetter ? [] : [typeof(object)];
-        if (accessor.IsStatic && _classExprs.Builders.Values.Any(builder => ReferenceEquals(builder, typeBuilder)))
+        bool hasDefinitionParameter = accessor.IsStatic
+            && _classExprs.Builders.Values.Any(builder => ReferenceEquals(builder, typeBuilder));
+        if (hasDefinitionParameter)
             paramTypes = [_runtime.ClassDefinitions.Type, .. paramTypes];
 
         var methodBuilder = typeBuilder.DefineMethod(
@@ -47,6 +49,8 @@ public partial class ILCompiler
             attrs,
             typeof(object),
             paramTypes);
+        if (hasDefinitionParameter)
+            MarkFunctionLength(methodBuilder, accessor.SetterParam is { } parameter ? [parameter] : []);
 
         _classes.ComputedMembers.DeclareAccessor(typeBuilder, accessor, methodBuilder);
 

@@ -49,7 +49,56 @@ public sealed class ClassGeneratorMethodNameTests
     public void OrdinaryGeneratorClassMethodsHaveConfigurableDeclaredNames(ExecutionMode mode)
         => Assert.Equal(Expected, TestHarness.Run(Source, mode));
 
-    [Fact]
-    public void InterpreterReadingGeneratorMethodAgainPreservesDeletedMetadata()
-        => Assert.Equal(VariantsExpected, TestHarness.Run(VariantsSource, ExecutionMode.Interpreted));
+    [Theory, ModeData]
+    public void ReadingGeneratorMethodAgainPreservesDeletedMetadata(ExecutionMode mode)
+        => Assert.Equal(VariantsExpected, TestHarness.Run(VariantsSource, mode));
+
+    public const string IdentitySource = """
+        class C { *id(value: any) {} }
+        const object: any = new C(), method: any = object.id;
+        console.log(object.id === method);
+        console.log(delete method.name, delete method.length);
+        console.log(Object.hasOwn(method, "name"), Object.hasOwn(method, "length"));
+        console.log(JSON.stringify(object.id.name), object.id.length, Object.hasOwn(object.id, "name"));
+        """;
+
+    [Theory, ModeData]
+    public void RepeatedGeneratorReadsRetainFunctionIdentity(ExecutionMode mode)
+        => Assert.Equal("true\ntrue true\nfalse false\n\"\" 0 false\n", TestHarness.Run(IdentitySource, mode));
+
+    [Theory, ModeData]
+    public void CanonicalGeneratorMethodKeepsDynamicReceiver(ExecutionMode mode)
+    {
+        const string source = """
+            class C {
+                constructor(public tag: number) {}
+                *id(value: number) { yield this.tag + value; }
+            }
+            const first: any = new C(1), second: any = new C(2), method: any = first.id;
+            console.log(method === first.id, method === second.id, method === C.prototype.id);
+            console.log(first.id(3).next().value, second.id(3).next().value, method.call(second, 3).next().value);
+            Object.defineProperty(method, "name", { value: "renamed", configurable: true });
+            console.log(first.id.name, second.id.name, C.prototype.id.name);
+            """;
+        Assert.Equal("true true true\n4 5 5\nrenamed renamed renamed\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void DeletedGeneratorMetadataReadsInheritedDescriptors(ExecutionMode mode)
+    {
+        const string source = """
+            class C { *id(value: any) {} }
+            const method: any = new C().id, state = { reads: 0 };
+            delete method.name; delete method.length;
+            Object.defineProperty(Function.prototype, "name", {
+                get() { state.reads++; return this === method ? "inherited" : "other"; }, configurable: true
+            });
+            Object.defineProperty(Function.prototype, "length", { value: 9, configurable: true });
+            console.log(method.name, method.length, state.reads);
+            Object.defineProperty(method, "name", { value: undefined, configurable: true });
+            Object.defineProperty(method, "length", { value: undefined, configurable: true });
+            console.log(method.name === undefined, method.length === undefined, state.reads);
+            """;
+        Assert.Equal("inherited 9 1\ntrue true 1\n", TestHarness.Run(source, mode));
+    }
 }

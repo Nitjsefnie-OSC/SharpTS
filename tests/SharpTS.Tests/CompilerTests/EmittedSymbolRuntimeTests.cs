@@ -51,7 +51,25 @@ public sealed class EmittedSymbolRuntimeTests
         var first = new EmittedRuntime();
         var second = new EmittedRuntime();
         Assert.Equal(28, Handles(typeof(EmittedSymbolRuntime)).Length);
-        Assert.Equal(12, Handles(typeof(EmittedSymbolAccessorRuntime)).Length);
+        (string Name, Type Type)[] accessorHandles =
+        [
+            (nameof(EmittedSymbolAccessorRuntime.CloseAccessor), typeof(MethodBuilder)),
+            (nameof(EmittedSymbolAccessorRuntime.ClosedOwner), typeof(MethodBuilder)),
+            (nameof(EmittedSymbolAccessorRuntime.FindGetter), typeof(MethodBuilder)),
+            (nameof(EmittedSymbolAccessorRuntime.FindMethod), typeof(MethodBuilder)),
+            (nameof(EmittedSymbolAccessorRuntime.FindOwnMethod), typeof(MethodBuilder)),
+            (nameof(EmittedSymbolAccessorRuntime.FindSetter), typeof(MethodBuilder)),
+            (nameof(EmittedSymbolAccessorRuntime.GetOrCreateStaticMethod), typeof(MethodBuilder)),
+            (nameof(EmittedSymbolAccessorRuntime.RegisterAccessor), typeof(MethodBuilder)),
+            (nameof(EmittedSymbolAccessorRuntime.RegisterMethod), typeof(MethodBuilder)),
+            (nameof(EmittedSymbolAccessorRuntime.Registry), typeof(FieldBuilder)),
+            (nameof(EmittedSymbolAccessorRuntime.RegistryKey), typeof(MethodBuilder)),
+            (nameof(EmittedSymbolAccessorRuntime.StaticCallableCache), typeof(FieldBuilder))
+        ];
+        Assert.Equal(accessorHandles.OrderBy(handle => handle.Name, StringComparer.Ordinal),
+            Handles(typeof(EmittedSymbolAccessorRuntime))
+                .Select(property => (Name: property.Name, Type: property.PropertyType))
+                .OrderBy(handle => handle.Name, StringComparer.Ordinal));
         Assert.NotSame(first.Symbols, second.Symbols);
         Assert.NotSame(first.SymbolAccessors, second.SymbolAccessors);
         Assert.Null(typeof(EmittedRuntime).GetProperty(nameof(EmittedRuntime.Symbols))!.SetMethod);

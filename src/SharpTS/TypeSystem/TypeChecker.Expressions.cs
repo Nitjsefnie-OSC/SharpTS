@@ -2573,39 +2573,7 @@ public partial class TypeChecker
         using (new EnvironmentScope(this, classTypeEnv))
         {
             CollectClassIndexSignatures(classExpr.IndexSignatures, mutableClass);
-            // Helper to build a TypeInfo.Function from a method declaration
-            TypeInfo.Function BuildMethodFuncType(Stmt.Function method)
-            {
-                var (paramTypes, requiredParams, hasRest, paramNames) = BuildFunctionSignature(
-                    method.Parameters,
-                    validateDefaults: true,
-                    contextName: $"method '{method.Name.Lexeme}'",
-                    editorOwner: method
-                );
-
-                TypeInfo returnType = ResolveAnnotation(method.ReturnType, method.ReturnTypeNode, method, EditorAnnotationSlot.Return)
-                    ?? TypeInfo.Inferred.Shared;
-
-                // Wrap return type for generator/async generator methods (skip when inferring).
-                // An un-annotated generator method stays a plain <inferred> placeholder so the
-                // inferred-return resolution pass below turns it into Generator<yieldType> (#793,
-                // mirroring CheckClassDeclaration).
-                if (method.ReturnType != null && method.IsGenerator)
-                {
-                    if (method.IsAsync && returnType is not TypeInfo.AsyncGenerator)
-                    {
-                        returnType = new TypeInfo.AsyncGenerator(returnType);
-                    }
-                    else if (!method.IsAsync && returnType is not TypeInfo.Generator)
-                    {
-                        returnType = new TypeInfo.Generator(returnType);
-                    }
-                }
-
-                var signature = new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, null, paramNames);
-                RegisterEditorSignature(signature, method, method.Name);
-                return signature;
-            }
+            TypeInfo BuildMethodFuncType(Stmt.Function method) => BuildClassMethodSignature(method);
 
             // Computed symbol-keyed methods (`[Symbol.iterator]() {...}`) are modeled under their
             // canonical @@name (@@iterator, …) so structural iterability sees them (#592). They carry the
@@ -2616,10 +2584,7 @@ public partial class TypeChecker
             {
                 if (TryGetWellKnownSymbolMemberName(method.ComputedKey) is not { } memberName)
                     continue;
-                var (cParamTypes, cRequired, cHasRest, cParamNames) = BuildFunctionSignature(
-                    method.Parameters, validateDefaults: true, contextName: $"method '{memberName}'");
-                TypeInfo factoryReturn = ResolveAnnotation(method.ReturnType, method.ReturnTypeNode, method, EditorAnnotationSlot.Return) ?? TypeInfo.Inferred.Shared;
-                var computedFunc = new TypeInfo.Function(cParamTypes, factoryReturn, cRequired, cHasRest, null, cParamNames);
+                var computedFunc = BuildClassMethodSignature(method, wrapGeneratorReturn: false);
                 if (method.IsStatic)
                     mutableClass.StaticMethods[memberName] = computedFunc;
                 else
@@ -2650,11 +2615,11 @@ public partial class TypeChecker
 
                     foreach (var sig in signatureTypes)
                     {
-                        if (implType.MinArity > sig.MinArity)
-                            throw new TypeCheckException($" Implementation of '{methodName}' requires {implType.MinArity} arguments but overload signature requires only {sig.MinArity}.", tsCode: "TS2394");
+                        if (ClassMethodImplementation(implType).MinArity > ClassMethodImplementation(sig).MinArity)
+                            throw new TypeCheckException($" Implementation of '{methodName}' requires {ClassMethodImplementation(implType).MinArity} arguments but overload signature requires only {ClassMethodImplementation(sig).MinArity}.", tsCode: "TS2394");
                     }
 
-                    var overloadedFunc = new TypeInfo.OverloadedFunction(signatureTypes, implType);
+                    var overloadedFunc = BuildClassMethodOverload(signatureTypes, implType);
                     RegisterEditorPublicSignatures(overloadedFunc, signatureTypes);
                     if (implementation.IsStatic)
                         mutableClass.StaticMethods[methodName] = overloadedFunc;
@@ -2892,10 +2857,7 @@ public partial class TypeChecker
                     }
                     else
                     {
-                        var (cpt, creq, chr, cpn) = BuildFunctionSignature(
-                            method.Parameters, validateDefaults: true, contextName: "computed method");
-                        TypeInfo cr = ResolveAnnotation(method.ReturnType, method.ReturnTypeNode, method, EditorAnnotationSlot.Return) ?? TypeInfo.Inferred.Shared;
-                        declaredMethodType = new TypeInfo.Function(cpt, cr, creq, chr, null, cpn);
+                        declaredMethodType = BuildClassMethodSignature(method, wrapGeneratorReturn: false);
                     }
                 }
                 else
@@ -2909,13 +2871,7 @@ public partial class TypeChecker
                         : classTypeForBody.Methods[method.Name.Lexeme];
                 }
 
-                TypeInfo.Function methodType = declaredMethodType switch
-                {
-                    TypeInfo.OverloadedFunction of => of.Implementation,
-                    TypeInfo.Function f => f,
-                    // SharpTS-only: internal invariant
-                    _ => throw new TypeCheckException($" Unexpected method type for '{method.Name.Lexeme}'.")
-                };
+                TypeInfo.Function methodType = ClassMethodBodySignature(method, methodEnv);
 
                 var bodyParamTypes = WidenOptionalParamsForBody(methodType.ParamTypes, method.Parameters);
                 for (int i = 0; i < method.Parameters.Count; i++)
@@ -3007,9 +2963,7 @@ public partial class TypeChecker
                         // Update the method type in the class. Computed symbol-keyed methods are keyed
                         // by their @@name (e.g. @@iterator); an arbitrary computed key (no well-known
                         // @@name) carries no static member to update.
-                        var updatedMethodType = new TypeInfo.Function(methodType.ParamTypes, inferredReturn, methodType.RequiredParams, methodType.HasRestParam, methodType.ThisType, methodType.ParamNames);
-                        RegisterEditorSignature(updatedMethodType, method, method.Name);
-                        CopyEditorPublicSignatures(declaredMethodType, updatedMethodType);
+                        var updatedMethodType = UpdateClassMethodReturn(method, declaredMethodType, methodType, inferredReturn);
                         string? mName = method.ComputedKey != null
                             ? TryGetWellKnownSymbolMemberName(method.ComputedKey)
                             : method.Name.Lexeme;

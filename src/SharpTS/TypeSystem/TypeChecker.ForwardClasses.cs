@@ -111,9 +111,7 @@ public partial class TypeChecker
                 : method.IsStatic ? shape.StaticMethods : shape.Methods;
             var overloads = methodsInGroup.Where(candidate => candidate.Body is null && !candidate.IsAbstract)
                 .Select(BuildForwardClassMethodSignature).ToList();
-            methods[name] = overloads.Count > 0 ? new TypeInfo.OverloadedFunction(overloads, signature) : signature;
-            if (methods[name] is TypeInfo.OverloadedFunction overloaded)
-                RegisterEditorPublicSignatures(overloaded, overloads);
+            methods[name] = overloads.Count > 0 ? BuildClassMethodOverload(overloads, signature) : signature;
             (method.IsStatic ? shape.StaticMethodAccess : shape.MethodAccess)[name] = method.Access;
 
             if (method.Name.Lexeme == "constructor")
@@ -158,21 +156,6 @@ public partial class TypeChecker
         }
     }
 
-    private TypeInfo.Function BuildForwardClassMethodSignature(Stmt.Function method)
-    {
-        var (parameterTypes, requiredParameters, hasRest, parameterNames) = BuildFunctionSignature(
-            method.Parameters, validateDefaults: false, contextName: $"method '{method.Name.Lexeme}'",
-            editorOwner: method, inspectDestructuredDefaults: false);
-        TypeInfo result = ResolveAnnotation(method.ReturnType, method.ReturnTypeNode, method, EditorAnnotationSlot.Return)
-            ?? TypeInfo.Any.Shared;
-        if (method.IsGenerator && method.ReturnType is not null)
-            result = method.IsAsync && result is not TypeInfo.AsyncGenerator ? new TypeInfo.AsyncGenerator(result)
-                : !method.IsAsync && result is not TypeInfo.Generator ? new TypeInfo.Generator(result) : result;
-        var signature = new TypeInfo.Function(parameterTypes, result,
-            requiredParameters, hasRest,
-            ResolveAnnotation(method.ThisType, method.ThisTypeNode, method, EditorAnnotationSlot.This),
-            parameterNames);
-        RegisterEditorSignature(signature, method, method.Name);
-        return signature;
-    }
+    private TypeInfo BuildForwardClassMethodSignature(Stmt.Function method) =>
+        BuildClassMethodSignature(method, preparatory: true, wrapGeneratorReturn: method.ComputedKey is null);
 }

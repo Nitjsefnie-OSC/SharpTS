@@ -113,7 +113,7 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo CheckGetOnTypeParameter(TypeInfo.TypeParameter tp, Token memberName)
     {
-        if (tp.Constraint != null)
+        if (tp.Constraint is not (null or TypeInfo.Any or TypeInfo.Unknown))
         {
             return CheckGetOnType(tp.Constraint, memberName);
         }
@@ -512,6 +512,8 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo SubstituteMethodType(TypeInfo methodType, Dictionary<string, TypeInfo> subs)
     {
+        if (methodType is TypeInfo.GenericFunction or TypeInfo.OverloadSet)
+            return Substitute(methodType, subs);
         if (methodType is TypeInfo.Function funcType)
         {
             var substitutedParams = funcType.ParamTypes.Select(p => Substitute(p, subs)).ToList();

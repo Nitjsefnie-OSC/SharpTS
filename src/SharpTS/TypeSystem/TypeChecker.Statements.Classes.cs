@@ -64,38 +64,7 @@ public partial class TypeChecker
         }
     }
 
-    // Helper to build a TypeInfo.Function from a method declaration
-    private TypeInfo.Function BuildDeclaredClassMethodType(Stmt.Function method)
-    {
-        var (paramTypes, requiredParams, hasRest, paramNames) = BuildFunctionSignature(
-            method.Parameters,
-            validateDefaults: true,
-            contextName: $"method '{method.Name.Lexeme}'",
-            editorOwner: method
-        );
-
-        TypeInfo returnType = ResolveAnnotation(method.ReturnType, method.ReturnTypeNode, method, EditorAnnotationSlot.Return)
-            ?? TypeInfo.Inferred.Shared;
-
-        // Wrap return type for generator/async generator methods (skip when inferring)
-        if (method.ReturnType != null && method.IsGenerator)
-        {
-            if (method.IsAsync && returnType is not TypeInfo.AsyncGenerator)
-            {
-                returnType = new TypeInfo.AsyncGenerator(returnType);
-            }
-            else if (!method.IsAsync && returnType is not TypeInfo.Generator)
-            {
-                returnType = new TypeInfo.Generator(returnType);
-            }
-        }
-
-        TypeInfo? explicitThisType = ResolveAnnotation(method.ThisType, method.ThisTypeNode, method, EditorAnnotationSlot.This);
-        var signature = new TypeInfo.Function(
-            paramTypes, returnType, requiredParams, hasRest, explicitThisType, paramNames);
-        RegisterEditorSignature(signature, method, method.Name);
-        return signature;
-    }
+    private TypeInfo BuildDeclaredClassMethodType(Stmt.Function method) => BuildClassMethodSignature(method);
 
     // Signature collection runs in the caller-owned class type environment and populates
     // the supplied class metadata. Diagnostic recovery and scope restoration remain
@@ -168,10 +137,7 @@ public partial class TypeChecker
             // Generator<Iterator<number>>. An un-annotated generator factory stays <inferred> here
             // and is filled in by the inferred-return post-pass below as Generator<yieldType>.
             var representative = implementations.Count == 1 ? implementations[0] : members[^1];
-            var (cParamTypes, cRequired, cHasRest, cParamNames) = BuildFunctionSignature(
-                representative.Parameters, validateDefaults: true, contextName: $"method '{memberName}'");
-            TypeInfo factoryReturn = ResolveAnnotation(representative.ReturnType, representative.ReturnTypeNode, representative, EditorAnnotationSlot.Return) ?? TypeInfo.Inferred.Shared;
-            var funcType = new TypeInfo.Function(cParamTypes, factoryReturn, cRequired, cHasRest, null, cParamNames);
+            var funcType = BuildClassMethodSignature(representative, wrapGeneratorReturn: false);
             if (representative.IsStatic)
                 mutableClass.StaticMethods[memberName] = funcType;
             else
@@ -235,13 +201,13 @@ public partial class TypeChecker
                 // Validate implementation is compatible with all signatures
                 foreach (var sig in signatureTypes)
                 {
-                    if (implType.MinArity > sig.MinArity)
+                    if (ClassMethodImplementation(implType).MinArity > ClassMethodImplementation(sig).MinArity)
                     {
-                        throw new TypeCheckException($" Implementation of '{methodName}' requires {implType.MinArity} arguments but overload signature requires only {sig.MinArity}.", tsCode: "TS2394");
+                        throw new TypeCheckException($" Implementation of '{methodName}' requires {ClassMethodImplementation(implType).MinArity} arguments but overload signature requires only {ClassMethodImplementation(sig).MinArity}.", tsCode: "TS2394");
                     }
                 }
 
-                var overloadedFunc = new TypeInfo.OverloadedFunction(signatureTypes, implType);
+                var overloadedFunc = BuildClassMethodOverload(signatureTypes, implType);
                 RegisterEditorPublicSignatures(overloadedFunc, signatureTypes);
 
                 if (implementation.IsStatic)
@@ -774,10 +740,7 @@ public partial class TypeChecker
                 }
                 else
                 {
-                    var (cParamTypes, cRequired, cHasRest, cParamNames) = BuildFunctionSignature(
-                        method.Parameters, validateDefaults: true, contextName: "computed method");
-                    TypeInfo cReturn = ResolveAnnotation(method.ReturnType, method.ReturnTypeNode, method, EditorAnnotationSlot.Return) ?? TypeInfo.Inferred.Shared;
-                    declaredMethodType = new TypeInfo.Function(cParamTypes, cReturn, cRequired, cHasRest, null, cParamNames);
+                    declaredMethodType = BuildClassMethodSignature(method, wrapGeneratorReturn: false);
                 }
             }
             else if (method.IsPrivate)
@@ -793,14 +756,7 @@ public partial class TypeChecker
                     : classTypeForBody.Methods[method.Name.Lexeme];
             }
 
-            // Get the actual function type (implementation for overloads)
-            TypeInfo.Function methodType = declaredMethodType switch
-            {
-                TypeInfo.OverloadedFunction of => of.Implementation,
-                TypeInfo.Function f => f,
-                // SharpTS-only: internal invariant
-                _ => throw new TypeCheckException($" Unexpected method type for '{method.Name.Lexeme}'.")
-            };
+            TypeInfo.Function methodType = ClassMethodBodySignature(method, methodEnv);
 
             if (methodType.ThisType is { } explicitMethodThis)
                 methodEnv.Define("this", explicitMethodThis);
@@ -811,7 +767,9 @@ public partial class TypeChecker
             // the body permissively typed as any.
             if (method.ReturnType != null)
             {
-                TypeInfo currentReturn = ResolveAnnotation(method.ReturnType, method.ReturnTypeNode, method, EditorAnnotationSlot.Return)!;
+                TypeInfo currentReturn;
+                using (new EnvironmentScope(this, methodEnv))
+                    currentReturn = ResolveAnnotation(method.ReturnType, method.ReturnTypeNode, method, EditorAnnotationSlot.Return)!;
                 methodType = methodType with { ReturnType = currentReturn };
             }
 
@@ -916,9 +874,7 @@ public partial class TypeChecker
                     // Update the method type in the class. Computed symbol-keyed methods are keyed
                     // by their @@name (e.g. @@iterator), not the synthetic `<computed>` lexeme; an
                     // arbitrary computed key (no well-known @@name) carries no static member to update.
-                    var updatedMethodType = new TypeInfo.Function(methodType.ParamTypes, inferredReturn, methodType.RequiredParams, methodType.HasRestParam, methodType.ThisType, methodType.ParamNames);
-                    RegisterEditorSignature(updatedMethodType, method, method.Name);
-                    CopyEditorPublicSignatures(declaredMethodType, updatedMethodType);
+                    var updatedMethodType = UpdateClassMethodReturn(method, declaredMethodType, methodType, inferredReturn);
                     string? mName = method.ComputedKey != null
                         ? TryGetWellKnownSymbolMemberName(method.ComputedKey)
                         : method.Name.Lexeme;
@@ -1369,36 +1325,7 @@ public partial class TypeChecker
             }
         }
 
-        // Helper to build a TypeInfo.Function from a method declaration
-        TypeInfo.Function BuildMethodFuncType(Stmt.Function method)
-        {
-            var (paramTypes, requiredParams, hasRest, paramNames) = BuildFunctionSignature(
-                method.Parameters,
-                validateDefaults: true,
-                contextName: $"method '{method.Name.Lexeme}'",
-                editorOwner: method
-            );
-
-            TypeInfo returnType = ResolveAnnotation(method.ReturnType, method.ReturnTypeNode, method, EditorAnnotationSlot.Return)
-                ?? TypeInfo.Inferred.Shared;
-
-            // Wrap return type for generator/async generator methods (skip when inferring)
-            if (method.ReturnType != null && method.IsGenerator)
-            {
-                if (method.IsAsync && returnType is not TypeInfo.AsyncGenerator)
-                {
-                    returnType = new TypeInfo.AsyncGenerator(returnType);
-                }
-                else if (!method.IsAsync && returnType is not TypeInfo.Generator)
-                {
-                    returnType = new TypeInfo.Generator(returnType);
-                }
-            }
-
-            var signature = new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, null, paramNames);
-            RegisterEditorSignature(signature, method, method.Name);
-            return signature;
-        }
+        TypeInfo BuildMethodFuncType(Stmt.Function method) => BuildClassMethodSignature(method);
 
         // Collect method signatures (all methods in declare class are treated as signatures)
         // Constructor is included as a method named "constructor"
@@ -1413,7 +1340,7 @@ public partial class TypeChecker
             {
                 // Single method declaration
                 var method = methods[0];
-                if (!TryResolveAmbientMember(() => BuildMethodFuncType(method), out TypeInfo.Function funcType))
+                if (!TryResolveAmbientMember(() => BuildMethodFuncType(method), out TypeInfo funcType))
                     continue;
 
                 if (method.IsStatic)
@@ -1426,13 +1353,13 @@ public partial class TypeChecker
             else
             {
                 // Multiple overloaded signatures - create OverloadedFunction
-                var signatureTypes = new List<TypeInfo.Function>();
+                var signatureTypes = new List<TypeInfo>();
                 foreach (var method in methods)
-                    if (TryResolveAmbientMember(() => BuildMethodFuncType(method), out TypeInfo.Function signature))
+                    if (TryResolveAmbientMember(() => BuildMethodFuncType(method), out TypeInfo signature))
                         signatureTypes.Add(signature);
                 if (signatureTypes.Count == 0)
                     continue;
-                var overloadedFunc = new TypeInfo.OverloadedFunction(signatureTypes, signatureTypes[0]);
+                var overloadedFunc = BuildClassMethodOverload(signatureTypes, signatureTypes[0]);
 
                 if (methods[0].IsStatic)
                     mutableClass.StaticMethods[methodName] = overloadedFunc;

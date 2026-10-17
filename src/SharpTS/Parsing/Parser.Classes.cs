@@ -301,8 +301,8 @@ public partial class Parser
 
                 Token fieldName = Consume(TokenType.PRIVATE_IDENTIFIER, "Expect private field name.");
 
-                // Check if it's a method: #name(
-                if (Check(TokenType.LEFT_PAREN))
+                // A private method may declare type parameters before its parameter list.
+                if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
                 {
                     // Private method: #name() { }
                     List<TypeParam>? typeParams2 = ParseTypeParameters();
@@ -942,8 +942,8 @@ public partial class Parser
 
                 Token fieldName = Consume(TokenType.PRIVATE_IDENTIFIER, "Expect private field name.");
 
-                // Check if it's a method: #name(
-                if (Check(TokenType.LEFT_PAREN))
+                // A private method may declare type parameters before its parameter list.
+                if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
                 {
                     // Private method: #name() { }
                     List<TypeParam>? typeParams2 = ParseTypeParameters();

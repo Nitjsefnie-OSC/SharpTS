@@ -1543,6 +1543,22 @@ public partial class TypeChecker
             return TypeInfo.Any.Shared;
         }
 
+        TypeInfo originalMethodType = methodType;
+        if (methodType is TypeInfo.GenericFunction genericMethod)
+        {
+            var argumentTypes = CheckGenericInferenceArguments(call.Arguments);
+            try
+            {
+                var arguments = InferTypeArguments(genericMethod,
+                    PrepareFreshCallArgumentsForInference(genericMethod.ParamTypes, call.Arguments, argumentTypes));
+                methodType = InstantiateGenericFunction(genericMethod, arguments);
+            }
+            catch (TypeCheckException exception) when (exception.Diagnostic.TsCode == "TS2344")
+            {
+                throw new TypeCheckException(exception.Message, call.Name.Line, tsCode: "TS2345");
+            }
+        }
+
         // Check argument types against the callable member's signature.
         if (methodType is not TypeInfo.Function funcType)
         {
@@ -1550,12 +1566,14 @@ public partial class TypeChecker
         }
         if (EditorFacts.IsEnabled && HasPrivateSourceOwner(objType, owner.Core.DeclarationId,
                 selectedFacet == MemberFacet.PrivateStatic))
-            RecordEditorCallCandidates(funcType);
+            RecordEditorCallCandidates(originalMethodType);
 
         CheckPrivateCallArguments(call, funcType);
 
         RecordProvenSourceMemberCall(call, call.Name, call);
-        RecordEditorInvocationSelection(funcType);
+        if (!ReferenceEquals(originalMethodType, funcType))
+            RecordEditorInvocationInstantiation(originalMethodType, funcType);
+        RecordEditorInvocationSelection(originalMethodType, funcType);
         return funcType.ReturnType;
     }
 

@@ -21,6 +21,8 @@ public partial class TypeChecker
         _forwardClassDeclarations.Clear();
         _forwardClassSignatureDepth = 0;
         _classDeclarationLines.Clear();
+        _classMethodSignatures.Clear();
+        _classMethodImplementationParameters.Clear();
     }
 
     private bool MarkBodylessFunctionCompleted(Stmt.Function declaration)

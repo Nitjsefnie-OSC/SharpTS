@@ -760,8 +760,9 @@ public partial class ILCompiler
         // If there's an explicit constructor body, it should contain super() call
         bool hasExplicitSuperCall = constructor?.Body?.Any(stmt => ContainsSuperCall(stmt)) ?? false;
         bool initializersEmitted = false;
-        var parameterProperties = ctx.ClassConstructorThisCell != null && classExpr.SuperclassExpr != null
+        var parameterProperties = classExpr.SuperclassExpr != null
             ? constructor?.Body?.Where(statement => IsConstructorParameterProperty(statement, constructor)).ToList() ?? [] : [];
+        bool initializeNominalElementsAtSuper = ctx.ClassConstructorThisCell == null && parameterProperties.Count != 0;
         if (ctx.ClassConstructorThisCell != null)
             EmitOnceOnlyConstructorElements(ctx, () =>
             {
@@ -776,6 +777,13 @@ public partial class ILCompiler
                         il.Emit(OpCodes.Ldc_I4, index);
                         il.Emit(OpCodes.Ldelem_Ref);
                     });
+                var parameterEmitter = new ILEmitter(ctx);
+                foreach (var assignment in parameterProperties) parameterEmitter.EmitStatement(assignment);
+            });
+        else if (initializeNominalElementsAtSuper)
+            EmitOnceOnlyConstructorElements(ctx, () =>
+            {
+                EmitInstanceFieldInitializers();
                 var parameterEmitter = new ILEmitter(ctx);
                 foreach (var assignment in parameterProperties) parameterEmitter.EmitStatement(assignment);
             });
@@ -914,7 +922,8 @@ public partial class ILCompiler
                 {
                     if (parameterProperties.Contains(stmt)) continue;
                     emitter.EmitStatement(stmt);
-                    if (ctx.ClassConstructorThisCell == null && !initializersEmitted && ContainsSuperCall(stmt))
+                    if (ctx.ClassConstructorThisCell == null && !initializeNominalElementsAtSuper
+                        && !initializersEmitted && ContainsSuperCall(stmt))
                     {
                         EmitInstanceFieldInitializers();
                         initializersEmitted = true;
@@ -923,7 +932,7 @@ public partial class ILCompiler
             }
         }
 
-        if (!initializersEmitted && ctx.ClassConstructorThisCell == null)
+        if (!initializersEmitted && ctx.ClassConstructorThisCell == null && !initializeNominalElementsAtSuper)
             EmitInstanceFieldInitializers();
 
         if (ctx.CapturesClassConstructorReturn)

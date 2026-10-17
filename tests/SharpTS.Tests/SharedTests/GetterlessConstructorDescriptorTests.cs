@@ -5,6 +5,29 @@ namespace SharpTS.Tests.SharedTests;
 
 public sealed class GetterlessConstructorDescriptorTests
 {
+    public const string ClassExpressionIssueSource = """
+        const C: any = class {};
+        Object.defineProperty(C, 'value', { set: undefined, configurable: true });
+        console.log(C.value === undefined);
+        """ + "\n";
+
+    public const string ExpressionTransitionsSource = """
+        const owner: any = class {};
+        const state = { reads: 0 };
+        Object.defineProperty(owner, "value", {
+            get: function(this: any) { state.reads++; return this; }, configurable: true
+        });
+        console.log(owner.value === owner, owner["value"] === owner, state.reads);
+        Object.defineProperty(owner, "value", { get: undefined });
+        const descriptor: any = Object.getOwnPropertyDescriptor(owner, "value");
+        console.log(owner.value === undefined, owner["value"] === undefined,
+            descriptor.get === undefined, descriptor.set === undefined, state.reads);
+        Object.defineProperty(owner, "value", { value: null, configurable: true });
+        console.log(owner.value === null, owner["value"] === null, state.reads);
+        delete owner.value;
+        console.log(Object.getOwnPropertyDescriptor(owner, "value") === undefined, owner.value === undefined);
+        """ + "\r\n";
+
     public static IEnumerable<object[]> Cases()
     {
         yield return ["original", """
@@ -76,6 +99,9 @@ public sealed class GetterlessConstructorDescriptorTests
             Object.defineProperty(second, "value", { get: function() { return 7; } });
             console.log(first.value === undefined, second.value, first !== second);
             """, "true\ntrue 1\n2\ntrue 7 true\n"];
+        yield return ["class-expression-issue", ClassExpressionIssueSource, "true\n"];
+        yield return ["expression-transitions", ExpressionTransitionsSource,
+            "true true 2\ntrue true true true 2\ntrue true 2\ntrue true\n"];
     }
 
     public static IEnumerable<object[]> ParityCases()

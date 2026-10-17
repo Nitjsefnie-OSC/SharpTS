@@ -1742,7 +1742,9 @@ public partial class TypeChecker
                     TypeInfo defaultType;
                     using (new EnvironmentScope(this, paramScope))
                     {
-                        defaultType = CheckExpr(param.DefaultValue);
+                        defaultType = _immediateClassCallables.ContainsKey(arrow)
+                            ? CheckExpr(param.DefaultValue)
+                            : CheckDeferredClassDefault(param.DefaultValue);
                     }
                     if (!IsCompatible(paramType, defaultType))
                     {
@@ -1871,6 +1873,9 @@ public partial class TypeChecker
         _switchDepth = 0;
         _activeLabels.Clear();
         PushDefiniteAssignmentScope();
+        _definiteAssignmentStack.TryPeek(out var classBodyFlow);
+        if (classBodyFlow is not null && _immediateClassCallables.TryGetValue(arrow, out var callerFlow))
+            _immediateClassFlows[classBodyFlow] = callerFlow;
 
         try
         {
@@ -1982,6 +1987,7 @@ public partial class TypeChecker
         }
         finally
         {
+            if (classBodyFlow is not null) _immediateClassFlows.Remove(classBodyFlow);
             PopDefiniteAssignmentScope();
             _environment = previousEnv;
             _currentFunctionReturnType = previousReturn;
@@ -2304,6 +2310,7 @@ public partial class TypeChecker
             BindValueUse(name);
             if (_environment.GetValueBinding(name.Lexeme) is { } symbol)
             {
+                CheckClassValueDeclarationOrder(name, symbol);
                 ReportImplicitAnyVariableCapture(name, symbol);
                 ThrowIfUsedBeforeAssigned(name, symbol);
             }

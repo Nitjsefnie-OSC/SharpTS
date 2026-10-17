@@ -1180,7 +1180,7 @@ public partial class TypeChecker
                 {
                     fields[property.Key.Lexeme] = property.DefaultValue is { } defaultExpression
                         ? inspectDestructuredDefaults
-                            ? WidenLiteralType(CheckExpr(defaultExpression))
+                            ? WidenLiteralType(CheckDeferredClassDefault(defaultExpression))
                             : defaultExpression is Expr.Literal literal
                                 ? WidenLiteralType(GetLiteralType(literal.Value))
                                 : TypeInfo.Any.Shared
@@ -1225,7 +1225,7 @@ public partial class TypeChecker
                     TypeInfo defaultType;
                     using (new EnvironmentScope(this, paramScope))
                     {
-                        defaultType = CheckExpr(param.DefaultValue);
+                        defaultType = CheckDeferredClassDefault(param.DefaultValue);
                     }
                     if (!IsCompatible(paramType, defaultType))
                     {

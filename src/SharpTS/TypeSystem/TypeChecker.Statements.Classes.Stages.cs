@@ -42,15 +42,25 @@ public partial class TypeChecker
         // `class C1 extends C2 {} class C2 {}` — a class value referenced in its own or an earlier
         // class's extends clause, before that class is textually declared, is TS2449 (class values
         // aren't hoisted for this position). Recorded (not thrown) so the body is still checked.
-        if (classStmt.SuperclassExpr is Expr.Variable baseVar
-            && _environment.GetValueBinding(baseVar.Name.Lexeme) is { } baseBinding
-            && _classDeclarationLines.TryGetValue(baseBinding, out int baseLine)
-            && baseLine > classStmt.Name.Line)
+        if (GetClassHeritageReference(classStmt.SuperclassExpr) is { } baseName
+            && _environment.GetValueBinding(baseName.Lexeme) is { } baseBinding
+            && _classDeclarationLines.TryGetValue(baseBinding, out int baseLine))
         {
-            RecordTypeError(new TypeCheckException(
-                $"Class '{baseVar.Name.Lexeme}' used before its declaration.",
-                line: classStmt.Name.Line, tsCode: "TS2449"));
+            bool precedesDeclaration = _forwardClassDeclarations.TryGetValue(baseBinding, out var forward)
+                && baseName.Start >= 0 && forward.Declaration.Name.Start >= 0
+                    ? IsClassValueReadBeforeDeclaration(baseName, forward)
+                    : baseLine > classStmt.Name.Line;
+            if (precedesDeclaration)
+                RecordTypeError(new TypeCheckException(
+                    $"Class '{baseName.Lexeme}' used before its declaration.",
+                    line: classStmt.Name.Line, tsCode: "TS2449"));
         }
+    }
+
+    private static Token? GetClassHeritageReference(Expr? expression)
+    {
+        while (expression is Expr.Grouping grouping) expression = grouping.Expression;
+        return expression is Expr.Variable variable ? variable.Name : null;
     }
 
     // Called within the declaration-owned class type environment; updates only index metadata.

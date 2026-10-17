@@ -1100,7 +1100,11 @@ public partial class TypeChecker
                 tsCode: "TS2304");
         }
 
-        TypeInfo superType = CheckExpr(classStmt.SuperclassExpr);
+        TypeInfo superType;
+        Token? previousHeritageRead = _recoverableClassHeritageRead;
+        _recoverableClassHeritageRead = GetClassHeritageReference(classStmt.SuperclassExpr);
+        try { superType = CheckExpr(classStmt.SuperclassExpr); }
+        finally { _recoverableClassHeritageRead = previousHeritageRead; }
         superType = ProjectDefaultLibraryErrorHeritage(classStmt.SuperclassExpr, superType);
         if (ProjectDefaultLibraryPromiseHeritage(classStmt.SuperclassExpr, superType,
                 classStmt.SuperclassTypeArgs, classStmt.SuperclassTypeArgNodes) is { } promiseBase)

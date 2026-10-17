@@ -1,5 +1,6 @@
 using SharpTS.Modules;
 using SharpTS.Parsing;
+using SharpTS.TypeSystem.Exceptions;
 
 namespace SharpTS.TypeSystem;
 
@@ -17,6 +18,7 @@ public partial class TypeChecker
         public SourceDocument? StandaloneSourceDocument { get; } = standaloneSourceDocument;
         public TypeInfo? Constructor { get; set; }
         public bool IsResolving { get; set; }
+        public Dictionary<BindingSymbol, bool>? DeclarationFlow { get; set; }
     }
 
     // The binding, rather than the spelling at the use site, owns the forward declaration. In
@@ -26,6 +28,12 @@ public partial class TypeChecker
     private readonly Dictionary<TypeInfo.MutableClass, ForwardClassDeclaration> _forwardClassTypeShadows =
         new(ReferenceEqualityComparer.Instance);
     private int _forwardClassSignatureDepth;
+    private Token? _recoverableClassHeritageRead;
+    private readonly Stack<Dictionary<BindingSymbol, bool>?> _deferredClassDefaultFlows = new();
+    private readonly Dictionary<Expr.ArrowFunction, Dictionary<BindingSymbol, bool>> _immediateClassCallables =
+        new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Dictionary<BindingSymbol, bool>, Dictionary<BindingSymbol, bool>> _immediateClassFlows =
+        new(ReferenceEqualityComparer.Instance);
 
     private BindingSymbol RegisterForwardClassDeclaration(Stmt.Class declaration)
     {
@@ -36,6 +44,8 @@ public partial class TypeChecker
                 !ReferenceEquals(forward.Environment, _environment))
                 _forwardClassDeclarations[symbol] = forward = new(declaration, _environment, -symbol.Id,
                     _currentModule, _filePath, _standaloneSourceDocument);
+            _definiteAssignmentStack.TryPeek(out var declarationFlow);
+            forward.DeclarationFlow = declarationFlow;
             // Shadow an existing outer type with this declaration's shell, so
             // annotations and deferred constructor reads select the same class.
             // Preserve existing unresolved annotation and generic handling.
@@ -48,6 +58,67 @@ public partial class TypeChecker
             }
         }
         return symbol;
+    }
+
+    private void CheckClassValueDeclarationOrder(Token use, BindingSymbol symbol)
+    {
+        if (ReferenceEquals(use, _recoverableClassHeritageRead) ||
+            !_forwardClassDeclarations.TryGetValue(symbol, out var forward))
+            return;
+
+        if (IsClassValueReadBeforeDeclaration(use, forward))
+            throw new TypeCheckException($"Class '{use.Lexeme}' used before its declaration.",
+                use.Line, tsCode: "TS2449");
+    }
+
+    private bool IsClassValueReadBeforeDeclaration(Token use, ForwardClassDeclaration forward)
+    {
+        if (!_definiteAssignmentStack.TryPeek(out var currentFlow)) return false;
+
+        while (!ReferenceEquals(forward.DeclarationFlow, currentFlow))
+        {
+            if (_deferredClassDefaultFlows.Contains(currentFlow) ||
+                !_immediateClassFlows.TryGetValue(currentFlow, out currentFlow))
+                return false;
+        }
+        if (_deferredClassDefaultFlows.Contains(currentFlow)) return false;
+
+        // Instance initializers run when their owner is constructed. Class
+        // declarations inside a nested callable still have their own eager flow.
+        for (var scope = _deferredInitializerFlowBoundary; scope != null; scope = scope.Enclosing)
+            if (ReferenceEquals(scope, forward.Environment))
+                return false;
+
+        Token declaration = forward.Declaration.Name;
+        // Synthetic AST tokens have no source offset; their diagnostic line
+        // does not establish declaration order in the surrounding parsed source.
+        return use.Start >= 0 && declaration.Start >= 0 && use.Start < declaration.Start;
+    }
+
+    private TypeInfo CheckDeferredClassDefault(Expr expression)
+    {
+        _definiteAssignmentStack.TryPeek(out var currentFlow);
+        _deferredClassDefaultFlows.Push(currentFlow);
+        try { return CheckExpr(expression); }
+        finally { _deferredClassDefaultFlows.Pop(); }
+    }
+
+    private TypeInfo CheckClassOrderCallTarget(Expr callee)
+    {
+        Expr target = callee;
+        while (target is Expr.Grouping grouping) target = grouping.Expression;
+        if (target is not Expr.ArrowFunction arrow ||
+            !_definiteAssignmentStack.TryPeek(out var callerFlow))
+            return CheckExpr(callee);
+
+        _immediateClassCallables.TryGetValue(arrow, out var previous);
+        _immediateClassCallables[arrow] = callerFlow;
+        try { return CheckExpr(callee); }
+        finally
+        {
+            if (previous is null) _immediateClassCallables.Remove(arrow);
+            else _immediateClassCallables[arrow] = previous;
+        }
     }
 
     private TypeInfo ResolveForwardClassConstructor(Token use, TypeInfo declared)

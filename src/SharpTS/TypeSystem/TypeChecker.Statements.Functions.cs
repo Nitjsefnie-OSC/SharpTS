@@ -20,7 +20,11 @@ public partial class TypeChecker
         _completedBodylessFunctions.Clear();
         _forwardClassDeclarations.Clear();
         _forwardClassTypeShadows.Clear();
+        _deferredClassDefaultFlows.Clear();
+        _immediateClassCallables.Clear();
+        _immediateClassFlows.Clear();
         _forwardClassSignatureDepth = 0;
+        _recoverableClassHeritageRead = null;
         _classDeclarationLines.Clear();
         _classMethodSignatures.Clear();
         _classMethodImplementationParameters.Clear();

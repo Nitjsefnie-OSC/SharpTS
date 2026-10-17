@@ -98,11 +98,7 @@ public sealed class FunctionPrototypeSymbolDescriptorTests
     }
 
     public static IEnumerable<object[]> ParityCases()
-        // Compiled constructor indexed writes ignore inherited readonly Symbols (#2219);
-        // the interpreter descriptor repair is independently covered here.
-        => Cases().SelectMany(row => ((string)row[0] == "inherited-readonly"
-                ? new[] { ExecutionMode.Interpreted }
-                : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
+        => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ParityCases))]

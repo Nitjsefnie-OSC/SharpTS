@@ -1407,7 +1407,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     private (LocalBuilder Tag, LocalBuilder? Receiver) SpillTaggedTemplateReference(Expr tag)
     {
         Expr reference = ExpressionUnwrapper.Unwrap(tag);
-        if (!TaggedTemplateReferenceHasOptionalLink(reference))
+        if (!ReferenceHasOptionalLink(reference))
         {
             if (reference is Expr.Get get)
             {
@@ -1440,19 +1440,19 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         return (SpillBoxed(tag), null);
     }
 
-    private static bool TaggedTemplateReferenceHasOptionalLink(Expr expression)
+    private static bool ReferenceHasOptionalLink(Expr expression)
     {
-        // The complete tag was already unwrapped for Reference classification.
+        // The complete member expression was already unwrapped for classification.
         // A grouping within its receiver ends an optional chain, so do not peel
         // that boundary while following type-only wrappers on the chain itself.
         return expression switch
         {
-            Expr.TypeAssertion assertion => TaggedTemplateReferenceHasOptionalLink(assertion.Expression),
-            Expr.Satisfies satisfies => TaggedTemplateReferenceHasOptionalLink(satisfies.Expression),
-            Expr.NonNullAssertion assertion => TaggedTemplateReferenceHasOptionalLink(assertion.Expression),
-            Expr.Get get => get.Optional || TaggedTemplateReferenceHasOptionalLink(get.Object),
-            Expr.GetIndex index => index.Optional || TaggedTemplateReferenceHasOptionalLink(index.Object),
-            Expr.Call call => call.Optional || TaggedTemplateReferenceHasOptionalLink(call.Callee),
+            Expr.TypeAssertion assertion => ReferenceHasOptionalLink(assertion.Expression),
+            Expr.Satisfies satisfies => ReferenceHasOptionalLink(satisfies.Expression),
+            Expr.NonNullAssertion assertion => ReferenceHasOptionalLink(assertion.Expression),
+            Expr.Get get => get.Optional || ReferenceHasOptionalLink(get.Object),
+            Expr.GetIndex index => index.Optional || ReferenceHasOptionalLink(index.Object),
+            Expr.Call call => call.Optional || ReferenceHasOptionalLink(call.Callee),
             _ => false
         };
     }

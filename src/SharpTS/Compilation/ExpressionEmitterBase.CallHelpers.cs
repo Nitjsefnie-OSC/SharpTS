@@ -1675,6 +1675,7 @@ public abstract partial class ExpressionEmitterBase
     {
         LocalBuilder calleeLocal;
         var callReference = UnwrapCallReference(c.Callee);
+        bool originalOptionalValue = RequiresOriginalOptionalCallValue(c.Callee, callReference);
 
         // #923: a direct method-style value-call `o.m(...)` must bind `this` to the receiver. The
         // generic value-call below passes a null receiver (correct for a detached call like `f()`),
@@ -1689,7 +1690,7 @@ public abstract partial class ExpressionEmitterBase
         // the receiver is now preserved. Strategy-resolved callees, detached `f()` (Expr.Variable),
         // and `arr[i]()` (Expr.Index) keep the null-receiver path below.
         LocalBuilder? receiverLocal = null;
-        if (callReference is Expr.Get methodGet && !ReceiverHasGetStrategy(methodGet.Object))
+        if (!originalOptionalValue && callReference is Expr.Get methodGet && !ReceiverHasGetStrategy(methodGet.Object))
         {
             // Evaluate the receiver once, spill it (a MoveNext re-entry from a suspending argument
             // wipes plain IL locals, #400), enforce RequireObjectCoercible before the arguments'
@@ -1704,7 +1705,7 @@ public abstract partial class ExpressionEmitterBase
             IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Property);
             calleeLocal = _helpers.SpillStoreObject();
         }
-        else if (callReference is Expr.GetIndex methodIndex)
+        else if (!originalOptionalValue && callReference is Expr.GetIndex methodIndex)
         {
             // Computed member calls have the same Reference receiver semantics as
             // dot-member calls: `obj[key]()` invokes the resolved function with
@@ -1715,11 +1716,14 @@ public abstract partial class ExpressionEmitterBase
             EmitExpression(methodIndex.Object);
             EnsureBoxed();
             receiverLocal = _helpers.SpillStoreObject();
-            EmitThrowIfReceiverUndefined(receiverLocal, "[]");
+            if (methodIndex.Optional)
+                EmitThrowIfReceiverUndefined(receiverLocal, "[]");
 
             EmitExpression(methodIndex.Index);
             EnsureBoxed();
             var indexLocal = _helpers.SpillStoreObject();
+            if (!methodIndex.Optional && !IsNullPlaceholderGlobal(methodIndex.Object))
+                EmitThrowIfUndefinedIndexReceiver(receiverLocal, indexLocal);
             IL.Emit(OpCodes.Ldloc, receiverLocal);
             IL.Emit(OpCodes.Ldloc, indexLocal);
             IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Index);
@@ -1817,16 +1821,25 @@ public abstract partial class ExpressionEmitterBase
     };
 
     /// <summary>
-    /// Parentheses and type assertions preserve a member Reference for call
+    /// Grouping and type-only wrappers preserve a member Reference for call
     /// evaluation; peel only those transparent wrappers when selecting the
     /// receiver that becomes `this`.
     /// </summary>
-    private static Expr UnwrapCallReference(Expr expr) => expr switch
+    private static Expr UnwrapCallReference(Expr expr) => ExpressionUnwrapper.Unwrap(expr);
+
+    private static bool RequiresOriginalOptionalCallValue(Expr original, Expr reference)
     {
-        Expr.Grouping grouping => UnwrapCallReference(grouping.Expression),
-        Expr.TypeAssertion assertion => UnwrapCallReference(assertion.Expression),
-        _ => expr
-    };
+        // Preserve the old value path only when the newly supported wrapper
+        // exposes an optional chain. Already-recognized member References keep
+        // their established dispatch, including their receiver's own wrappers.
+        while (true)
+        {
+            if (original is Expr.Grouping grouping) original = grouping.Expression;
+            else if (original is Expr.TypeAssertion assertion) original = assertion.Expression;
+            else break;
+        }
+        return (original is Expr.NonNullAssertion or Expr.Satisfies) && ReferenceHasOptionalLink(reference);
+    }
 
     /// <summary>
     /// Intercepts a method call whose callee chain contains an optional link
@@ -2051,14 +2064,12 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Isinst, Ctx.Runtime!.Sentinels.UndefinedType);
                 IL.Emit(OpCodes.Brtrue, nullishLabel);
             }
-            else
-            {
-                EmitThrowIfReceiverUndefined(receiverLocal, "[]");
-            }
 
             EmitExpression(index.Index);
             EnsureBoxed();
             var indexLocal = _helpers.SpillStoreObject();
+            if (!index.Optional && !IsNullPlaceholderGlobal(index.Object))
+                EmitThrowIfUndefinedIndexReceiver(receiverLocal, indexLocal);
             IL.Emit(OpCodes.Ldloc, receiverLocal);
             IL.Emit(OpCodes.Ldloc, indexLocal);
             IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Index);

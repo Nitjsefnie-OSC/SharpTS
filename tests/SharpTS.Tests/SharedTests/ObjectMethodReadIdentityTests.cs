@@ -206,9 +206,8 @@ public sealed class ObjectMethodReadIdentityTests
     public static IEnumerable<object[]> ParityCases()
         // These compiler receiver boundaries are tracked independently; every
         // source still runs through interpreted, resolved and CLI coverage.
-        // #2210: non-null member calls.
         // #2250: arguments of calls to a grouped optional member.
-        => Cases().SelectMany(row => ((string)row[0] is "non-null-reference" or "grouped-optional-arguments"
+        => Cases().SelectMany(row => ((string)row[0] == "grouped-optional-arguments"
                 ? new[] { ExecutionMode.Interpreted }
                 : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));

@@ -878,6 +878,7 @@ public partial class ILCompiler
         ctx.EmittingTypeBuilder = typeBuilder;
         // ES2022 Private Class Elements support
         ctx.CurrentClassName = qualifiedClassName;
+        SetupSyncMethodFunctionDisplayClass(ctx, il, method);
         ApplyCapturedTopLevelVariableAccess(ctx);
         // Arrow-closure DC field maps — required so arrow closures created inside
         // this method populate their captured-DC fields at newobj time.
@@ -911,6 +912,7 @@ public partial class ILCompiler
             isInstanceMethod: !isStatic,
             hasOwnThis: false,
             paramTypes: methodParams.Select(p => p.ParameterType).ToArray());
+        InitializeSyncMethodCapturedParameters(ctx, il, method, methodBuilder, paramOffset);
 
         // Emit method body
         if (method.Body != null)

@@ -5,6 +5,29 @@ namespace SharpTS.Tests.SharedTests;
 
 public sealed class MethodLocalInnerFunctionCaptureTests
 {
+    [Theory, ModeData]
+    public void PublicMethodsShareTypedCapturedParameterBindings(ExecutionMode mode)
+    {
+        const string source = """
+            class C {
+                run(value: number, flag: boolean, text: string) {
+                    function update() { value = value + 1; flag = !flag; text = text + "!"; }
+                    function shadow(value: number) { return value; }
+                    update();
+                    return value + ":" + flag + ":" + text + ":" + shadow(99);
+                }
+                static runStatic(value: number = 2, flag: boolean = true, text: string = "S") {
+                    function update() { value = value + 1; flag = !flag; text = text + "!"; }
+                    function shadow(value: number) { return value; }
+                    update();
+                    return value + ":" + flag + ":" + text + ":" + shadow(99);
+                }
+            }
+            console.log(new C().run(2, true, "I"), C.runStatic());
+            """;
+        Assert.Equal("3:false:I!:99 3:false:S!:99\n", TestHarness.Run(source, mode));
+    }
+
     public const string IssueSource = """
         class C {
             static run() {

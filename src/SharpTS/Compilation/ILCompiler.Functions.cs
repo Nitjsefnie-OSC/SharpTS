@@ -94,6 +94,7 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Box, parameterType);
             il.Emit(OpCodes.Stfld, field);
         }
+        ctx.UseFunctionDisplayClassParameterStorage = true;
     }
 
     private void DefineFunction(Stmt.Function funcStmt)

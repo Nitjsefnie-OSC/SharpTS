@@ -100,13 +100,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitBoundFunctionName(MethodBuilder captureName, MethodBuilder getFunctionProperty)
+    private void EmitBoundFunctionName(MethodBuilder captureName, MethodBuilder getProperty)
     {
         var il = captureName.GetILGenerator();
         il.Emit(OpCodes.Ldstr, "bound ");
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "name");
-        il.Emit(OpCodes.Call, getFunctionProperty);
+        il.Emit(OpCodes.Call, getProperty);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
         il.Emit(OpCodes.Ret);

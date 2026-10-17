@@ -150,17 +150,21 @@ public static class FunctionBuiltIns
         // BoundFunctionCreate snapshots the target's actual internal prototype,
         // including a derived class's base constructor and explicit null.
         object? prototype = ObjectBuiltIns.PrototypeOf(interp, callable);
+        // Bind snapshots the target's current guest-visible name, including
+        // constructor aliases and descriptor overrides, independently of it.
+        string targetName = interp.GetPropertyValue(callable, "name") as string ?? "";
 
         // Arrow functions ignore thisArg (they capture 'this' from lexical scope)
         if (callable is SharpTSArrowFunction arrow && !arrow.HasOwnThis)
         {
             // Still create a bound function for partial application, but 'this' won't change
-            var boundArrow = new BoundFunction(callable, null, boundArgs, ignoreThisArg: true);
+            var boundArrow = new BoundFunction(callable, null, boundArgs,
+                ignoreThisArg: true, targetName: targetName);
             boundArrow.SetPrototypeSnapshot(prototype);
             return RuntimeValue.FromObject(boundArrow);
         }
 
-        var bound = new BoundFunction(callable, thisArg, boundArgs);
+        var bound = new BoundFunction(callable, thisArg, boundArgs, targetName: targetName);
         bound.SetPrototypeSnapshot(prototype);
         return RuntimeValue.FromObject(bound);
     }
@@ -513,7 +517,8 @@ public class BoundFunction : ISharpTSCallable
     /// </summary>
     public string Name { get; }
 
-    public BoundFunction(ISharpTSCallable target, object? thisArg, List<object?> boundArgs, bool ignoreThisArg = false)
+    public BoundFunction(ISharpTSCallable target, object? thisArg, List<object?> boundArgs,
+        bool ignoreThisArg = false, string? targetName = null)
     {
         _target = target;
         _thisArg = thisArg;
@@ -521,7 +526,7 @@ public class BoundFunction : ISharpTSCallable
         _ignoreThisArg = ignoreThisArg;
 
         // Get base function name and prefix with "bound "
-        var baseName = GetBaseName(target);
+        var baseName = targetName ?? GetBaseName(target);
         Name = string.IsNullOrEmpty(baseName) ? "bound " : $"bound {baseName}";
     }
 

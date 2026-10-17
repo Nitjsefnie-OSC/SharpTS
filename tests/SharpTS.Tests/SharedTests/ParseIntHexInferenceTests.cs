@@ -56,4 +56,43 @@ public sealed class ParseIntHexInferenceTests
             console.log(global("10", "16"), constructor.parseInt("10", "16"));
             """));
     }
+
+    [Theory, ModeData]
+    public void NextLineIsNotWhitespaceEvenAfterABom(ExecutionMode mode)
+    {
+        const string source = """
+            const global: any = parseInt, constructor: any = Number;
+            for (const input of ["\u00850x10", "\uFEFF\u00850x10", "\u0085\uFEFF0x10"]) {
+                console.log(Number.isNaN(parseInt(input)), Number.isNaN(Number.parseInt(input)),
+                    Number.isNaN(global(input)), Number.isNaN(constructor.parseInt(input)),
+                    Number.isNaN(parseInt(input, 16)), Number.isNaN(constructor.parseInt(input, 16)));
+            }
+            """;
+        Assert.Equal(string.Concat(Enumerable.Repeat("true true true true true true\n", 3)),
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void HexadecimalMagnitudeIsUnsignedBeforeApplyingSign(ExecutionMode mode)
+    {
+        const string source = """
+            console.log(parseInt("-0x8000000000000000", 16) === -9223372036854775808,
+                parseInt("0x8000000000000000", 16) === 9223372036854775808,
+                parseInt("0xffffffffffffffff", 16) === 18446744073709551616,
+                Object.is(parseInt("-0x0", 16), -0));
+            """;
+        Assert.Equal("true true true true\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void InterpretedNumberAliasesPreserveLargeHexadecimalSigns()
+    {
+        // Compiled Number aliases retain their general-parser magnitude limitation (#2481).
+        Assert.Equal("true true true\n", TestHarness.RunInterpreted("""
+            const constructor: any = Number, alias: any = constructor.parseInt;
+            console.log(Number.parseInt("-0x8000000000000000", 16) === -9223372036854775808,
+                constructor.parseInt("0x8000000000000000", 16) === 9223372036854775808,
+                alias("0xffffffffffffffff", 16) === 18446744073709551616);
+            """));
+    }
 }

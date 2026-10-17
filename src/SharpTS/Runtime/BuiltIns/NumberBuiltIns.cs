@@ -341,7 +341,7 @@ public static class NumberBuiltIns
             var numPart = str.Substring(startIndex);
             var validDigits = GetValidDigits(numPart, radix);
             if (string.IsNullOrEmpty(validDigits)) return double.NaN;
-            return sign * (double)Convert.ToInt64(validDigits, radix);
+            return sign * (double)Convert.ToUInt64(validDigits, radix);
         }
         catch
         {

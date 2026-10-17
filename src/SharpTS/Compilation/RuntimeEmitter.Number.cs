@@ -440,6 +440,7 @@ public partial class RuntimeEmitter
         var trimIndex = il.DeclareLocal(_types.Int32);
         var trimLoop = il.DefineLabel();
         var trimDone = il.DefineLabel();
+        var nextLine = il.DefineLabel();
         il.MarkLabel(trimLoop);
         il.Emit(OpCodes.Ldloc, trimIndex);
         emitString();
@@ -448,6 +449,10 @@ public partial class RuntimeEmitter
         emitString();
         il.Emit(OpCodes.Ldloc, trimIndex);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", [_types.Int32])!);
+        // CLR whitespace includes NEL; ECMAScript whitespace does not.
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4, 0x85);
+        il.Emit(OpCodes.Beq, nextLine);
         EmitJsWhitespaceCheck(il);
         il.Emit(OpCodes.Brfalse, trimDone);
         il.Emit(OpCodes.Ldloc, trimIndex);
@@ -455,6 +460,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Stloc, trimIndex);
         il.Emit(OpCodes.Br, trimLoop);
+        il.MarkLabel(nextLine);
+        il.Emit(OpCodes.Pop);
         il.MarkLabel(trimDone);
         emitString();
         il.Emit(OpCodes.Ldloc, trimIndex);

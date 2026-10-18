@@ -40,6 +40,10 @@ public partial class ILCompiler
             if (classType != null && classType.FieldTypes.TryGetValue(field.Name.Lexeme, out var fieldTypeInfo))
             {
                 var mapped = _typeMapper.MapTypeInfoStrict(fieldTypeInfo);
+                // Guest callables use $TSFunction rather than CLR Delegate storage. Concrete
+                // CLR delegate types retain their own interop signatures and conversion policy.
+                if (mapped == _types.Delegate)
+                    return _types.Object;
                 // A field whose runtime value is a dynamic $TSDate/$RegExp/$Array/$Map/$Set — mapped
                 // strictly to DateTime/Regex/List<T>/Dictionary/HashSet — must use an object backing
                 // field: the runtime value is not a CLR instance of that type, so a typed field throws

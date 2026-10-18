@@ -123,11 +123,8 @@ public class SharpTSArrayClass : SharpTSClass
     public override object? Call(Interpreter interpreter, List<object?> arguments)
         => Construct(interpreter, arguments, this);
 
-    internal override object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
-    {
-        var instance = new SharpTSArraySubclassInstance(this);
-        return ExecuteConstructorLevel(interpreter, instance, arguments, newTarget);
-    }
+    internal override object AllocateInstance(Interpreter interpreter)
+        => new SharpTSArraySubclassInstance(this);
 
     protected override bool TryExecuteNativeConstructor(
         Interpreter interpreter, object allocation, List<object?> arguments)

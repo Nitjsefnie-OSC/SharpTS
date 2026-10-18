@@ -4,8 +4,7 @@ using SharpTS.Runtime.Exceptions;
 namespace SharpTS.Runtime.Types;
 
 /// <summary>Invocation-local state for one lexical class constructor level.</summary>
-internal sealed class ClassConstructionFrame(
-    SharpTSClass owner, object allocation, object? newTarget, bool retryingFailedSuper = false)
+internal sealed class ClassConstructionFrame(SharpTSClass owner, object allocation, object? newTarget)
 {
     internal enum ElementProgress { NotStarted, Started, Complete }
 
@@ -18,7 +17,6 @@ internal sealed class ClassConstructionFrame(
     internal bool ThisBound { get; private set; } = owner.Superclass is null;
     internal ElementProgress Elements { get; private set; }
     internal object? ParentResult { get; private set; }
-    internal bool RetryingFailedSuper { get; } = retryingFailedSuper;
     private int _superAttempts;
     private Action? _initializeParameterProperties;
 
@@ -45,18 +43,26 @@ internal sealed class ClassConstructionFrame(
             throw new ThrowException(new SharpTSReferenceError("Must call super constructor before accessing 'this'"));
     }
 
-    internal bool BeginSuperAttempt()
+    internal object BeginSuperAttempt(Interpreter interpreter)
     {
-        if (SuperCompleted)
-            throw new ThrowException(new SharpTSReferenceError("Super constructor may only be called once"));
-        // A caught parent failure may legitimately retry. Until fresh parent
-        // allocations are supported (#2283), replace only that new attempt's
-        // existing owner storage rather than leaking CWT duplicate-key errors.
-        return _superAttempts++ != 0 || RetryingFailedSuper;
+        if (_superAttempts++ == 0) return Allocation;
+        // Each [[Construct]] attempt creates a fresh allocation with the original
+        // leaf class and native backing, even when binding derived this will fail.
+        var allocationClass = Allocation switch
+        {
+            SharpTSInstance instance => instance.RuntimeClass,
+            SharpTSArraySubclassInstance array => array.Klass,
+            SharpTSPromiseSubclassInstance promise => promise.Klass,
+            _ => throw new InvalidOperationException("Unsupported constructor allocation."),
+        };
+        return allocationClass.AllocateInstance(interpreter);
     }
 
     internal object? CompleteSuper(Interpreter interpreter, object? parentResult)
     {
+        // Parent construction and its abrupt completion precede BindThisValue.
+        if (ThisBound)
+            throw new ThrowException(new SharpTSReferenceError("Super constructor may only be called once"));
         SuperCompleted = true;
         Receiver = parentResult ?? throw new InvalidOperationException("Parent construction must select an object receiver.");
         ThisBindingHome?.DefineRV("this", RuntimeValue.FromBoxed(Receiver));
@@ -74,8 +80,7 @@ internal sealed class ClassConstructionFrame(
         if (Elements != ElementProgress.NotStarted)
             throw new ThrowException(new SharpTSReferenceError("Class instance elements have already been initialized"));
         Elements = ElementProgress.Started;
-        Owner.InitializeOwnInstanceElements(interpreter, Receiver,
-            RetryingFailedSuper && ReferenceEquals(Receiver, Allocation));
+        Owner.InitializeOwnInstanceElements(interpreter, Receiver);
         Elements = ElementProgress.Complete;
     }
 }

@@ -456,12 +456,9 @@ public partial class Interpreter
         public int Arity() => superclass.Arity();
         public object? Call(Interpreter interpreter, List<object?> arguments)
         {
-            // Full second-allocation/effect ordering for duplicate super is a
-            // separate boundary (#2283); reject with a guest error before reusing
-            // this allocation's private brands or retrying partial elements.
-            bool retryingFailedSuper = frame.BeginSuperAttempt();
+            var allocation = frame.BeginSuperAttempt(interpreter);
             var parentResult = superclass.ExecuteConstructorLevel(
-                interpreter, frame.Allocation, arguments, frame.NewTarget, retryingFailedSuper);
+                interpreter, allocation, arguments, frame.NewTarget);
             return frame.CompleteSuper(interpreter, parentResult);
         }
     }

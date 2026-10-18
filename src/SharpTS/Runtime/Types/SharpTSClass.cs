@@ -124,19 +124,21 @@ public partial class SharpTSClass(
         => Construct(interpreter, arguments, this);
 
     internal virtual object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
+        => ExecuteConstructorLevel(interpreter, AllocateInstance(interpreter), arguments, newTarget);
+
+    internal virtual object AllocateInstance(Interpreter interpreter)
     {
         SharpTSInstance instance = new(this);
         instance.SetInterpreter(interpreter);
-        return ExecuteConstructorLevel(interpreter, instance, arguments, newTarget);
+        return instance;
     }
 
     internal object? ExecuteConstructorLevel(
-        Interpreter interpreter, object allocation, List<object?> arguments, object? newTarget,
-        bool retryingFailedSuper = false)
+        Interpreter interpreter, object allocation, List<object?> arguments, object? newTarget)
     {
         if (TryExecuteNativeConstructor(interpreter, allocation, arguments)) return allocation;
 
-        var frame = new ClassConstructionFrame(this, allocation, newTarget, retryingFailedSuper);
+        var frame = new ClassConstructionFrame(this, allocation, newTarget);
         var constructor = FindOwnMethod("constructor");
         if (Superclass is null)
         {
@@ -159,7 +161,7 @@ public partial class SharpTSClass(
             // first, then install only this owner's elements, preserving the
             // ancestor completion selected by existing constructor-return rules.
             var parentResult = Superclass.ExecuteConstructorLevel(
-                interpreter, allocation, arguments, newTarget, retryingFailedSuper);
+                interpreter, allocation, arguments, newTarget);
             return frame.CompleteSuper(interpreter, parentResult);
         }
 
@@ -291,15 +293,11 @@ public partial class SharpTSClass(
         }
     }
 
-    internal void InitializeOwnInstanceElements(
-        Interpreter interpreter, object receiver, bool retryingFailedSuper = false)
+    internal void InitializeOwnInstanceElements(Interpreter interpreter, object receiver)
     {
         Dictionary<string, object?>? privateFields = null;
         if (_privateMethods.Count != 0 || _instancePrivateFields.Count != 0)
         {
-            // Retry erasure is allowed only for the original allocation by the
-            // invocation frame. An external selected object's existing brand stays.
-            if (retryingFailedSuper) _privateFieldStorage.Remove(receiver);
             if (!_privateFieldStorage.TryGetValue(receiver, out privateFields))
             {
                 privateFields = [];
@@ -326,7 +324,7 @@ public partial class SharpTSClass(
                 ObjectBuiltIns.CreateDataPropertyOrThrow(interpreter, receiver, key, value);
             }
         }
-        InitializeOwnAutoAccessors(interpreter, receiver, retryingFailedSuper);
+        InitializeOwnAutoAccessors(interpreter, receiver);
     }
 
     internal ISharpTSCallable? FindOwnMethod(string name)
@@ -862,14 +860,12 @@ public partial class SharpTSClass(
         InitializeOwnAutoAccessors(interpreter, instance);
     }
 
-    private void InitializeOwnAutoAccessors(
-        Interpreter interpreter, object instance, bool retryingFailedSuper = false)
+    private void InitializeOwnAutoAccessors(Interpreter interpreter, object instance)
     {
         // Then initialize this class's auto-accessors
         if (_instanceAutoAccessors.Count == 0)
             return;
 
-        if (retryingFailedSuper) _autoAccessorStorage.Remove(instance);
         var storage = _autoAccessorStorage.GetValue(instance, static _ => []);
         foreach (var autoAccessor in _instanceAutoAccessors)
         {

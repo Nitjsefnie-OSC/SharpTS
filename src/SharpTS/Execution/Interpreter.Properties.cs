@@ -506,7 +506,7 @@ public partial class Interpreter
             {
                 if (record.GetGetter(name) is { } getter)
                     return BindAccessorToObject(getter, receiver!).CallBoxed(this, []);
-                if (record.HasSetter(name)) return SharpTSUndefined.Instance;
+                if (record.IsAccessorProperty(name)) return SharpTSUndefined.Instance;
                 if (record.Fields.TryGetValue(name, out var value)) return value;
                 current = GetRecordPrototype(record);
                 continue;

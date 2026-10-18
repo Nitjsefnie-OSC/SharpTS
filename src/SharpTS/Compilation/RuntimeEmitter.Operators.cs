@@ -1859,6 +1859,48 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, endLabel);
         il.MarkLabel(notRightCoercibleLabel);
 
+        // Primitive loose equality: Boolean first becomes Number, then mixed
+        // Number/String operands use ToNumber. Two strings stay lexical, and
+        // Symbol/BigInt must never be sent through numeric coercion here.
+        void EmitBooleanAsNumber(LocalBuilder operand)
+        {
+            var notBoolean = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, operand);
+            il.Emit(OpCodes.Isinst, _types.Boolean);
+            il.Emit(OpCodes.Brfalse, notBoolean);
+            il.Emit(OpCodes.Ldloc, operand);
+            il.Emit(OpCodes.Call, inputs.NumericCoercion.ToNumber);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Stloc, operand);
+            il.MarkLabel(notBoolean);
+        }
+
+        EmitBooleanAsNumber(leftLocal);
+        EmitBooleanAsNumber(rightLocal);
+        var leftNotNumber = il.DefineLabel();
+        var numericComparison = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, leftLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, leftNotNumber);
+        il.Emit(OpCodes.Ldloc, rightLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, numericComparison);
+        il.Emit(OpCodes.Br, objectEqualsLabel);
+        il.MarkLabel(leftNotNumber);
+        il.Emit(OpCodes.Ldloc, leftLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, objectEqualsLabel);
+        il.Emit(OpCodes.Ldloc, rightLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, objectEqualsLabel);
+        il.MarkLabel(numericComparison);
+        il.Emit(OpCodes.Ldloc, leftLocal);
+        il.Emit(OpCodes.Call, inputs.NumericCoercion.ToNumber);
+        il.Emit(OpCodes.Ldloc, rightLocal);
+        il.Emit(OpCodes.Call, inputs.NumericCoercion.ToNumber);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Br, endLabel);
+
         // Primitive equality and object identity/equality share the existing
         // Object.Equals terminal path. Object/object branches arrive here with
         // the untouched original operands.

@@ -30,7 +30,8 @@ public partial class RuntimeEmitter
         EmittedStringRuntime Strings,
         EmittedSymbolRuntime Symbols,
         TypeBuilder TSFunctionType,
-        Type UndefinedType
+        Type UndefinedType,
+        Type FunctionPrototypeType
     );
 
     private readonly record struct ObjectProtoValueOfHelperInputs(EmittedErrorRuntime Errors, Type UndefinedType);
@@ -132,7 +133,8 @@ public partial class RuntimeEmitter
                 Strings: runtime.Strings,
                 Symbols: runtime.Symbols,
                 TSFunctionType: runtime.FunctionValues.Type,
-                UndefinedType: runtime.Sentinels.UndefinedType
+                UndefinedType: runtime.Sentinels.UndefinedType,
+                FunctionPrototypeType: runtime.FunctionPrototypes.Type
             )
         );
         runtime.ObjectPrototypes.ValueOf = EmitObjectProtoValueOfHelper(
@@ -639,6 +641,7 @@ public partial class RuntimeEmitter
             il.MarkLabel(notMatch);
         }
 
+        EmitFunctionBranch(inputs.FunctionPrototypeType);
         EmitFunctionBranch(inputs.TSFunctionType);
         EmitFunctionBranch(inputs.BoundTSFunctionType);
         EmitFunctionBranch(inputs.FunctionBindWrapperType);

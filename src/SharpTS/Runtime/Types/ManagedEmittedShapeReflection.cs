@@ -38,7 +38,7 @@ internal static class ManagedEmittedShapeReflection
         return shape switch
         {
             ManagedEmittedShape.Object => type.Name == "$Object",
-            ManagedEmittedShape.Function => type.Name is "$TSFunction" or "$BoundTSFunction",
+            ManagedEmittedShape.Function => type.Name is "$TSFunction" or "$BoundTSFunction" or "$FunctionPrototype",
             ManagedEmittedShape.WritableStream => type.Name == "$WritableStream",
             ManagedEmittedShape.MessagePort => type.Name == "$MessagePort",
             ManagedEmittedShape.ArrayBuffer => type.Name == "$ArrayBuffer",
@@ -152,7 +152,7 @@ internal static class ManagedEmittedShapeReflection
     private static string DisplayName(ManagedEmittedShape shape) => shape switch
     {
         ManagedEmittedShape.Object => "$Object",
-        ManagedEmittedShape.Function => "$TSFunction/$BoundTSFunction",
+        ManagedEmittedShape.Function => "$TSFunction/$BoundTSFunction/$FunctionPrototype",
         ManagedEmittedShape.WritableStream => "$WritableStream",
         ManagedEmittedShape.MessagePort => "$MessagePort",
         ManagedEmittedShape.ArrayBuffer => "$ArrayBuffer",

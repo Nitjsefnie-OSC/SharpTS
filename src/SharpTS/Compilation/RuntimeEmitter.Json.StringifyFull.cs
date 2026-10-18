@@ -282,11 +282,10 @@ public partial class RuntimeEmitter
         // ignored (PropertyList stays empty / replacerFunction stays null).
         // Only treat as function if it's actually a callable type.
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
+        il.Emit(OpCodes.Call, inputs.TypeOf);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
         var replacerIsFnLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, replacerIsFnLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, inputs.BoundTSFunctionType);
         il.Emit(OpCodes.Brtrue, replacerIsFnLabel);
         // Not callable, not array → ignore (replacerFunc stays null).
         il.Emit(OpCodes.Br, replacerDoneLabel);
@@ -386,6 +385,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, replacerFuncLocal);
         il.Emit(OpCodes.Isinst, inputs.BoundTSFunctionType);
         il.Emit(OpCodes.Brtrue, rootIsBoundLabel);
+        // Other callable carriers (including Function.prototype) must run at
+        // the root too, with the synthetic holder as their receiver (#2240).
+        il.Emit(OpCodes.Ldloc, rootHolderLocal);
+        il.Emit(OpCodes.Ldloc, replacerFuncLocal);
+        il.Emit(OpCodes.Ldloc, rootArgsLocal);
+        il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
+        il.Emit(OpCodes.Stloc, rootValueLocal);
         il.Emit(OpCodes.Br, rootCallDoneLabel);
 
         il.MarkLabel(rootIsTSFunctionLabel);
@@ -638,7 +644,7 @@ public partial class RuntimeEmitter
         EmitFunctionSkipCheck(
             il,
             valueLocal,
-            new FunctionSkipCheckInputs(inputs.BoundTSFunctionType, inputs.TSFunctionType, inputs.TSSymbolType)
+            new FunctionSkipCheckInputs(inputs.TSSymbolType, inputs.TypeOf)
         );
 
         // Boxed-primitive unwrap (ECMA-262 25.5.2.3 step 4.a-c), honoring an own

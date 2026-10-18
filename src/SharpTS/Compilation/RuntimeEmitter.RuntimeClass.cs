@@ -562,7 +562,7 @@ public partial class RuntimeEmitter
 
         // Function.prototype starts empty; populated by
         // EmitFunctionPrototypePopulate (eagerly invoked from cctor tail).
-        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Newobj, runtime.FunctionPrototypes.Constructor);
         cctorIL.Emit(OpCodes.Stsfld, functionPrototypeField);
 
         // RegExp.prototype starts empty; populated by
@@ -796,7 +796,8 @@ public partial class RuntimeEmitter
                 runtime.Set,
                 runtime.Symbols,
                 runtime.FunctionValues.Type,
-                runtime.Sentinels.UndefinedType
+                runtime.Sentinels.UndefinedType,
+                runtime.FunctionPrototypes.Prototype
             )
         );
         EmitAdd(
@@ -1009,7 +1010,8 @@ public partial class RuntimeEmitter
                 runtime.Sentinels.UndefinedInstance,
                 runtime.NumericCoercion,
                 runtime.BigInt,
-                runtime.Booleans
+                runtime.Booleans,
+                runtime.FunctionPrototypes
             )
         );
         EmitInvokeMethodValue(
@@ -1035,7 +1037,9 @@ public partial class RuntimeEmitter
                 _features.HasAnyTypedArray,
                 _features.UsesNodeStreams,
                 _features.UsesPromise,
-                _features.UsesTextEncoding
+                _features.UsesTextEncoding,
+                runtime.FunctionPrototypes,
+                runtime.Sentinels.UndefinedInstance
             )
         );
         EmitInvokeMethodValue0(
@@ -1957,7 +1961,8 @@ public partial class RuntimeEmitter
                 runtime.Symbols,
                 runtime.FunctionValues.Type,
                 runtime.Sentinels.UndefinedInstance,
-                runtime.Sentinels.UndefinedType
+                runtime.Sentinels.UndefinedType,
+                runtime.FunctionPrototypes.Type
             )
         );
         // Math.* adapters must precede gOPD so its Math singleton synth can
@@ -2149,7 +2154,8 @@ public partial class RuntimeEmitter
                 runtime.StringCoercion,
                 runtime.FunctionValues.Type,
                 runtime.Sentinels.UndefinedInstance,
-                runtime.Sentinels.UndefinedType
+                runtime.Sentinels.UndefinedType,
+                runtime.FunctionPrototypes.Type
             )
         );
         EmitObjectGroupBy(
@@ -2161,7 +2167,8 @@ public partial class RuntimeEmitter
                 runtime.Errors,
                 runtime.Invocation.Value,
                 GetCollectionConsumerInputs(runtime),
-                runtime.FunctionValues.Type
+                runtime.FunctionValues.Type,
+                runtime.FunctionPrototypes.Type
             )
         );
         // Reflect.set / setPrototypeOf / defineProperty / ownKeys / apply /

@@ -23,7 +23,8 @@ public partial class RuntimeEmitter
         EmittedSetRuntime? Set,
         EmittedSymbolRuntime Symbols,
         TypeBuilder TSFunctionType,
-        Type UndefinedType
+        Type UndefinedType,
+        FieldInfo FunctionPrototype
     );
 
     private readonly record struct InstanceOfInputs(
@@ -497,6 +498,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, inputs.Symbols.Type);
         il.Emit(OpCodes.Brtrue, symbolLabel);
 
+        // The Function.prototype singleton is callable even though its own
+        // properties use the same dictionary storage as ordinary prototypes.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototype);
+        il.Emit(OpCodes.Beq, functionLabel);
+
         // TSFunction => "function"
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
@@ -806,6 +813,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, falseLabel);
         il.MarkLabel(objectLhsLabel);
 
+        var targetProtoLocal = il.DeclareLocal(_types.Object);
+        var checkPrototypeLabel = il.DefineLabel();
+        var validPrototypeLabel = il.DefineLabel();
+        var invalidPrototypeLabel = il.DefineLabel();
+        var notFunctionPrototype = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypes.Prototype);
+        il.Emit(OpCodes.Bne_Un, notFunctionPrototype);
+        // OrdinaryHasInstance checks the left operand before reading .prototype.
+        // This callable intrinsic normally has no such property, which must
+        // throw for an object candidate while primitive candidates return false.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, inputs.ObjectRead.Property);
+        il.Emit(OpCodes.Stloc, targetProtoLocal);
+        il.Emit(OpCodes.Br, checkPrototypeLabel);
+        il.MarkLabel(notFunctionPrototype);
+
         // A plain Dictionary RHS is never a constructor — letting it reach the
         // IsAssignableFrom fallback matched EVERY dict-shaped value (object
         // literals, namespace singletons, module namespaces), so
@@ -879,15 +904,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, notTSFuncLabel);
 
         // F.prototype = $Runtime.GetFunctionMethod(F, "prototype")
-        var targetProtoLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldstr, "prototype");
         il.Emit(OpCodes.Call, inputs.GetFunctionMethod);
         il.Emit(OpCodes.Stloc, targetProtoLocal);
 
-        var checkPrototypeLabel = il.DefineLabel();
-        var validPrototypeLabel = il.DefineLabel();
-        var invalidPrototypeLabel = il.DefineLabel();
         il.MarkLabel(checkPrototypeLabel);
         il.Emit(OpCodes.Ldloc, targetProtoLocal);
         il.Emit(OpCodes.Brfalse, invalidPrototypeLabel);

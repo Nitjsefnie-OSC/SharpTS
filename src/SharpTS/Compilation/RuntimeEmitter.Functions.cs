@@ -43,7 +43,8 @@ public partial class RuntimeEmitter
         EmittedMapRuntime? Map,
         EmittedSetRuntime? Set,
         FieldInfo UndefinedInstance,
-        EmittedErrorRuntime Errors
+        EmittedErrorRuntime Errors,
+        Type FunctionPrototypeType
     );
 
     private readonly record struct FunctionCallWrapperClassInputs(
@@ -1637,6 +1638,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brtrue, callableTargetLabel);
         }
         AcceptCallable(inputs.FunctionValues.Type);
+        AcceptCallable(inputs.FunctionPrototypeType);
         AcceptCallable(inputs.ClassDefinitions.Type);
         AcceptCallable(functionBindings.BoundType);
         AcceptCallable(functionBindings.AnyType);

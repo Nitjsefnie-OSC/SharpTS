@@ -154,6 +154,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Brfalse, attachDone);
         il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, runtime.FunctionPrototypes.Type);
+        il.Emit(OpCodes.Brtrue, attachHandler);
+        il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Isinst, runtime.FunctionValues.Type);
         il.Emit(OpCodes.Brtrue, attachHandler);
         il.Emit(OpCodes.Ldarg_2);
@@ -363,6 +366,10 @@ public partial class RuntimeEmitter
         // Isinst against known callable shapes; anything else → pass-through.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.OnFulfilledField);
+        il.Emit(OpCodes.Isinst, runtime.FunctionPrototypes.Type);
+        il.Emit(OpCodes.Brtrue, onFulfilledCallableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.OnFulfilledField);
         il.Emit(OpCodes.Isinst, runtime.FunctionValues.Type);
         il.Emit(OpCodes.Brtrue, onFulfilledCallableLabel);
         il.Emit(OpCodes.Ldarg_0);
@@ -539,6 +546,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.OnRejectedField);
         il.Emit(OpCodes.Brfalse, noRejectCallbackLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.OnRejectedField);
+        il.Emit(OpCodes.Isinst, runtime.FunctionPrototypes.Type);
+        il.Emit(OpCodes.Brtrue, onRejectedCallableLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.OnRejectedField);
         il.Emit(OpCodes.Isinst, runtime.FunctionValues.Type);

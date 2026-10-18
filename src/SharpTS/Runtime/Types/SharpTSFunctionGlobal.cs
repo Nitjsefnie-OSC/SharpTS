@@ -55,8 +55,14 @@ public sealed class SharpTSFunctionGlobal : ISharpTSCallable
 /// the BuiltInMethod rebind path that real-world test262 harness code (e.g.
 /// <c>propertyHelper.js</c>) relies on.
 /// </summary>
-public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSSymbolPropertyBag
+public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSSymbolPropertyBag,
+    ISharpTSNonConstructorCallable
 {
+    public int Arity() => 0;
+
+    public object? Call(Execution.Interpreter interpreter, List<object?> arguments)
+        => SharpTSUndefined.Instance;
+
     private readonly Dictionary<string, BuiltIns.BuiltInMethod> _methods = new(StringComparer.Ordinal)
     {
         ["bind"] = BuiltIns.FunctionBuiltIns.CreatePrototypeMethod("bind")!,

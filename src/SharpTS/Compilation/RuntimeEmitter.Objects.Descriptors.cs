@@ -54,7 +54,8 @@ public partial class RuntimeEmitter
         EmittedSymbolRuntime Symbols,
         TypeBuilder TSFunctionType,
         FieldInfo UndefinedInstance,
-        Type UndefinedType
+        Type UndefinedType,
+        Type FunctionPrototypeType
     );
 
     private readonly record struct DefinePropertyArrayLengthCoercionInputs(
@@ -84,7 +85,8 @@ public partial class RuntimeEmitter
         EmittedErrorRuntime Errors,
         TypeBuilder TSFunctionType,
         FieldInfo UndefinedInstance,
-        Type UndefinedType
+        Type UndefinedType,
+        Type FunctionPrototypeType
     );
 
     private readonly record struct DefinePropertyRedefinitionValidationInputs(
@@ -664,7 +666,8 @@ public partial class RuntimeEmitter
                 inputs.Errors,
                 inputs.TSFunctionType,
                 inputs.UndefinedInstance,
-                inputs.UndefinedType
+                inputs.UndefinedType,
+                inputs.FunctionPrototypeType
             ),
             dictLocal,
             descriptorLocal,
@@ -1166,6 +1169,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, inputs.UndefinedType);
         il.Emit(OpCodes.Brtrue, getterIsUndefLabel);
         il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, inputs.FunctionPrototypeType);
+        il.Emit(OpCodes.Brtrue, getterStoreLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
         il.Emit(OpCodes.Brtrue, getterStoreLabel);
         il.Emit(OpCodes.Ldloc, valueLocal);
@@ -1198,6 +1204,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Isinst, inputs.UndefinedType);
         il.Emit(OpCodes.Brtrue, setterIsUndefLabel);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, inputs.FunctionPrototypeType);
+        il.Emit(OpCodes.Brtrue, setterStoreLabel);
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
         il.Emit(OpCodes.Brtrue, setterStoreLabel);

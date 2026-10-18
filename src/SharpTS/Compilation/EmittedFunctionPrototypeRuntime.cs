@@ -11,6 +11,20 @@ public sealed class EmittedFunctionPrototypeRuntime
     private bool _populateBodyEmitted;
     private bool _prepareApplyArgumentsBodyEmitted;
 
+    private Type? _type;
+    public Type Type
+    {
+        get => Require(_type);
+        internal set => SetHandle(ref _type, value);
+    }
+
+    private ConstructorBuilder? _constructor;
+    public ConstructorBuilder Constructor
+    {
+        get => Require(_constructor);
+        internal set => SetHandle(ref _constructor, value);
+    }
+
     private FieldBuilder? _prototype;
     /// <summary>Function.prototype singleton dict, populated lazily with $TSFunction wrappers for call/apply/bind/toString/constructor (ECMA-262 §20.2.3).</summary>
     public FieldBuilder Prototype
@@ -74,6 +88,8 @@ public sealed class EmittedFunctionPrototypeRuntime
     internal void CompleteEmission()
     {
         EnsureMutable();
+        _ = Type;
+        _ = Constructor;
         _ = Prototype;
         _ = Populate;
         _ = PrepareApplyArguments;

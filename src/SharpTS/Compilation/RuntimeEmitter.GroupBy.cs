@@ -11,7 +11,8 @@ public partial class RuntimeEmitter
         EmittedErrorRuntime Errors,
         MethodBuilder InvokeValue,
         CollectionConsumerInputs Iteration,
-        TypeBuilder TSFunctionType
+        TypeBuilder TSFunctionType,
+        Type FunctionPrototypeType
     );
 
     private readonly record struct MapGroupByInputs(
@@ -51,6 +52,9 @@ public partial class RuntimeEmitter
         // throw TypeError. Pre-fix Object.groupBy([], non-callable) silently
         // did nothing and returned an empty object.
         var gbCallableOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, inputs.FunctionPrototypeType);
+        il.Emit(OpCodes.Brtrue, gbCallableOkLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
         il.Emit(OpCodes.Brtrue, gbCallableOkLabel);

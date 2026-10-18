@@ -1957,7 +1957,7 @@ public class SharpTSProxy : ISharpTSCallable
         ? proxy.IsCallable
         : _target is ISharpTSCallable or Delegate or Type
         || _target?.GetType().Name is "$TSFunction" or "$BoundTSFunction"
-            or "$PromisifiedFunction" or "$DeprecatedFunction";
+            or "$PromisifiedFunction" or "$DeprecatedFunction" or "$FunctionPrototype";
 
     #region RuntimeValue Overloads
 

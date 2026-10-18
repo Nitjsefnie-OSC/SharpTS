@@ -1460,30 +1460,12 @@ public abstract partial class ExpressionEmitterBase
             var targetMethod = callableMethod!;
             EmitStaticCallArguments(c.Arguments, targetMethod);
 
-            // A direct Class.method() call bypasses $TSFunction.InvokeWithThis,
-            // so publish the lexical class as the receiver while the static body
-            // runs. Private static brand checks can then distinguish this valid
-            // path from a value call whose receiver is a Proxy or another object.
-            // Preserve the enclosing dynamic receiver for nested calls.
-            var previousThis = IL.DeclareLocal(Types.Object);
-            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.FunctionValues.CurrentThisField);
-            IL.Emit(OpCodes.Stloc, previousThis);
-            IL.Emit(OpCodes.Ldtoken, classBuilder);
-            IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
-            IL.Emit(OpCodes.Stsfld, Ctx.Runtime.FunctionValues.CurrentThisField);
-
-            IL.Emit(OpCodes.Call, targetMethod);
-
-            LocalBuilder? result = null;
-            if (targetMethod.ReturnType != Types.Void)
-            {
-                result = IL.DeclareLocal(targetMethod.ReturnType);
-                IL.Emit(OpCodes.Stloc, result);
-            }
-            IL.Emit(OpCodes.Ldloc, previousThis);
-            IL.Emit(OpCodes.Stsfld, Ctx.Runtime.FunctionValues.CurrentThisField);
-            if (result != null)
-                IL.Emit(OpCodes.Ldloc, result);
+            // Arguments retain the actual target's conversion/publication metadata.
+            // A separate typed frame restores CurrentThis even when the target throws,
+            // without an exception region around the caller's pending evaluation stack.
+            var receiverCall = Ctx.GetStaticReceiverCall?.Invoke(classBuilder, targetMethod)
+                ?? throw new InvalidOperationException("Static receiver call service is unavailable.");
+            IL.Emit(OpCodes.Call, receiverCall);
 
             SetStackUnknown();
             return true;

@@ -79,6 +79,7 @@ public partial class ILCompiler
             // Compilation-wide services
             Runtime = _runtime,
             ProgramType = _programType,
+            GetStaticReceiverCall = GetOrCreateStaticReceiverCall,
             RuntimeFeatures = _features,
             LexicalTdzNames = _lexicalBindingNames,
             StaticDirectEvalStatements = _staticDirectEvalStatements,
@@ -267,6 +268,7 @@ public partial class ILCompiler
         return new CompilationContext(il, parentCtx.TypeMapper, parentCtx.Functions, parentCtx.Classes, parentCtx.NamespaceFields, parentCtx.NamespaceVarFields, parentCtx.Types)
         {
             Runtime = parentCtx.Runtime,
+            GetStaticReceiverCall = parentCtx.GetStaticReceiverCall,
             RuntimeFeatures = parentCtx.RuntimeFeatures,
             StaticDirectEvalStatements = parentCtx.StaticDirectEvalStatements,
             ClosureAnalyzer = parentCtx.ClosureAnalyzer,

@@ -654,15 +654,14 @@ public static class ParameterTypeResolver
                     return typeof(object);
                 }
 
-                // Optional parameters without defaults should use object for null-checking
+                // An omitted optional guest argument must retain undefined, including
+                // reference annotations whose CLR slots cannot hold that sentinel.
                 if (i < parameters.Count &&
                     parameters[i].DefaultValue == null &&
-                    parameters[i].IsOptional)
+                    parameters[i].IsOptional &&
+                    !parameters[i].IsRest)
                 {
-                    if (mappedType.IsValueType)
-                    {
-                        return typeof(object);
-                    }
+                    return typeof(object);
                 }
 
                 return i < parameters.Count

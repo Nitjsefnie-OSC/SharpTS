@@ -196,24 +196,25 @@ public sealed class PrivateRenameDomainTests
     }
 
     [Theory]
-    [InlineData("this.#value ||= 1;")]
-    [InlineData("this.#value &&= 1;")]
-    [InlineData("this.#value ??= 1;")]
     [InlineData("this.#value++;")]
     [InlineData("++this.#value;")]
     [InlineData("this.#value--;")]
     [InlineData("--this.#value;")]
-    public void UnsupportedPrivateLogicalAndUpdateSyntaxRefusesTheWholeDomain(string use)
+    public void UnsupportedPrivateUpdateSyntaxRefusesTheWholeDomain(string use)
     {
         var value = Check("class Box { /*selected*/#value: number = 1; inspect(): void { " + use + " } }");
         Assert.False(value.Parse.IsSuccess);
         Assert.Equal(PrivateRenameDomainStatus.IncompleteSyntax, Query(value, "selected").Status);
     }
 
-    [Fact]
-    public void PrivateCompoundWriteJoinsItsCheckedRenameDomain()
+    [Theory]
+    [InlineData("+=")]
+    [InlineData("||=")]
+    [InlineData("&&=")]
+    [InlineData("??=")]
+    public void PrivateCompoundAndLogicalWritesJoinTheirCheckedRenameDomain(string op)
     {
-        var value = Check("class Box { /*selected*/#value: number = 1; inspect(): void { this./*write*/#value += 1; } }");
+        var value = Check("class Box { /*selected*/#value: number = 1; inspect(): void { this./*write*/#value " + op + " 1; } }");
         Clean(value);
         var domain = Domain(value, "selected");
         Assert.Equal(new[] { Offset(value.Document.Text, "selected"), Offset(value.Document.Text, "write") },

@@ -628,35 +628,8 @@ public partial class Interpreter
     /// </summary>
     internal double ToNumberWithPrimitive(object? value)
     {
-        object? primitive = value is SharpTSObject obj
-            ? OrdinaryToPrimitiveNumber(obj)
-            : ToPrimitive(value, PrimitiveHint.Number);
+        object? primitive = ToPrimitive(value, PrimitiveHint.Number);
         return CoerceToNumber(RuntimeValue.FromBoxed(primitive));
-    }
-
-    /// <summary>
-    /// OrdinaryToPrimitive with a number hint for plain objects. Unlike the
-    /// compatibility-oriented general ToPrimitive path below, this performs
-    /// full prototype-chain Get for valueOf/toString and throws when neither
-    /// callable returns a primitive, as ArraySetLength requires.
-    /// </summary>
-    private object? OrdinaryToPrimitiveNumber(SharpTSObject obj)
-    {
-        if (TryCallExoticToPrimitive(obj, PrimitiveHint.Number, out var exoticResult))
-            return exoticResult;
-
-        // Boxed primitives retain the dedicated internal-slot behavior used by
-        // the wider coercion paths.
-        if (TryGetBoxedPrimitiveValue(obj, out _))
-            return ToPrimitive(obj, PrimitiveHint.Number);
-
-        if (TryCallConversion(obj, "valueOf", out var valueOfResult))
-            return valueOfResult;
-        if (TryCallConversion(obj, "toString", out var toStringResult))
-            return toStringResult;
-
-        throw new ThrowException(new SharpTSTypeError(
-            "Cannot convert object to primitive value"));
     }
 
     private bool TryCallConversion(SharpTSObject receiver, string name, out object? result)

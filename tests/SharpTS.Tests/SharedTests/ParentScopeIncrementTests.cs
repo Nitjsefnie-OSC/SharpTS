@@ -41,6 +41,7 @@ public sealed class ParentScopeIncrementTests
             }
             outer();
             """, "11 11 11 11 10\n10 10\n12 12\n10 10\n"];
+        // Direct owner-parameter reads after child writes are tracked separately (#2518).
         yield return ["parameter", """
             function outer() {
                 function middle(count: number) {
@@ -161,8 +162,7 @@ public sealed class ParentScopeIncrementTests
     [Fact]
     public void ArrowShadowsParentScopeField_Interpreter()
     {
-        // Compiled coverage is pending the separate parent-scope shadow resolution issue,
-        // which also affects plain assignments and reads without increment operators.
+        // Compiled arrow shadow resolution also fails for plain reads and assignments (#2517).
         const string source = """
             function outer() {
                 function middle() {

@@ -169,6 +169,8 @@ public partial class Interpreter
                 throw new InterpreterException($"Cannot create an instance of abstract class '{sharpClass.Name}'.");
             return sharpClass.Construct(this, [.. args], newTarget);
         }
+        if (callable is SharpTSBuiltInConstructor { Name: BuiltInNames.Promise })
+            return CreatePromiseFromExecutor(args.Count > 0 ? args[0] : SharpTSUndefined.Instance);
         if (callable is SharpTSBuiltInConstructor builtIn && BuiltInConstructorFactory.IsBuiltIn(builtIn.Name))
             return BuiltInConstructorFactory.TryCreate(builtIn.Name, [.. args], this);
         if (callable is SharpTSStringNamespace)

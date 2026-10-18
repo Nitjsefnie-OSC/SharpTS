@@ -52,10 +52,10 @@ public sealed class EmittedDynamicConstructionRuntimeTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void ReusedEmitterPreservesConstructionAndRestoresAmbientReceiver(bool hosted)
+    public async Task ReusedEmitterPreservesConstructionAndRestoresAmbientReceiver(bool hosted)
     {
         var emitter = new RuntimeEmitter(TypeProvider.Runtime, emitHosted: hosted); var owners = new HashSet<object>();
-        foreach (string code in new[] { "const n=1;", "const r=new RegExp('a','g');function F(){}const c:any=F;new c();", "const n=2;" })
+        foreach (string code in new[] { "const n=1;", "const r=new RegExp('a','g');function F(){}const c:any=F;new c();", "const P:any=Promise;", "const n=2;" })
         {
             var builder = NewAssembly(); var runtime = emitter.EmitAll(builder.DefineDynamicModule("main"), Detect(code));
             var owner = runtime.DynamicConstruction; Assert.True(owners.Add(owner)); Assert.True(owner.IsComplete);
@@ -107,6 +107,13 @@ public sealed class EmittedDynamicConstructionRuntimeTests
                 var regexp = Construct(owner.Value.Name, loaded.GetType(runtime.RegExps.RequireImplementation().Type.Name)!, "a", "g");
                 Assert.Equal("a", type.GetMethod(runtime.ObjectRead.Property.Name)!.Invoke(null, [regexp, "source"]));
                 Assert.Equal("g", type.GetMethod(runtime.ObjectRead.Property.Name)!.Invoke(null, [regexp, "flags"]));
+            }
+            if (runtime.Promise is not null)
+            {
+                var promise = Assert.IsAssignableFrom<Task<object>>(
+                    Construct(owner.Value.Name, typeof(Task<object>), Wrap(nameof(ResolvePromise))));
+                Assert.True(promise.IsCompleted);
+                Assert.Equal(11d, await promise);
             }
             Assert.DoesNotContain(loaded.GetReferencedAssemblies(), a => a.Name == "SharpTS");
             Assert.Equal(hosted, loaded.GetReferencedAssemblies().Any(a => a.Name == "SharpTS.Hosting.Abstractions"));
@@ -166,6 +173,7 @@ public sealed class EmittedDynamicConstructionRuntimeTests
                 ("FunctionConstruction", typeof(EmittedFunctionConstructionRuntime)),
                 ("FunctionValues", typeof(EmittedFunctionValueRuntime)),
                 ("NumericCoercion", typeof(EmittedNumericCoercionRuntime)),
+                ("Promise", typeof(EmittedPromiseRuntime)),
                 ("RegExps", typeof(EmittedRegExpRuntime)),
                 ("StringCoercion", typeof(EmittedStringCoercionRuntime)),
                 ("UndefinedInstance", typeof(FieldInfo)),
@@ -202,6 +210,11 @@ public sealed class EmittedDynamicConstructionRuntimeTests
     public static object ReturnObject(object __this, object value) => value;
     public static object ReturnPrimitive(object __this) => 7d;
     public static object Fail(object __this) => throw Failure;
+    public static object? ResolvePromise(object resolve, object reject)
+    {
+        resolve.GetType().GetMethod("Invoke")!.Invoke(resolve, [new object[] { 11d }]);
+        return null;
+    }
     public sealed class HostConstructor
     {
         public HostConstructor(double value) { Value = value; }

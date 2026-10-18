@@ -588,6 +588,22 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Br, builtInDone);
         IL.MarkLabel(notBooleanType);
 
+        if (_ctx.Runtime.Promise is not null)
+        {
+            // Aliases and member-held Promise constructors reach this Type
+            // path. Expand arguments once before the shared executor adapter.
+            var notPromiseType = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, typeLocal);
+            IL.Emit(OpCodes.Ldtoken, _ctx.Types.TaskOfObject);
+            IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+            IL.Emit(OpCodes.Bne_Un, notPromiseType);
+            IL.Emit(OpCodes.Ldloc, typeLocal);
+            EmitArgsArrayWithSpread(n.Arguments);
+            IL.Emit(OpCodes.Call, _ctx.Runtime.DynamicConstruction.Value);
+            IL.Emit(OpCodes.Br, builtInDone);
+            IL.MarkLabel(notPromiseType);
+        }
+
         List<LocalBuilder> argTemps = [];
         foreach (var arg in n.Arguments)
         {

@@ -756,6 +756,7 @@ public partial class RuntimeEmitter
                 runtime.FunctionConstruction,
                 runtime.FunctionValues,
                 runtime.NumericCoercion,
+                runtime.Promise,
                 runtime.RegExps,
                 runtime.StringCoercion,
                 runtime.ArrayOperations.Constructor,

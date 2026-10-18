@@ -15,6 +15,7 @@ public class PromiseRuntimeFeatureGatingTests
     [InlineData("console.log(1);", false)]
     [InlineData("setTimeout(() => console.log(1), 0);", false)]
     [InlineData("Promise.resolve(1);", true)]
+    [InlineData("const P: any = Promise; new P(() => {});", true)]
     [InlineData("async function f(): Promise<number> { return 1; }", true)]
     [InlineData("const f = async (): Promise<number> => 1;", true)]
     [InlineData("async function* f() { yield 1; }", true)]

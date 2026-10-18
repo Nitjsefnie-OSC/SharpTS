@@ -88,6 +88,12 @@ public sealed class ArrayFromIteratorAcquisitionTests
 
     public static IEnumerable<object[]> Cases()
     {
+        yield return ["nullish-data-iterator", """
+            for (const method of [null, undefined]) {
+                const input: any = { 0: 7, length: 1, [Symbol.iterator]: method };
+                console.log(Array.from(input).join(','));
+            }
+            """, "7\n7\n"];
         yield return ["class-first-method", ClassSource, "true true true 3 3 true true\n"];
         yield return ["mapped-object", MappedObjectSource, "10,11 n0m0n1m1n2 1 1 1 true\n2 true true 2 2 2\n"];
         yield return ["validation-and-fallback", ValidationSource, "true 0 0\ntrue 1 0\ntrue 2 0\ntrue 3 1\na,b\n"];
@@ -103,5 +109,21 @@ public sealed class ArrayFromIteratorAcquisitionTests
     {
         Assert.NotEmpty(name);
         Assert.Equal(expected, TestHarness.Run(source, mode));
+    }
+
+    // Compiled required iteration accepts ordinary undefined iterator slots (#2574).
+    [Fact]
+    public void RequiredConsumersRejectNullishRecordIteratorSlots()
+    {
+        const string source = """
+            for (const method of [null, undefined]) {
+                const input: any = { 0: 7, length: 1, [Symbol.iterator]: method };
+                try { for (const value of input) {} }
+                catch (error) { console.log(error instanceof TypeError); }
+                try { const values = [...input]; }
+                catch (error) { console.log(error instanceof TypeError); }
+            }
+            """;
+        Assert.Equal("true\ntrue\ntrue\ntrue\n", TestHarness.Run(source, ExecutionMode.Interpreted));
     }
 }

@@ -922,7 +922,9 @@ public partial class Interpreter
             {
                 iteratorFn = obj.GetBySymbol(SharpTSSymbol.Iterator);
             }
-            if (iteratorFn != null || obj.HasSymbolProperty(SharpTSSymbol.Iterator))
+            // GetMethod treats both null and undefined as an absent method.
+            // Array.from may then use indexed reads; required consumers reject absence.
+            if (iteratorFn is not null and not SharpTSUndefined)
             {
                 if (iteratorFn is not ISharpTSCallable)
                     throw new ThrowException(new SharpTSTypeError(

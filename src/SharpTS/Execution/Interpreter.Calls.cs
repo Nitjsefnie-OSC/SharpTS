@@ -786,8 +786,8 @@ public partial class Interpreter
             // booleans→0/1) — a raw (double) cast crashed with
             // InvalidCastException on any-typed undefined operands (#190).
             OperatorDescriptor.Plus => RuntimeValue.FromBoxed(EvaluatePlus(left, right)),
-            OperatorDescriptor.Arithmetic => RuntimeValue.FromNumber(EvaluateArithmetic(op.Type, CoerceToNumber(left), CoerceToNumber(right))),
-            OperatorDescriptor.Power => RuntimeValue.FromNumber(Math.Pow(CoerceToNumber(left), CoerceToNumber(right))),
+            OperatorDescriptor.Arithmetic => RuntimeValue.FromNumber(EvaluateArithmetic(op.Type, ToNumberWithPrimitive(left), ToNumberWithPrimitive(right))),
+            OperatorDescriptor.Power => RuntimeValue.FromNumber(Math.Pow(ToNumberWithPrimitive(left), ToNumberWithPrimitive(right))),
             // JS AbstractRelationalComparison: string vs string → lexicographic.
             OperatorDescriptor.Comparison =>
                 left is string ls && right is string rs

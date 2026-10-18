@@ -1042,9 +1042,7 @@ public partial class Interpreter
             ? EvaluateGetOnRecord(nextObject, "next")
             : EvaluateGetOnInstanceRV((SharpTSInstance)iterator,
                 new Token(TokenType.IDENTIFIER, "next", null, 0)).ToObject();
-        nextMethod = TryBindReceiverForMethodAccess(nextMethod, iterator) ?? nextMethod;
-        if (nextMethod is SharpTSFunction nextFunction && iterator is SharpTSInstance nextInstance)
-            nextMethod = nextFunction.Bind(nextInstance);
+        nextMethod = BindMemberCallReceiver(nextMethod, iterator);
 
         // Only abandonment after a successful IteratorStepValue closes. A
         // failure in next/done/value itself marks the iterator completed.

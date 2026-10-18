@@ -10,6 +10,46 @@ namespace SharpTS.Tests.SharedTests;
 /// </summary>
 public class IteratorProtocolTests
 {
+    [Theory, ModeData]
+    public void NextGetterDeclaredFunctionReceivesIterator(ExecutionMode mode)
+    {
+        const string source = """
+            const iterator: any = { index: 0 }, state = { receivers: true, gets: 0 };
+            function advance(this: any) {
+                state.receivers = state.receivers && this === iterator;
+                const current = this.index++;
+                return { value: current, done: current !== 0 };
+            }
+            Object.defineProperty(iterator, 'next', { get() { state.gets++; return advance; } });
+            const source: any = { [Symbol.iterator]() { return iterator; } }, values: any[] = [];
+            console.log(iterator.next === advance);
+            for (const value of source) values.push(value);
+            console.log(values.join(','), state.receivers, state.gets);
+            iterator.index = 0;
+            console.log(Array.from(source).join(','), state.receivers, state.gets);
+            """;
+        Assert.Equal("true\n0 true 2\n0 true 3\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void NextGetterArrowRetainsLexicalReceiver(ExecutionMode mode)
+    {
+        const string source = """
+            const owner = {}, state = { calls: 0, valid: true };
+            function build(this: any) {
+                const next = () => {
+                    state.valid = state.valid && this === owner;
+                    return { value: state.calls++, done: state.calls > 1 };
+                };
+                const iterator: any = { get next() { return next; } };
+                return { [Symbol.iterator]() { return iterator; } };
+            }
+            const source: any = build.call(owner);
+            console.log(Array.from(source).join(','), state.valid);
+            """;
+        Assert.Equal("0 true\n", TestHarness.Run(source, mode));
+    }
+
     #region Sync Iterator Protocol (Symbol.iterator)
 
     [Theory, ModeData]

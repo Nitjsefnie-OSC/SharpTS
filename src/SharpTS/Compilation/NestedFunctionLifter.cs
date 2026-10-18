@@ -670,6 +670,21 @@ internal sealed class NestedFunctionLifter
                 }
                 if (_lambdaForwards.TryGetValue(f, out var forwarded))
                 {
+                    // A generator must retain its capture owners across every yield.
+                    // Forwarding scalar parameters only snapshots their call-time values,
+                    // so use the existing generator-expression live storage instead.
+                    if (f.IsGenerator)
+                    {
+                        result ??= new List<Stmt>(body.GetRange(0, i));
+                        bool hoisted = _hoistedForwards.Contains(f);
+                        var closure = MakeLiveFunctionClosure(f, hoisted);
+                        if (hoisted)
+                            (aliases ??= new List<Stmt>()).Add(closure);
+                        else
+                            result.Add(closure);
+                        continue;
+                    }
+
                     // A plain nested function can use the ordinary closure
                     // emitter. Captures must keep shared lexical storage even
                     // when their writes occur in a descendant closure: lifting
@@ -764,15 +779,15 @@ internal sealed class NestedFunctionLifter
     }
 
     /// <summary>
-    /// Hoists a capturing synchronous declaration as an ordinary function expression,
-    /// whose captured bindings use the async function's shared display class.
+    /// Retains a capturing declaration as a function expression whose closures and iterators
+    /// use the original binding's display class or lexical cell throughout their lifetime.
     /// </summary>
-    private Stmt MakeLiveFunctionClosure(Stmt.Function function)
+    private Stmt MakeLiveFunctionClosure(Stmt.Function function, bool hoisted = true)
     {
-        var body = ProcessBody(function.Body!, enclosingIsStateMachine: false,
-            enclosingIsAsyncFunction: false, enclosingIsGeneratorClassMethod: false);
+        var body = ProcessBody(function.Body!, function.IsGenerator || function.IsAsync,
+            function.IsAsync && !function.IsGenerator, enclosingIsGeneratorClassMethod: false);
         var closure = new Expr.ArrowFunction(
-            Name: function.Name,
+            Name: function.IsGenerator ? null : function.Name,
             TypeParams: function.TypeParams,
             ThisType: function.ThisType,
             Parameters: function.Parameters,
@@ -780,10 +795,15 @@ internal sealed class NestedFunctionLifter
             BlockBody: body,
             ReturnType: function.ReturnType,
             HasOwnThis: true,
+            IsAsync: function.IsAsync,
+            IsGenerator: function.IsGenerator,
             ThisTypeNode: function.ThisTypeNode,
-            ReturnTypeNode: function.ReturnTypeNode);
+            ReturnTypeNode: function.ReturnTypeNode)
+        {
+            RuntimeName = function.IsGenerator ? function.RuntimeName ?? function.Name.Lexeme : null,
+        };
         _spans?.CopySpan(function, closure);
-        var binding = new Stmt.Var(function.Name, TypeAnnotation: null, Initializer: closure, IsVar: true);
+        var binding = new Stmt.Var(function.Name, TypeAnnotation: null, Initializer: closure, IsVar: hoisted);
         _spans?.MarkHidden(binding);
         return binding;
     }

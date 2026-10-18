@@ -495,7 +495,7 @@ public partial class ILCompiler
             // args must pad with the `undefined` sentinel (JS semantics), not CLR null. (#640)
             MarkPadsUndefined(_closures.ArrowMethods[arrow]);
             MarkFunctionLength(_closures.ArrowMethods[arrow], arrow.Parameters);
-            MarkFunctionName(_closures.ArrowMethods[arrow], arrow.Name?.Lexeme ?? "");
+            MarkFunctionName(_closures.ArrowMethods[arrow], arrow.RuntimeName ?? arrow.Name?.Lexeme ?? "");
             if (arrow.IsGenerator || !arrow.HasOwnThis || arrow.IsMethod)
                 MarkNonConstructible(_closures.ArrowMethods[arrow]);
             else DefineNewTargetBody(_closures.ArrowMethods[arrow]);

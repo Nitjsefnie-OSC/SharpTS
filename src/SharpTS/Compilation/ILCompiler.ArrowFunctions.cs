@@ -200,6 +200,11 @@ public partial class ILCompiler
                     : ReturnSlotAnalysis.BlockReturnsMayBeUndefined(arrow.BlockBody, _typeMap);
                 var logicalReturnType = ParameterTypeResolver.ResolveReturnType(
                     funcTypeInfo.ReturnType, isAsync: false, _typeMapper, returnMayBeUndefined);
+                // Arrow methods and their display classes do not own CLR generic parameters.
+                // An open generic instance return must use the boxed runtime representation.
+                // Persisted type definitions can report ContainsGenericParameters as false.
+                if (logicalReturnType.IsGenericTypeDefinition || logicalReturnType.ContainsGenericParameters)
+                    logicalReturnType = _types.Object;
 
                 // Use typed return if:
                 // 1. Return type is not void (void methods need special handling)

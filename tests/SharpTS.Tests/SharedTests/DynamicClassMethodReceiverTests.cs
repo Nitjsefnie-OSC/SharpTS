@@ -110,10 +110,7 @@ public sealed class DynamicClassMethodReceiverTests
     }
 
     public static IEnumerable<object[]> ParityCases()
-        // #2284 tracks the interpreter's stale cached property after assignment.
-        => Cases().SelectMany(row => ((string)row[0] == "own-property-precedence"
-                ? new[] { ExecutionMode.Compiled }
-                : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
+        => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ParityCases))]

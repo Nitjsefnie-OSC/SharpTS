@@ -314,11 +314,10 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             return;
         }
 
-        // No cache invalidation needed - we update _fields, Get() reads fresh value
         _fields[propName] = value;
-
-        // Ensure property is in lookup cache as a field for dynamic property addition
-        _lookupCache.TryAdd(propName, new PropertyResolution { Type = ResolutionType.Field });
+        // A successful own write can replace a cached miss or inherited method.
+        // Re-resolve the name while preserving own accessor precedence.
+        _lookupCache.Remove(propName);
     }
 
     /// <summary>
@@ -387,8 +386,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         }
 
         _fields[propName] = value;
-
-        _lookupCache.TryAdd(propName, new PropertyResolution { Type = ResolutionType.Field });
+        _lookupCache.Remove(propName);
     }
 
     private bool TrySetClassAccessor(string name, object? value, bool strictMode)

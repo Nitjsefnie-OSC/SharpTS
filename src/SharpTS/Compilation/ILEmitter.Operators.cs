@@ -1944,7 +1944,7 @@ public partial class ILEmitter
 
     /// <summary>
     /// Stores an incremented numeric value into the named local/parameter, walking the storage ladder
-    /// (per-iteration binding cell #650 → function display class #674/#321 → arrow-scope display class →
+    /// (per-iteration binding cell #650 → function display class #674/#321 → own/ancestor scope display class →
     /// entry-point display class → IL local / captured display-class field / top-level static). Shared by
     /// <see cref="EmitPrefixIncrement"/> and <see cref="EmitPostfixIncrement"/>, which walked byte-identical
     /// copies of this ~8-rung ladder that repeatedly had to be kept in sync (#1127).
@@ -1958,7 +1958,7 @@ public partial class ILEmitter
     /// (the prefix new value for a typed-double local, or the postfix original value, which is dup'd
     /// before boxing). The early-exit storage rungs box that result and report <c>Unknown</c>; the
     /// fall-through IL-local / static rungs leave it unboxed for lazy boxing and report
-    /// <see cref="StackType.Double"/>. Emitted IL is identical to the two former inline copies.
+    /// <see cref="StackType.Double"/>.
     /// </remarks>
     private void EmitStoreIncrementedVariable(string name, bool isTypedDouble, bool resultIsUnboxedDouble)
     {
@@ -2057,6 +2057,23 @@ public partial class ILEmitter
                 _ctx.EmitConvertForParamSlot(IL, name);
                 IL.Emit(OpCodes.Starg, arrowParamSync);
             }
+            if (resultIsUnboxedDouble) IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            SetStackUnknown();
+            return;
+        }
+
+        // Ancestor scope captures use the same live storage and lexical guards as
+        // ordinary assignment, including captures from multiple ancestor scopes.
+        // Nested locals and parameters take precedence on the matching read path.
+        if (_ctx.Locals.GetNestedScopeLocal(name) == null &&
+            !_ctx.TryGetParameter(name, out _) &&
+            ((_ctx.ParentArrowCapturedLocals?.Contains(name) == true &&
+             _ctx.ParentArrowScopeDisplayClassFields?.ContainsKey(name) == true &&
+             _ctx.CurrentArrowScopeDCField != null) ||
+             _ctx.ExtraArrowScopeBindings?.ContainsKey(name) == true))
+        {
+            if (isTypedDouble) IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            _resolver.TryStoreVariable(name);
             if (resultIsUnboxedDouble) IL.Emit(OpCodes.Box, _ctx.Types.Double);
             SetStackUnknown();
             return;

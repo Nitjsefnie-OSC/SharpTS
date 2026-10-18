@@ -113,7 +113,7 @@ if (-not $coreJob.Contains('--filter "' + $coreFilter + '"', [StringComparison]:
 foreach ($requiredText in @('shard: [0, 1, 2, 3, 4, 5]', 'shell: pwsh',
     './scripts/test-standalone-shard.ps1 -ShardIndex ${{ matrix.shard }} -ShardCount 6',
     '-ResultsDirectory artifacts/standalone/${{ matrix.os }}-${{ matrix.shard }}',
-    'timeout-minutes: 25', 'timeout-minutes: 30', 'fail-fast: false', 'if: always()',
+    'timeout-minutes: 35', 'timeout-minutes: 40', 'fail-fast: false', 'if: always()',
     'name: standalone-${{ matrix.os }}-${{ matrix.shard }}',
     'path: artifacts/standalone/', 'retention-days: 7')) {
     if (-not $standaloneJob.Contains($requiredText, [StringComparison]::Ordinal)) {

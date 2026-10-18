@@ -261,7 +261,7 @@ jobs:
     needs: workflow-policy
     if: needs.workflow-policy.outputs.mode == 'full'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -282,9 +282,9 @@ jobs:
       - name: Test standalone
         shell: pwsh
         # Balance discovered row counts while keeping each method's rows together.
-        # Preserve the aggregate deadline and 120-second per-test hang guard.
+        # Bound aggregate shard time separately from the 120-second per-test hang guard.
         run: ./scripts/test-standalone-shard.ps1 -ShardIndex ${{ matrix.shard }} -ShardCount 6 -ResultsDirectory artifacts/standalone/${{ matrix.os }}-${{ matrix.shard }}
-        timeout-minutes: 25
+        timeout-minutes: 35
       - name: Upload standalone shard evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

@@ -1648,6 +1648,10 @@ public sealed class RuntimeFeatureDetector
                 VisitExpr(privateCompound.Object);
                 VisitExpr(privateCompound.Value);
                 break;
+            case Expr.LogicalSetPrivate privateLogical:
+                VisitExpr(privateLogical.Object);
+                VisitExpr(privateLogical.Value);
+                break;
             case Expr.CallPrivate cp:
                 VisitExpr(cp.Object);
                 foreach (var a in cp.Arguments) VisitExpr(a);

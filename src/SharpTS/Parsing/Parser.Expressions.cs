@@ -146,7 +146,8 @@ public partial class Parser
             return DispatchAssignmentTarget(expr, value, "Invalid logical assignment target.",
                 onVariable: (name, val) => new Expr.LogicalAssign(name, op, val),
                 onGet: (get, val) => new Expr.LogicalSet(get.Object, get.Name, op, val),
-                onGetIndex: (gi, val) => new Expr.LogicalSetIndex(gi.Object, gi.Index, op, val));
+                onGetIndex: (gi, val) => new Expr.LogicalSetIndex(gi.Object, gi.Index, op, val),
+                onGetPrivate: (gp, val) => new Expr.LogicalSetPrivate(gp.Object, gp.Name, op, val));
         }
 
         return expr;

@@ -96,6 +96,7 @@ internal sealed partial class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeF
             Expr.LogicalAssign assignment => storage?.IsRawBinding(assignment.Name, callEvidenceOnly) == true
                 | PassesRawCall(assignment.Value, callEvidenceOnly),
             Expr.LogicalSet assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
+            Expr.LogicalSetPrivate assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             Expr.LogicalSetIndex assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             // Operators perform their own conversions; their operands are not returned.
             _ => false

@@ -195,6 +195,7 @@ public abstract record Expr
     // Logical assignment (&&=, ||=, ??=) - has short-circuit semantics
     public record LogicalAssign(Token Name, Token Operator, Expr Value) : Expr;
     public record LogicalSet(Expr Object, Token Name, Token Operator, Expr Value) : Expr;
+    public record LogicalSetPrivate(Expr Object, Token Name, Token Operator, Expr Value) : Expr;
     public record LogicalSetIndex(Expr Object, Expr Index, Token Operator, Expr Value) : Expr;
     // Increment/decrement
     public record PrefixIncrement(Token Operator, Expr Operand) : Expr;

@@ -236,6 +236,11 @@ public static class LoopAssignmentAnalyzer
                 CollectAssignedPathsFromExpr(logicalSet.Value, paths);
                 break;
 
+            case Expr.LogicalSetPrivate logicalSetPrivate:
+                CollectAssignedPathsFromExpr(logicalSetPrivate.Object, paths);
+                CollectAssignedPathsFromExpr(logicalSetPrivate.Value, paths);
+                break;
+
             case Expr.LogicalSetIndex logicalSetIndex:
                 CollectAssignedPathsFromExpr(logicalSetIndex.Object, paths);
                 CollectAssignedPathsFromExpr(logicalSetIndex.Index, paths);

@@ -52,6 +52,7 @@ public partial class TypeChecker
         Expr.CompoundSetIndex e => VisitCompoundSetIndex(e),
         Expr.LogicalAssign e => VisitLogicalAssign(e),
         Expr.LogicalSet e => VisitLogicalSet(e),
+        Expr.LogicalSetPrivate e => VisitLogicalSetPrivate(e),
         Expr.LogicalSetIndex e => VisitLogicalSetIndex(e),
         Expr.PrefixIncrement e => VisitPrefixIncrement(e),
         Expr.PostfixIncrement e => VisitPostfixIncrement(e),

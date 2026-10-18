@@ -1273,6 +1273,7 @@ public abstract partial class ExpressionEmitterBase
         Expr.CompoundSetIndex csi => ExprContainsSuspension(csi.Object) || ExprContainsSuspension(csi.Index) || ExprContainsSuspension(csi.Value),
         Expr.LogicalAssign la => ExprContainsSuspension(la.Value),
         Expr.LogicalSet lst => ExprContainsSuspension(lst.Object) || ExprContainsSuspension(lst.Value),
+        Expr.LogicalSetPrivate privateLogical => ExprContainsSuspension(privateLogical.Object) || ExprContainsSuspension(privateLogical.Value),
         Expr.LogicalSetIndex lsi => ExprContainsSuspension(lsi.Object) || ExprContainsSuspension(lsi.Index) || ExprContainsSuspension(lsi.Value),
         Expr.PrefixIncrement pi => ExprContainsSuspension(pi.Operand),
         Expr.PostfixIncrement pi => ExprContainsSuspension(pi.Operand),

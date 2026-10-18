@@ -59,6 +59,7 @@ public static class AstNodeCatalog
         typeof(Expr.CompoundSetIndex),
         typeof(Expr.LogicalAssign),
         typeof(Expr.LogicalSet),
+        typeof(Expr.LogicalSetPrivate),
         typeof(Expr.LogicalSetIndex),
         typeof(Expr.PrefixIncrement),
         typeof(Expr.PostfixIncrement),

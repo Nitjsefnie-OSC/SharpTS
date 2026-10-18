@@ -323,6 +323,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case Expr.LogicalSet ls:
                 EmitLogicalSet(ls);
                 break;
+            case Expr.LogicalSetPrivate ls:
+                EmitLogicalSetPrivate(ls);
+                break;
             case Expr.LogicalSetIndex lsi:
                 EmitLogicalSetIndex(lsi);
                 break;

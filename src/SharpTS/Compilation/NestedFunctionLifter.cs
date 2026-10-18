@@ -1187,6 +1187,11 @@ internal sealed class NestedFunctionLifter
                 var obj = ProcessExpr(e.Object); var value = ProcessExpr(e.Value);
                 return ReferenceEquals(obj, e.Object) && ReferenceEquals(value, e.Value) ? e : e with { Object = obj, Value = value };
             }
+            case Expr.LogicalSetPrivate e:
+            {
+                var obj = ProcessExpr(e.Object); var value = ProcessExpr(e.Value);
+                return ReferenceEquals(obj, e.Object) && ReferenceEquals(value, e.Value) ? e : e with { Object = obj, Value = value };
+            }
             case Expr.LogicalSetIndex e:
             {
                 var obj = ProcessExpr(e.Object); var index = ProcessExpr(e.Index); var value = ProcessExpr(e.Value);

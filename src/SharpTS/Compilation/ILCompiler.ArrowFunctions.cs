@@ -1159,6 +1159,10 @@ public partial class ILCompiler
                 CollectArrowsFromExpr(lsObj.Object);
                 CollectArrowsFromExpr(lsObj.Value);
                 break;
+            case Expr.LogicalSetPrivate privateLogical:
+                CollectArrowsFromExpr(privateLogical.Object);
+                CollectArrowsFromExpr(privateLogical.Value);
+                break;
             case Expr.LogicalSetIndex lsi:
                 CollectArrowsFromExpr(lsi.Object);
                 CollectArrowsFromExpr(lsi.Index);
@@ -1276,7 +1280,7 @@ public partial class ILCompiler
 
         protected override void BeforeVisit(Expr expression)
         {
-            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CompoundSetPrivate or Expr.CallPrivate or Expr.PrivateIn ||
+            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CompoundSetPrivate or Expr.LogicalSetPrivate or Expr.CallPrivate or Expr.PrivateIn ||
                 expression is Expr.Variable variable && referencesSelf(variable))
             {
                 UsesDefinition = true;

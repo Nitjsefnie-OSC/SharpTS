@@ -674,6 +674,12 @@ internal sealed class GeneratorArrowLifter
                 var o = RewriteExpr(lset.Object); var v = RewriteExpr(lset.Value);
                 return ReferenceEquals(o, lset.Object) && ReferenceEquals(v, lset.Value) ? lset : new Expr.LogicalSet(o, lset.Name, lset.Operator, v);
             }
+            case Expr.LogicalSetPrivate lset:
+            {
+                var o = RewriteExpr(lset.Object); var v = RewriteExpr(lset.Value);
+                return ReferenceEquals(o, lset.Object) && ReferenceEquals(v, lset.Value)
+                    ? lset : lset with { Object = o, Value = v };
+            }
             case Expr.LogicalSetIndex lsi:
             {
                 var o = RewriteExpr(lsi.Object); var idx = RewriteExpr(lsi.Index); var v = RewriteExpr(lsi.Value);

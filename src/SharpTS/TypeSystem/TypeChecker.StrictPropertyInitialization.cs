@@ -204,6 +204,10 @@ public partial class TypeChecker
                 assigned = AnalyzeInitializationExpression(compound.Object, assigned);
                 assigned = AnalyzeInitializationExpression(compound.Value, assigned);
                 break;
+            case Expr.LogicalSetPrivate logicalPrivate:
+                // The RHS may be skipped, so only receiver assignments are definite.
+                assigned = AnalyzeInitializationExpression(logicalPrivate.Object, assigned);
+                break;
             case Expr.LogicalSet { Object: Expr.This, Name: var logicalName, Value: var logicalValue }:
                 assigned = AnalyzeInitializationExpression(logicalValue, assigned);
                 assigned.Add(logicalName.Lexeme);

@@ -122,7 +122,7 @@ public partial class SharpTSClass
         if (GetOwnStaticSymbolPropertyDescriptor(symbol) is null
             && !Compilation.PropertyDescriptorStore.IsExtensible(this))
             return false;
-        if (!(_staticSymbolAccessorObject ??= new SharpTSObject([])).DefineProperty(symbol, descriptor)) return false;
+        if (!MaterializeOwnStaticProperty(symbol).DefineProperty(symbol, descriptor)) return false;
         RecordOwnStaticKey(symbol);
         return true;
     }

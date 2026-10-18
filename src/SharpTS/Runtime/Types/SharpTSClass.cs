@@ -488,8 +488,7 @@ public partial class SharpTSClass(
         if (!HasOwnStaticMember(name) && name is not ("name" or "length")
             && !Compilation.PropertyDescriptorStore.IsExtensible(this))
             return false;
-        _staticPropertyObject ??= new SharpTSObject(_staticProperties);
-        if (!_staticPropertyObject.DefineProperty(name, descriptor))
+        if (!MaterializeOwnStaticProperty(name).DefineProperty(name, descriptor))
             return false;
         if (_staticMethods.ContainsKey(name))
             _deletedStaticMethods.Add(name);
@@ -517,9 +516,8 @@ public partial class SharpTSClass(
         }
         // Assignment changes a method's value without changing its attributes.
         if (_staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol) is null
-            && _staticSymbolMethods?.TryGetValue(symbol, out var method) == true)
-            (_staticSymbolAccessorObject ??= new SharpTSObject([])).DefineProperty(
-                symbol, SharpTSPropertyDescriptor.ForMethod(method));
+            && _staticSymbolMethods?.ContainsKey(symbol) == true)
+            MaterializeOwnStaticProperty(symbol);
         if (_staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol) is not null)
         {
             _staticSymbolAccessorObject.SetBySymbol(symbol, value);

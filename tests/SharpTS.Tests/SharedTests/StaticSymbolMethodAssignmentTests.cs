@@ -98,9 +98,6 @@ public sealed class StaticSymbolMethodAssignmentTests
 
     public static IEnumerable<object[]> DescriptorModeCases()
         => DescriptorCases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            // #2432 still owns partial method definitions in this combined row.
-            .Where(mode => (string)row[0] != "keys-partial-definition-and-delete"
-                || mode == ExecutionMode.Compiled)
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(DescriptorModeCases))]

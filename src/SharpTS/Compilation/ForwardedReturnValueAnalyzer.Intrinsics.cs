@@ -34,6 +34,9 @@ internal sealed partial class ForwardedReturnValueAnalyzer
                 Expr.Get { Optional: false } method
                     when StringEmitter.EmitsUnboxedPrimitiveSearch(map, features, method.Object, method.Name.Lexeme, call.Arguments)
                     => method.Name.Lexeme == "includes" ? TokenType.TYPE_BOOLEAN : TokenType.TYPE_NUMBER,
+                Expr.Get { Optional: false, Name.Lexeme: "charCodeAt" } method
+                    when StringEmitter.EmitsUnboxedCharCodeAt(map, method.Object, call.Arguments)
+                    => TokenType.TYPE_NUMBER,
                 _ => null
             };
             if (kind is { } native && PrimitiveKind(map.Get(call)) == native) _nativeIntrinsics[call] = native;

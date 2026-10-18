@@ -12,6 +12,40 @@ namespace SharpTS.Tests.CompilerTests;
 public sealed class RawCallStorageAnalysisTests
 {
     [Fact]
+    public void CharCodeAtNativeProofDoesNotAdmitDynamicOrUserDefinedReceivers()
+    {
+        var statements = Parse("""
+            function readString(input: string, index: number): number {
+                let code: number = input.charCodeAt(index);
+                return code;
+            }
+            function readAny(input: any): number {
+                let code: number = input.charCodeAt(0);
+                return code;
+            }
+            class User {
+                charCodeAt(index: number): number { return null as any; }
+            }
+            function readUser(input: User): number {
+                let code: number = input.charCodeAt(0);
+                return code;
+            }
+            """);
+        var map = new TypeChecker().Check(statements);
+        var native = Variable(Function(statements, "readString").Body!, "code");
+        var dynamic = Variable(Function(statements, "readAny").Body!, "code");
+        var user = Variable(Function(statements, "readUser").Body!, "code");
+
+        RawCallStorageAnalysis.Capture(statements, map)
+            .Analyze(statements, new RuntimeFeatureDetector().Detect(statements, map));
+
+        AssertLocal(map, native, expectedRaw: false);
+        Assert.True(map.IsUndefinedReachableNumericLocal(dynamic));
+        Assert.True(map.IsUndefinedReachableNumericLocal(dynamic.Initializer!));
+        AssertLocal(map, user, expectedRaw: true);
+    }
+
+    [Fact]
     public void BindingIdentityAndRewriteFlagsSurviveCheckerReuse()
     {
         foreach (bool recover in new[] { false, true })

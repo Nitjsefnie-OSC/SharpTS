@@ -487,6 +487,12 @@ public sealed class StringEmitter : ITypeEmitterStrategy
             or TypeSystem.TypeInfo.StringLiteral;
     }
 
+    internal static bool EmitsUnboxedCharCodeAt(
+        TypeSystem.TypeMap? typeMap, Expr receiver, IReadOnlyList<Expr> arguments)
+        => typeMap?.Get(receiver) is TypeSystem.TypeInfo.String
+            && arguments.Count <= 1
+            && (arguments.Count == 0 || arguments[0] is not Expr.Spread);
+
     internal static bool EmitsUnboxedPrimitiveSearch(
         TypeSystem.TypeMap? typeMap, RuntimeFeatureSet? features, Expr receiver,
         string methodName, IReadOnlyList<Expr> arguments)

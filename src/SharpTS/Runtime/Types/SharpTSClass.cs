@@ -4,6 +4,7 @@ using SharpTS.Runtime;
 using SharpTS.Runtime.BuiltIns;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.TypeSystem;
+using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 
@@ -65,7 +66,7 @@ public partial class SharpTSClass(
 
     // Method lookup cache - avoids repeated inheritance chain walks
     // Key: method name, Value: method (null means not found in entire chain)
-    private readonly Dictionary<string, ISharpTSCallable?> _methodCache = [];
+    private readonly ConcurrentDictionary<string, ISharpTSCallable?> _methodCache = new();
 
     private SharpTSClassPrototype? _prototype;
 
@@ -83,10 +84,10 @@ public partial class SharpTSClass(
     internal bool HasModifiedInstancePrototypeChain
         => _prototype?.HasExplicitPrototype == true
             || Superclass?.HasModifiedInstancePrototypeChain == true;
-    private readonly Dictionary<string, ISharpTSCallable?> _staticMethodCache = [];
+    private readonly ConcurrentDictionary<string, ISharpTSCallable?> _staticMethodCache = new();
     private readonly HashSet<string> _deletedStaticMethods = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, SharpTSFunction?> _getterCache = [];
-    private readonly Dictionary<string, SharpTSFunction?> _setterCache = [];
+    private readonly ConcurrentDictionary<string, SharpTSFunction?> _getterCache = new();
+    private readonly ConcurrentDictionary<string, SharpTSFunction?> _setterCache = new();
 
     // ES2022 Private class elements
     // Instance private storage - ConditionalWeakTable for GC-friendly per-instance storage
@@ -412,7 +413,7 @@ public partial class SharpTSClass(
         }
         if (_staticMethods.ContainsKey(name))
             _deletedStaticMethods.Add(name);
-        _staticMethodCache.Remove(name);
+        _staticMethodCache.TryRemove(name, out _);
         if (_staticPropertyObject is not null)
             _staticPropertyObject.SetPropertyStrict(name, value, strictMode);
         else
@@ -467,7 +468,7 @@ public partial class SharpTSClass(
         _staticProperties.Remove(name);
         if (_staticMethods.ContainsKey(name))
             _deletedStaticMethods.Add(name);
-        _staticMethodCache.Remove(name);
+        _staticMethodCache.TryRemove(name, out _);
         return true;
     }
 
@@ -487,7 +488,7 @@ public partial class SharpTSClass(
             return false;
         if (_staticMethods.ContainsKey(name))
             _deletedStaticMethods.Add(name);
-        _staticMethodCache.Remove(name);
+        _staticMethodCache.TryRemove(name, out _);
         return true;
     }
 

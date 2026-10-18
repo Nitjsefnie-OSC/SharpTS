@@ -1420,7 +1420,7 @@ public partial class Interpreter
             // Accessor defined via Object.defineProperty(fn, name, {get, set}).
             if (fn.TryGetAccessor(memberName, out var getter, out _) && getter != null)
             {
-                return RuntimeValue.FromBoxed(getter.CallBoxed(this, []));
+                return RuntimeValue.FromBoxed(FunctionBuiltIns.CallWithThis(this, getter, fn, []));
             }
             if (fn.TryGetProperty(memberName, out var userProp))
                 return RuntimeValue.FromBoxed(userProp);
@@ -1435,7 +1435,7 @@ public partial class Interpreter
         if (obj is SharpTSArrowFunction arrowFn)
         {
             if (arrowFn.TryGetAccessor(memberName, out var getter, out _) && getter != null)
-                return RuntimeValue.FromBoxed(getter.CallBoxed(this, []));
+                return RuntimeValue.FromBoxed(FunctionBuiltIns.CallWithThis(this, getter, arrowFn, []));
             if (arrowFn.TryGetProperty(memberName, out var arrowProp))
                 return RuntimeValue.FromBoxed(arrowProp);
             // Lazy-init `fn.prototype` for function expressions (HasOwnThis).
@@ -2423,7 +2423,7 @@ public partial class Interpreter
         if (obj is SharpTSFunction fn)
         {
             if (fn.TryGetAccessor(memberName, out var getter, out _) && getter != null)
-                return getter.CallBoxed(this, []);
+                return FunctionBuiltIns.CallWithThis(this, getter, fn, []);
             if (fn.TryGetProperty(memberName, out var v)) return v;
             if (memberName == "name") return fn.TryGetProperty("name", out var n) ? n : "";
             if (memberName == "length") return (double)fn.Arity();
@@ -2447,7 +2447,7 @@ public partial class Interpreter
         if (obj is SharpTSArrowFunction arrowFn2)
         {
             if (arrowFn2.TryGetAccessor(memberName, out var arrowGetter, out _) && arrowGetter != null)
-                return arrowGetter.CallBoxed(this, []);
+                return FunctionBuiltIns.CallWithThis(this, arrowGetter, arrowFn2, []);
             if (arrowFn2.TryGetProperty(memberName, out var arrowProp2)) return arrowProp2;
             if (memberName == "length") return (double)arrowFn2.Arity();
             if (memberName == "constructor")

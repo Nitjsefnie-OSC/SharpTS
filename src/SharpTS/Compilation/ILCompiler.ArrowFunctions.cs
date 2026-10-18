@@ -1789,21 +1789,33 @@ public partial class ILCompiler
             {
                 ctx.CurrentArrowFunctionDCField = functionDCField;
 
-                // Also set up the captured function locals info so LocalVariableResolver can use it
-                if (_closures.ArrowFunctionDCSource.TryGetValue(arrow, out var sourceFuncName) &&
-                    _closures.FunctionDisplayClassFields.TryGetValue(sourceFuncName, out var funcDCFields))
-                {
-                    ctx.FunctionDisplayClassFields = funcDCFields;
-                    ctx.CapturedFunctionLocals = [.. funcDCFields.Keys];
-                    if (_arrowClassDefinitionCaptures.TryGetValue(arrow, out var classCaptures))
-                        ctx.CapturedFunctionLocals.ExceptWith(classCaptures);
-                }
-
                 // #838: redirect this arrow's write-captured block-scope shadows to their renamed DC
                 // storage keys so they reach the shadow's field rather than the outer same-named binding.
                 ctx.CurrentArrowFunctionDCFieldRenames =
                     _closures.ArrowFunctionDCFieldRenames.TryGetValue(arrow, out var dcFieldRenames)
                         ? dcFieldRenames : null;
+
+                // Also set up the captured function locals info so LocalVariableResolver can use it
+                if (_closures.ArrowFunctionDCSource.TryGetValue(arrow, out var sourceFuncName) &&
+                    _closures.FunctionDisplayClassFields.TryGetValue(sourceFuncName, out var funcDCFields))
+                {
+                    ctx.FunctionDisplayClassFields = funcDCFields;
+                    object? sourceOwner = _closures.FunctionAstNodes.GetValueOrDefault(sourceFuncName)
+                        ?? _closures.AsyncArrowDCKeys.FirstOrDefault(entry => entry.Value == sourceFuncName).Key;
+                    _arrowClassDefinitionCaptures.TryGetValue(arrow, out var classCaptures);
+                    ctx.CapturedFunctionLocals = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (string sourceName in _closures.Analyzer.GetCaptures(arrow))
+                    {
+                        // The reference and full field map also transport storage for descendants.
+                        // Only this arrow's genuine binding may override one of its own locals.
+                        if (sourceOwner is null || classCaptures?.Contains(sourceName) == true ||
+                            !ReferenceEquals(_closures.Analyzer.GetCaptureSource(arrow, sourceName), sourceOwner))
+                            continue;
+                        string fieldName = dcFieldRenames?.GetValueOrDefault(sourceName) ?? sourceName;
+                        if (funcDCFields.ContainsKey(fieldName))
+                            ctx.CapturedFunctionLocals.Add(fieldName);
+                    }
+                }
             }
 
             // Set the $arrowDC field if this arrow captures arrow-scope variables
@@ -1822,13 +1834,16 @@ public partial class ILCompiler
                     _closures.ArrowScopeDisplayClassFields.TryGetValue(sourceArrowRef, out var arrowDCFields))
                 {
                     ctx.ParentArrowScopeDisplayClassFields = arrowDCFields;
-                    ctx.ParentArrowCapturedLocals = [.. arrowDCFields.Keys];
+                    ctx.ParentArrowCapturedLocals = _closures.Analyzer.GetCaptures(arrow)
+                        .Where(name => arrowDCFields.ContainsKey(name)
+                            && ReferenceEquals(_closures.Analyzer.GetCaptureSource(arrow, name), sourceArrowRef))
+                        .ToHashSet(StringComparer.Ordinal);
                     // Legacy fallback: arrows without their own arrow-scope DC
                     // also see these as their "own" fields (read through
                     // $arrowDC) — preserved for compatibility with code paths
                     // that haven't been updated to check the parent slots.
                     ctx.ArrowScopeDisplayClassFields = arrowDCFields;
-                    ctx.CapturedArrowLocals = [.. arrowDCFields.Keys];
+                    ctx.CapturedArrowLocals = [.. ctx.ParentArrowCapturedLocals];
                 }
             }
 

@@ -4483,7 +4483,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldloc, subjectLocal);
             EmitExpression(s.Cases[i].Value);
             EmitBoxIfNeeded(s.Cases[i].Value);
-            IL.Emit(OpCodes.Call, _ctx.Runtime!.Operators.LooseEquals);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.Operators.StrictEquals);
             builder.Emit_Brtrue(caseLabels[i]);
         }
 

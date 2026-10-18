@@ -1771,7 +1771,7 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
             IL.Emit(OpCodes.Ldloc, subjectLocal);
             EmitExpression(s.Cases[i].Value);
             EnsureBoxed();
-            IL.Emit(OpCodes.Call, Ctx.Runtime!.Operators.LooseEquals);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.Operators.StrictEquals);
             IL.Emit(OpCodes.Brtrue, caseLabels[i]);
         }
 

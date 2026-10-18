@@ -323,7 +323,7 @@ public partial class Interpreter
             if (!fallen && !matched)
             {
                 object? caseValue = (await ctx.EvaluateExprAsync(caseItem.Value)).ToObject();
-                if (IsEqual(subject, caseValue))
+                if (IsStrictEqual(subject, caseValue))
                 {
                     matched = true;
                 }
@@ -375,7 +375,7 @@ public partial class Interpreter
             if (!fallen && !matched)
             {
                 object? caseValue = Evaluate(caseItem.Value);
-                if (IsEqual(subject, caseValue))
+                if (IsStrictEqual(subject, caseValue))
                 {
                     matched = true;
                 }

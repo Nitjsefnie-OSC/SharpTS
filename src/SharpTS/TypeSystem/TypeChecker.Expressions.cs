@@ -2772,8 +2772,7 @@ public partial class TypeChecker
             classExprResultType = classType;
         }
 
-        ValidateOverrideMembers(classExpr.Methods, classExpr.Accessors, classTypeForBody,
-            staticOnly: classTypeParams != null);
+        ValidateOverrideMembers(classExpr.Methods, classExpr.Accessors, classTypeForBody);
         ValidateStaticOverrideCompatibility(classExpr.Methods, classExpr.Accessors, className, classTypeForBody);
 
         // Validate interface implementations (skip for generic - validated at instantiation)
@@ -2963,6 +2962,9 @@ public partial class TypeChecker
                             inferredReturn = CollapseOrCreateUnion(distinct);
                         }
 
+                        if (!method.IsGenerator)
+                            inferredReturn = WidenInferredClassMemberReturn(method.Body, inferredReturn);
+
                         // A generator method's type argument is its YIELD type (#548), not the
                         // `return`-derived inferredReturn; a non-generator async method wraps in Promise.
                         // The resolved type is re-published below (anyInferredMethodReturnResolved), so
@@ -3056,6 +3058,12 @@ public partial class TypeChecker
             _compatibilityCache = null;
             _identityCompatibilityCache = null;
         }
+
+        // Validate against completed inferred signatures, not the placeholders
+        // collected before method and getter bodies were checked.
+        mutableClass.ResetFrozenCache();
+        ValidateStaticOverrideCompatibility(classExpr.Methods, classExpr.Accessors,
+            className, mutableClass.Freeze());
 
         // Return the class type (not an instance). For a generic class expression this is the
         // GenericClass so callers (e.g. `new`) can instantiate/infer its type arguments (#291).

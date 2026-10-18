@@ -344,7 +344,7 @@ public partial class Parser
                     Token methodBodyOpen = Consume(TokenType.LEFT_BRACE, "Expect '{' before private method body.");
                     List<Stmt> body = Block();
 
-                    var func = new Stmt.Function(fieldName, typeParams2, null, parameters, body, returnType, isStatic, AccessModifier.Public, IsAbstract: false, IsOverride: false, IsAsync: isMemberAsync, IsGenerator: isMemberGenerator, Decorators: null, IsPrivate: true);
+                    var func = new Stmt.Function(fieldName, typeParams2, null, parameters, body, returnType, isStatic, AccessModifier.Public, IsAbstract: false, IsOverride: isOverride, IsAsync: isMemberAsync, IsGenerator: isMemberGenerator, Decorators: null, IsPrivate: true);
                     AttachEditorSyntax(func, returnTypeNode);
                     RecordFunctionSyntax(func, fieldName.Start, parametersOpen, parametersClose,
                         methodBodyOpen.Start, new SourceSpan(methodBodyOpen.Start, ConsumedSourceEnd));
@@ -997,7 +997,7 @@ public partial class Parser
                     Token methodBodyOpen = Consume(TokenType.LEFT_BRACE, "Expect '{' before private method body.");
                     List<Stmt> body = Block();
 
-                    var func = new Stmt.Function(fieldName, typeParams2, null, parameters, body, returnType, isStatic, AccessModifier.Public, IsAbstract: false, IsOverride: false, IsAsync: isMemberAsync, IsGenerator: isMemberGenerator, Decorators: null, IsPrivate: true);
+                    var func = new Stmt.Function(fieldName, typeParams2, null, parameters, body, returnType, isStatic, AccessModifier.Public, IsAbstract: false, IsOverride: isOverride, IsAsync: isMemberAsync, IsGenerator: isMemberGenerator, Decorators: null, IsPrivate: true);
                     AttachEditorSyntax(func, returnTypeNode);
                     RecordFunctionSyntax(func, fieldName.Start, parametersOpen, parametersClose,
                         methodBodyOpen.Start, new SourceSpan(methodBodyOpen.Start, ConsumedSourceEnd));

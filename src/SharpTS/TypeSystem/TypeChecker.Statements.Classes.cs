@@ -879,6 +879,9 @@ public partial class TypeChecker
                         inferredReturn = CollapseOrCreateUnion(distinct);
                     }
 
+                    if (!method.IsGenerator)
+                        inferredReturn = WidenInferredClassMemberReturn(method.Body, inferredReturn);
+
                     // A generator method's type argument is its YIELD type (#548), not the
                     // `return`-derived inferredReturn; a non-generator async method wraps in Promise.
                     // The resolved type is re-published below (anyInferredMethodReturnResolved), so
@@ -1039,6 +1042,7 @@ public partial class TypeChecker
                         TypeInfo inferred = distinct.Count == 0
                             ? TypeInfo.Void.Shared
                             : CollapseOrCreateUnion(distinct);
+                        inferred = WidenInferredClassMemberReturn(accessor.Body, inferred);
                         getters[accessorName] = inferred;
 
                         // An unannotated setter parameter is contextually typed from its getter.

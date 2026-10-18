@@ -28,6 +28,28 @@ public sealed class ClassExpressionOverrideParserTests
     }
 
     [Theory]
+    [InlineData("override #value() {}", false, false, false)]
+    [InlineData("static override #value() {}", true, false, false)]
+    [InlineData("override async #value() {}", false, true, false)]
+    [InlineData("override *#value() {}", false, false, true)]
+    public void PrivateMethodsRetainOverrideForSemanticValidation(
+        string member, bool isStatic, bool isAsync, bool isGenerator)
+    {
+        var expressionMethod = Assert.Single(ParseClass("const Derived = class extends Base { " + member + " };").Methods);
+        var declaration = Assert.IsType<Stmt.Class>(Assert.Single(
+            TestHarness.ParseOrThrow("class Derived extends Base { " + member + " }")));
+        var declarationMethod = Assert.Single(declaration.Methods);
+        foreach (var method in new[] { expressionMethod, declarationMethod })
+        {
+            Assert.True(method.IsPrivate);
+            Assert.True(method.IsOverride);
+            Assert.Equal(isStatic, method.IsStatic);
+            Assert.Equal(isAsync, method.IsAsync);
+            Assert.Equal(isGenerator, method.IsGenerator);
+        }
+    }
+
+    [Theory]
     [InlineData("override get value(): number { return 2; }", false, false)]
     [InlineData("override set value(next: number) {}", false, false)]
     [InlineData("static override get value(): number { return 2; }", true, false)]

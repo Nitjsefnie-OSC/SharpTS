@@ -420,7 +420,7 @@ public partial class TypeChecker
         if (arrow.ExpressionBody != null) returns.Add(arrow.ExpressionBody);
         else if (arrow.BlockBody != null)
         {
-            var collector = new ClassFieldArrowReturnCollector(returns);
+            var collector = new ClassMemberReturnCollector(returns);
             foreach (var statement in arrow.BlockBody) collector.Visit(statement);
         }
         if (returns.Count == 0) return type;
@@ -447,7 +447,7 @@ public partial class TypeChecker
         };
     }
 
-    private sealed class ClassFieldArrowReturnCollector(List<Expr> returns) : AstVisitorBase
+    private sealed class ClassMemberReturnCollector(List<Expr> returns) : AstVisitorBase
     {
         protected override void VisitReturn(Stmt.Return statement)
         {

@@ -64,11 +64,12 @@ public sealed class InheritedGenericConstructorTests
         console.log(explicitCheck, inferredCheck, nestedCheck);
         """;
 
-    // Keep the optional parameter while avoiding the separate optional-field
-    // undefined-assignment rejection tracked by #2449.
+    // Keep the optional parameter while isolating separate field issues:
+    // #2449 rejects optional-field undefined assignment; #2555 rejects the
+    // undefined sentinel in string | undefined field storage.
     public const string SignatureShapesSource = """
         class OptionalBase<T> {
-            value: T; label: string | undefined;
+            value: T; label: any;
             constructor(value: T, label?: string) { this.value = value; this.label = label; }
         }
         class OptionalMiddle<U> extends OptionalBase<U> {}

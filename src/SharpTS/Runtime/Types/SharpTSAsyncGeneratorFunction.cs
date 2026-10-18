@@ -149,6 +149,8 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
 /// <seealso cref="SharpTSArrowGeneratorFunction"/>
 public class SharpTSAsyncArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceiverBindable
 {
+    // A receiver view keeps the named expression's original callable identity.
+    private SharpTSAsyncArrowGeneratorFunction? _selfReference;
     private GeneratorFunctionProperties _functionProperties;
     GeneratorFunctionProperties ISharpTSGeneratorFunctionValue.FunctionProperties => _functionProperties;
     private readonly Expr.ArrowFunction _declaration;
@@ -193,7 +195,7 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSGeneratorFunctionValue
         // Named async generator function expression: bind self-reference alongside params.
         if (_declaration.Name != null)
         {
-            environment.Define(_declaration.Name.Lexeme, this);
+            environment.Define(_declaration.Name.Lexeme, _selfReference ?? this);
         }
         // #775: a `function*` expression binds its own dynamic `this`; the bound receiver (or globalThis for
         // a plain call) is defined in the generator's OWN body environment, NOT a parent scope.
@@ -219,6 +221,7 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSGeneratorFunctionValue
         var bound = new SharpTSAsyncArrowGeneratorFunction(
             _declaration, _closure, hasOwnThis: true, thisBound: true, boundThis: thisObject);
         bound._functionProperties = _functionProperties;
+        bound._selfReference = _selfReference ?? this;
         return bound;
     }
 

@@ -82,7 +82,6 @@ public sealed class BlockGeneratorExpressionTests
         run();
         """;
 
-    // Receiver-bound expression self identity is an interpreter gap (#2344).
     public const string EvaluationIdentitySource = """
         class Maker {
             make(seed: number): any {
@@ -285,6 +284,12 @@ public sealed class BlockGeneratorExpressionTests
         yield return ["live-async", LiveAsyncSource, "4 4\n12 12\n20 true\n23 23\n"];
         yield return ["evaluation-identity", EvaluationIdentitySource,
             "true true true true\n111 true 222\nnamed named 1 1\ntrue true true\nfalse true\n"];
+        yield return ["evaluation-identity-async",
+            "async function run() {\n" + EvaluationIdentitySource
+                .Replace("return function* named", "return async function* named")
+                .Replace("left.next().value", "(await left.next()).value")
+                .Replace("right.next().value", "(await right.next()).value") + "\n}\nrun();",
+            "true true true true\n111 true 222\nnamed named 1 1\ntrue true true\nfalse true\n"];
         yield return ["initialization-shadow", InitializationAndShadowSource, "ReferenceError\n42 100\n"];
         yield return ["invocation", InvocationSource, "named 0 0\n1\n2|40|3,4|3\nfinally\n45 true\n"];
         yield return ["suspended-owner", SuspendedOwnerSource, "1 1\n10 10\n11 11\ntrue 11 11\n"];
@@ -298,7 +303,7 @@ public sealed class BlockGeneratorExpressionTests
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases()
-        .Where(row => (string)row[0] is not ("evaluation-identity" or "initialization-shadow"))
+        .Where(row => (string)row[0] is not "initialization-shadow")
         .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted })
         .Concat(Cases().Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Compiled }));
 

@@ -7,6 +7,7 @@ namespace SharpTS.Tests.IntegrationTests;
 /// End-to-end tests for the <c>var</c> keyword and JavaScript var-hoisting semantics.
 /// Covers both interpreter and compiled modes.
 /// </summary>
+[Collection("ExternalProcessTests")]
 public class CliVarTests
 {
     private static (int ExitCode, string StdOut) CompileAndRun(

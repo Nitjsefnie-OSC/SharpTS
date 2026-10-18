@@ -21,7 +21,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         public bool CanRelayClassSelf { get; } = canRelayClassSelf;
     }
 
-    private sealed class Binding(Token name, Owner owner, bool candidate, Binding? shadowOf, bool lexical)
+    private sealed class Binding(Token name, Owner owner, bool candidate, Binding? shadowOf, bool lexical,
+        bool ordinaryHandlerCandidate, object? moduleOwner)
     {
         public Token Name { get; } = name;
         public Owner Owner { get; } = owner;
@@ -32,22 +33,29 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         public bool Lexical { get; } = lexical;
         public bool GeneratorCaptured { get; set; }
         public bool GeneratorEligible { get; set; } = lexical;
+        public bool OrdinaryHandlerCandidate { get; } = ordinaryHandlerCandidate;
+        public object? ModuleOwner { get; } = moduleOwner;
     }
 
     private readonly List<Owner> _owners = [];
     private readonly Stack<Dictionary<string, Binding>> _scopes = new();
     private readonly Dictionary<Token, Binding> _declarations = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<object, Dictionary<string, Binding>> _moduleRootBindings = new(ReferenceEqualityComparer.Instance);
+    private readonly object _singleSourceRootOwner = new();
     private readonly Dictionary<object, Dictionary<string, Binding>> _tentative = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _cells = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Token> _ordinaryBlockShadows = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Token, Expr.ClassExpr> _classSelfDeclarations = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Expr.Variable, Expr.ClassExpr> _classSelfReferences = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.Variable> _transportedClassSelfReferences = new(ReferenceEqualityComparer.Instance);
     private int _loopBodyDepth;
     private int _classDepth;
+    private object? _currentModuleOwner;
 
     public Dictionary<object, Dictionary<string, Token>> ClosureCaptures { get; } = new(ReferenceEqualityComparer.Instance);
     public IEnumerable<Token> CellDeclarations => _cells;
     public bool IsCellDeclaration(Token token) => _cells.Contains(token);
+    public bool IsOrdinaryBlockShadowDeclaration(Token token) => _ordinaryBlockShadows.Contains(token);
     public bool TryGetClassSelfOwner(Expr.Variable reference, out Expr.ClassExpr owner) =>
         _classSelfReferences.TryGetValue(reference, out owner!);
     public bool CanTransportClassSelf(Expr.Variable reference) => _transportedClassSelfReferences.Contains(reference);
@@ -60,18 +68,28 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         return false;
     }
 
-    public void Analyze(List<Stmt> statements)
+    public void Analyze(List<Stmt> statements, IReadOnlyDictionary<Stmt, object>? moduleOwners = null)
     {
         _owners.Clear(); _scopes.Clear(); _declarations.Clear(); _tentative.Clear(); _cells.Clear(); ClosureCaptures.Clear();
         _classSelfDeclarations.Clear();
+        _moduleRootBindings.Clear();
+        _ordinaryBlockShadows.Clear();
         _classSelfReferences.Clear();
         _transportedClassSelfReferences.Clear();
         _loopBodyDepth = 0;
         _classDepth = 0;
+        _currentModuleOwner = null;
         _owners.Add(new(new object(), !HasDirectSuspension(statements), false));
-        EnterScope(statements, allowCandidates: false, hoistVars: true);
-        try { foreach (var statement in statements) Visit(statement); }
-        finally { _scopes.Pop(); _owners.Clear(); }
+        EnterScope(statements, allowCandidates: false, hoistVars: true, moduleOwners: moduleOwners);
+        try
+        {
+            foreach (var statement in statements)
+            {
+                _currentModuleOwner = moduleOwners?.GetValueOrDefault(statement);
+                Visit(statement);
+            }
+        }
+        finally { _scopes.Pop(); _owners.Clear(); _currentModuleOwner = null; }
 
         foreach (var binding in _declarations.Values)
             if (binding.Eligible && binding.Captured && binding.ShadowOf is null) _cells.Add(binding.Name);
@@ -117,7 +135,22 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         return null;
     }
 
-    private void Declare(Token name, bool candidate = false, bool unsupportedShadow = false, Binding? shadowOf = null, bool lexical = false)
+    private Binding? VisibleOrdinaryBlockBinding(string name)
+    {
+        int remainingScopes = _scopes.Count;
+        foreach (var scope in _scopes)
+        {
+            // Closure analysis shares a flattened root dictionary across modules.
+            // Only the new shadow policy uses the actual module's root bindings.
+            if (--remainingScopes == 0)
+                return _moduleRootBindings.GetValueOrDefault(_currentModuleOwner ?? _singleSourceRootOwner)?.GetValueOrDefault(name);
+            if (scope.TryGetValue(name, out var binding)) return binding;
+        }
+        return null;
+    }
+
+    private void Declare(Token name, bool candidate = false, bool unsupportedShadow = false, Binding? shadowOf = null,
+        bool lexical = false, bool ordinaryHandlerCandidate = false, bool rootOwned = true)
     {
         // Header, catch and switch lists have their own selected-cell scope
         // emitters. A same-name binding must mask a selected generator cell
@@ -140,35 +173,70 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
                     break;
                 }
         if (!_declarations.TryGetValue(name, out var binding))
-            _declarations[name] = binding = new(name, _owners[^1], candidate, shadowOf, lexical);
+            _declarations[name] = binding = new(name, _owners[^1], candidate, shadowOf, lexical, ordinaryHandlerCandidate, _currentModuleOwner);
         if (lexical && !_owners[^1].CanOwnGeneratorCells) binding.GeneratorEligible = false;
         _scopes.Peek()[name.Lexeme] = binding;
+        if (_scopes.Count == 1 && rootOwned)
+        {
+            var module = _currentModuleOwner ?? _singleSourceRootOwner;
+            if (!_moduleRootBindings.TryGetValue(module, out var roots))
+                _moduleRootBindings[module] = roots = new(StringComparer.Ordinal);
+            roots[name.Lexeme] = binding;
+        }
     }
 
-    private void EnterScope(IEnumerable<Stmt> statements, bool allowCandidates, bool hoistVars = false, bool unsupportedShadows = false, bool generatorLexicals = false)
+    private void EnterScope(IEnumerable<Stmt> statements, bool allowCandidates, bool hoistVars = false,
+        bool unsupportedShadows = false, bool generatorLexicals = false, bool ordinaryHandler = false,
+        bool ordinaryBlock = false, IReadOnlyDictionary<Stmt, object>? moduleOwners = null)
     {
         _scopes.Push(new(StringComparer.Ordinal));
         if (hoistVars)
         {
             var vars = new VarCollector();
-            foreach (var statement in statements) vars.Visit(statement);
-            foreach (var token in vars.Names) Declare(token);
+            foreach (var statement in statements)
+            {
+                vars.Names.Clear();
+                vars.OwnedNames.Clear();
+                vars.Visit(statement);
+                var previousModule = _currentModuleOwner;
+                if (moduleOwners is not null) _currentModuleOwner = moduleOwners.GetValueOrDefault(statement);
+                try { foreach (var token in vars.Names) Declare(token, rootOwned: vars.OwnedNames.Contains(token)); }
+                finally { _currentModuleOwner = previousModule; }
+            }
         }
-        foreach (var statement in statements) Predeclare(statement, allowCandidates, unsupportedShadows, generatorLexicals);
+        foreach (var statement in statements)
+        {
+            var previousModule = _currentModuleOwner;
+            if (moduleOwners is not null) _currentModuleOwner = moduleOwners.GetValueOrDefault(statement);
+            try { Predeclare(statement, allowCandidates, unsupportedShadows, generatorLexicals, ordinaryHandler, ordinaryBlock); }
+            finally { _currentModuleOwner = previousModule; }
+        }
     }
 
-    private void Predeclare(Stmt statement, bool allowCandidates, bool unsupportedShadows, bool generatorLexicals)
+    private void Predeclare(Stmt statement, bool allowCandidates, bool unsupportedShadows, bool generatorLexicals,
+        bool ordinaryHandler, bool ordinaryBlock)
     {
         void Lexical(Token name)
         {
-            bool direct = allowCandidates && _loopBodyDepth > 0 && _owners[^1].CanOwnCells;
+            bool handlerCandidate = ordinaryHandler && _owners[^1].CanOwnCells;
+            bool loopCandidate = allowCandidates && _loopBodyDepth > 0 && _owners[^1].CanOwnCells;
+            bool blockShadow = ordinaryBlock && VisibleOrdinaryBlockBinding(name.Lexeme) is { } outer
+                && !ReferenceEquals(outer.Name, name)
+                && ReferenceEquals(outer.ModuleOwner, _currentModuleOwner);
+            if (blockShadow) _ordinaryBlockShadows.Add(name);
+            // A captured ordinary block shadow must own storage independently of
+            // the outer parameter/local, even when that outer binding has no cell.
+            // Existing loop candidates retain their broader forwarding policy.
+            bool blockCandidate = blockShadow && !loopCandidate && _owners[^1].CanOwnCells;
+            bool direct = handlerCandidate || loopCandidate || blockCandidate;
             var parent = !direct && allowCandidates && _owners[^1].CanOwnGeneratorCells
                 ? VisibleBinding(name.Lexeme) : null;
             bool relatedShadow = parent is { Candidate: true } or { Lexical: true };
             // A callback's inner shadow also needs a cell when it masks an actual
             // outer cell. Final selection waits for that parent's selected status.
-            Declare(name, direct || (relatedShadow && _owners[^1].CanOwnCells), unsupportedShadows, relatedShadow ? parent : null,
-                lexical: generatorLexicals);
+            Declare(name, direct || (relatedShadow && _owners[^1].CanOwnCells),
+                unsupportedShadows && !handlerCandidate, relatedShadow ? parent : null,
+                lexical: generatorLexicals, ordinaryHandlerCandidate: handlerCandidate || blockCandidate);
         }
         switch (statement)
         {
@@ -189,7 +257,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
                         }
                 break;
             case Stmt.Sequence sequence:
-                foreach (var child in sequence.Statements) Predeclare(child, allowCandidates, unsupportedShadows, generatorLexicals);
+                foreach (var child in sequence.Statements) Predeclare(child, allowCandidates, unsupportedShadows, generatorLexicals, ordinaryHandler, ordinaryBlock);
                 break;
         }
     }
@@ -219,7 +287,9 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         for (int index = _owners.Count - 1; index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
         {
             var owner = _owners[index];
-            if (!owner.CanForward) { binding.Eligible = false; continue; }
+            if (!owner.CanForward || binding.OrdinaryHandlerCandidate &&
+                owner.Node is not Expr.ArrowFunction { IsAsync: false, IsGenerator: false })
+            { binding.Eligible = false; continue; }
             RecordCapture(owner.Node, name, binding);
         }
     }
@@ -260,7 +330,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
     protected override void VisitBlock(Stmt.Block stmt)
     {
-        EnterScope(stmt.Statements, allowCandidates: true, generatorLexicals: true);
+        EnterScope(stmt.Statements, allowCandidates: true, generatorLexicals: true, ordinaryBlock: true);
         try { base.VisitBlock(stmt); }
         finally { _scopes.Pop(); }
     }
@@ -310,21 +380,28 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
     protected override void VisitTryCatch(Stmt.TryCatch stmt)
     {
-        VisitStatementScope(stmt.TryBlock);
+        VisitStatementScope(stmt.TryBlock, ordinaryHandler: true);
         if (stmt.CatchBlock is { } catchBlock)
         {
-            EnterScope(catchBlock, allowCandidates: false, unsupportedShadows: true, generatorLexicals: true);
-            if (stmt.CatchParam is { } parameter) Declare(parameter, unsupportedShadow: true, lexical: true);
+            EnterScope(catchBlock, allowCandidates: false, unsupportedShadows: true,
+                generatorLexicals: true, ordinaryHandler: true);
+            if (stmt.CatchParam is { } parameter)
+            {
+                bool candidate = _owners[^1].CanOwnCells;
+                Declare(parameter, candidate, unsupportedShadow: !candidate, lexical: true,
+                    ordinaryHandlerCandidate: candidate);
+            }
             try { foreach (var statement in catchBlock) Visit(statement); }
             finally { _scopes.Pop(); }
         }
-        if (stmt.FinallyBlock is { } finallyBlock) VisitStatementScope(finallyBlock);
+        if (stmt.FinallyBlock is { } finallyBlock) VisitStatementScope(finallyBlock, ordinaryHandler: true);
     }
 
-    private void VisitStatementScope(List<Stmt> statements)
+    private void VisitStatementScope(List<Stmt> statements, bool ordinaryHandler = false)
     {
         // These AST lists are not emitted through EmitBlock's cell prologue.
-        EnterScope(statements, allowCandidates: false, unsupportedShadows: true, generatorLexicals: true);
+        EnterScope(statements, allowCandidates: false, unsupportedShadows: true,
+            generatorLexicals: true, ordinaryHandler: ordinaryHandler);
         try { foreach (var statement in statements) Visit(statement); }
         finally { _scopes.Pop(); }
     }
@@ -367,7 +444,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         _loopBodyDepth = 0;
         bool directSuspension = HasDirectSuspension(body, expressionBody);
         _owners.Add(new(node, synchronous && _classDepth == 0 && !directSuspension,
-            node is Expr.ArrowFunction && synchronous && _classDepth == 0,
+            node is Expr.ArrowFunction { IsGenerator: false } && _classDepth == 0,
             canOwnGeneratorCells, canRelayClassSelf));
         EnterScope([], allowCandidates: false);
         try
@@ -499,10 +576,33 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
     private sealed class VarCollector : AstVisitorBase
     {
+        // Keep the existing inventory unchanged; the subset is provenance for
+        // the new ordinary-block shadow lookup, not a new var-hoisting policy.
         public List<Token> Names { get; } = [];
-        protected override void VisitVar(Stmt.Var stmt) { if (stmt.IsVar) Names.Add(stmt.Name); }
-        protected override void VisitForOf(Stmt.ForOf stmt) { if (stmt.IsDeclaration && stmt.IsVar) Names.Add(stmt.Variable); Visit(stmt.Body); }
-        protected override void VisitForIn(Stmt.ForIn stmt) { if (stmt.IsDeclaration && stmt.IsVar) Names.Add(stmt.Variable); Visit(stmt.Body); }
+        public HashSet<Token> OwnedNames { get; } = new(ReferenceEqualityComparer.Instance);
+        private int _independentOwnerDepth;
+
+        private void Add(Token name, bool runtime = true)
+        {
+            Names.Add(name);
+            if (_independentOwnerDepth == 0 && runtime) OwnedNames.Add(name);
+        }
+
+        protected override void VisitVar(Stmt.Var stmt) { if (stmt.IsVar) Add(stmt.Name, !stmt.IsDeclare); }
+        protected override void VisitForOf(Stmt.ForOf stmt) { if (stmt.IsDeclaration && stmt.IsVar) Add(stmt.Variable); Visit(stmt.Body); }
+        protected override void VisitForIn(Stmt.ForIn stmt) { if (stmt.IsDeclaration && stmt.IsVar) Add(stmt.Variable); Visit(stmt.Body); }
+        protected override void VisitNamespace(Stmt.Namespace stmt)
+        {
+            _independentOwnerDepth++;
+            try { base.VisitNamespace(stmt); }
+            finally { _independentOwnerDepth--; }
+        }
+        protected override void VisitDeclareModule(Stmt.DeclareModule stmt)
+        {
+            _independentOwnerDepth++;
+            try { base.VisitDeclareModule(stmt); }
+            finally { _independentOwnerDepth--; }
+        }
         protected override void VisitArrowFunction(Expr.ArrowFunction expr) { }
         protected override void VisitFunction(Stmt.Function stmt) { }
         protected override void VisitClass(Stmt.Class stmt) { }

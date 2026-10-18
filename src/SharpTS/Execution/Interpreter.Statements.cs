@@ -323,7 +323,7 @@ public partial class Interpreter
             if (!fallen && !matched)
             {
                 object? caseValue = (await ctx.EvaluateExprAsync(caseItem.Value)).ToObject();
-                if (IsEqual(subject, caseValue))
+                if (IsStrictEqual(subject, caseValue))
                 {
                     matched = true;
                 }
@@ -375,7 +375,7 @@ public partial class Interpreter
             if (!fallen && !matched)
             {
                 object? caseValue = Evaluate(caseItem.Value);
-                if (IsEqual(subject, caseValue))
+                if (IsStrictEqual(subject, caseValue))
                 {
                     matched = true;
                 }
@@ -419,21 +419,11 @@ public partial class Interpreter
 
         try
         {
-            foreach (var stmt in tryCatch.TryBlock)
+            pendingResult = await ExecuteHandlerBlockCore(ctx, tryCatch.TryBlock);
+            if (pendingResult.Type == ExecutionResult.ResultType.Throw)
             {
-                var result = await ctx.ExecuteStmtAsync(stmt);
-                if (result.Type == ExecutionResult.ResultType.Throw)
-                {
-                    pendingResult = result;
-                    (exceptionHandled, pendingResult) = await HandleCatchBlockCore(
-                        ctx, tryCatch, result.Value, fromHostException: false);
-                    break;
-                }
-                else if (result.IsAbrupt)
-                {
-                    pendingResult = result;
-                    break;
-                }
+                (exceptionHandled, pendingResult) = await HandleCatchBlockCore(
+                    ctx, tryCatch, pendingResult.Value, fromHostException: false);
             }
         }
         catch (Runtime.Exceptions.WorkerTerminatedException)
@@ -458,7 +448,7 @@ public partial class Interpreter
         // Always execute finally
         if (tryCatch.FinallyBlock != null)
         {
-            var finallyResult = await ExecuteFinallyCore(ctx, tryCatch.FinallyBlock);
+            var finallyResult = await ExecuteHandlerBlockCore(ctx, tryCatch.FinallyBlock);
             if (finallyResult.IsAbrupt)
             {
                 // Finally block overrides previous jump/throw
@@ -521,11 +511,12 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Core implementation for executing finally blocks, shared between sync and async paths.
+    /// Executes one handler list and restores its outer scope before catch dispatch.
     /// </summary>
-    private async ValueTask<ExecutionResult> ExecuteFinallyCore(IEvaluationContext ctx, List<Stmt> finallyBlock)
+    private async ValueTask<ExecutionResult> ExecuteHandlerBlockCore(IEvaluationContext ctx, List<Stmt> statements)
     {
-        foreach (var stmt in finallyBlock)
+        using var scope = PushScope(CreateHandlerEnvironment());
+        foreach (var stmt in statements)
         {
             var result = await ctx.ExecuteStmtAsync(stmt);
             if (result.IsAbrupt) return result;
@@ -551,21 +542,11 @@ public partial class Interpreter
 
         try
         {
-            foreach (var stmt in tryCatch.TryBlock)
+            pendingResult = ExecuteHandlerBlock(tryCatch.TryBlock);
+            if (pendingResult.Type == ExecutionResult.ResultType.Throw)
             {
-                var result = Execute(stmt);
-                if (result.Type == ExecutionResult.ResultType.Throw)
-                {
-                    pendingResult = result;
-                    (exceptionHandled, pendingResult) = HandleCatchBlock(
-                        tryCatch, result.Value, fromHostException: false);
-                    break;
-                }
-                else if (result.IsAbrupt)
-                {
-                    pendingResult = result;
-                    break;
-                }
+                (exceptionHandled, pendingResult) = HandleCatchBlock(
+                    tryCatch, pendingResult.Value, fromHostException: false);
             }
         }
         catch (GeneratorReturnException grex)
@@ -597,7 +578,7 @@ public partial class Interpreter
         // Always execute finally
         if (tryCatch.FinallyBlock != null)
         {
-            var finallyResult = ExecuteFinallyBlock(tryCatch.FinallyBlock);
+            var finallyResult = ExecuteHandlerBlock(tryCatch.FinallyBlock);
             if (finallyResult.IsAbrupt)
             {
                 // Finally block overrides previous jump/throw
@@ -684,11 +665,21 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Pure sync implementation for executing finally blocks.
+    /// Creates a lexical handler scope without changing existing var placement.
     /// </summary>
-    private ExecutionResult ExecuteFinallyBlock(List<Stmt> finallyBlock)
+    private RuntimeEnvironment CreateHandlerEnvironment()
     {
-        foreach (var stmt in finallyBlock)
+        var previous = _environment;
+        return new RuntimeEnvironment(previous)
+        {
+            VarDeclarationTarget = previous.VarDeclarationTarget ?? previous
+        };
+    }
+
+    private ExecutionResult ExecuteHandlerBlock(List<Stmt> statements)
+    {
+        using var scope = PushScope(CreateHandlerEnvironment());
+        foreach (var stmt in statements)
         {
             var result = Execute(stmt);
             if (result.IsAbrupt) return result;
@@ -2001,8 +1992,9 @@ public partial class Interpreter
         {
             value = Evaluate(varStmt.Initializer);
         }
-        _environment.Define(varStmt.Name.Lexeme, value);
-        if (varStmt.IsVar && _environment.Enclosing is null)
+        var target = varStmt.IsVar ? _environment.VarDeclarationTarget ?? _environment : _environment;
+        target.Define(varStmt.Name.Lexeme, value);
+        if (varStmt.IsVar && target.Enclosing is null)
             GlobalThis.SetProperty(varStmt.Name.Lexeme, value);
         return ExecutionResult.Success();
     }

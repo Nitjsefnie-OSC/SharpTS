@@ -466,8 +466,7 @@ public partial class ILCompiler
         il.MarkLabel(tryMethodsLabel);
         EmitInheritedGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: false);
         EmitClassPrototypeFieldFallback(il);
-        if ((_classes.Builders[className].Attributes & TypeAttributes.Abstract) == 0
-            && classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
+        if (classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
             EmitDeclaredComputedMethodRead(il, _classes.Builders[className]);
 
         // 2c. Check instance getters (accessors with `get` keyword). JS semantics: reading
@@ -584,10 +583,6 @@ public partial class ILCompiler
         if (classStmt.Accessors?.Any(accessor => accessor.ComputedKey != null && !accessor.IsStatic) == true)
             EmitComputedInstanceGetterFallback(il);
 
-        if ((_classes.Builders[className].Attributes & TypeAttributes.Abstract) != 0
-            && classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
-            EmitDeclaredComputedMethodRead(il, _classes.Builders[className]);
-
         // Evaluated computed members may supply the other accessor half or a
         // later data method. Only claim a missing getter after those own reads.
         EmitSetterOnlyUndefinedBranches(il, classStmt.Accessors, backingFields);
@@ -637,12 +632,12 @@ public partial class ILCompiler
                     il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(guestField.GuestSetter));
                 else
                 {
-                // Unbox value types
-                if (backingField.FieldType.IsValueType)
-                    il.Emit(OpCodes.Unbox_Any, backingField.FieldType);
-                else if (backingField.FieldType != _types.Object)
-                    il.Emit(OpCodes.Castclass, backingField.FieldType);
-                il.Emit(OpCodes.Stfld, backingField);
+                    // Unconstrained T can represent either a value or a reference type.
+                    if (backingField.FieldType.IsValueType || backingField.FieldType.IsGenericParameter)
+                        il.Emit(OpCodes.Unbox_Any, backingField.FieldType);
+                    else if (backingField.FieldType != _types.Object)
+                        il.Emit(OpCodes.Castclass, backingField.FieldType);
+                    il.Emit(OpCodes.Stfld, EmitterTypeHelpers.SelfFieldReference(backingField));
                 }
                 il.Emit(OpCodes.Ret);
 
@@ -675,7 +670,7 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Ldarg_2);
                 var setterParams = setterMethod.GetParameters();
                 var paramType = setterParams.Length > 0 ? setterParams[0].ParameterType : _types.Object;
-                if (paramType.IsValueType)
+                if (paramType.IsValueType || paramType.IsGenericParameter)
                     il.Emit(OpCodes.Unbox_Any, paramType);
                 else if (paramType != _types.Object)
                     il.Emit(OpCodes.Castclass, paramType);
@@ -1093,19 +1088,6 @@ public partial class ILCompiler
         il.Emit(OpCodes.Stloc, method);
         il.Emit(OpCodes.Ldloc, method); il.Emit(OpCodes.Brfalse, absent);
         EmitComputedMethodOwnerCheck(il, method, owner, absent);
-
-        if ((owner.Attributes & TypeAttributes.Abstract) != 0)
-        {
-            // Abstract owners have no nominal guest prototype yet. Preserve the
-            // prior ordinary dispatch until that independent prototype gap is
-            // addressed, without publishing their method onto Object.prototype.
-            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, method);
-            il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.Constructor);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(absent);
-            return;
-        }
 
         var prototype = il.DeclareLocal(_types.Object);
         var havePrototype = il.DefineLabel();

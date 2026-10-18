@@ -809,11 +809,11 @@ public partial class ILCompiler
         var defCtx = GetDefinitionContext();
         var resolvedClassName = defCtx.ResolveClassName(typeArg);
         if (_classes.Builders.TryGetValue(resolvedClassName, out var classBuilder))
-            return classBuilder;
+            return _typeMapper.IsDynamicClassInstance(_typeMap.GetClassType(resolvedClassName)) ? _types.Object : classBuilder;
 
         // Also try the simple name
         if (_classes.Builders.TryGetValue(typeArg, out classBuilder))
-            return classBuilder;
+            return _typeMapper.IsDynamicClassInstance(_typeMap.GetClassType(typeArg)) ? _types.Object : classBuilder;
 
         // 5. Check for array types (e.g., "number[]")
         if (typeArg.EndsWith("[]"))
@@ -855,10 +855,12 @@ public partial class ILCompiler
         var resolvedBaseName = defCtx.ResolveClassName(baseName);
         if (_classes.Builders.TryGetValue(resolvedBaseName, out var classBuilder))
         {
+            if (_typeMapper.IsDynamicClassInstance(_typeMap.GetClassType(resolvedBaseName))) return _types.Object;
             baseType = classBuilder;
         }
         else if (_classes.Builders.TryGetValue(baseName, out classBuilder))
         {
+            if (_typeMapper.IsDynamicClassInstance(_typeMap.GetClassType(baseName))) return _types.Object;
             baseType = classBuilder;
         }
         else if (baseName == "Map")

@@ -129,6 +129,10 @@ public partial class ILCompiler
         // If an inner arrow needs $functionDC, parent arrows also need it
         PropagateFunctionDCRequirements();
 
+        // Ordinary declarations can need a method's environment solely to create
+        // a capturing descendant. Resolve that typed-reference path before definitions.
+        ResolveInnerFunctionMethodDCSources();
+
         // Define arrow scope display classes (for arrow-local vars captured by nested arrows)
         // Skip async arrows - their bodies are emitted by async state machine emitters,
         // which don't support arrow scope DC instantiation
@@ -200,6 +204,11 @@ public partial class ILCompiler
                     : ReturnSlotAnalysis.BlockReturnsMayBeUndefined(arrow.BlockBody, _typeMap);
                 var logicalReturnType = ParameterTypeResolver.ResolveReturnType(
                     funcTypeInfo.ReturnType, isAsync: false, _typeMapper, returnMayBeUndefined);
+                // Arrow methods and their display classes do not own CLR generic parameters.
+                // An open generic instance return must use the boxed runtime representation.
+                // Persisted type definitions can report ContainsGenericParameters as false.
+                if (logicalReturnType.IsGenericTypeDefinition || logicalReturnType.ContainsGenericParameters)
+                    logicalReturnType = _types.Object;
 
                 // Use typed return if:
                 // 1. Return type is not void (void methods need special handling)
@@ -490,7 +499,7 @@ public partial class ILCompiler
             // args must pad with the `undefined` sentinel (JS semantics), not CLR null. (#640)
             MarkPadsUndefined(_closures.ArrowMethods[arrow]);
             MarkFunctionLength(_closures.ArrowMethods[arrow], arrow.Parameters);
-            MarkFunctionName(_closures.ArrowMethods[arrow], arrow.Name?.Lexeme ?? "");
+            MarkFunctionName(_closures.ArrowMethods[arrow], arrow.RuntimeName ?? arrow.Name?.Lexeme ?? "");
             if (arrow.IsGenerator || !arrow.HasOwnThis || arrow.IsMethod)
                 MarkNonConstructible(_closures.ArrowMethods[arrow]);
             else DefineNewTargetBody(_closures.ArrowMethods[arrow]);
@@ -1338,7 +1347,9 @@ public partial class ILCompiler
             // #838 (additive): expands `members` with renamed storage keys for write-captured shadows AND
             // records ArrowFunctionDCFieldRenames[nestedSyncArrow] so the sync arrow's body resolves the
             // renamed field generically (main's CurrentArrowFunctionDCFieldRenames path).
-            ApplyWriteCaptureRenames(members, GeneratorBlockScopeRenamer.Compute(arrow, preserveDebugBindings: EmitDebugSymbols));
+            ApplyWriteCaptureRenames(members, GeneratorBlockScopeRenamer.Compute(arrow,
+                preserveDebugBindings: EmitDebugSymbols,
+                outerCaptureNames: _closures.Analyzer.GetLoopBodyCellCaptures(arrow)?.Keys));
 
             RegisterFunctionDisplayClass(key, members, arrow);
             if (_closures.FunctionDisplayClasses.ContainsKey(key))
@@ -1778,21 +1789,33 @@ public partial class ILCompiler
             {
                 ctx.CurrentArrowFunctionDCField = functionDCField;
 
-                // Also set up the captured function locals info so LocalVariableResolver can use it
-                if (_closures.ArrowFunctionDCSource.TryGetValue(arrow, out var sourceFuncName) &&
-                    _closures.FunctionDisplayClassFields.TryGetValue(sourceFuncName, out var funcDCFields))
-                {
-                    ctx.FunctionDisplayClassFields = funcDCFields;
-                    ctx.CapturedFunctionLocals = [.. funcDCFields.Keys];
-                    if (_arrowClassDefinitionCaptures.TryGetValue(arrow, out var classCaptures))
-                        ctx.CapturedFunctionLocals.ExceptWith(classCaptures);
-                }
-
                 // #838: redirect this arrow's write-captured block-scope shadows to their renamed DC
                 // storage keys so they reach the shadow's field rather than the outer same-named binding.
                 ctx.CurrentArrowFunctionDCFieldRenames =
                     _closures.ArrowFunctionDCFieldRenames.TryGetValue(arrow, out var dcFieldRenames)
                         ? dcFieldRenames : null;
+
+                // Also set up the captured function locals info so LocalVariableResolver can use it
+                if (_closures.ArrowFunctionDCSource.TryGetValue(arrow, out var sourceFuncName) &&
+                    _closures.FunctionDisplayClassFields.TryGetValue(sourceFuncName, out var funcDCFields))
+                {
+                    ctx.FunctionDisplayClassFields = funcDCFields;
+                    object? sourceOwner = _closures.FunctionAstNodes.GetValueOrDefault(sourceFuncName)
+                        ?? _closures.AsyncArrowDCKeys.FirstOrDefault(entry => entry.Value == sourceFuncName).Key;
+                    _arrowClassDefinitionCaptures.TryGetValue(arrow, out var classCaptures);
+                    ctx.CapturedFunctionLocals = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (string sourceName in _closures.Analyzer.GetCaptures(arrow))
+                    {
+                        // The reference and full field map also transport storage for descendants.
+                        // Only this arrow's genuine binding may override one of its own locals.
+                        if (sourceOwner is null || classCaptures?.Contains(sourceName) == true ||
+                            !ReferenceEquals(_closures.Analyzer.GetCaptureSource(arrow, sourceName), sourceOwner))
+                            continue;
+                        string fieldName = dcFieldRenames?.GetValueOrDefault(sourceName) ?? sourceName;
+                        if (funcDCFields.ContainsKey(fieldName))
+                            ctx.CapturedFunctionLocals.Add(fieldName);
+                    }
+                }
             }
 
             // Set the $arrowDC field if this arrow captures arrow-scope variables
@@ -1811,13 +1834,16 @@ public partial class ILCompiler
                     _closures.ArrowScopeDisplayClassFields.TryGetValue(sourceArrowRef, out var arrowDCFields))
                 {
                     ctx.ParentArrowScopeDisplayClassFields = arrowDCFields;
-                    ctx.ParentArrowCapturedLocals = [.. arrowDCFields.Keys];
+                    ctx.ParentArrowCapturedLocals = _closures.Analyzer.GetCaptures(arrow)
+                        .Where(name => arrowDCFields.ContainsKey(name)
+                            && ReferenceEquals(_closures.Analyzer.GetCaptureSource(arrow, name), sourceArrowRef))
+                        .ToHashSet(StringComparer.Ordinal);
                     // Legacy fallback: arrows without their own arrow-scope DC
                     // also see these as their "own" fields (read through
                     // $arrowDC) — preserved for compatibility with code paths
                     // that haven't been updated to check the parent slots.
                     ctx.ArrowScopeDisplayClassFields = arrowDCFields;
-                    ctx.CapturedArrowLocals = [.. arrowDCFields.Keys];
+                    ctx.CapturedArrowLocals = [.. ctx.ParentArrowCapturedLocals];
                 }
             }
 
@@ -2034,6 +2060,8 @@ public partial class ILCompiler
                 }
             }
         }
+
+        ctx.UseOwnedCapturedParameterStorage = true;
 
         if (arrow.ExpressionBody != null)
         {

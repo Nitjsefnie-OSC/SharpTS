@@ -16,7 +16,8 @@ internal static class StableExactClassMethodCallAnalyzer
     public static void Analyze(
         List<Stmt> program,
         TypeMap? typeMap,
-        RuntimeFeatureSet? features)
+        RuntimeFeatureSet? features,
+        TypeMapper typeMapper)
     {
         if (typeMap is null
             || features?.UsesDynamicPropertyDescriptors != false
@@ -41,7 +42,8 @@ internal static class StableExactClassMethodCallAnalyzer
 
             foreach (var method in calls)
             {
-                if (TryGetInstanceClassName(typeMap.Get(method.Object), out string? receiverClass)
+                if (!typeMapper.IsDynamicClassInstance(typeMap.Get(method.Object))
+                    && TryGetInstanceClassName(typeMap.Get(method.Object), out string? receiverClass)
                     && receiverClass == candidateClassName)
                 {
                     typeMap.MarkStableExactPrimitiveMethodCall(method);
@@ -54,6 +56,7 @@ internal static class StableExactClassMethodCallAnalyzer
 
         foreach (var method in visitor.ImmediateCalls)
         {
+            if (typeMapper.IsDynamicClassInstance(typeMap.Get(method.Object))) continue;
             typeMap.MarkStableExactPrimitiveMethodCall(method);
             if (method.Object is Expr.New construction &&
                 ProvesNativeFieldLifetime(construction, [method], sources.Classes, typeMap))

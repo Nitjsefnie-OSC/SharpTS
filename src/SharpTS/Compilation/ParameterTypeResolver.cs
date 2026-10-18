@@ -32,6 +32,13 @@ public static class ParameterTypeResolver
         {
             // Fallback: try to resolve from parameter type annotations
             var fallback = parameters.Select(p => WidenIfUndefinedReachableParam(ResolveParameterType(p, typeMapper), p, typeMap)).ToArray();
+            // Match the full-type path: optional slots must carry the undefined
+            // sentinel without converting it to a string or a numeric value.
+            for (int i = 0; i < parameters.Count; i++)
+            {
+                if (parameters[i] is { IsOptional: true, DefaultValue: null, IsRest: false })
+                    fallback[i] = typeof(object);
+            }
             WidenDefaultedParamsToObject(fallback, parameters, typeof(object));
             ForceRestParamsToListMarker(fallback, parameters);
             return fallback;
@@ -456,7 +463,7 @@ public static class ParameterTypeResolver
                 .ToArray();
         }
 
-        WidenDefaultedMethodParams(resolved, parameters, className, methodName, isStatic, typeMap);
+        WidenMethodParams(resolved, parameters, className, methodName, isStatic, typeMap);
         ForceRestParamsToListMarker(resolved, parameters);
         return resolved;
     }
@@ -464,10 +471,10 @@ public static class ParameterTypeResolver
     /// <summary>
     /// Widens a method parameter slot to <c>object</c> wherever a default needs to distinguish the
     /// <c>$Undefined</c> sentinel from JavaScript <c>null</c> — non-virtually for static methods, and
-    /// hierarchy-consistently for (virtual) instance methods. No-op when no defaults are
-    /// involved, so the common method keeps its fast unboxed slots. (#705/#723/#737)
+    /// hierarchy-consistently for (virtual) instance methods. Raw numeric/boolean parameter
+    /// writes also widen the complete override group. Other methods keep unboxed slots.
     /// </summary>
-    private static void WidenDefaultedMethodParams(
+    private static void WidenMethodParams(
         Type[] resolved,
         List<Stmt.Parameter> parameters,
         string className,
@@ -484,7 +491,7 @@ public static class ParameterTypeResolver
             return;
         }
 
-        // Virtual: widen each optional slot the override group needs as object, so every override
+        // Virtual: widen each raw or optional slot the override group needs as object, so every override
         // keeps an identical CLR signature (preserving vtable dispatch).
         var mask = ComputeInstanceMethodWidenMask(className, methodName, resolved.Length, typeMap);
         for (int i = 0; i < resolved.Length; i++)
@@ -498,7 +505,8 @@ public static class ParameterTypeResolver
     /// explicitly supplied <c>null</c>. The decision is
     /// <b>hierarchy-consistent</b>: a position is flagged when ANY member of the method's override
     /// group (its root declaration plus every class that overrides it) makes that position an
-    /// optional parameter. Flagging the whole group keeps every override's CLR signature
+    /// optional parameter or can assign a raw value into a numeric/boolean parameter.
+    /// Flagging the whole group keeps every override's CLR signature
     /// identical, so a derived override that adds a default still lands in the base's vtable slot
     /// and a base-typed call dispatches to it correctly. (#737)
     /// </summary>
@@ -513,7 +521,7 @@ public static class ParameterTypeResolver
         if (root == null)
             return mask;
 
-        // Union the optional positions over every class whose method shares this root
+        // Union the raw and optional positions over every class whose method shares this root
         // declaration (i.e. the override group). A class only declares the method if it is a key in
         // its OWN Methods map (lookup walks the chain, but Methods holds own-declared entries only).
         foreach (var (otherName, otherClass) in typeMap.ClassTypes)
@@ -529,11 +537,7 @@ public static class ParameterTypeResolver
             int count = Math.Min(paramCount, f.ParamTypes.Count);
             for (int i = 0; i < count; i++)
             {
-                // Positions below the member's arity are required there — a required param is always
-                // supplied, so it never needs an undefined-capable slot on this member's behalf.
-                if (i < minArity)
-                    continue;
-                mask[i] = true;
+                mask[i] |= i >= minArity || typeMap.IsClassMethodParameterUndefinedReachable(f, i);
             }
         }
 
@@ -650,15 +654,14 @@ public static class ParameterTypeResolver
                     return typeof(object);
                 }
 
-                // Optional parameters without defaults should use object for null-checking
+                // An omitted optional guest argument must retain undefined, including
+                // reference annotations whose CLR slots cannot hold that sentinel.
                 if (i < parameters.Count &&
                     parameters[i].DefaultValue == null &&
-                    parameters[i].IsOptional)
+                    parameters[i].IsOptional &&
+                    !parameters[i].IsRest)
                 {
-                    if (mappedType.IsValueType)
-                    {
-                        return typeof(object);
-                    }
+                    return typeof(object);
                 }
 
                 return i < parameters.Count

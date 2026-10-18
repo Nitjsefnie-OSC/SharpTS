@@ -216,6 +216,10 @@ public abstract record Expr
         // Ordinary function expressions also have HasOwnThis, so retain this distinction.
         public bool IsMethod { get; init; }
 
+        // A lowered declaration retains its observable name without introducing the
+        // separate immutable self binding of a named function expression.
+        public string? RuntimeName { get; init; }
+
         // #945: marks the sync forwarding arrow NestedFunctionLifter substitutes for a capturing nested
         // generator that was hoisted into a generator encloser's body. Tells the generator function-DC
         // pass (ComputeMutatedCapturedGeneratorVars) to route this arrow's read-only forwarded captures

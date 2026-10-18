@@ -407,8 +407,8 @@ public partial class ILEmitter
         // The common numeric consumer (`=== 43`, `sum + …`) then pays no box/unbox; a boxed consumer
         // re-boxes lazily via EmitBoxIfNeeded. Mirrors the #859 promoted-accumulator path for plain
         // strings; the any-typed receiver still routes through the boxed EmitStringOnlyMethodCall path.
-        if (methodName == "charCodeAt" && !methodGet.Optional && arguments.Count <= 1
-            && _ctx.TypeMap?.Get(methodGet.Object) is TypeSystem.TypeInfo.String)
+        if (methodName == "charCodeAt" && !methodGet.Optional
+            && Emitters.StringEmitter.EmitsUnboxedCharCodeAt(_ctx.TypeMap, methodGet.Object, arguments))
         {
             EmitExpression(methodGet.Object);
             EmitBoxIfNeeded(methodGet.Object);

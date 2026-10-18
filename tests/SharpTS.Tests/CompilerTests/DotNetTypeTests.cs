@@ -939,6 +939,25 @@ public class DotNetTypeTests
     }
 
     [Fact]
+    public void CompiledDelegate_TypedCallableFieldConvertsAtTheInteropBoundary()
+    {
+        const string source = """
+            @DotNetType("SharpTS.Tests.Infrastructure.CallbackFixture")
+            declare class CallbackFixture {
+                constructor();
+                doubleOf(callback: (n: number) => number, input: number): number;
+            }
+            class Holder { callback: (value: number) => number = (value: number) => value + 1; }
+            const fixture = new CallbackFixture(), holder = new Holder();
+            console.log(fixture.doubleOf(holder.callback, 10));
+            holder.callback = (value: number) => value + 3;
+            console.log(fixture.doubleOf(holder.callback, 10));
+            """;
+
+        Assert.Equal("22\n26\n", TestHarness.RunCompiledWithTestFixtures(source));
+    }
+
+    [Fact]
     public void CompiledDelegate_ZeroArgAction_Works()
     {
         var source = """

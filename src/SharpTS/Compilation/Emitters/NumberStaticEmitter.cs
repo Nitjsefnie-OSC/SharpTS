@@ -171,11 +171,20 @@ public sealed class NumberStaticEmitter : IStaticTypeEmitterStrategy
         IReadOnlyList<Expr> arguments)
         => emitter.Context.RuntimeFeatures?.UsesNumberConstructorMutation != true
             && !emitter.HasVariable("Number")
-            && arguments.Count == 2
-            && (IsStaticallyString(emitter.Context.TypeMap?.Get(arguments[0]))
-                || emitter is ExpressionEmitterBase expressionEmitter
+            && (IsDecimalStringParseInt(emitter.Context.TypeMap, arguments)
+                || arguments.Count == 2
+                    && ExpressionEmitterBase.TryGetInt32Literal(arguments[1], out int radix)
+                    && radix == 10
+                    && emitter is ExpressionEmitterBase expressionEmitter
                     && expressionEmitter.CanEmitStableIntegerCounterParseInt(
-                        arguments[0]))
+                        arguments[0]));
+
+    /// <summary>The checked argument shape shared by direct lowering and return-slot analysis.</summary>
+    internal static bool IsDecimalStringParseInt(
+        TypeSystem.TypeMap? typeMap, IReadOnlyList<Expr> arguments)
+        => arguments.Count == 2
+            && !arguments.Any(argument => argument is Expr.Spread)
+            && IsStaticallyString(typeMap?.Get(arguments[0]))
             && ExpressionEmitterBase.TryGetInt32Literal(arguments[1], out int radix)
             && radix == 10;
 

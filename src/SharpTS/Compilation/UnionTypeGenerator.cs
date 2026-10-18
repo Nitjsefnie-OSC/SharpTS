@@ -386,7 +386,7 @@ public class UnionTypeGenerator
 
         // default: return null
         il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Br_S, endLabel);
+        il.Emit(OpCodes.Br, endLabel);
 
         // case N: return (object)_vN
         for (int i = 0; i < valueFields.Count; i++)
@@ -399,7 +399,7 @@ public class UnionTypeGenerator
             if (mappedTypes[i].IsValueType)
                 il.Emit(OpCodes.Box, mappedTypes[i]);
 
-            il.Emit(OpCodes.Br_S, endLabel);
+            il.Emit(OpCodes.Br, endLabel);
         }
 
         il.MarkLabel(endLabel);

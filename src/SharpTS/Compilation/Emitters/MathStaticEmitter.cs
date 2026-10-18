@@ -435,14 +435,20 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
 
     internal static bool EmitsUnboxedFixedArityMinMax(
         IEmitterContext emitter, string methodName, IReadOnlyList<Expr> arguments)
+        => EmitsUnboxedFixedArityMinMax(emitter.Context.TypeMap,
+            emitter.Context.RuntimeFeatures, methodName, arguments);
+
+    internal static bool EmitsUnboxedFixedArityMinMax(
+        TypeSystem.TypeMap? typeMap, RuntimeFeatureSet? features,
+        string methodName, IReadOnlyList<Expr> arguments)
     {
         if (methodName is not ("min" or "max")
-            || emitter.Context.RuntimeFeatures?.UsesMathMutation != false
+            || features?.UsesMathMutation != false
             || arguments.Any(argument => argument is Expr.Spread))
             return false;
 
         return arguments.All(argument =>
-            emitter.Context.TypeMap?.Get(argument) is
+            typeMap?.Get(argument) is
                 TypeSystem.TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER }
                 or TypeSystem.TypeInfo.NumberLiteral
                 or TypeSystem.TypeInfo.Enum { Kind: TypeSystem.EnumKind.Numeric });

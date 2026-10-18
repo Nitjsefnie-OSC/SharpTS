@@ -5,20 +5,20 @@ namespace SharpTS.Tests.CompilerTests;
 
 public partial class StandaloneDllTests
 {
-    [Theory]
-    [InlineData("private-field")]
-    [InlineData("preservation")]
-    public void Isolated_Issue2146AsyncReturnThenables_PreserveSupportedReturnPaths(string name)
+    [Theory, MemberData(nameof(AsyncReturnThenableTests.SavedCases), MemberType = typeof(AsyncReturnThenableTests))]
+    public void Isolated_AsyncReturnThenables_VerifyBeforeExecution(string name, string source, string expected)
     {
-        var (source, expected) = name switch
-        {
-            "private-field" => (PrivateCallableFieldTests.AsyncReturnThenableSource, "47\n"),
-            "preservation" => (AsyncReturnThenableTests.PreservationSource, AsyncReturnThenableTests.PreservationExpected),
-            _ => throw new ArgumentException("Unknown return-path case", nameof(name))
-        };
         using var directory = IntegrationTests.CliTestHelper.CreateTempDirectory();
         var path = directory.CreateFile("main.ts", source);
-        AssertStandaloneConstructorIdentity(directory.Path, path,
-            directory.GetPath("async-return-thenable-" + name + ".dll"), expected);
+        var output = directory.GetPath("async-return-thenable-" + name + ".dll");
+        var compile = IntegrationTests.CliTestHelper.RunCli(
+            $"--no-tsconfig --compile \"{path}\" -o \"{output}\" --standalone --verify",
+            directory.Path, TimeSpan.FromSeconds(60));
+        Assert.True(compile.ExitCode == 0, compile.StandardOutput + compile.StandardError);
+        Assert.Contains("IL verification passed.", compile.StandardOutput);
+        Assert.All(GetAssemblyReferences(output), reference => Assert.StartsWith("System.", reference));
+        Assert.False(File.Exists(directory.GetPath("SharpTS.dll")));
+        Assert.Equal(expected, ExecuteCompiledDllIsolated(output, timeoutMs: 30000,
+            verifyStandardError: error => Assert.Empty(error), standardInput: ""));
     }
 }

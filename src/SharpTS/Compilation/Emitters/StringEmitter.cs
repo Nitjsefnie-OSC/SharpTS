@@ -455,6 +455,9 @@ public sealed class StringEmitter : ITypeEmitterStrategy
     }
 
     private static bool IsSideEffectFreePrimitiveString(Expr expression, CompilationContext ctx)
+        => IsSideEffectFreePrimitiveString(expression, ctx.TypeMap);
+
+    private static bool IsSideEffectFreePrimitiveString(Expr expression, TypeSystem.TypeMap? typeMap)
     {
         while (true)
         {
@@ -480,9 +483,25 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         if (expression is not Expr.Variable and not Expr.Literal { Value: string })
             return false;
 
-        return ctx.TypeMap?.Get(expression) is TypeSystem.TypeInfo.String
+        return typeMap?.Get(expression) is TypeSystem.TypeInfo.String
             or TypeSystem.TypeInfo.StringLiteral;
     }
+
+    internal static bool EmitsUnboxedCharCodeAt(
+        TypeSystem.TypeMap? typeMap, Expr receiver, IReadOnlyList<Expr> arguments)
+        => typeMap?.Get(receiver) is TypeSystem.TypeInfo.String
+            && arguments.Count <= 1
+            && (arguments.Count == 0 || arguments[0] is not Expr.Spread);
+
+    internal static bool EmitsUnboxedPrimitiveSearch(
+        TypeSystem.TypeMap? typeMap, RuntimeFeatureSet? features, Expr receiver,
+        string methodName, IReadOnlyList<Expr> arguments)
+        => features?.UsesStringPrototypeMutation == false
+            && methodName is "indexOf" or "includes"
+            && IsSideEffectFreePrimitiveString(receiver, typeMap)
+            && arguments.Count is 1 or 2
+            && IsSideEffectFreePrimitiveString(arguments[0], typeMap)
+            && (arguments.Count == 1 || IsSideEffectFreePrimitiveNumber(arguments[1], typeMap));
 
     private static bool TryEmitPrimitiveStringIntrinsic(
         IEmitterContext emitter,
@@ -497,10 +516,8 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         bool isSearch = methodName is "indexOf" or "includes";
         if (isSearch)
         {
-            if (arguments.Count is < 1 or > 2
-                || !IsSideEffectFreePrimitiveString(arguments[0], ctx)
-                || (arguments.Count == 2
-                    && !IsSideEffectFreePrimitiveNumber(arguments[1], ctx)))
+            if (!EmitsUnboxedPrimitiveSearch(ctx.TypeMap, ctx.RuntimeFeatures,
+                    receiver, methodName, arguments))
                 return false;
 
             emitter.EmitExpression(receiver);
@@ -552,6 +569,10 @@ public sealed class StringEmitter : ITypeEmitterStrategy
 
     private static bool IsSideEffectFreePrimitiveNumber(
         Expr expression, CompilationContext ctx)
+        => IsSideEffectFreePrimitiveNumber(expression, ctx.TypeMap);
+
+    private static bool IsSideEffectFreePrimitiveNumber(
+        Expr expression, TypeSystem.TypeMap? typeMap)
     {
         while (true)
         {
@@ -577,9 +598,9 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         bool sideEffectFree = expression is Expr.Variable
             or Expr.Literal { Value: double }
             || expression is Expr.Unary unary
-                && IsSideEffectFreePrimitiveNumber(unary.Right, ctx);
+                && IsSideEffectFreePrimitiveNumber(unary.Right, typeMap);
         return sideEffectFree
-            && ctx.TypeMap?.Get(expression) is TypeSystem.TypeInfo.Primitive
+            && typeMap?.Get(expression) is TypeSystem.TypeInfo.Primitive
                 { Type: TokenType.TYPE_NUMBER }
                 or TypeSystem.TypeInfo.NumberLiteral;
     }

@@ -14,6 +14,7 @@ public partial class RuntimeEmitter
         EmittedFunctionConstructionRuntime FunctionConstruction,
         EmittedFunctionValueRuntime FunctionValues,
         EmittedNumericCoercionRuntime NumericCoercion,
+        EmittedPromiseRuntime? Promise,
         EmittedRegExpRuntime RegExps,
         EmittedStringCoercionRuntime StringCoercion,
         MethodInfo ArrayConstructor,
@@ -97,6 +98,32 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.ArrayConstructor);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notArrayTypeLabel);
+
+        // Promise constructor values carry Task<object>, whose CLR callback
+        // constructors do not implement the guest executor protocol.
+        if (inputs.Promise is { } promise)
+        {
+            var notPromiseType = il.DefineLabel();
+            var executorPresent = il.DefineLabel();
+            var executorReady = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldtoken, _types.TaskOfObject);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Bne_Un, notPromiseType);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Brtrue, executorPresent);
+            il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
+            il.Emit(OpCodes.Br, executorReady);
+            il.MarkLabel(executorPresent);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.MarkLabel(executorReady);
+            il.Emit(OpCodes.Call, promise.FromExecutor);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notPromiseType);
+        }
 
         // An aliased RegExp constructor is represented by the emitted $RegExp
         // Type. Activator cannot supply its JavaScript optional arguments (and

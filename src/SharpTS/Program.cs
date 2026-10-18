@@ -613,7 +613,8 @@ static void RunModuleFile(
 
         // Type checking across all modules (still uses Check-style API for modules)
         // Module type checking has its own error handling
-        var checker = new TypeChecker(options.TypeCheckerOptions);
+        var checker = new TypeChecker(options.TypeCheckerOptions)
+            .WithSourceDiagnosticPolicy(options.CheckJs);
         checker.SetDecoratorMode(decoratorMode);
         var typeMap = checker.CheckModules(allModules, resolver);
 
@@ -834,7 +835,8 @@ static void CompileModuleFile(string absolutePath, string outputPath, bool prese
     var allModules = loaded.RuntimeModules;
     var typeModules = loaded.TypeModules;
 
-    var checker = new TypeChecker(globalOptions.TypeCheckerOptions);
+    var checker = new TypeChecker(globalOptions.TypeCheckerOptions)
+        .WithSourceDiagnosticPolicy(globalOptions.CheckJs);
     checker.SetDecoratorMode(decoratorMode);
     if (hosted)
         checker.EnableHostedTopLevelAwait();

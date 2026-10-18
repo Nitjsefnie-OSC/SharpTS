@@ -1206,7 +1206,7 @@ public partial class Interpreter
     /// <param name="b">The second value.</param>
     /// <returns><c>true</c> if the values are loosely equal; otherwise <c>false</c>.</returns>
     /// <remarks>
-    /// Uses object equality. Both null values are equal.
+    /// Preserves nullish and object identity rules, then applies primitive coercion.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Equality">MDN Equality</seealso>
     private bool IsEqual(object? a, object? b)
@@ -1227,7 +1227,18 @@ public partial class Interpreter
                 or SharpTSBooleanPrototype
             && IsPrimitiveOperand(a))
             b = ToPrimitive(b, PrimitiveHint.Default);
-        return a!.Equals(b);
+        // Boolean conversion precedes Number/String comparison. Strings on both
+        // sides keep lexical equality, and Symbol/BigInt never enter ToNumber.
+        if (a is bool leftBoolean) a = leftBoolean ? 1d : 0d;
+        if (b is bool rightBoolean) b = rightBoolean ? 1d : 0d;
+        if (a is double && b is string || a is string && b is double)
+            return ToNumber(a) == ToNumber(b);
+        // Double.Equals considers NaN equal to itself; JS uses IEEE equality.
+        if (a is double leftNumber && b is double rightNumber)
+            return leftNumber == rightNumber;
+        // A ToPrimitive hook can produce null even though neither original
+        // operand was nullish.
+        return object.Equals(a, b);
     }
 
     /// <summary>

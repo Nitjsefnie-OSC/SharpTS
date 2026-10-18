@@ -1395,6 +1395,21 @@ public partial class ILCompiler
 
         if (main.ReturnsExitCode)
         {
+            Label? nonNumeric = null;
+            if (target.ReturnType != _types.Double)
+            {
+                // Numeric annotations can have an object ABI when forwarding a raw call.
+                // Match async/interpreted hosted main: only an actual number requests exit.
+                var result = il.DeclareLocal(_types.Object);
+                if (target.ReturnType.IsValueType) il.Emit(OpCodes.Box, target.ReturnType);
+                il.Emit(OpCodes.Stloc, result);
+                il.Emit(OpCodes.Ldloc, result);
+                il.Emit(OpCodes.Isinst, _types.Double);
+                nonNumeric = il.DefineLabel();
+                il.Emit(OpCodes.Brfalse, nonNumeric.Value);
+                il.Emit(OpCodes.Ldloc, result);
+                il.Emit(OpCodes.Unbox_Any, _types.Double);
+            }
             il.Emit(OpCodes.Conv_I4);
             var exitCode = il.DeclareLocal(_types.Int32);
             il.Emit(OpCodes.Stloc, exitCode);
@@ -1402,6 +1417,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldloc, exitCode);
             il.Emit(OpCodes.Callvirt, typeof(SharpTSHostedRuntimeBase).GetMethod(
                 nameof(SharpTSHostedRuntimeBase.CompleteProgram))!);
+            if (nonNumeric is { } skipped) il.MarkLabel(skipped);
         }
         else
         {

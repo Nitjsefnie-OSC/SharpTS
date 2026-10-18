@@ -28,6 +28,10 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     private bool _ownsConstructionFrame;
     private ClassConstructionFrame? _constructionFrame;
 
+    // Only try/finally scopes redirect var declarations to their previous home.
+    // Invocation and ordinary block environments start unmarked.
+    internal RuntimeEnvironment? VarDeclarationTarget { get; set; }
+
     // Ordinary invocations and class initializers explicitly own a null slot;
     // true arrows and blocks inherit their lexical constructor invocation.
     internal ClassConstructionFrame? ConstructionFrame

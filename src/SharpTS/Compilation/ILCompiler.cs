@@ -138,6 +138,7 @@ public partial class ILCompiler
 
     // Type information from static analysis
     private TypeMap _typeMap = null!;
+    private RawCallStorageAnalysis? _rawCallStorage;
 
     // Dead code analysis results
     private DeadCodeInfo? _deadCodeInfo;
@@ -650,7 +651,9 @@ public partial class ILCompiler
         _typeMap = typeMap;
         _deadCodeInfo = deadCodeInfo;
         _isStrictMode = Parsing.DirectivePrologue.HasUseStrict(statements);
-        statements = NestedFunctionLifter.Lift(statements, _entryPointDebugScope?.Spans);
+        _typeMapper.HeldClassConstructions = HeldClassConstructionInfo.Analyze(statements, typeMap, _typeMapper);
+        _rawCallStorage = RawCallStorageAnalysis.Capture(statements, typeMap);
+        statements = NestedFunctionLifter.Lift(statements, _entryPointDebugScope?.Spans, typeMap, _rawCallStorage.RecordRewrite);
         _lexicalBindingNames = LexicalBindingNameCollector.Collect(statements);
         _features ??= new RuntimeFeatureDetector().Detect(statements, _typeMap);
         // The stable iterator result shape must be known before Phase 1 emits its
@@ -664,6 +667,9 @@ public partial class ILCompiler
         PrepareRepeatingClassDeclarations(statements);
         Phase2_AnalyzeClosures(statements, modules);
         _closures.ConstArrowBindings = ConstArrowBindingAnalyzer.Collect(statements);
+        StableExactClassMethodCallAnalyzer.Analyze(statements, _typeMap, _features, _typeMapper);
+        if (_rawCallStorage is not null) _rawCallStorage.Analyze(statements, _features);
+        else ForwardedReturnValueAnalyzer.Analyze(statements, _typeMap, _features, modules);
         StableMapIterationAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
         StableCustomIteratorAnalyzer.Analyze(
             statements, _typeMap, _closures.Analyzer, _features);
@@ -675,15 +681,14 @@ public partial class ILCompiler
             statements, _typeMap, _closures.Analyzer, hasObservablePromiseMutation);
         StablePrimitivePromiseAllAnalyzer.Analyze(
             statements, _typeMap, _closures.Analyzer, _features, hasObservablePromiseMutation);
-        StableExactClassMethodCallAnalyzer.Analyze(statements, _typeMap, _features);
         NonEscapingArrowLocalAnalyzer.Analyze(
             statements, _closures.DirectCallArrowBindings, _closures.Analyzer);
         StableNumericLoopCaptureAnalyzer.Analyze(
             statements, _typeMap, _closures.Analyzer, _closures.DirectCallArrowBindings);
         StableClassLocalScalarReplacementAnalyzer.Analyze(
-            statements, _typeMap, _closures.Analyzer, _features);
+            statements, _typeMap, _closures.Analyzer, _features, _typeMapper);
         _classes.CompactStorageClasses.UnionWith(
-            CompactClassStorageAnalyzer.Analyze(statements, _typeMap, _features));
+            CompactClassStorageAnalyzer.Analyze(statements, _typeMap, _features, _typeMapper));
         TypedArrayHoistAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
         ArrayLocalPromotionAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer, _features);
         StringAccumulatorPromotionAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
@@ -754,10 +759,16 @@ public partial class ILCompiler
     {
         _closures.Analyzer = new ClosureAnalyzer(_runtimeClassDeclarations);
         Dictionary<Stmt, IReadOnlySet<string>>? moduleClrImports = null;
+        Dictionary<Stmt, object>? moduleOwners = null;
         if (modules != null)
         {
+            moduleOwners = new(ReferenceEqualityComparer.Instance);
+            // Script files share a global scope; external modules own separate roots.
+            object scriptOwner = new();
             foreach (var module in modules)
             {
+                foreach (var statement in module.Statements)
+                    moduleOwners[statement] = module.IsScript ? scriptOwner : module;
                 var names = module.Statements.OfType<Stmt.Import>()
                     .Where(import => !import.IsTypeOnly && DotNetImports.IsDotNetSpecifier(import.ModulePath))
                     .SelectMany(import => import.NamedImports ?? [])
@@ -770,7 +781,7 @@ public partial class ILCompiler
                     moduleClrImports[statement] = names;
             }
         }
-        _closures.Analyzer.Analyze(statements, _typeMap, moduleClrImports);
+        _closures.Analyzer.Analyze(statements, _typeMap, moduleClrImports, moduleOwners);
     }
 
     /// <summary>
@@ -1268,6 +1279,11 @@ public partial class ILCompiler
         _entryModulePath = modules.Count > 0 ? Path.GetFullPath(modules[^1].Path) : null;
 
         RegisterModuleDocuments(modules);
+        _typeMapper.HeldClassConstructions = HeldClassConstructionInfo.Analyze(
+            modules.SelectMany(module => module.Statements), typeMap, _typeMapper);
+        _rawCallStorage = RawCallStorageAnalysis.Capture(
+            modules.SelectMany(module => module.Statements), typeMap,
+            modules.Where(module => !module.IsCommonJs).Select(module => (IEnumerable<Stmt>)module.Statements));
 
         // Relocate non-capturing nested generator/async/state-machine-nested function declarations
         // to each module's top level (#470, #501). Compile-path only. The Statements property is
@@ -1275,7 +1291,7 @@ public partial class ILCompiler
         // in place.
         foreach (var m in modules)
         {
-            var lifted = NestedFunctionLifter.Lift(m.Statements, m.Document?.Spans);
+            var lifted = NestedFunctionLifter.Lift(m.Statements, m.Document?.Spans, typeMap, _rawCallStorage.RecordRewrite);
             if (!ReferenceEquals(lifted, m.Statements))
             {
                 m.Statements.Clear();

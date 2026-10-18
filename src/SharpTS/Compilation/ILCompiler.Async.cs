@@ -12,6 +12,13 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class ILCompiler
 {
+    private static AsyncStateAnalyzer.AsyncFunctionAnalysis AddAsyncReturnCompletionState(
+        AsyncStateAnalyzer.AsyncFunctionAnalysis analysis) => analysis with
+        {
+            AwaitPointCount = analysis.AwaitPointCount + 1,
+            AwaitPoints = [.. analysis.AwaitPoints, new(analysis.AwaitPointCount, null, [])]
+        };
+
     private void DefineAsyncFunction(Stmt.Function funcStmt)
     {
         // Analyze the async function for await points and hoisted variables
@@ -39,6 +46,8 @@ public partial class ILCompiler
                 funcStmt, qualifiedFunctionName);
             return;
         }
+
+        analysis = AddAsyncReturnCompletionState(analysis);
 
         // Create state machine builder
         var smBuilder = new AsyncStateMachineBuilder(_moduleBuilder, _types, _async.StateMachineCounter++);
@@ -382,6 +391,7 @@ public partial class ILCompiler
         AsyncStateAnalyzer.AsyncFunctionAnalysis analysis)
     {
         if (analysis.AwaitPointCount != 0
+            || ReturnSlotAnalysis.BlockReturnsMayBeUndefined(function.Body, _typeMap)
             || analysis.AsyncArrows.Count != 0
             || analysis.HasTryCatch
             || analysis.UsesThis
@@ -403,7 +413,10 @@ public partial class ILCompiler
         var functionType = _typeMap?.GetFunctionType(qualifiedFunctionName)
             ?? _typeMap?.GetFunctionType(function.Name.Lexeme);
         if (functionType?.ReturnType is not TypeSystem.TypeInfo.Promise promised
-            || !IsStableNonThenablePrimitive(promised.ValueType))
+            || !IsStableNonThenablePrimitive(promised.ValueType)
+            // String slots deliberately use the object ABI (#318). Their annotation cannot
+            // prove primitive completion; a forwarded value may still be a thenable.
+            || ParameterTypeResolver.ResolveReturnType(promised.ValueType, isAsync: false, _typeMapper) == _types.Object)
         {
             return false;
         }
@@ -857,7 +870,9 @@ public partial class ILCompiler
         // an async arrow does not lift read-only captures into a name-keyed function display class (only
         // promoted WRITTEN captures, #682/#625), so the inner arrow's read flows through the per-arrow
         // snapshot path the pivot redirects — no DC exclusion is needed here, unlike async functions (#837).
-        var renameResult = GeneratorBlockScopeRenamer.Compute(arrow, arrowReadCapturesShareStorage: false, preserveDebugBindings: EmitDebugSymbols);
+        var renameResult = GeneratorBlockScopeRenamer.Compute(arrow, arrowReadCapturesShareStorage: false,
+            preserveDebugBindings: EmitDebugSymbols,
+            outerCaptureNames: _closures.Analyzer.GetLoopBodyCellCaptures(arrow)?.Keys);
         _arrowBlockScopeRenames = renameResult.Renames;
         _arrowBlockScopeCaptureRenames = renameResult.CaptureRenames;
 
@@ -898,7 +913,8 @@ public partial class ILCompiler
         foreach (var param in arrow.Parameters)
             hoistedLocals.Remove(param.Name.Lexeme);
 
-        return (awaitCount, hoistedLocals, _arrowBlockScopeRenames, _arrowBlockScopeCaptureRenames);
+        // The completion state is outside the body and must not affect local liveness.
+        return (awaitCount + 1, hoistedLocals, _arrowBlockScopeRenames, _arrowBlockScopeCaptureRenames);
     }
 
     private void AnalyzeArrowStmtForAwaits(Stmt stmt, ref int awaitCount, ref bool seenAwait,
@@ -941,15 +957,6 @@ public partial class ILCompiler
             case Stmt.Return r:
                 if (r.Value != null)
                     AnalyzeArrowExprForAwaits(r.Value, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
-                // Keep the custom async-arrow analyzer in lockstep with AsyncStateAnalyzer.VisitReturn:
-                // private calls may return the emitted Task<object> for an async private method. The
-                // emitter decides from the resolved MethodBuilder whether adoption is actually needed;
-                // reserving an unused state for a synchronous private call is harmless.
-                if (r.Value is Expr.CallPrivate)
-                {
-                    awaitCount++;
-                    seenAwait = true;
-                }
                 break;
             case Stmt.If i:
                 AnalyzeArrowExprForAwaits(i.Condition, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
@@ -1696,7 +1703,8 @@ public partial class ILCompiler
         bool isInstanceMethod = true, string? currentClassName = null, string? lexicalThisParameterName = null)
     {
         // Analyze async function to determine await points and hoisted variables
-        var analysis = _async.Analyzer.Analyze(method, preserveDebugBindings: EmitDebugSymbols);
+        var analysis = AddAsyncReturnCompletionState(
+            _async.Analyzer.Analyze(method, preserveDebugBindings: EmitDebugSymbols));
         if (isInstanceMethod && (_classExprs.DefinitionMethods.ContainsKey(methodBuilder) || _classExprs.Builders.Values.Any(builder => ReferenceEquals(builder, methodBuilder.DeclaringType))))
             analysis = analysis with { UsesThis = true };
 
@@ -1880,7 +1888,8 @@ public partial class ILCompiler
                 arrow.Parameters,
                 arrowAnalysis.HoistedLocals,
                 GetStandaloneLiveCaptureFields(arrow, captures),
-                GetDebugStaticCaptureNames(arrow, captures));
+                GetDebugStaticCaptureNames(arrow, captures),
+                _closures.Analyzer.GetLoopBodyCellCaptures(arrow));
 
             // Define the stub method
             DefineAsyncArrowStub(arrowBuilder);

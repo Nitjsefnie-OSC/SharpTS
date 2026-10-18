@@ -1980,7 +1980,7 @@ public partial class TypeChecker
                         returnType = CollapseOrCreateUnion(distinct);
                     }
 
-                    if (arrow.IsAsync && !arrow.IsGenerator && returnType is not TypeInfo.Void)
+                    if (arrow.IsAsync && !arrow.IsGenerator)
                         returnType = new TypeInfo.Promise(returnType);
                 }
             }

@@ -25,6 +25,7 @@ public class VariableResolver : AstVisitorBase
     // Stack of scopes - each scope maps variable names to their "initialized" status
     // (true = initialized, false = declared but not yet initialized)
     private readonly Stack<Dictionary<string, bool>> _scopes = new();
+    private readonly Dictionary<Dictionary<string, bool>, Dictionary<string, bool>?> _handlerVarTargets = new();
 
     // Track current class for 'this' and 'super' resolution
     private enum ClassType { None, Class, Subclass }
@@ -53,7 +54,29 @@ public class VariableResolver : AstVisitorBase
 
     private void BeginScope() => _scopes.Push(new Dictionary<string, bool>());
 
-    private void EndScope() => _scopes.Pop();
+    private void EndScope()
+    {
+        _handlerVarTargets.Remove(_scopes.Pop());
+    }
+
+    private void VisitHandlerBlock(List<Stmt> statements)
+    {
+        Dictionary<string, bool>? target = null;
+        if (_scopes.TryPeek(out var previous))
+            target = _handlerVarTargets.TryGetValue(previous, out var markedTarget) ? markedTarget : previous;
+
+        BeginScope();
+        _handlerVarTargets.Add(_scopes.Peek(), target);
+        try
+        {
+            foreach (var statement in statements)
+                Visit(statement);
+        }
+        finally
+        {
+            EndScope();
+        }
+    }
 
     /// <summary>
     /// Declares a variable in the current scope (marks it as "not yet initialized").
@@ -117,10 +140,15 @@ public class VariableResolver : AstVisitorBase
 
     protected override void VisitVar(Stmt.Var stmt)
     {
-        Declare(stmt.Name.Lexeme);
+        Dictionary<string, bool>? target = _scopes.TryPeek(out var current) ? current : null;
+        if (stmt.IsVar && target is not null && _handlerVarTargets.TryGetValue(target, out var markedTarget))
+            target = markedTarget;
+        if (target is not null)
+            target[stmt.Name.Lexeme] = false;
         if (stmt.Initializer != null)
             Visit(stmt.Initializer);
-        Define(stmt.Name.Lexeme);
+        if (target is not null)
+            target[stmt.Name.Lexeme] = true;
     }
 
     protected override void VisitConst(Stmt.Const stmt)
@@ -281,8 +309,7 @@ public class VariableResolver : AstVisitorBase
 
     protected override void VisitTryCatch(Stmt.TryCatch stmt)
     {
-        foreach (var s in stmt.TryBlock)
-            Visit(s);
+        VisitHandlerBlock(stmt.TryBlock);
 
         if (stmt.CatchBlock != null)
         {
@@ -299,8 +326,7 @@ public class VariableResolver : AstVisitorBase
 
         if (stmt.FinallyBlock != null)
         {
-            foreach (var s in stmt.FinallyBlock)
-                Visit(s);
+            VisitHandlerBlock(stmt.FinallyBlock);
         }
     }
 

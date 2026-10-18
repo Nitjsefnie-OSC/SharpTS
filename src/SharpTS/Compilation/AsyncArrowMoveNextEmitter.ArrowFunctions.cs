@@ -142,6 +142,7 @@ public partial class AsyncArrowMoveNextEmitter
                 var written = CapturedWriteAnalysis.CollectImmediateWrites(af);
                 written.IntersectWith(captureOrder);
                 written.ExceptWith(nestedBuilder.StandaloneLiveCaptureFields.Keys);
+                written.ExceptWith(nestedBuilder.StandaloneCellCaptureDeclarations.Keys);
                 if (written.Count > 0)
                 {
                     throw new CompileException(
@@ -163,6 +164,7 @@ public partial class AsyncArrowMoveNextEmitter
                     var name = captureOrder[i];
                     if (name == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
                     else if (name == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
+                    else if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(_il, _ctx!, af, name)) { }
                     else if (nestedBuilder.StandaloneLiveCaptureFields.TryGetValue(name, out var liveField))
                         StandaloneAsyncCaptureEmitter.EmitReference(_il, _ctx!, liveField, name, _builder);
                     else

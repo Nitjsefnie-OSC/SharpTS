@@ -1715,6 +1715,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitNew(Expr.New n)
     {
+        if (Ctx.TypeMapper.HeldClassConstructions?.RequiresValueConstruction(n) == true)
+        {
+            EmitDynamicConstruction(n);
+            return;
+        }
         if (IsRuntimeClassDeclarationReference(n.Callee))
         {
             EmitDynamicConstruction(n);
@@ -1760,6 +1765,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         var ctorBuilder = Ctx.ClassRegistry?.GetConstructorByQualifiedName(resolvedClassName);
         if (Ctx.Classes.TryGetValue(resolvedClassName, out var typeBuilder) && ctorBuilder != null)
         {
+            if (Ctx.TypeMapper.HeldClassConstructions is { } bindings && !bindings.HasCanonicalReference(n.Callee))
+            {
+                EmitDynamicConstruction(n);
+                return;
+            }
             Type targetType = typeBuilder;
             ConstructorInfo targetCtor = ctorBuilder;
 
@@ -1833,9 +1843,21 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     }
 
     /// <summary>
-    /// Resolves a TypeScript type argument name to a CLR type (stub — all map to object).
+    /// Resolves a type argument consistently in ordinary and suspended expression emitters.
     /// </summary>
-    protected virtual Type ResolveTypeArg(string typeArg) => typeof(object);
+    protected virtual Type ResolveTypeArg(string typeArg)
+    {
+        if (typeArg == "number") return Types.Double;
+        if (typeArg == "string") return Types.String;
+        if (typeArg == "boolean") return Types.Boolean;
+        string qualified = Ctx.ResolveClassName(typeArg);
+        if (Ctx.TypeMapper.ExternalTypes.TryGetValue(typeArg, out var external)
+            || Ctx.TypeMapper.ExternalTypes.TryGetValue(qualified, out external)) return external;
+        if (Ctx.GenericTypeParameters.TryGetValue(typeArg, out var owned)) return owned;
+        if (Ctx.Classes.TryGetValue(qualified, out var builder))
+            return Ctx.TypeMapper.IsDynamicClassInstance(Ctx.TypeMap?.GetClassType(qualified)) ? Types.Object : builder;
+        return SharpTS.Runtime.DotNet.DotNetTypeRegistry.ResolveFriendly(typeArg) ?? Types.Object;
+    }
 
     /// <summary>
     /// Resolves class name considering namespace imports and imported class aliases.
@@ -2536,15 +2558,14 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
     /// <summary>
     /// Emits a static class method used as a value through <c>this.method</c>.
-    /// Static CLR bodies have no arg0 receiver, so the generic property path cannot
-    /// first evaluate <c>this</c>. Resolve the current declaration or class expression
-    /// from compiler metadata and materialize its JavaScript function wrapper directly.
+    /// Compiler metadata identifies eligible static members; the actual constructor
+    /// receiver selects their live runtime value, including inherited overrides.
     /// </summary>
     protected bool TryEmitStaticClassMethodValue(Expr.Get g)
     {
         if (Ctx.ClassDefinitionParameterIndex != null || Ctx.ClassDefinitionVariableName != null
             || Ctx.HasGuestReceiver || Ctx.GuestThisVariableName != null) return false;
-        if (g.Object is not Expr.This || Ctx.IsInstanceMethod || Ctx.CurrentClassBuilder == null)
+        if (g.Optional || g.Object is not Expr.This || Ctx.IsInstanceMethod || Ctx.CurrentClassBuilder == null)
             return false;
 
         System.Reflection.MethodInfo? method = null;
@@ -2575,9 +2596,10 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         if (method == null)
             return false;
 
-        IL.Emit(OpCodes.Ldnull);
-        Types.EmitLoadMethodInfoViaHandle(IL, method);
-        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.FunctionConstruction.Constructor);
+        EmitExpression(g.Object);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Property);
         SetStackUnknown();
         return true;
     }

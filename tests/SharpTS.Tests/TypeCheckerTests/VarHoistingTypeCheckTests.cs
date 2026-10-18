@@ -1,4 +1,8 @@
+using SharpTS.Parsing;
 using SharpTS.Tests.Infrastructure;
+using SharpTS.Tests.SharedTests;
+using SharpTS.TypeSystem;
+using SharpTS.TypeSystem.Exceptions;
 using Xunit;
 
 namespace SharpTS.Tests.TypeCheckerTests;
@@ -108,6 +112,43 @@ public class VarHoistingTypeCheckTests
 
         var output = TestHarness.RunInterpreted(source);
         Assert.Equal("5", output.Trim());
+    }
+
+    [Fact]
+    public void BlockForwardReference_KeepsInnerDeclarationIdentity()
+    {
+        var document = new SourceDocument("block-shadow.ts", ForOfBodyLexicalCellTests.AnnotatedShadowSource);
+        var statements = new Parser(new Lexer(document.Text).ScanTokens())
+            .WithSourceDocument(document).ParseOrThrow();
+        var checker = new TypeChecker();
+        checker.Check(statements, document);
+
+        var outer = Assert.IsType<Stmt.Var>(statements[0]);
+        var block = Assert.IsType<Stmt.Block>(statements[1]);
+        var read = Assert.IsType<Stmt.Const>(block.Statements[0]);
+        var forward = Assert.IsType<Expr.Variable>(Assert.IsType<Expr.ArrowFunction>(read.Initializer).ExpressionBody);
+        var inner = Assert.IsType<Stmt.Var>(block.Statements[1]);
+        var outsideCall = Assert.IsType<Expr.Call>(Assert.IsType<Stmt.Expression>(statements[2]).Expr);
+        var outside = Assert.IsType<Expr.Variable>(Assert.Single(outsideCall.Arguments));
+
+        Assert.Same(inner.Name, Assert.Single(checker.Bindings.FindDefinitions(document, forward.Name.Start)).Name);
+        Assert.Same(outer.Name, Assert.Single(checker.Bindings.FindDefinitions(document, outside.Name.Start)).Name);
+        Assert.NotEqual(
+            Assert.Single(checker.Bindings.FindSymbols(document, forward.Name.Start)).Id,
+            Assert.Single(checker.Bindings.FindSymbols(document, outside.Name.Start)).Id);
+    }
+
+    [Theory]
+    [InlineData("let value = 1; const wrong: string = value;")]
+    [InlineData("const value = 'inner'; const wrong: number = value;")]
+    public void BlockForwardReference_LaterUsesRetainPreciseTypes(string declarations)
+    {
+        var source = "{ const read = () => value; " + declarations + " }";
+        var statements = new Parser(new Lexer(source).ScanTokens()).ParseOrThrow();
+
+        var error = Assert.Throws<TypeMismatchException>(() => new TypeChecker().Check(statements));
+
+        Assert.Equal("TS2322", error.Diagnostic.TsCode);
     }
 
     [Fact]

@@ -16,7 +16,8 @@ internal static class CompactClassStorageAnalyzer
     public static HashSet<Stmt.Class> Analyze(
         List<Stmt> program,
         TypeMap? typeMap,
-        RuntimeFeatureSet? features)
+        RuntimeFeatureSet? features,
+        TypeMapper typeMapper)
     {
         if (typeMap is null
             || features?.UsesDynamicPropertyDescriptors != false
@@ -32,6 +33,7 @@ internal static class CompactClassStorageAnalyzer
             .Where(pair => pair.Value.Count == 1)
             .Select(pair => pair.Value[0])
             .Where(IsLayoutCandidate)
+            .Where(statement => !typeMapper.IsDynamicClassInstance(typeMap.GetClassType(statement)))
             .Where(statement => !declarations.ExportedNames.Contains(statement.Name.Lexeme))
             .ToDictionary(statement => statement.Name.Lexeme, StringComparer.Ordinal);
         if (eligibleByName.Count == 0)

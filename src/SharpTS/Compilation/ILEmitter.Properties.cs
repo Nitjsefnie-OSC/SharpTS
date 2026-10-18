@@ -233,8 +233,7 @@ public partial class ILEmitter
 
             if (currentClassName != null)
             {
-                // Emit as static field access on the current class
-                if (EmitStaticMemberAccess(currentClassName, _ctx.CurrentClassBuilder, g.Object, g.Name.Lexeme))
+                if (EmitStaticMemberAccess(currentClassName, _ctx.CurrentClassBuilder, g.Object, g.Name.Lexeme, g.Optional))
                 {
                     return;
                 }
@@ -252,46 +251,14 @@ public partial class ILEmitter
             {
                 if (_ctx.ClassRegistry!.IsSourceStaticGetter(resolvedClassName, g.Name.Lexeme))
                 {
-                    EmitSourceStaticGetterRead(g.Object, g.Name.Lexeme);
+                    EmitRuntimeStaticMemberRead(g.Object, g.Name.Lexeme);
                     return;
                 }
 
                 // Try static getter first (for auto-accessors and explicit static accessors)
                 if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(resolvedClassName, g.Name.Lexeme, classBuilder, out var staticGetter))
                 {
-                    IL.Emit(OpCodes.Call, staticGetter!);
-
-                    // The getter returns the typed value (e.g., double for number).
-                    // Track the stack type so EmitBoxIfNeeded can box only when necessary.
-                    // This avoids unnecessary boxing in numeric contexts like `Counter.count + 1`.
-                    string pascalPropName = NamingConventions.ToPascalCase(g.Name.Lexeme);
-                    if (_ctx.PropertyTypes != null &&
-                        _ctx.PropertyTypes.TryGetValue(resolvedClassName, out var propTypes) &&
-                        propTypes.TryGetValue(pascalPropName, out var propType))
-                    {
-                        if (propType == _ctx.Types.Double)
-                        {
-                            SetStackType(StackType.Double);
-                        }
-                        else if (propType == _ctx.Types.Boolean)
-                        {
-                            SetStackType(StackType.Boolean);
-                        }
-                        else if (propType == _ctx.Types.String)
-                        {
-                            SetStackType(StackType.String);
-                        }
-                        else
-                        {
-                            // Other reference types
-                            SetStackUnknown();
-                        }
-                    }
-                    else
-                    {
-                        // Fallback: assume object return (legacy behavior)
-                        SetStackUnknown();
-                    }
+                    EmitStaticGetterCall(staticGetter!);
                     return;
                 }
 
@@ -315,15 +282,14 @@ public partial class ILEmitter
         {
             if (_ctx.ClassRegistry!.IsSourceStaticGetter(importedQualifiedClassName, g.Name.Lexeme))
             {
-                EmitSourceStaticGetterRead(g.Object, g.Name.Lexeme);
+                EmitRuntimeStaticMemberRead(g.Object, g.Name.Lexeme);
                 return;
             }
 
             // Try static getter first
             if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(importedQualifiedClassName, g.Name.Lexeme, importedClassBuilder, out var importedStaticGetter))
             {
-                IL.Emit(OpCodes.Call, importedStaticGetter!);
-                SetStackUnknown();
+                EmitStaticGetterCall(importedStaticGetter!);
                 return;
             }
 
@@ -2737,7 +2703,7 @@ public partial class ILEmitter
         var setterReturnsVoid = _ctx.Types.IsVoid(setterBuilder.ReturnType);
 
         // Save a copy for expression result (need to box if value type for consistent handling)
-        if (setterParamType.IsValueType)
+        if (setterParamType.IsValueType || setterParamType.IsGenericParameter)
         {
             // For value types: box first, then dup, then unbox for setter
             EmitBoxIfNeeded(value);

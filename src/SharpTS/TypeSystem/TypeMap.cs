@@ -13,6 +13,12 @@ namespace SharpTS.TypeSystem;
 /// </remarks>
 public class TypeMap
 {
+    private IReadOnlyDictionary<Token, BindingSymbol> _valueBindings = new Dictionary<Token, BindingSymbol>();
+    internal void SetValueBindings(IReadOnlyDictionary<Token, BindingSymbol> bindings) => _valueBindings = bindings;
+    internal BindingSymbol? GetValueBinding(Token token) => _valueBindings.GetValueOrDefault(token);
+    internal IEnumerable<KeyValuePair<Stmt.Class, TypeInfo.Class>> ClassDeclarations => _classDeclarations;
+    internal IEnumerable<KeyValuePair<Expr.ClassExpr, TypeInfo.Class>> ClassExpressions => _classExprTypes;
+
     private readonly Dictionary<Expr, TypeInfo> _types = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Token, TypeInfo.Class> _privateInOwners = new(ReferenceEqualityComparer.Instance);
 
@@ -35,10 +41,23 @@ public class TypeMap
     public TypeInfo.Function? GetClassMethodImplementation(Stmt.Function method) => _classMethodImplementations.GetValueOrDefault(method);
     public TypeInfo.Function? GetClassMethodImplementation(List<Stmt.Parameter> parameters) => _classMethodParameterImplementations.GetValueOrDefault(parameters);
     public TypeInfo.Function? GetClassMethodImplementation(TypeInfo callable) => _classMethodCallableImplementations.GetValueOrDefault(callable);
+
+    // Virtual methods sharing a slot must agree on the physical parameter type.
+    // Use the registered body identity rather than a public overload or a name lookup.
+    internal bool IsClassMethodParameterUndefinedReachable(TypeInfo.Function implementation, int index) =>
+        _classMethodImplementations.Any(entry => ReferenceEquals(entry.Value, implementation)
+            && index < entry.Key.Parameters.Count
+            && IsUndefinedReachableNumericParam(entry.Key.Parameters[index]));
     private readonly Dictionary<Expr.ClassExpr, TypeInfo.Class> _classExprTypes = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr> _undefinedReachableReturns = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<object> _undefinedReachableNumericLocals = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Stmt.Parameter> _undefinedReachableNumericParams = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Token> _rawCallStorage = new(ReferenceEqualityComparer.Instance);
+
+    // Stronger than conservative checker taint: an actual raw call flows into this exact
+    // source slot. Optimizer exceptions must not erase this representation evidence.
+    internal void MarkRawCallStorage(Token token) => _rawCallStorage.Add(token);
+    internal bool IsRawCallStorage(Token token) => _rawCallStorage.Contains(token);
     private readonly Dictionary<Token, TokenType> _promotableArrayLocals = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _promotableNumericMapLocals = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _promotableStringAccumulators = new(ReferenceEqualityComparer.Instance);
@@ -52,6 +71,7 @@ public class TypeMap
     private readonly Dictionary<Expr.ArrowFunction, StableCustomIteratorInfo> _stableCustomIteratorNextMethods =
         new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.Get> _stablePrimitivePromiseThenCalls = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Expr.Await, IReadOnlyList<Expr.ArrowFunction>> _stablePrimitivePromiseAwaits = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Expr.ArrowFunction, HashSet<string>> _stableNumericCaptureFields = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<object, HashSet<string>> _stableNumericFunctionCaptureFields = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _stableCustomIteratorNumericAccumulators = new(ReferenceEqualityComparer.Instance);
@@ -80,14 +100,17 @@ public class TypeMap
     public void SetClassType(string className, TypeInfo.Class classType) => _classTypes[className] = classType;
 
     private readonly Dictionary<Stmt.Class, TypeInfo.Class> _classDeclarations = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Token, TypeInfo.Class> _classDeclarationNames = new(ReferenceEqualityComparer.Instance);
 
     public void SetClassType(Stmt.Class declaration, TypeInfo.Class classType)
     {
         _classDeclarations[declaration] = classType;
+        _classDeclarationNames[declaration.Name] = classType;
         SetClassType(declaration.Name.Lexeme, classType);
     }
 
-    public TypeInfo.Class? GetClassType(Stmt.Class declaration) => _classDeclarations.GetValueOrDefault(declaration);
+    public TypeInfo.Class? GetClassType(Stmt.Class declaration) =>
+        _classDeclarations.GetValueOrDefault(declaration) ?? _classDeclarationNames.GetValueOrDefault(declaration.Name);
 
     /// <summary>
     /// Gets the class type by name, or null if not found.
@@ -368,6 +391,14 @@ public class TypeMap
     /// </summary>
     public bool IsStablePrimitivePromiseThen(Expr.Get method) =>
         _stablePrimitivePromiseThenCalls.Contains(method);
+
+    /// <summary>Records a stable chain's terminal await and handlers for a later emitted-ABI check.</summary>
+    public void MarkStablePrimitivePromiseAwait(Expr.Await expression, IReadOnlyList<Expr.ArrowFunction> handlers) =>
+        _stablePrimitivePromiseAwaits[expression] = handlers;
+
+    /// <summary>Returns the candidate handlers whose actual CLR signatures must still be checked.</summary>
+    public bool TryGetStablePrimitivePromiseAwait(Expr.Await expression, out IReadOnlyList<Expr.ArrowFunction> handlers) =>
+        _stablePrimitivePromiseAwaits.TryGetValue(expression, out handlers!);
 
     /// <summary>
     /// Marks a captured binding whose value-snapshot field may use an unboxed

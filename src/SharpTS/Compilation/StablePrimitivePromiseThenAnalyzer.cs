@@ -41,6 +41,17 @@ internal static class StablePrimitivePromiseThenAnalyzer
 
             foreach (var method in calls)
                 typeMap.MarkStablePrimitivePromiseThen(method);
+
+            // The initial promise also needs a primitive guarantee: the loop may perform no
+            // appends, in which case its seed reaches the terminal await unchanged.
+            if (visitor.NumericLiteralSeeds.Contains(key)
+                && visitor.TerminalAwaits.TryGetValue(key, out var terminalAwaits)
+                && calls.All(method => visitor.SingleHandlers.GetValueOrDefault(method) is not null))
+            {
+                var handlers = calls.Select(method => visitor.SingleHandlers[method]!).ToArray();
+                foreach (var expression in terminalAwaits)
+                    typeMap.MarkStablePrimitivePromiseAwait(expression, handlers);
+            }
         }
 
         foreach (var method in visitor.DirectSeedCalls)
@@ -138,6 +149,9 @@ internal static class StablePrimitivePromiseThenAnalyzer
         public HashSet<FunctionScopedBinding> Candidates { get; } = [];
         public Dictionary<FunctionScopedBinding, int> TerminalCounts { get; } = [];
         public Dictionary<FunctionScopedBinding, List<Expr.Get>> Calls { get; } = [];
+        public Dictionary<Expr.Get, Expr.ArrowFunction?> SingleHandlers { get; } = [];
+        public HashSet<FunctionScopedBinding> NumericLiteralSeeds { get; } = [];
+        public Dictionary<FunctionScopedBinding, List<Expr.Await>> TerminalAwaits { get; } = [];
         public HashSet<Expr.Get> DirectSeedCalls { get; } = new(ReferenceEqualityComparer.Instance);
         private HashSet<FunctionScopedBinding> Terminated { get; } = [];
 
@@ -150,7 +164,18 @@ internal static class StablePrimitivePromiseThenAnalyzer
             if (key.Scope != 0
                 && initializer is not null
                 && IsIntrinsicResolveSeed(initializer))
+            {
                 Candidates.Add(key);
+                if (ExpressionUnwrapper.Unwrap(initializer) is Expr.Call
+                    {
+                        Optional: false,
+                        Callee: Expr.Get { Optional: false },
+                        Arguments: [Expr.Literal { Value: double }]
+                    })
+                {
+                    NumericLiteralSeeds.Add(key);
+                }
+            }
         }
 
         protected override void VisitExpression(Stmt.Expression statement)
@@ -181,7 +206,7 @@ internal static class StablePrimitivePromiseThenAnalyzer
             {
                 if (Terminated.Contains(key))
                     Disqualified.Add(key);
-                RecordCall(key, method);
+                RecordCall(key, method, call);
                 VisitEligibleArguments(call);
                 return;
             }
@@ -215,11 +240,12 @@ internal static class StablePrimitivePromiseThenAnalyzer
             base.VisitCall(expression);
         }
 
-        private void RecordCall(FunctionScopedBinding key, Expr.Get method)
+        private void RecordCall(FunctionScopedBinding key, Expr.Get method, Expr.Call call)
         {
             if (!Calls.TryGetValue(key, out var calls))
                 Calls[key] = calls = [];
             calls.Add(method);
+            SingleHandlers[method] = call.Arguments is [Expr.ArrowFunction handler] ? handler : null;
         }
 
         private void VisitEligibleArguments(Expr.Call call)
@@ -232,7 +258,11 @@ internal static class StablePrimitivePromiseThenAnalyzer
         {
             if (ExpressionUnwrapper.Unwrap(expression.Expression) is Expr.Variable variable)
             {
-                RecordTerminal(Binding(variable.Name));
+                var key = Binding(variable.Name);
+                RecordTerminal(key);
+                if (!TerminalAwaits.TryGetValue(key, out var awaits))
+                    TerminalAwaits[key] = awaits = [];
+                awaits.Add(expression);
                 return;
             }
             base.VisitAwait(expression);

@@ -63,7 +63,10 @@ public partial class ILCompiler
     {
         if (name is null) return false;
         var expression = _classExprs.Names.FirstOrDefault(entry => entry.Value == name).Key;
-        var type = expression is null ? _typeMap.GetClassType(name) : _typeMap.GetClassExprType(expression);
+        var source = expression is null ? _classes.Declarations.FirstOrDefault(declaration =>
+            GetQualifiedClassDeclarationName(declaration) == name) : null;
+        var type = expression is not null ? _typeMap.GetClassExprType(expression)
+            : source is not null ? _typeMap.GetClassType(source) : _typeMap.GetClassType(name);
         return _typeMapper.IsDynamicClassInstance(type);
     }
 }

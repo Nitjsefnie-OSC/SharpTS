@@ -227,6 +227,13 @@ public sealed class BindingIndex
     internal BindingSymbol? GetSymbol(Token token, BindingNamespace bindingNamespace = BindingNamespace.Value) =>
         _tokens.TryGetValue(token, out var facets) ? facets.GetValueOrDefault(bindingNamespace) : null;
 
+    // Compilation also checks ASTs without SourceDocument. Unlike the editor index,
+    // this identity-only snapshot must retain those tokens and ignore fact budgets.
+    internal IReadOnlyDictionary<Token, BindingSymbol> CopyValueBindings() => _tokens
+        .Where(entry => entry.Value.ContainsKey(BindingNamespace.Value))
+        .ToFrozenDictionary(entry => entry.Key, entry => entry.Value[BindingNamespace.Value],
+            (IEqualityComparer<Token>)ReferenceEqualityComparer.Instance);
+
     private void RecordOccurrence(
         BindingSymbol symbol,
         Token token,

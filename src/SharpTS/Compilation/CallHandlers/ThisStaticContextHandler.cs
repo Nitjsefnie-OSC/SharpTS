@@ -14,7 +14,7 @@ public class ThisStaticContextHandler : ICallHandler
 
     public bool TryHandle(IEmitterContext emitter, Expr.Call call)
     {
-        if (call.Callee is not Expr.Get thisGet ||
+        if (call.Optional || call.Callee is not Expr.Get thisGet || thisGet.Optional ||
             thisGet.Object is not Expr.This)
             return false;
 
@@ -29,13 +29,27 @@ public class ThisStaticContextHandler : ICallHandler
         if (currentClassName == null)
             return false;
 
-        if (!ctx.ClassRegistry!.TryGetCallableStaticMethod(currentClassName, thisGet.Name.Lexeme, ctx.CurrentClassBuilder, out var thisStaticMethod))
+        if (!ctx.ClassRegistry!.TryGetCallableStaticMethod(currentClassName, thisGet.Name.Lexeme, ctx.CurrentClassBuilder, out _))
             return false;
 
         var il = emitter.IL;
-        var targetMethod = thisStaticMethod!;
-        emitter.EmitStaticCallArguments(call.Arguments, targetMethod);
-        il.Emit(OpCodes.Call, targetMethod);
+        // Lexical metadata proves this is a static method reference, but its
+        // actual constructor receiver selects the live method at runtime.
+        var receiver = emitter.SpillBoxedArg(thisGet.Object);
+        il.Emit(OpCodes.Ldloc, receiver);
+        il.Emit(OpCodes.Ldstr, thisGet.Name.Lexeme);
+        il.Emit(OpCodes.Call, ctx.Runtime!.ObjectRead.Property);
+        var callable = emitter.SpillStackToObjectLocal();
+
+        // Preserve lookup-before-arguments and retain both values across an
+        // argument await/yield using the shared registered spill machinery.
+        emitter.EmitArgsArrayWithSpread(call.Arguments);
+        var arguments = il.DeclareLocal(ctx.Types.ObjectArray);
+        il.Emit(OpCodes.Stloc, arguments);
+        il.Emit(OpCodes.Ldloc, receiver);
+        il.Emit(OpCodes.Ldloc, callable);
+        il.Emit(OpCodes.Ldloc, arguments);
+        il.Emit(OpCodes.Call, ctx.Runtime.Invocation.Method);
         emitter.SetStackUnknown();
         return true;
     }

@@ -22,6 +22,9 @@ public partial class ILCompiler
     private readonly Dictionary<Stmt.Function, string> _innerFunctionEnclosingClassNames = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Stmt.Function, FieldBuilder> _innerFunctionEntryPointDCFields = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Stmt.Function, FieldBuilder> _innerFunctionFunctionDCFields = new(ReferenceEqualityComparer.Instance);
+    // A method environment can be needed only to create a descendant closure.
+    // Keep that reference requirement separate from the function's semantic captures.
+    private readonly Dictionary<Stmt.Function, string> _innerFunctionMethodDCSources = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Stmt.Function, Type[]> _innerFunctionParamTypes = new(ReferenceEqualityComparer.Instance);
 
     // #307: inner function declarations that capture variables living on an
@@ -105,6 +108,67 @@ public partial class ILCompiler
         var visitor = CreateClassDefinitionVisitor();
         visitor.Visit(function);
         return visitor.UsesDefinition;
+    }
+
+    private void ResolveInnerFunctionMethodDCSources()
+    {
+        var collected = new HashSet<Stmt.Function>(
+            _collectedInnerFunctions.Select(entry => entry.Func), ReferenceEqualityComparer.Instance);
+        foreach (var (function, captures, _) in _collectedInnerFunctions)
+        {
+            if (!TryResolveMethodDCOwner(function, captures, out var owner, out var key)
+                || owner == null)
+                continue;
+
+            var path = new List<Stmt.Function>();
+            object? node = function;
+            int guard = 0;
+            while (!ReferenceEquals(node, owner))
+            {
+                // This relay pass admits only ordinary declarations; leave arrow
+                // and state-machine boundaries on their existing paths.
+                if (++guard > 256 || node is not Stmt.Function intermediate
+                    || !collected.Contains(intermediate)
+                    || intermediate.IsAsync || intermediate.IsGenerator
+                    || (_innerFunctionMethodDCSources.TryGetValue(intermediate, out var existing)
+                        && existing != key)
+                    || !TryResolveMethodDCOwner(intermediate,
+                        _closures.Analyzer.GetCaptures(intermediate), out var directOwner, out _)
+                    || (directOwner != null && !ReferenceEquals(directOwner, owner)))
+                    break;
+
+                path.Add(intermediate);
+                _innerFunctionParentCallable.TryGetValue(intermediate, out node);
+            }
+
+            // Commit only after the whole lexical chain reaches the exact owner.
+            // An empty intermediate carries its environment, not invented capture names.
+            if (ReferenceEquals(node, owner))
+                foreach (var intermediate in path)
+                    _innerFunctionMethodDCSources[intermediate] = key!;
+        }
+    }
+
+    private bool TryResolveMethodDCOwner(
+        Stmt.Function function, IEnumerable<string> captures,
+        out Stmt.Function? owner, out string? key)
+    {
+        owner = null;
+        key = null;
+        foreach (string name in captures)
+        {
+            if (_closures.Analyzer.GetCaptureSource(function, name) is not Stmt.Function source
+                || !_syncMethodFunctionDCKeys.TryGetValue(source, out var sourceKey)
+                || !_closures.FunctionDisplayClassFields.TryGetValue(sourceKey, out var fields)
+                || !fields.ContainsKey(name))
+                continue;
+
+            if (owner != null && !ReferenceEquals(owner, source))
+                return false;
+            owner = source;
+            key = sourceKey;
+        }
+        return true;
     }
 
     /// <summary>
@@ -279,8 +343,8 @@ public partial class ILCompiler
             Type returnType = _types.Object;
 
             // Check if this inner function captures function-level variables
-            bool needsFunctionDC = false;
-            string? sourceFunctionForDC = null;
+            bool needsFunctionDC = _innerFunctionMethodDCSources.ContainsKey(func);
+            string? sourceFunctionForDC = needsFunctionDC ? enclosingFuncName : null;
             if (_closures.FunctionDisplayClassFields.TryGetValue(enclosingFuncName, out var enclosingFuncDCFields))
             {
                 if (captures.Any(c => IsInnerFunctionFunctionDCCapture(
@@ -658,6 +722,8 @@ public partial class ILCompiler
                 }
             }
 
+            ctx.UseOwnedCapturedParameterStorage = true;
+
             // Emit function body
             if (func.Body != null)
             {
@@ -690,6 +756,9 @@ public partial class ILCompiler
     private string ResolveInnerFunctionEnclosingFunctionName(
         Stmt.Function function, HashSet<string> captures, string collectedName)
     {
+        if (_innerFunctionMethodDCSources.TryGetValue(function, out var methodSource))
+            return methodSource;
+
         // Method display classes use class-qualified keys, whereas collection's
         // enclosing-name cursor describes free functions. Resolve the storage
         // owner by AST identity so same-named methods and shadowed locals cannot
@@ -722,8 +791,8 @@ public partial class ILCompiler
                     && arrowField.FieldType == methodDC,
             _ => false
         };
-        // Uncapturing intermediate declarations do not yet relay method storage.
-        // Keep their existing capture path until explicit pass-through support exists.
+        // Preserve existing direct paths across boundaries not admitted by the
+        // ordinary-declaration relay prepass.
         return reachable ? methodKey : collectedName;
     }
 

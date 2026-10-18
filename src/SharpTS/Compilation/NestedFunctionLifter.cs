@@ -75,6 +75,8 @@ internal sealed class NestedFunctionLifter
 
     // Source positions of the AST being rewritten, when the caller is tracking them.
     private SharpTS.Parsing.SpanTable? _spans;
+    private TypeSystem.TypeMap? _typeMap;
+    private Action<object, object>? _recordRewrite;
 
     private NestedFunctionLifter(
         ClosureAnalyzer analyzer,
@@ -98,7 +100,11 @@ internal sealed class NestedFunctionLifter
     /// statements they replace, and the <c>var</c> aliases left behind are marked
     /// compiler-generated.
     /// </param>
-    public static List<Stmt> Lift(List<Stmt> module, SharpTS.Parsing.SpanTable? spans = null)
+    public static List<Stmt> Lift(List<Stmt> module, SharpTS.Parsing.SpanTable? spans = null, TypeSystem.TypeMap? typeMap = null)
+        => Lift(module, spans, typeMap, recordRewrite: null);
+
+    internal static List<Stmt> Lift(List<Stmt> module, SharpTS.Parsing.SpanTable? spans,
+        TypeSystem.TypeMap? typeMap, Action<object, object>? recordRewrite)
     {
         // Cheap structural pre-scan: collect declarations whose SHAPE qualifies (case A/B, or a
         // declaration inside a module-level block/loop), without running closure analysis. The
@@ -133,6 +139,7 @@ internal sealed class NestedFunctionLifter
         foreach (var f in scan.Candidates)
         {
             bool isModuleBlock = scan.ModuleBlockEnclosingBindings.TryGetValue(f, out var blockBindings);
+            var externalCaptures = GetExternalCaptures(analyzer, f);
 
             // A reference into an intermediate FUNCTION scope is a real closure capture (#583 §1). Only
             // an INSIDE-FUNCTION candidate can have one (a module-block candidate has no enclosing
@@ -142,9 +149,9 @@ internal sealed class NestedFunctionLifter
             // async body, which now binds captured display instances correctly (see
             // GeneratorMoveNextEmitter.EmitArrowFunction). Declines (leaves nested — a clean failure) for
             // bodies using this/arguments or rest/default params, which the forwarding arrow can't carry.
-            if (!IsNonCapturing(analyzer, f))
+            if (!IsNonCapturing(externalCaptures))
             {
-                if (!isModuleBlock && TryComputeFunctionCaptureForward(analyzer, f, out var fnForwarded))
+                if (!isModuleBlock && TryComputeFunctionCaptureForward(analyzer, f, externalCaptures, out var fnForwarded))
                 {
                     lambdaForwards[f] = fnForwarded;
                     hoistedForwards.Add(f);
@@ -181,7 +188,8 @@ internal sealed class NestedFunctionLifter
         }
         if (safe.Count == 0 && lambdaForwards.Count == 0) return module;
 
-        var lifter = new NestedFunctionLifter(analyzer, safe, lambdaForwards, hoistedForwards) { _spans = spans };
+        var lifter = new NestedFunctionLifter(analyzer, safe, lambdaForwards, hoistedForwards)
+        { _spans = spans, _typeMap = typeMap, _recordRewrite = recordRewrite };
         var rewritten = lifter.ProcessTopLevel(module);
         if (lifter._lifted.Count == 0) return rewritten;
 
@@ -202,19 +210,76 @@ internal sealed class NestedFunctionLifter
         => f.Body != null && (f.IsGenerator || f.IsAsync || enclosingIsStateMachine);
 
     /// <summary>
-    /// A declaration is liftable only if every free variable resolves to module/global scope. A
-    /// reference into an intermediate function scope is a real closure capture (#583 §1) and blocks
-    /// lifting. The function's own name is excluded — recursion resolves through the self-alias the
-    /// lifter injects into the relocated body, not a captured outer binding.
+    /// A declaration can move only when it and its descendants have no external function-scope
+    /// dependency. A descendant's capture of the candidate's own parameter/local is internal,
+    /// while a capture from an enclosing owner must retain that owner's lexical storage.
     /// </summary>
-    private static bool IsNonCapturing(ClosureAnalyzer analyzer, Stmt.Function f)
+    private static bool IsNonCapturing(IReadOnlySet<string> externalCaptures) => externalCaptures.Count == 0;
+
+    private static HashSet<string> GetExternalCaptures(ClosureAnalyzer analyzer, Stmt.Function function)
     {
-        foreach (var captured in analyzer.GetCaptures(f))
+        var owners = new ContainedCaptureOwners();
+        owners.Visit(function);
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var owner in owners.Nodes)
         {
-            if (captured == f.Name.Lexeme) continue;
-            if (analyzer.GetCaptureSource(f, captured) != null) return false;
+            foreach (var captured in analyzer.GetCaptures(owner))
+            {
+                // Preserve the existing direct-recursion self-alias policy.
+                // A descendant's same-spelled external binding is not this exemption.
+                if (ReferenceEquals(owner, function) && captured == function.Name.Lexeme) continue;
+                if (analyzer.GetCaptureSource(owner, captured) is { } source && !owners.Nodes.Contains(source))
+                    result.Add(captured);
+            }
         }
-        return true;
+        return result;
+    }
+
+    /// <summary>Original analyzer owners contained in the subtree that would be relocated.</summary>
+    private sealed class ContainedCaptureOwners : Parsing.Visitors.AstVisitorBase
+    {
+        public HashSet<object> Nodes { get; } = new(ReferenceEqualityComparer.Instance);
+
+        protected override void VisitFunction(Stmt.Function statement)
+        {
+            if (Nodes.Add(statement)) base.VisitFunction(statement);
+        }
+
+        protected override void VisitArrowFunction(Expr.ArrowFunction expression)
+        {
+            if (Nodes.Add(expression)) base.VisitArrowFunction(expression);
+        }
+
+        protected override void VisitAccessor(Stmt.Accessor statement)
+        {
+            if (!Nodes.Add(statement)) return;
+            if (statement.SetterParam?.DefaultValue is { } defaultValue) Visit(defaultValue);
+            base.VisitAccessor(statement);
+        }
+
+        protected override void VisitClass(Stmt.Class statement)
+        {
+            if (!Nodes.Add(statement)) return;
+            foreach (var expression in ClassDefinitionExpressions.Enumerate(statement)) Visit(expression);
+            base.VisitClass(statement);
+            foreach (var accessor in statement.AutoAccessors ?? []) Visit(accessor);
+            foreach (var initializer in statement.StaticInitializers ?? []) Visit(initializer);
+        }
+
+        protected override void VisitClassExpr(Expr.ClassExpr expression)
+        {
+            if (!Nodes.Add(expression)) return;
+            foreach (var definition in ClassDefinitionExpressions.Enumerate(expression)) Visit(definition);
+            base.VisitClassExpr(expression);
+            foreach (var accessor in expression.AutoAccessors ?? []) Visit(accessor);
+            foreach (var initializer in expression.StaticInitializers ?? []) Visit(initializer);
+        }
+
+        protected override void VisitNew(Expr.New expression)
+        {
+            Visit(expression.Callee);
+            base.VisitNew(expression);
+        }
     }
 
     /// <summary>True if <paramref name="f"/> captures any name in <paramref name="names"/> (its own
@@ -276,7 +341,7 @@ internal sealed class NestedFunctionLifter
     /// <c>this</c>/<c>arguments</c>, exactly as the module-block path does.
     /// </summary>
     private static bool TryComputeFunctionCaptureForward(
-        ClosureAnalyzer analyzer, Stmt.Function f, out List<string> forwarded)
+        ClosureAnalyzer analyzer, Stmt.Function f, IReadOnlySet<string> externalCaptures, out List<string> forwarded)
     {
         forwarded = [];
 
@@ -292,11 +357,10 @@ internal sealed class NestedFunctionLifter
         // `let` binding is still in its temporal dead zone when the arrow is created, so it would capture
         // an unassigned (null) self and crash on the first recursive call. Leave such a declaration nested
         // (a clean "not supported" failure, never a miscompile). Non-recursive captures lift fine.
-        if (analyzer.GetCaptures(f).Contains(f.Name.Lexeme))
+        if (analyzer.GetCaptures(f).Contains(f.Name.Lexeme) || externalCaptures.Contains(f.Name.Lexeme))
             return false;
 
-        forwarded = analyzer.GetCaptures(f)
-            .Where(c => analyzer.GetCaptureSource(f, c) != null)
+        forwarded = externalCaptures
             .OrderBy(c => c, System.StringComparer.Ordinal)
             .ToList();
         return forwarded.Count > 0;
@@ -670,6 +734,21 @@ internal sealed class NestedFunctionLifter
                 }
                 if (_lambdaForwards.TryGetValue(f, out var forwarded))
                 {
+                    // A generator must retain its capture owners across every yield.
+                    // Forwarding scalar parameters only snapshots their call-time values,
+                    // so use the existing generator-expression live storage instead.
+                    if (f.IsGenerator)
+                    {
+                        result ??= new List<Stmt>(body.GetRange(0, i));
+                        bool hoisted = _hoistedForwards.Contains(f);
+                        var closure = MakeLiveFunctionClosure(f, hoisted);
+                        if (hoisted)
+                            (aliases ??= new List<Stmt>()).Add(closure);
+                        else
+                            result.Add(closure);
+                        continue;
+                    }
+
                     // A plain nested function can use the ordinary closure
                     // emitter. Captures must keep shared lexical storage even
                     // when their writes occur in a descendant closure: lifting
@@ -751,7 +830,9 @@ internal sealed class NestedFunctionLifter
             liftedBody = withSelfAlias;
         }
 
-        _lifted.Add(f with { Name = freshToken, Body = liftedBody });
+        var lifted = f with { Name = freshToken, Body = liftedBody };
+        _recordRewrite?.Invoke(f, lifted);
+        _lifted.Add(lifted);
         return MakeAlias(f.Name, freshToken);
     }
 
@@ -764,15 +845,15 @@ internal sealed class NestedFunctionLifter
     }
 
     /// <summary>
-    /// Hoists a capturing synchronous declaration as an ordinary function expression,
-    /// whose captured bindings use the async function's shared display class.
+    /// Retains a capturing declaration as a function expression whose closures and iterators
+    /// use the original binding's display class or lexical cell throughout their lifetime.
     /// </summary>
-    private Stmt MakeLiveFunctionClosure(Stmt.Function function)
+    private Stmt MakeLiveFunctionClosure(Stmt.Function function, bool hoisted = true)
     {
-        var body = ProcessBody(function.Body!, enclosingIsStateMachine: false,
-            enclosingIsAsyncFunction: false, enclosingIsGeneratorClassMethod: false);
+        var body = ProcessBody(function.Body!, function.IsGenerator || function.IsAsync,
+            function.IsAsync && !function.IsGenerator, enclosingIsGeneratorClassMethod: false);
         var closure = new Expr.ArrowFunction(
-            Name: function.Name,
+            Name: function.IsGenerator ? null : function.Name,
             TypeParams: function.TypeParams,
             ThisType: function.ThisType,
             Parameters: function.Parameters,
@@ -780,10 +861,16 @@ internal sealed class NestedFunctionLifter
             BlockBody: body,
             ReturnType: function.ReturnType,
             HasOwnThis: true,
+            IsAsync: function.IsAsync,
+            IsGenerator: function.IsGenerator,
             ThisTypeNode: function.ThisTypeNode,
-            ReturnTypeNode: function.ReturnTypeNode);
+            ReturnTypeNode: function.ReturnTypeNode)
+        {
+            RuntimeName = function.IsGenerator ? function.RuntimeName ?? function.Name.Lexeme : null,
+        };
         _spans?.CopySpan(function, closure);
-        var binding = new Stmt.Var(function.Name, TypeAnnotation: null, Initializer: closure, IsVar: true);
+        _recordRewrite?.Invoke(function, closure);
+        var binding = new Stmt.Var(function.Name, TypeAnnotation: null, Initializer: closure, IsVar: hoisted);
         _spans?.MarkHidden(binding);
         return binding;
     }
@@ -819,8 +906,14 @@ internal sealed class NestedFunctionLifter
         foreach (var name in forwarded)
             liftedParams.Add(new Stmt.Parameter(new Token(TokenType.IDENTIFIER, name, null, f.Name.Line), Type: null));
         foreach (var p in f.Parameters)
-            liftedParams.Add(p with { });
-        _lifted.Add(f with { Name = freshToken, Parameters = liftedParams, Body = liftedBody });
+        {
+            var parameter = p with { };
+            _recordRewrite?.Invoke(p, parameter);
+            liftedParams.Add(parameter);
+        }
+        var lifted = f with { Name = freshToken, Parameters = liftedParams, Body = liftedBody };
+        _recordRewrite?.Invoke(f, lifted);
+        _lifted.Add(lifted);
 
         // Forwarding arrow: original parameters in, captured bindings + those parameters forwarded
         // to the relocated declaration. Not a generator/async itself — it returns whatever the
@@ -854,6 +947,9 @@ internal sealed class NestedFunctionLifter
             // Module-block/loop (#622) forwarders remain unmarked because they stay in place.
             IsLiftedForwarder = hoisted,
         };
+        _recordRewrite?.Invoke(f, arrow);
+        for (int index = 0; index < f.Parameters.Count; index++)
+            _recordRewrite?.Invoke(f.Parameters[index], arrow.Parameters[index]);
 
         // Function-scope capture (#534): a `var` the caller hoists to the body top, matching
         // function-declaration hoisting. Module-block/loop capture (#622): a block-scoped `let` left
@@ -865,6 +961,26 @@ internal sealed class NestedFunctionLifter
     /// reaches class expressions in every ordinary expression position without replacing unrelated AST
     /// identities used by closure and type maps.</summary>
     private Expr ProcessExpr(Expr expr)
+    {
+        var rewritten = ProcessExprCore(expr);
+        if (!ReferenceEquals(expr, rewritten) && _typeMap != null)
+        {
+            // Construction needs its checked class/generic arguments after rewriting.
+            // Do not restore unrelated primitive types without their return-slot facts.
+            if (expr is Expr.New && _typeMap.Get(expr) is TypeSystem.TypeInfo.Instance instance)
+                _typeMap.Set(rewritten, instance);
+            if (expr is Expr.ClassExpr source && rewritten is Expr.ClassExpr target
+                && _typeMap.GetClassExprType(source) is { } owner)
+            {
+                _typeMap.SetClassExprType(target, owner);
+                if (_typeMap.Get(source) is { } type) _typeMap.Set(target, type);
+            }
+        }
+        _recordRewrite?.Invoke(expr, rewritten);
+        return rewritten;
+    }
+
+    private Expr ProcessExprCore(Expr expr)
     {
         switch (expr)
         {
@@ -1126,7 +1242,9 @@ internal sealed class NestedFunctionLifter
     {
         if (parameter.DefaultValue == null) return parameter;
         var value = ProcessExpr(parameter.DefaultValue);
-        return ReferenceEquals(value, parameter.DefaultValue) ? parameter : parameter with { DefaultValue = value };
+        var rewritten = ReferenceEquals(value, parameter.DefaultValue) ? parameter : parameter with { DefaultValue = value };
+        _recordRewrite?.Invoke(parameter, rewritten);
+        return rewritten;
     }
 
     private static List<T> RewriteListIfChanged<T>(List<T> source, Func<T, T> rewrite)
@@ -1156,6 +1274,7 @@ internal sealed class NestedFunctionLifter
     {
         Stmt rewritten = ProcessStmtCore(stmt, enclosingIsStateMachine, enclosingIsAsyncFunction, enclosingIsGeneratorClassMethod);
         _spans?.CopySpan(stmt, rewritten);
+        _recordRewrite?.Invoke(stmt, rewritten);
         return rewritten;
     }
 

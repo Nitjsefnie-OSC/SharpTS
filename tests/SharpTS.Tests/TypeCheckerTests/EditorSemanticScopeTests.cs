@@ -274,9 +274,29 @@ public sealed class EditorSemanticScopeTests
         Assert.True(result.HitErrorLimit);
         int caret = source.IndexOf("/*inside*/", StringComparison.Ordinal) + "/*inside*/".Length;
         var facts = checker.EditorFacts.Freeze();
-        Assert.Empty(facts.GetVisibleBindings(document, caret));
-        Assert.Contains(facts.Declarations, declaration => declaration.LocalName == "local" &&
+        var outer = Assert.IsType<Stmt.Const>(statements[0]);
+        var block = Assert.IsType<Stmt.Block>(statements[1]);
+        var inner = Assert.IsType<Stmt.Const>(block.Statements[1]);
+        var skipped = Assert.IsType<Expr.Variable>(Assert.IsType<Stmt.Expression>(block.Statements[2]).Expr);
+
+        // Lexical preregistration identifies the inner declaration before its initializer
+        // is reached. It masks the outer binding without publishing an unchecked type.
+        var visible = Assert.Single(facts.GetVisibleBindings(document, caret),
+            binding => binding.LocalName == "local" && binding.Facet == BindingNamespace.Value);
+        Assert.Same(inner, visible.DeclarationOwner);
+        Assert.Same(inner.Name, Assert.Single(visible.Binding!.Declarations).Name);
+        Assert.Equal(EditorFactAvailability.Unavailable, visible.Availability);
+        Assert.False(visible.Type.IsAvailable);
+
+        var outerFact = Assert.Single(facts.Declarations, declaration => declaration.LocalName == "local" &&
             declaration.Availability == EditorFactAvailability.Available);
+        Assert.Same(outer, outerFact.Source.Owner);
+        Assert.Same(outer.Name, Assert.Single(outerFact.Binding!.Declarations).Name);
+        Assert.NotEqual(outerFact.Binding.Id, visible.Binding.Id);
+        Assert.True(facts.GetOccurrence(document, inner.Initializer) is null or
+            { Availability: EditorFactAvailability.Unavailable });
+        Assert.True(facts.GetOccurrence(document, skipped) is null or
+            { Availability: EditorFactAvailability.Unavailable });
     }
 
     [Theory]

@@ -157,6 +157,7 @@ public class ClosureAnalyzer : AstVisitorBase
     private readonly LoopBodyCellAnalyzer _bodyCells = new();
 
     internal bool IsLoopBodyCellDeclaration(Token declaration) => _bodyCells.IsCellDeclaration(declaration);
+    internal bool IsOrdinaryBlockShadowDeclaration(Token declaration) => _bodyCells.IsOrdinaryBlockShadowDeclaration(declaration);
     internal bool TryGetLoopBodyCellCapture(object closure, string name, out Token declaration) =>
         _bodyCells.TryGetCaptureDeclaration(closure, name, out declaration);
     internal IReadOnlyDictionary<string, Token>? GetLoopBodyCellCaptures(object closure) =>
@@ -303,14 +304,21 @@ public class ClosureAnalyzer : AstVisitorBase
         List<Stmt> statements,
         TypeMap? checkedTypes,
         IReadOnlyDictionary<Stmt, IReadOnlySet<string>>? moduleClrImports)
+        => Analyze(statements, checkedTypes, moduleClrImports, null);
+
+    internal void Analyze(
+        List<Stmt> statements,
+        TypeMap? checkedTypes,
+        IReadOnlyDictionary<Stmt, IReadOnlySet<string>>? moduleClrImports,
+        IReadOnlyDictionary<Stmt, object>? moduleOwners)
     {
         // Resolve lexical declaration identities before ordinary capture discovery.
         // A named class expression's immutable self is carried by its evaluated
         // definition, independently of any same-spelled outer variable storage.
-        _bodyCells.Analyze(statements);
+        _bodyCells.Analyze(statements, moduleOwners);
         _checkedTypes = checkedTypes;
         _scopeStack.Push([]);
-        HoistFunctionDeclarations(statements);
+        HoistFunctionDeclarations(statements, hoistOwnedVars: true);
         foreach (var stmt in statements)
         {
             _moduleClrImports = moduleClrImports?.GetValueOrDefault(stmt);
@@ -342,8 +350,16 @@ public class ClosureAnalyzer : AstVisitorBase
     /// are reached in source order. Matches the interpreter's block-level hoisting
     /// (see <c>Interpreter.Statements.cs</c> and <c>Interpreter.HoistFunctionDeclarations</c>).
     /// </summary>
-    private void HoistFunctionDeclarations(IEnumerable<Stmt> statements)
+    private void HoistFunctionDeclarations(IEnumerable<Stmt> statements, bool hoistOwnedVars = false)
     {
+        if (hoistOwnedVars)
+        {
+            // Raw accessor bodies have not passed through VarHoister. Handler
+            // lexical scopes must not hide their function-owned var bindings.
+            var variables = new OwnedVarCollector();
+            foreach (var statement in statements) variables.Visit(statement);
+            foreach (var name in variables.Names) DeclareVariable(name);
+        }
         foreach (var stmt in statements)
         {
             // Comma-separated declarations are a scope-transparent Sequence.
@@ -929,22 +945,23 @@ public class ClosureAnalyzer : AstVisitorBase
 
     protected override void VisitTryCatch(Stmt.TryCatch stmt)
     {
-        foreach (var s in stmt.TryBlock)
-            Visit(s);
+        VisitHandlerScope(stmt.TryBlock);
+        if (stmt.CatchBlock is { } catchBlock)
+            VisitHandlerScope(catchBlock, stmt.CatchParam);
+        if (stmt.FinallyBlock is { } finallyBlock)
+            VisitHandlerScope(finallyBlock);
+    }
 
-        if (stmt.CatchBlock != null)
+    private void VisitHandlerScope(List<Stmt> statements, Token? parameter = null)
+    {
+        EnterScope();
+        try
         {
-            EnterScope();
-            if (stmt.CatchParam != null)
-                DeclareVariable(stmt.CatchParam.Lexeme);
-            foreach (var s in stmt.CatchBlock)
-                Visit(s);
-            ExitScope();
+            if (parameter is not null) DeclareVariable(parameter.Lexeme);
+            HoistFunctionDeclarations(statements);
+            foreach (var statement in statements) Visit(statement);
         }
-
-        if (stmt.FinallyBlock != null)
-            foreach (var s in stmt.FinallyBlock)
-                Visit(s);
+        finally { ExitScope(); }
     }
 
     #endregion
@@ -1122,7 +1139,7 @@ public class ClosureAnalyzer : AstVisitorBase
 
         // Hoist sibling function declarations so forward references in one sibling's
         // body resolve to another sibling declared later in source order.
-        HoistFunctionDeclarations(body);
+        HoistFunctionDeclarations(body, hoistOwnedVars: true);
 
         // Analyze body
         foreach (var stmt in body)
@@ -1203,7 +1220,7 @@ public class ClosureAnalyzer : AstVisitorBase
             Visit(af.ExpressionBody);
         else if (af.BlockBody != null)
         {
-            HoistFunctionDeclarations(af.BlockBody);
+            HoistFunctionDeclarations(af.BlockBody, hoistOwnedVars: true);
             foreach (var stmt in af.BlockBody)
                 Visit(stmt);
         }
@@ -1220,6 +1237,20 @@ public class ClosureAnalyzer : AstVisitorBase
         _outerVariables.Clear();
         foreach (var name in previousOuter)
             _outerVariables.Add(name);
+    }
+
+    private sealed class OwnedVarCollector : AstVisitorBase
+    {
+        public HashSet<string> Names { get; } = [];
+        protected override void VisitVar(Stmt.Var stmt) { if (stmt.IsVar && !stmt.IsDeclare) Names.Add(stmt.Name.Lexeme); }
+        protected override void VisitForOf(Stmt.ForOf stmt) { if (stmt.IsDeclaration && stmt.IsVar) Names.Add(stmt.Variable.Lexeme); Visit(stmt.Body); }
+        protected override void VisitForIn(Stmt.ForIn stmt) { if (stmt.IsDeclaration && stmt.IsVar) Names.Add(stmt.Variable.Lexeme); Visit(stmt.Body); }
+        protected override void VisitArrowFunction(Expr.ArrowFunction expr) { }
+        protected override void VisitFunction(Stmt.Function stmt) { }
+        protected override void VisitClass(Stmt.Class stmt) { }
+        protected override void VisitClassExpr(Expr.ClassExpr expr) { }
+        protected override void VisitNamespace(Stmt.Namespace stmt) { }
+        protected override void VisitDeclareModule(Stmt.DeclareModule stmt) { }
     }
 
     private static HashSet<string> CollectDirectEvalVarDeclarations(List<Stmt.Parameter> parameters)

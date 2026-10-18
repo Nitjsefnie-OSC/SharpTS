@@ -796,6 +796,9 @@ public partial class ILEmitter
     /// </summary>
     private bool CanUseUnboxedLocal(Stmt.Var v)
     {
+        if (_ctx.TypeMap?.IsRawCallStorage(v.Name) == true)
+            return false;
+
         // Stable custom iteration proves its value binding is numeric. For the
         // exact `acc = acc + value` loop shape, that proof also removes the
         // checker's conservative any/undefined flow from the accumulator.
@@ -3221,7 +3224,7 @@ public partial class ILEmitter
         List<LoopBodyCellScopeEntry> cells = [];
         try
         {
-            EnterLoopBodyCellScope(b.Statements, cells);
+            EnterOrdinaryBlockCellScope(b.Statements, cells);
             RegisterRuntimeClassBindingScopes(b.Statements);
             _ctx.PredeclareCapturedLexicalLocals?.Invoke(IL, _ctx, b.Statements);
             InitializeCapturedLexicalTdzBindings(b.Statements);
@@ -4483,7 +4486,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldloc, subjectLocal);
             EmitExpression(s.Cases[i].Value);
             EmitBoxIfNeeded(s.Cases[i].Value);
-            IL.Emit(OpCodes.Call, _ctx.Runtime!.Operators.LooseEquals);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.Operators.StrictEquals);
             builder.Emit_Brtrue(caseLabels[i]);
         }
 
@@ -4596,7 +4599,7 @@ public partial class ILEmitter
             _iteratorLoopCompletionScopes.Count));
         try
         {
-            EmitGeneratorScopedStatements(t.TryBlock);
+            EmitGeneratorScopedStatements(t.TryBlock, ordinaryHandler: true);
         }
         finally
         {
@@ -4626,10 +4629,10 @@ public partial class ILEmitter
         {
             WithGeneratorLexicalScope(t.CatchBlock, () =>
             {
-                if (t.CatchParam != null && !TryInitializeGeneratorCatchBinding(t.CatchParam, catchValue))
+                if (t.CatchParam != null && !TryInitializeGeneratorCatchBinding(t.CatchParam, catchValue, ordinaryHandler: true))
                     _ctx.Locals.RegisterLocal(t.CatchParam.Lexeme, catchValue);
                 foreach (var stmt in t.CatchBlock) EmitStatement(stmt);
-            }, t, t.CatchParam);
+            }, t, t.CatchParam, ordinaryHandler: true);
         }
         finally
         {
@@ -4682,7 +4685,7 @@ public partial class ILEmitter
         {
             _ctx.ExceptionBlockDepth++;
             builder.BeginExceptionBlock();
-            EmitGeneratorScopedStatements(t.TryBlock);
+            EmitGeneratorScopedStatements(t.TryBlock, ordinaryHandler: true);
 
             builder.BeginCatchBlock(_ctx.Types.Exception);
             _ctx.Locals.EnterScope();
@@ -4701,10 +4704,10 @@ public partial class ILEmitter
                 }
                 WithGeneratorLexicalScope(t.CatchBlock, () =>
                 {
-                    if (t.CatchParam != null && !TryInitializeGeneratorCatchBinding(t.CatchParam, caught!))
+                    if (t.CatchParam != null && !TryInitializeGeneratorCatchBinding(t.CatchParam, caught!, ordinaryHandler: true))
                         _ctx.Locals.RegisterLocal(t.CatchParam.Lexeme, caught!);
                     foreach (var stmt in t.CatchBlock) EmitStatement(stmt);
-                }, t, t.CatchParam);
+                }, t, t.CatchParam, ordinaryHandler: true);
             }
             finally
             {
@@ -4715,7 +4718,7 @@ public partial class ILEmitter
         }
         else
         {
-            EmitGeneratorScopedStatements(t.TryBlock);
+            EmitGeneratorScopedStatements(t.TryBlock, ordinaryHandler: true);
         }
 
         builder.Emit_Leave(runFinally);
@@ -4729,7 +4732,7 @@ public partial class ILEmitter
 
         _abruptCompletionScopes.Pop();
         builder.MarkLabel(runFinally);
-        EmitGeneratorScopedStatements(t.FinallyBlock!);
+        EmitGeneratorScopedStatements(t.FinallyBlock!, ordinaryHandler: true);
 
         // A normal finally preserves and resumes the pending completion.
         IL.Emit(OpCodes.Ldloc, kind);

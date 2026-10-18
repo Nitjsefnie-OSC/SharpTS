@@ -30,15 +30,11 @@ public partial class AsyncArrowMoveNextEmitter
     private void EmitImplicitReturnUndefined()
     {
         _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.Sentinels.UndefinedInstance);
-        EmitSetResult();
-        _il.Emit(OpCodes.Leave, _exitLabel);
+        EmitCompleteWithReturnValueOnStack();
     }
 
     private void EmitSetResult()
     {
-        // Store result
-        _il.Emit(OpCodes.Stloc, _resultLocal!);
-
         // Set state to -2 (completed)
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, -2);

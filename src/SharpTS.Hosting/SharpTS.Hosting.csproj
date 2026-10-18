@@ -29,6 +29,7 @@
     <PackageReference Include="Microsoft.ILVerification" />
     <PackageReference Include="NuGet.Packaging" />
     <PackageReference Include="NuGet.Protocol" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
     <PackageReference Include="PrettyPrompt" />
     <PackageReference Include="ZstdSharp.Port" />
   </ItemGroup>

@@ -99,14 +99,6 @@ public partial class ILCompiler
         Stmt.Function source, MethodBuilder original, LocalBuilder key, Type? descriptorOwner = null)
     {
         var registrationDone = il.DefineLabel();
-        if (!source.IsStatic && (owner.Attributes & TypeAttributes.Abstract) != 0)
-        {
-            // Abstract CLR owners do not yet have a registered guest prototype.
-            // Keep their existing ordinary legacy dispatch rather than defining
-            // an instance property on GetClassPrototype's Object.prototype fallback.
-            il.Emit(OpCodes.Ldloc, key); il.Emit(OpCodes.Isinst, _types.String);
-            il.Emit(OpCodes.Brtrue, registrationDone);
-        }
         if (source.IsStatic && owner.IsGenericTypeDefinition && descriptorOwner == null)
         {
             // A source generic class has one constructor object. Initializing

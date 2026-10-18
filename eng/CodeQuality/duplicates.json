@@ -120,14 +120,6 @@
     "Reason": "Existing Buffer and DataView argument adapters share numeric offset conversion; defer extraction to a built-in emission change."
   },
   {
-    "Hash": "8b65ab92c41910f87f8b5b99ebb7b0de5fd3fed0badda6f71cfc7e376b63c969",
-    "Members": [
-      "src/SharpTS/Compilation/Emitters/RegExpEmitter.cs::RegExpEmitter.IsSideEffectFreeString(Expr expression, CompilationContext ctx)",
-      "src/SharpTS/Compilation/Emitters/StringEmitter.cs::StringEmitter.IsSideEffectFreePrimitiveString(Expr expression, CompilationContext ctx)"
-    ],
-    "Reason": "Existing string and RegExp optimization guards share a conservative primitive-string proof; defer common proof extraction to an optimization change."
-  },
-  {
     "Hash": "8bd6a8b5e8970409777e89cefeb367a0ca5da6771723407e34974fb69e126127",
     "Members": [
       "src/SharpTS/Program.cs::SharpTSCli.IsDeclarationSource(string path)",

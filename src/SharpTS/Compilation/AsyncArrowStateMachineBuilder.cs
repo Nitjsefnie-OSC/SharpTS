@@ -75,6 +75,10 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
     // than a value snapshot. The mapped field is the actual binding's storage.
     public Dictionary<string, FieldBuilder> StandaloneLiveCaptureFields { get; } = [];
 
+    // Selected lexical captures hold the original shared box, not a snapshot
+    // or a function display-class carrier. Keep exact declaration identity.
+    internal Dictionary<string, Token> StandaloneCellCaptureDeclarations { get; } = [];
+
     // For nested arrows: captures that require accessing through outer's outer reference
     // These are variables from a grandparent that the parent arrow also captured
     public HashSet<string> TransitiveCaptures { get; } = [];
@@ -275,7 +279,8 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
         List<Stmt.Parameter> arrowParameters,
         HashSet<string> hoistedLocals,
         IReadOnlyDictionary<string, FieldBuilder>? liveCaptures = null,
-        IReadOnlySet<string>? debugStaticCaptures = null)
+        IReadOnlySet<string>? debugStaticCaptures = null,
+        IReadOnlyDictionary<string, Token>? cellCaptures = null)
     {
         IsStandalone = true;
         OuterStateMachineType = null;
@@ -330,7 +335,14 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
                 continue;
 
             Type captureType = _types.Object;
-            if (liveCaptures?.TryGetValue(captureName, out var liveField) == true)
+            if (cellCaptures?.TryGetValue(captureName, out var declaration) == true)
+            {
+                // Record only fields actually created after own parameters and
+                // locals were excluded; their same-spelled bindings stay own.
+                StandaloneCellCaptureDeclarations[captureName] = declaration;
+                captureType = _types.StrongBoxOfObject;
+            }
+            else if (liveCaptures?.TryGetValue(captureName, out var liveField) == true)
             {
                 StandaloneLiveCaptureFields[captureName] = liveField;
                 captureType = liveField.DeclaringType!;

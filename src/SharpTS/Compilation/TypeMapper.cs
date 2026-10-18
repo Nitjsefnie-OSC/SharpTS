@@ -22,6 +22,7 @@ public class TypeMapper
     private readonly TypeProvider _types;
     private readonly Dictionary<int, string> _checkedClassNames = [];
     private readonly HashSet<int> _dynamicClassInstances = [];
+    internal HeldClassConstructionInfo? HeldClassConstructions { get; set; }
 
     internal void RegisterDynamicClassInstance(int declarationId)
     {
@@ -429,6 +430,11 @@ public class TypeMapper
     private Type MapUnionTypeStrict(TypeInfo.Union union)
     {
         var types = union.FlattenedTypes;
+
+        // Both guest null and the undefined sentinel need an object slot; there is no T
+        // to wrap in Nullable<T> when the union contains only nullish members.
+        if (types.Count > 0 && types.All(t => t is TypeInfo.Null or TypeInfo.Undefined))
+            return _types.Object;
 
         // Special case: T | null or T | undefined for value types → Nullable<T>
         // For reference types, they're already nullable (can hold $Undefined.Instance)

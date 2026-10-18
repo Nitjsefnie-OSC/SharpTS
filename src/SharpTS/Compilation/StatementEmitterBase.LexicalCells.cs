@@ -9,20 +9,30 @@ public abstract partial class StatementEmitterBase
     private int _lexicalCellCount;
     protected virtual FieldBuilder? DefineLexicalCellField(string name) => null;
 
-    protected void EnterLoopBodyCellScope(IEnumerable<Stmt> statements, List<LoopBodyCellScopeEntry> prior)
+    protected void EnterLoopBodyCellScope(IEnumerable<Stmt> statements, List<LoopBodyCellScopeEntry> prior,
+        bool ordinaryHandler = false)
     {
         foreach (var (declaration, token) in DirectLexicalDeclarations(statements))
-            EnterLexicalCellBinding(declaration, token, prior);
+            EnterLexicalCellBinding(declaration, token, prior, ordinaryHandler);
     }
 
-    protected void EnterLexicalCellBinding(object declaration, Token token, List<LoopBodyCellScopeEntry> prior)
+    private protected void EnterOrdinaryBlockCellScope(IEnumerable<Stmt> statements, List<LoopBodyCellScopeEntry> prior)
+    {
+        foreach (var (declaration, token) in DirectLexicalDeclarations(statements))
+            EnterLexicalCellBinding(declaration, token, prior,
+                Ctx.ClosureAnalyzer?.IsOrdinaryBlockShadowDeclaration(token) == true);
+    }
+
+    protected void EnterLexicalCellBinding(object declaration, Token token, List<LoopBodyCellScopeEntry> prior,
+        bool ordinaryHandler = false)
     {
             string name = GetBindingStorageName(declaration, token.Lexeme);
             bool selected = Ctx.ClosureAnalyzer?.IsLoopBodyCellDeclaration(token) == true;
             if (!selected && !Ctx.CellBindingLocals.ContainsKey(name)
                 && !Ctx.LoopBodyCellFields.ContainsKey(name)
                 && !Ctx.LoopBodyCellShadows.ContainsKey(name)
-                && Ctx.LoopBodyCellCaptures?.ContainsKey(name) != true)
+                && Ctx.LoopBodyCellCaptures?.ContainsKey(name) != true
+                && !(ordinaryHandler && HasActiveCapturedBinding(name)))
                 return;
 
             prior.Add(new(name, token, Ctx.CellBindingLocals.GetValueOrDefault(name), Ctx.LoopBodyCellFields.GetValueOrDefault(name),
@@ -75,6 +85,47 @@ public abstract partial class StatementEmitterBase
                 }
                 Ctx.LoopBodyCellShadows[name] = token;
             }
+    }
+
+    private bool HasActiveCapturedBinding(string name)
+    {
+        string functionName = Ctx.ResolveFunctionDCFieldName(name);
+        return Ctx.CapturedFunctionLocals?.Contains(functionName) == true
+                && Ctx.FunctionDisplayClassFields?.ContainsKey(functionName) == true
+                && (Ctx.FunctionDisplayClassLocal is not null || Ctx.CurrentArrowFunctionDCField is not null)
+            || Ctx.CapturedArrowLocals?.Contains(name) == true
+                && Ctx.ArrowScopeDisplayClassFields?.ContainsKey(name) == true
+                && (Ctx.ArrowScopeDisplayClassLocal is not null || Ctx.CurrentArrowScopeDCField is not null)
+            || Ctx.ParentArrowCapturedLocals?.Contains(name) == true
+                && Ctx.ParentArrowScopeDisplayClassFields?.ContainsKey(name) == true
+                && Ctx.CurrentArrowScopeDCField is not null
+            || Ctx.ExtraArrowScopeBindings?.ContainsKey(name) == true
+            || Ctx.IsInstanceMethod && Ctx.CapturedFields?.ContainsKey(name) == true
+            || Ctx.CapturedTopLevelVars?.Contains(name) == true
+                && Ctx.EntryPointDisplayClassFields?.ContainsKey(name) == true
+                && (Ctx.EntryPointDisplayClassLocal is not null || Ctx.CurrentArrowEntryPointDCField is not null
+                    || Ctx.EntryPointDisplayClassStaticField is not null);
+    }
+
+    protected bool TryInitializeLexicalShadow(Token token, LocalBuilder value)
+    {
+        if (!Ctx.LexicalCellStorageNames.TryGetValue(token, out var name)
+            || !Ctx.LoopBodyCellShadows.TryGetValue(name, out var shadow)
+            || !ReferenceEquals(token, shadow)) return false;
+        if (Ctx.LoopBodyCellShadowFields.TryGetValue(name, out var field))
+        {
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, field);
+            IL.Emit(OpCodes.Ldloc, value);
+            IL.Emit(OpCodes.Stfld, Types.StrongBoxOfObjectValueField);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldloc, value);
+            IL.Emit(OpCodes.Stloc, Ctx.Locals.GetLocal(name)!);
+        }
+        RefreshLexicalCaptureSnapshots(name, value);
+        return true;
     }
 
     protected void ExitLoopBodyCellScope(List<LoopBodyCellScopeEntry> prior)

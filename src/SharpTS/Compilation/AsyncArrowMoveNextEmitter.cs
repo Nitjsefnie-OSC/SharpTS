@@ -27,6 +27,7 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
     private int _currentState = 0;
     private readonly List<Label> _stateLabels = [];
     private Label _exitLabel;
+    private Label _setResultLabel;
     private LocalBuilder? _resultLocal;
     private LocalBuilder? _exceptionLocal;
 
@@ -127,6 +128,15 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
     {
         // Note: _il is initialized in constructor via GetILGenerator()
         _ctx = ctx;
+        if (_builder.IsStandalone && _builder.StandaloneCellCaptureDeclarations.Count > 0)
+        {
+            // Expose only actual incoming cell fields, after the builder has
+            // excluded its own parameters and locals. Ordinary snapshots keep
+            // their existing lower-priority standalone resolution path.
+            ctx.LoopBodyCellCaptures = _builder.StandaloneCellCaptureDeclarations;
+            ctx.CapturedFields = _builder.StandaloneCellCaptureDeclarations.Keys.ToDictionary(
+                name => name, name => _builder.StandaloneCaptureFields[name], StringComparer.Ordinal);
+        }
         _builder.AttachDebugSymbols(ctx);
         _builder.EmitDebugCaptureReferences(_il);
         // Wire the runtime into the helper now that the context is bound, so MoveNext uses the
@@ -143,6 +153,7 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
             _stateLabels.Add(_il.DefineLabel());
         }
         _exitLabel = _il.DefineLabel();
+        _setResultLabel = _il.DefineLabel();
 
         // Declare locals
         _resultLocal = _il.DeclareLocal(_types.Object);
@@ -196,6 +207,11 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
 
         // Implicit completion: a body that runs off the end resolves with `undefined`.
         EmitImplicitReturnUndefined();
+
+        _il.MarkLabel(_setResultLabel);
+        EmitAdoptCompletionValue(_resultLocal!, _analysis.AwaitPointCount - 1);
+        EmitSetResult();
+        _il.Emit(OpCodes.Leave, _exitLabel);
 
         // Catch block
         _il.BeginCatchBlock(_types.Exception);
@@ -271,14 +287,12 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
         => _builder.StateMachineType.DefineField(_builder.DebugScaffoldingName(name), type, FieldAttributes.Private);
 
     /// <summary>
-    /// Completes the async-arrow state machine using the boxed value on the IL stack: the arrow's
-    /// <see cref="EmitSetResult"/> consumes it into <c>_resultLocal</c> and calls builder.SetResult,
-    /// then leave to the single Ret epilogue.
+    /// Stores the selected boxed return and leaves every guest handler before final resolution.
     /// </summary>
     protected override void EmitCompleteWithReturnValueOnStack()
     {
-        EmitSetResult();
-        _il.Emit(OpCodes.Leave, _exitLabel);
+        _il.Emit(OpCodes.Stloc, _resultLocal!);
+        _il.Emit(OpCodes.Leave, _setResultLabel);
     }
 
     #endregion

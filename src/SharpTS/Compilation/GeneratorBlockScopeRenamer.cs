@@ -145,8 +145,10 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
     /// Arrow-function overload (#766). Arrows have no self-name, and only a block body can hold
     /// block-scoped declarations (an expression-bodied arrow has none, so it has no shadows to rename).
     /// </summary>
-    public static BlockScopeRenameResult Compute(Expr.ArrowFunction arrow, bool arrowReadCapturesShareStorage = false, bool preserveDebugBindings = false) =>
-        Compute(selfName: null, arrow.Parameters, arrow.BlockBody, arrowReadCapturesShareStorage, preserveDebugBindings);
+    public static BlockScopeRenameResult Compute(Expr.ArrowFunction arrow, bool arrowReadCapturesShareStorage = false,
+        bool preserveDebugBindings = false, IEnumerable<string>? outerCaptureNames = null) =>
+        Compute(selfName: null, arrow.Parameters, arrow.BlockBody, arrowReadCapturesShareStorage,
+            preserveDebugBindings, outerCaptureNames);
 
     private static BlockScopeRenameResult Compute(
         string? selfName, List<Stmt.Parameter> parameters, List<Stmt>? body, bool arrowReadCapturesShareStorage,

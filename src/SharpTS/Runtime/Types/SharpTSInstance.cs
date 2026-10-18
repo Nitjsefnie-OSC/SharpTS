@@ -147,8 +147,13 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         if ((_getters?.ContainsKey(name) ?? false) || (_setters?.ContainsKey(name) ?? false))
             return new PropertyResolution { Type = ResolutionType.OwnAccessor };
 
-        // Check for auto-accessor first (TypeScript 4.9+)
-        // Auto-accessors take precedence since they're a specific declaration
+        // Own data properties shadow inherited accessors (don't cache the value!).
+        if (_fields.ContainsKey(name))
+        {
+            return new PropertyResolution { Type = ResolutionType.Field };
+        }
+
+        // Check for an inherited auto-accessor (TypeScript 4.9+).
         if (_klass.HasInstanceAutoAccessor(name))
         {
             return new PropertyResolution { Type = ResolutionType.AutoAccessor };
@@ -163,12 +168,6 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
                 Type = ResolutionType.Getter,
                 Function = getter
             };
-        }
-
-        // Check if it's a field (don't cache the value!)
-        if (_fields.ContainsKey(name))
-        {
-            return new PropertyResolution { Type = ResolutionType.Field };
         }
 
         // Check for method
@@ -314,11 +313,10 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             return;
         }
 
-        // No cache invalidation needed - we update _fields, Get() reads fresh value
         _fields[propName] = value;
-
-        // Ensure property is in lookup cache as a field for dynamic property addition
-        _lookupCache.TryAdd(propName, new PropertyResolution { Type = ResolutionType.Field });
+        // A successful own write can replace a cached miss or inherited method.
+        // Re-resolve the name while preserving own accessor precedence.
+        _lookupCache.Remove(propName);
     }
 
     /// <summary>
@@ -387,8 +385,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         }
 
         _fields[propName] = value;
-
-        _lookupCache.TryAdd(propName, new PropertyResolution { Type = ResolutionType.Field });
+        _lookupCache.Remove(propName);
     }
 
     private bool TrySetClassAccessor(string name, object? value, bool strictMode)

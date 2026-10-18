@@ -164,53 +164,33 @@ public partial class ILEmitter
     /// Emits static member access on a class (used for both ClassName.property and this.property in static context).
     /// Returns true if successful, false if property not found.
     /// </summary>
-    private bool EmitStaticMemberAccess(string className, System.Reflection.Emit.TypeBuilder classBuilder, Expr receiver, string propertyName)
+    private bool EmitStaticMemberAccess(string className, System.Reflection.Emit.TypeBuilder classBuilder, Expr receiver, string propertyName, bool optional = false)
     {
         if (_ctx.ClassRegistry!.IsSourceStaticGetter(className, propertyName))
         {
-            EmitSourceStaticGetterRead(receiver, propertyName);
+            EmitRuntimeStaticMemberRead(receiver, propertyName);
             return true;
         }
 
         // Try static getter first (for auto-accessors and explicit static accessors)
         if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(className, propertyName, classBuilder, out var staticGetter))
         {
-            IL.Emit(OpCodes.Call, staticGetter!);
-
-            // Track the stack type for proper boxing behavior
-            string pascalPropName = NamingConventions.ToPascalCase(propertyName);
-            if (_ctx.PropertyTypes != null &&
-                _ctx.PropertyTypes.TryGetValue(className, out var propTypes) &&
-                propTypes.TryGetValue(pascalPropName, out var propType))
-            {
-                if (propType == _ctx.Types.Double)
-                {
-                    SetStackType(StackType.Double);
-                }
-                else if (propType == _ctx.Types.Boolean)
-                {
-                    SetStackType(StackType.Boolean);
-                }
-                else if (propType == _ctx.Types.String)
-                {
-                    SetStackType(StackType.String);
-                }
-                else
-                {
-                    SetStackUnknown();
-                }
-            }
-            else
-            {
-                SetStackUnknown();
-            }
+            EmitStaticGetterCall(staticGetter!);
             return true;
         }
 
         // Try to find static field using stored FieldBuilders
         if (_ctx.ClassRegistry!.TryGetCallableStaticField(className, propertyName, classBuilder, out var staticField))
         {
-            EmitStaticFieldLoadWithShadow(className, classBuilder, propertyName, staticField!);
+            if (receiver is Expr.This)
+            {
+                // Let the ordinary optional read perform its nullish check.
+                // Getter priority above remains unchanged for auto-accessors.
+                if (optional) return false;
+                EmitRuntimeStaticMemberRead(receiver, propertyName);
+            }
+            else
+                EmitStaticFieldLoadWithShadow(className, classBuilder, propertyName, staticField!);
             return true;
         }
 
@@ -226,10 +206,33 @@ public partial class ILEmitter
         return false;
     }
 
-    private void EmitSourceStaticGetterRead(Expr receiver, string propertyName)
+    private void EmitStaticGetterCall(System.Reflection.MethodInfo getter)
     {
-        // The source descriptor owns an accessor value with an explicit guest
-        // receiver. Calling the nominal CLR getter directly skips that receiver.
+        IL.Emit(OpCodes.Call, getter);
+
+        // The resolved signature determines boxing even when the emission context
+        // has no PropertyTypes map, or the getter belongs to an inherited class.
+        Type returnType = getter.ReturnType;
+        if (returnType == _ctx.Types.Double)
+            SetStackType(StackType.Double);
+        else if (returnType == _ctx.Types.Boolean)
+            SetStackType(StackType.Boolean);
+        else if (returnType == _ctx.Types.String)
+            SetStackType(StackType.String);
+        else if (returnType.IsValueType || returnType.IsGenericParameter)
+        {
+            // StackType cannot represent other CLR value types or generic slots.
+            IL.Emit(OpCodes.Box, returnType);
+            SetStackUnknown();
+        }
+        else
+            SetStackUnknown();
+    }
+
+    private void EmitRuntimeStaticMemberRead(Expr receiver, string propertyName)
+    {
+        // Preserve the original constructor for descriptor getters, inherited
+        // data fields and live own shadows instead of selecting a lexical owner.
         EmitExpression(receiver);
         EmitBoxIfNeeded(receiver);
         IL.Emit(OpCodes.Ldstr, propertyName);

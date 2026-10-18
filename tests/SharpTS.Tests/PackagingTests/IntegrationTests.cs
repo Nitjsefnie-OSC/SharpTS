@@ -9,6 +9,7 @@ namespace SharpTS.Tests.PackagingTests;
 /// End-to-end integration tests for the --pack CLI workflow.
 /// Tests the complete packaging pipeline from TypeScript source to NuGet package.
 /// </summary>
+[Collection("ExternalProcessTests")]
 public class IntegrationTests
 {
     #region Test Fixtures

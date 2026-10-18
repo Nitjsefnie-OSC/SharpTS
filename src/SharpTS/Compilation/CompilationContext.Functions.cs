@@ -46,6 +46,9 @@ public partial class CompilationContext
     /// </summary>
     public TypeBuilder? ProgramType { get; set; }
 
+    // Compiler-owned typed call wrapper; not a guest callable or runtime service.
+    internal Func<TypeBuilder, MethodInfo, MethodInfo>? GetStaticReceiverCall { get; set; }
+
     // Rest parameter info: function name -> (restParamIndex, regularParamCount)
     // If a function has a rest param, restParamIndex is its index, regularParamCount is non-rest param count
     public Dictionary<string, (int RestParamIndex, int RegularParamCount)>? FunctionRestParams { get; set; }

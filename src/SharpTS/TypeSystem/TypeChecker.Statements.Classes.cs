@@ -1268,6 +1268,9 @@ public partial class TypeChecker
     {
         // Save reference to current environment for later registration
         TypeEnvironment parentEnv = _environment;
+        TypeInfo? mergedInterface = parentEnv.GetLocalTypeBinding(classStmt.Name.Lexeme);
+        if (mergedInterface is not (TypeInfo.Interface or TypeInfo.GenericInterface))
+            mergedInterface = null;
 
         // Handle generic type parameters
         TypeEnvironment classTypeEnv = new(_environment);
@@ -1280,6 +1283,14 @@ public partial class TypeChecker
                 classTypeParams = BuildGenericTypeParameters(
                     classStmt.TypeParams,
                     classTypeEnv);
+        }
+        classTypeParams = ReconcileAmbientClassTypeParameters(classStmt.Name, classTypeParams ?? [], mergedInterface);
+        for (int index = 0; index < classTypeParams.Count; index++)
+        {
+            if (classStmt.TypeParams is { } declarations && index < declarations.Count)
+                DefineSourceTypeParameter(classTypeEnv, declarations[index], classTypeParams[index]);
+            else
+                classTypeEnv.DefineTypeParameter(classTypeParams[index].Name, classTypeParams[index]);
         }
 
         // Resolve the base with the ambient class's type parameters in scope. Consumers need the
@@ -1451,22 +1462,10 @@ public partial class TypeChecker
             PublishStaticAccessorTypes(mutableClass);
         }
 
-        // Publish the generic constructor surface for ambient classes too. Previously
-        // `declare class Component<P, S>` was always frozen as a non-generic Class, so
-        // consumers saw TS2315 and JSX could never recover the instantiated props type.
-        TypeInfo.Class classType = mutableClass.Freeze();
-        if (classTypeParams is { Count: > 0 })
-        {
-            TypeInfo.GenericClass genericClass = mutableClass.FreezeGeneric(classTypeParams);
-            parentEnv.Define(classStmt.Name.Lexeme, genericClass);
-            parentEnv.DefineType(classStmt.Name.Lexeme, genericClass);
-        }
-        else
-        {
-            parentEnv.Define(classStmt.Name.Lexeme, classType);
-            parentEnv.DefineType(classStmt.Name.Lexeme, classType);
-        }
-        _typeMap.SetClassType(classStmt, classType);
+        var merge = new AmbientClassMergeState(parentEnv, classStmt, mutableClass,
+            mutableClass.FreezeCore(), classTypeParams);
+        ApplyAmbientClassInterface(merge, mergedInterface, classTypeParams);
+        _ambientClassMerges[(parentEnv, classStmt.Name.Lexeme)] = merge;
 
         } // End EnvironmentScope
     }

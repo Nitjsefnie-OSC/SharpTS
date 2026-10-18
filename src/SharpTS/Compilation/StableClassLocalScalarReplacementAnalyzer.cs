@@ -18,7 +18,8 @@ internal static class StableClassLocalScalarReplacementAnalyzer
         List<Stmt> program,
         TypeMap? typeMap,
         ClosureAnalyzer? closures,
-        RuntimeFeatureSet? features)
+        RuntimeFeatureSet? features,
+        TypeMapper typeMapper)
     {
         if (typeMap is null
             || features?.UsesDynamicPropertyDescriptors != false
@@ -33,7 +34,8 @@ internal static class StableClassLocalScalarReplacementAnalyzer
         var eligibleClasses = new Dictionary<string, ClassCandidate>(StringComparer.Ordinal);
         foreach (var (name, classes) in declarations.Classes)
         {
-            if (classes.Count != 1 || declarations.ExportedNames.Contains(name))
+            if (classes.Count != 1 || declarations.ExportedNames.Contains(name)
+                || typeMapper.IsDynamicClassInstance(typeMap.GetClassType(classes[0])))
                 continue;
             if (TryBuildClassCandidate(classes[0], out var candidate))
                 eligibleClasses[name] = candidate;

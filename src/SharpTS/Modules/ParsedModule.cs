@@ -32,6 +32,9 @@ public class ParsedModule
     /// <summary>Source tokens retained with this parse, empty for synthetic modules.</summary>
     public IReadOnlyList<Token> Tokens { get; set; } = [];
 
+    /// <summary>File and line directives retained from this source's lexer.</summary>
+    public TypeScriptPragmas Pragmas { get; set; } = TypeScriptPragmas.Empty;
+
     /// <summary>
     /// Recoverable syntax diagnostics produced while parsing this module. Empty during
     /// normal product loading, which remains fail-fast; conformance and editor-style

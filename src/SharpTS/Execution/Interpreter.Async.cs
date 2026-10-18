@@ -626,7 +626,8 @@ public partial class Interpreter
         {
             value = (await EvaluateAsync(varStmt.Initializer)).ToObject();
         }
-        _environment.Define(varStmt.Name.Lexeme, value);
+        var target = varStmt.IsVar ? _environment.VarDeclarationTarget ?? _environment : _environment;
+        target.Define(varStmt.Name.Lexeme, value);
         return ExecutionResult.Success();
     }
 

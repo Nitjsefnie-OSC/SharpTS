@@ -14,6 +14,11 @@ public partial class ILEmitter
 {
     protected override void EmitNew(Expr.New n)
     {
+        if (_ctx.TypeMapper.HeldClassConstructions?.RequiresValueConstruction(n) == true)
+        {
+            EmitDynamicConstruction(n);
+            return;
+        }
         if (n.Callee is Expr.This && !_ctx.IsInstanceMethod && _ctx.CurrentClassExpr != null
             && _ctx.RuntimeClassDeclarations?.Values.Any(expression => ReferenceEquals(expression, _ctx.CurrentClassExpr)) == true)
         {
@@ -99,6 +104,11 @@ public partial class ILEmitter
         var ctorBuilder = _ctx.ClassRegistry?.GetConstructorByQualifiedName(resolvedClassName);
         if (_ctx.Classes.TryGetValue(resolvedClassName, out var typeBuilder) && ctorBuilder != null)
         {
+            if (_ctx.TypeMapper.HeldClassConstructions is { } bindings && !bindings.HasCanonicalReference(n.Callee))
+            {
+                EmitDynamicConstruction(n);
+                return;
+            }
             EmitTypedClassConstruction(typeBuilder, ctorBuilder, resolvedClassName, n);
             return;
         }
@@ -588,6 +598,35 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Br, builtInDone);
         IL.MarkLabel(notBooleanType);
 
+        // Array constructor values carry an IList<object> Type token. Its
+        // CLR interface has no constructor; use the guest length/element rules.
+        var notArrayType = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, typeLocal);
+        IL.Emit(OpCodes.Ldtoken, _ctx.Types.IListOfObject);
+        IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Bne_Un, notArrayType);
+        IL.Emit(OpCodes.Ldloc, typeLocal);
+        EmitArgsArrayWithSpread(n.Arguments);
+        IL.Emit(OpCodes.Call, _ctx.Runtime.DynamicConstruction.Value);
+        IL.Emit(OpCodes.Br, builtInDone);
+        IL.MarkLabel(notArrayType);
+
+        if (_ctx.Runtime.Promise is not null)
+        {
+            // Aliases and member-held Promise constructors reach this Type
+            // path. Expand arguments once before the shared executor adapter.
+            var notPromiseType = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, typeLocal);
+            IL.Emit(OpCodes.Ldtoken, _ctx.Types.TaskOfObject);
+            IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+            IL.Emit(OpCodes.Bne_Un, notPromiseType);
+            IL.Emit(OpCodes.Ldloc, typeLocal);
+            EmitArgsArrayWithSpread(n.Arguments);
+            IL.Emit(OpCodes.Call, _ctx.Runtime.DynamicConstruction.Value);
+            IL.Emit(OpCodes.Br, builtInDone);
+            IL.MarkLabel(notPromiseType);
+        }
+
         List<LocalBuilder> argTemps = [];
         foreach (var arg in n.Arguments)
         {
@@ -683,42 +722,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Brtrue, constructionDone);
         IL.Emit(OpCodes.Pop);
 
-        // Preserve the evaluated constructor binding (including module aliases
-        // and reassignment), while closing its generic definition using the
-        // type arguments resolved for this particular new-expression.
-        if (_ctx.TypeMap?.Get(n) is SharpTS.TypeSystem.TypeInfo.Instance
-            { ClassType: SharpTS.TypeSystem.TypeInfo.InstantiatedGeneric instantiated })
-        {
-            var alreadyClosed = IL.DefineLabel();
-            IL.Emit(OpCodes.Ldloc, typeLocal);
-            IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(_ctx.Types.Type, "get_IsGenericTypeDefinition"));
-            IL.Emit(OpCodes.Brfalse, alreadyClosed);
-            IL.Emit(OpCodes.Ldloc, typeLocal);
-            IL.Emit(OpCodes.Ldc_I4, instantiated.TypeArguments.Count);
-            IL.Emit(OpCodes.Newarr, _ctx.Types.Type);
-            for (int i = 0; i < instantiated.TypeArguments.Count; i++)
-            {
-                IL.Emit(OpCodes.Dup);
-                IL.Emit(OpCodes.Ldc_I4, i);
-                Type genericArgument = instantiated.TypeArguments[i] switch
-                {
-                    SharpTS.TypeSystem.TypeInfo.StringLiteral => _ctx.Types.String,
-                    SharpTS.TypeSystem.TypeInfo.NumberLiteral => _ctx.Types.Double,
-                    SharpTS.TypeSystem.TypeInfo.BooleanLiteral => _ctx.Types.Boolean,
-                    var argument => _ctx.TypeMapper.MapTypeInfo(argument)
-                };
-                // CLR generic arguments cannot be System.Void; erase void/never to object here.
-                if (_ctx.Types.IsVoid(genericArgument))
-                    genericArgument = _ctx.Types.Object;
-                IL.Emit(OpCodes.Ldtoken, genericArgument);
-                IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
-                IL.Emit(OpCodes.Stelem_Ref);
-            }
-            IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(
-                _ctx.Types.Type, "MakeGenericType", _ctx.Types.MakeArrayType(_ctx.Types.Type)));
-            IL.Emit(OpCodes.Stloc, typeLocal);
-            IL.MarkLabel(alreadyClosed);
-        }
+        EmitCloseEvaluatedGenericConstructor(typeLocal, n);
 
         // Guest classes already have a source-aware factory that publishes the
         // untrimmed caller list for `arguments`. The CLR reflection fallback

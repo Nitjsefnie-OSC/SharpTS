@@ -200,7 +200,11 @@ public class DeclareFieldTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("null\ndefault\n123\n", output);
+        // The interpreter still materializes erased fields as null (#2549).
+        var expected = mode == ExecutionMode.Compiled
+            ? "undefined\ndefault\n123\n"
+            : "null\ndefault\n123\n";
+        Assert.Equal(expected, output);
     }
 
     #endregion

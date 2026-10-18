@@ -6,8 +6,9 @@ namespace SharpTS.Compilation;
 /// <summary>
 /// Decides whether a function/arrow/method body has a return whose value can be the runtime
 /// <c>undefined</c> sentinel despite a numeric, boolean or class-instance declared return type.
-/// The checker flags those expressions in <see cref="TypeMap"/> so the compiler can widen the
-/// return slot to <c>object</c>, preserving the value instead of coercing it or failing a class cast.
+/// The checker and forwarding analysis flag those expressions in <see cref="TypeMap"/> so the
+/// compiler can widen the return slot to <c>object</c>, preserving the value instead of coercing it
+/// or failing a class cast.
 /// </summary>
 internal static class ReturnSlotAnalysis
 {

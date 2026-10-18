@@ -169,12 +169,13 @@ internal static class SingleSourceAnalyzer
         phaseStartedAt = timingCollector.Start();
         try
         {
-            var checker = new TypeChecker().WithFilePath(options.FileName);
+            var checker = new TypeChecker().WithFilePath(options.FileName)
+                .WithSourceDiagnosticPolicy(checkJs: false, lexer.Pragmas);
             checker.SetDecoratorMode(options.DecoratorMode);
             typeResult = checker.CheckWithRecovery(parseResult.Statements);
-            diagnostics = TypeCheckPolicy.ApplyLineDirectives(
-                typeResult.Diagnostics,
-                lexer.Pragmas);
+            diagnostics = TypeCheckPolicy.ShouldTypeCheck(options.FileName, lexer.Pragmas, checkJsDefault: false)
+                ? TypeCheckPolicy.ApplyLineDirectives(typeResult.Diagnostics, lexer.Pragmas)
+                : typeResult.Diagnostics;
         }
         catch (SharpTSException ex)
         {

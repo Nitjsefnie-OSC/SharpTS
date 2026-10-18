@@ -1205,10 +1205,14 @@ public sealed class HostedInterpreterRuntimeTests
             program.Resolver,
             program.TypeMap);
 
+        byte[] bytes = compiler.SaveToBytes();
+        using var verifier = new ILVerifier(extraProbeDirectories: [AppContext.BaseDirectory]);
+        using var assemblyStream = new MemoryStream(bytes);
+        Assert.Empty(verifier.Verify(assemblyStream));
         var dispatcher = new DeterministicHostDispatcher();
         var lifetime = new RecordingLifetime();
         using ISharpTSHostedRuntime runtime = SharpTSHostedAssembly.CreateRuntime(
-            System.Reflection.Assembly.Load(compiler.SaveToBytes()),
+            System.Reflection.Assembly.Load(bytes),
             dispatcher,
             lifetime,
             new RecordingErrorSink());
@@ -1217,6 +1221,51 @@ public sealed class HostedInterpreterRuntimeTests
         initialization.GetAwaiter().GetResult();
 
         Assert.Equal([(13, dispatcher.OwnerThreadId)], lifetime.Exits);
+    }
+
+    [Theory]
+    [InlineData("13", true)]
+    [InlineData("null", false)]
+    [InlineData("undefined", false)]
+    public void CompiledHostedNumericMain_UsesActualObjectReturnValue(string value, bool completes)
+    {
+        SharpTSProgram program = CreateProgram($$"""
+            function invoke(callback: () => number): number { return callback(); }
+            function main(): number { return invoke((): number => {{value}} as any); }
+            export {};
+            """);
+        var compiler = new ILCompiler($"hosted_object_main_{Guid.NewGuid():N}");
+        compiler.EnableHostedOutput();
+        compiler.CompileModules(program.RuntimeModules.ToList(), program.Resolver, program.TypeMap);
+        byte[] bytes = compiler.SaveToBytes();
+        using var verifier = new ILVerifier(extraProbeDirectories: [AppContext.BaseDirectory]);
+        using var assemblyStream = new MemoryStream(bytes);
+        Assert.Empty(verifier.Verify(assemblyStream));
+        var assembly = System.Reflection.Assembly.Load(bytes);
+        Assert.Contains(assembly.GetTypes().SelectMany(type => type.GetMethods(
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic)), method => method.Name.EndsWith("_main", StringComparison.Ordinal)
+                && method.ReturnType == typeof(object));
+
+        var dispatcher = new DeterministicHostDispatcher();
+        var lifetime = new RecordingLifetime();
+        var errors = new RecordingErrorSink();
+        using ISharpTSHostedRuntime runtime = SharpTSHostedAssembly.CreateRuntime(
+            assembly, dispatcher, lifetime, errors);
+        Task initialization = runtime.InitializeAsync();
+        dispatcher.RunUntil(() => completes ? runtime.State == SharpTSHostedRuntimeState.Stopped : initialization.IsCompleted);
+        initialization.GetAwaiter().GetResult();
+        Assert.Empty(errors.Errors);
+        if (completes)
+        {
+            Assert.Equal([(13, dispatcher.OwnerThreadId)], lifetime.Exits);
+            Assert.Equal(SharpTSHostedShutdownReason.ProgramCompleted, runtime.ShutdownReason);
+        }
+        else
+        {
+            Assert.Empty(lifetime.Exits);
+            Assert.Equal(SharpTSHostedRuntimeState.Running, runtime.State);
+        }
     }
 
     [Fact]

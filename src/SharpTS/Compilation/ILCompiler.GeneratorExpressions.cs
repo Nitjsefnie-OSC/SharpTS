@@ -47,7 +47,7 @@ public partial class ILCompiler
                 source.Parameters, source.BlockBody, source.ReturnType,
                 IsAsync: source.IsAsync, IsGenerator: true, HasDynamicThis: source.HasOwnThis,
                 ThisTypeNode: source.ThisTypeNode, ReturnTypeNode: source.ReturnTypeNode,
-                RuntimeName: source.Name?.Lexeme ?? "");
+                RuntimeName: source.RuntimeName ?? source.Name?.Lexeme ?? "");
 
             StateMachineBuilderBase machine;
             if (source.IsAsync)

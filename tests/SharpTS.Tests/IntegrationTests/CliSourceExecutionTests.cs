@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Text.Json;
 using SharpTS.Testing;
+using SharpTS.Tests.SharedTests;
 using Xunit;
 
 namespace SharpTS.Tests.IntegrationTests;
@@ -9,6 +11,31 @@ namespace SharpTS.Tests.IntegrationTests;
 /// </summary>
 public class CliSourceExecutionTests
 {
+    public static IEnumerable<object[]> HandlerScopeCases() => HandlerLexicalScopeTests.ResolverCases()
+        .Where(row => (string)row[0] is "outer-binding-restoration" or "abrupt-handler-completion");
+
+    [Theory, MemberData(nameof(HandlerScopeCases))]
+    public void Interpret_HandlerScopesPreserveResolvedBindingHomes(string name, string source, string expected)
+    {
+        Assert.NotEmpty(name);
+        using var directory = CliTestHelper.CreateTempDirectory();
+        var sourceLiteral = JsonSerializer.Serialize(source);
+        var entryPath = directory.CreateFile("handler-bridge.ts", $$"""
+            import { runSourceJson } from "sharpts:execution";
+            const result = JSON.parse(runSourceJson({{sourceLiteral}}, "interpret", 8192));
+            console.log(result.Success);
+            console.log(result.Errors.length);
+            console.log(result.Output.trim());
+            """);
+
+        var result = CliTestHelper.RunCli($"--no-tsconfig \"{entryPath}\"", directory.Path,
+            TimeSpan.FromSeconds(30));
+
+        Assert.True(result.ExitCode == 0, result.StandardOutput + result.StandardError);
+        Assert.Empty(result.StandardError);
+        Assert.Equal("true\n0\n" + expected, CliTestHelper.NormalizeOutput(result.StandardOutput));
+    }
+
     [Fact]
     public void Compile_CopiesManagedClosure_AndRunsOutsideCompilerProcess()
     {

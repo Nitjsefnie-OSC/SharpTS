@@ -115,6 +115,43 @@ public sealed class InterleavedSuspendedClosureTests
         run(state, gate(state)).then(() => {}, (error: any) => console.log("rejected", error.message));
         """;
 
+    public const string EqualityAwaitRejectInterleaveSource = """
+        function gate(state: any): any {
+            return new Promise<any>((resolve: any, reject: any) => {
+                state.release = resolve;
+                state.fail = reject;
+            });
+        }
+        async function* values(wait: any, label: string): any {
+            const marker = { tag: "generator-" + label };
+            try {
+                const same = (null as any) === await wait;
+                yield [same, marker.tag];
+            } finally {
+                console.log("finally", marker.tag);
+            }
+        }
+        async function run() {
+            const marker = { tag: "caller" };
+            const token: any = {};
+            const leftState: any = {}, rightState: any = {};
+            const left: any = values(gate(leftState), "left");
+            const right: any = values(gate(rightState), "right");
+            const leftPending: any = left.next();
+            const rightPending: any = right.next();
+            rightState.release(null);
+            const first: any = await rightPending;
+            console.log(marker.tag, first.value[0], first.value[1]);
+            leftState.fail(token);
+            try { await leftPending; }
+            catch (error: any) { console.log(error === token, marker.tag); }
+            console.log((await left.next()).done, marker.tag);
+            console.log((await right.next()).done, marker.tag);
+            console.log("after", marker.tag);
+        }
+        run().catch((error: any) => console.log("unexpected", error.name, error.message));
+        """;
+
     public static IEnumerable<object[]> Cases()
     {
         yield return ["issue", IssueSource,
@@ -123,6 +160,9 @@ public sealed class InterleavedSuspendedClosureTests
         yield return ["reverse-release", ReverseReleaseSource,
             "right! 1 true\noutside true\nleft! 1 right!-changed true true\n7 1\n"];
         yield return ["equality-await-caller", EqualityAwaitCallerSource, "same true\ncaller 1\n"];
+        yield return ["equality-await-reject-interleave", EqualityAwaitRejectInterleaveSource,
+            "caller true generator-right\nfinally generator-left\ntrue caller\ntrue caller\n" +
+            "finally generator-right\ntrue caller\nafter caller\n"];
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>

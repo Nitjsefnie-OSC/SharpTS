@@ -1026,23 +1026,13 @@ public partial class RuntimeEmitter
         // Closed CLR generic instantiations have distinct storage prototypes,
         // but each is the prototype of the same erased source constructor.
         var nextAllocationPrototype = il.DefineLabel();
-        var candidateType = il.DeclareLocal(_types.Type);
         il.Emit(OpCodes.Ldloc, classTypeLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsGenericTypeDefinition")!.GetGetMethod()!);
         il.Emit(OpCodes.Brfalse, nextAllocationPrototype);
         il.Emit(OpCodes.Ldloc, allocationCandidate);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, candidateType);
-        il.Emit(OpCodes.Ldloc, candidateType);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsGenericType")!.GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, nextAllocationPrototype);
-        il.Emit(OpCodes.Ldloc, candidateType);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
-        il.Emit(OpCodes.Ldloc, classTypeLocal);
-        il.Emit(OpCodes.Bne_Un, nextAllocationPrototype);
-        il.Emit(OpCodes.Ldloc, candidateType);
-        il.Emit(OpCodes.Call, inputs.ClassPrototypes.Get);
-        il.Emit(OpCodes.Ldloc, allocationCandidate);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.NormalizePrototype);
+        il.Emit(OpCodes.Ldloc, allocationPrototype);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.NormalizePrototype);
         il.Emit(OpCodes.Beq, trueLabel);
         il.MarkLabel(nextAllocationPrototype);
         il.Emit(OpCodes.Br, allocationWalk);
@@ -1858,6 +1848,48 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.StringOpEquality);
         il.Emit(OpCodes.Br, endLabel);
         il.MarkLabel(notRightCoercibleLabel);
+
+        // Primitive loose equality: Boolean first becomes Number, then mixed
+        // Number/String operands use ToNumber. Two strings stay lexical, and
+        // Symbol/BigInt must never be sent through numeric coercion here.
+        void EmitBooleanAsNumber(LocalBuilder operand)
+        {
+            var notBoolean = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, operand);
+            il.Emit(OpCodes.Isinst, _types.Boolean);
+            il.Emit(OpCodes.Brfalse, notBoolean);
+            il.Emit(OpCodes.Ldloc, operand);
+            il.Emit(OpCodes.Call, inputs.NumericCoercion.ToNumber);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Stloc, operand);
+            il.MarkLabel(notBoolean);
+        }
+
+        EmitBooleanAsNumber(leftLocal);
+        EmitBooleanAsNumber(rightLocal);
+        var leftNotNumber = il.DefineLabel();
+        var numericComparison = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, leftLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, leftNotNumber);
+        il.Emit(OpCodes.Ldloc, rightLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, numericComparison);
+        il.Emit(OpCodes.Br, objectEqualsLabel);
+        il.MarkLabel(leftNotNumber);
+        il.Emit(OpCodes.Ldloc, leftLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, objectEqualsLabel);
+        il.Emit(OpCodes.Ldloc, rightLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, objectEqualsLabel);
+        il.MarkLabel(numericComparison);
+        il.Emit(OpCodes.Ldloc, leftLocal);
+        il.Emit(OpCodes.Call, inputs.NumericCoercion.ToNumber);
+        il.Emit(OpCodes.Ldloc, rightLocal);
+        il.Emit(OpCodes.Call, inputs.NumericCoercion.ToNumber);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Br, endLabel);
 
         // Primitive equality and object identity/equality share the existing
         // Object.Equals terminal path. Object/object branches arrive here with

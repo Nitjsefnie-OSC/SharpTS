@@ -94,7 +94,7 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Box, parameterType);
             il.Emit(OpCodes.Stfld, field);
         }
-        ctx.UseFunctionDisplayClassParameterStorage = true;
+        ctx.UseOwnedCapturedParameterStorage = true;
     }
 
     private void DefineFunction(Stmt.Function funcStmt)
@@ -650,6 +650,8 @@ public partial class ILCompiler
                 }
             }
         }
+
+        ctx.UseOwnedCapturedParameterStorage = true;
 
         // Captured lexical slots must enter TDZ before hoisted functions can
         // retain a reference to their environment.
@@ -1685,9 +1687,12 @@ public partial class ILCompiler
     /// </summary>
     private Type ResolveConstraintType(string constraint)
     {
+        string qualified = GetDefinitionContext().ResolveClassName(constraint);
+        if (_classes.Builders.TryGetValue(qualified, out var owned))
+            return _typeMapper.IsDynamicClassInstance(_typeMap.GetClassType(qualified)) ? _types.Object : owned;
         // Check class builders first
         if (_classes.Builders.TryGetValue(constraint, out var tb))
-            return tb;
+            return _typeMapper.IsDynamicClassInstance(_typeMap.GetClassType(constraint)) ? _types.Object : tb;
 
         // Delegate primitive resolution to centralized mappings
         return PrimitiveTypeMappings.StringToClrType.GetValueOrDefault(constraint, typeof(object));

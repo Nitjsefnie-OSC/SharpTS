@@ -23,6 +23,39 @@ namespace SharpTS.Tests.SharedTests;
 public class AsyncCallApplyBindTests
 {
     [Theory, ModeData]
+    public void AsyncFunctionExpression_MemberCallsPreserveReceiverAcrossAwait(ExecutionMode mode)
+    {
+        const string source = """
+            const object: any = {
+                tag: "ordinary",
+                value: async function(this: any) {
+                    await Promise.resolve(0);
+                    return "async:" + this.tag;
+                }
+            };
+            async function run() {
+                console.log(await object.value());
+                console.log(await object['value']());
+                console.log(await object.value?.());
+                const copied: any = { tag: "copied", value: object.value };
+                console.log(await copied.value());
+                console.log(await object.value.call({ tag: "explicit" }));
+                const outer: any = {
+                    tag: "lexical",
+                    make: function() {
+                        return async () => { await Promise.resolve(0); return this.tag; };
+                    }
+                };
+                const lexical: any = { tag: "wrong", value: outer.make() };
+                console.log(await lexical.value());
+            }
+            run();
+            """;
+        Assert.Equal("async:ordinary\nasync:ordinary\nasync:ordinary\nasync:copied\nasync:explicit\nlexical\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
     public void AsyncArrow_Call_PassesArguments(ExecutionMode mode)
     {
         // The headline repro from the issue: used to throw "undefined is not a function".

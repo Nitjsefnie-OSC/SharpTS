@@ -1934,6 +1934,8 @@ public partial class Interpreter
         // an ordinary object onto which a method has been copied.
         if (callee is SharpTSFunction function)
             callee = function.BindThis(receiver);
+        else if (callee is SharpTSAsyncArrowFunction { HasOwnThis: true } asyncExpression)
+            callee = asyncExpression.Bind(receiver);
         else if (callee is SharpTSAsyncFunction asyncFunction)
         {
             // Instance property reads already install the method's receiver scope.

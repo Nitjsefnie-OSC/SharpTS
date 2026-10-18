@@ -131,6 +131,67 @@ public class GroupByTests
     }
 
     [Theory, ModeData]
+    public void MapGroupBy_ConsumesGeneratorsInIterationOrder(ExecutionMode mode)
+    {
+        const string source = """
+            function* values() { yield 1; yield 2; yield 3; }
+            const map: any = Map, events: string[] = [];
+            const result: any = map.groupBy(values(), (value: number, index: number) => {
+                events.push(value + ':' + index); return value % 2;
+            });
+            console.log(result.size, result.get(1).join(','), result.get(0).join(','), events.join('|'));
+            """;
+        Assert.Equal("2 1,3 2 1:0|2:1|3:2\n", TestHarness.Run(source, mode));
+    }
+
+    // #2572 tracks compiled Set iterable admission.
+    [Theory, InterpretedOnlyData]
+    public void MapGroupBy_ConsumesSetsInIterationOrder(ExecutionMode mode)
+    {
+        const string source = """
+            const map: any = Map;
+            const result: any = map.groupBy(new Set([2, 2, 3]), (value: number) => value % 2);
+            console.log(result.size, result.get(0).join(','), result.get(1).join(','));
+            """;
+        Assert.Equal("2 2 3\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void MapGroupBy_ClosesTheActualIteratorAndPreservesTheCallbackThrow()
+    {
+        // #2309 tracks the distinct compiled cleanup precedence failure.
+        const string source = """
+            const marker = {}, cleanup = {}, events: string[] = [];
+            const iterator: any = {
+                next() { events.push('next'); return { done: false, value: 1 }; },
+                return() { events.push('return'); throw cleanup; }
+            };
+            const source: any = {
+                [Symbol.iterator]() { events.push('acquire'); return iterator; },
+                return() { events.push('wrong'); return {}; }
+            };
+            const map: any = Map;
+            try { map.groupBy(source, () => { events.push('callback'); throw marker; }); }
+            catch (error) { console.log(error === marker, events.join('|')); }
+            """;
+        Assert.Equal("true acquire|next|callback|return\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Theory, ModeData]
+    public void MapGroupBy_ValidatesCallbackBeforeAcquiringTheIterator(ExecutionMode mode)
+    {
+        const string source = """
+            let reads = 0;
+            const source: any = { get [Symbol.iterator]() { reads++; throw 1; } };
+            const map: any = Map;
+            try { map.groupBy(source, null); } catch (error) { console.log(error instanceof TypeError, reads); }
+            function key(value: number) { 'use strict'; console.log(this === undefined); return value; }
+            console.log(map.groupBy([1], key).size);
+            """;
+        Assert.Equal("true 0\ntrue\n1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
     public void MapGroupBy_EmptyArray(ExecutionMode mode)
     {
         var source = """

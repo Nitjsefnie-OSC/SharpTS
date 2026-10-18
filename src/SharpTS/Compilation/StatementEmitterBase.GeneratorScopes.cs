@@ -1,5 +1,6 @@
 using System.Reflection.Emit;
 using SharpTS.Parsing;
+using SharpTS.Parsing.Visitors;
 
 namespace SharpTS.Compilation;
 
@@ -62,36 +63,62 @@ public abstract partial class StatementEmitterBase
     }
 
     protected void WithGeneratorLexicalScope(IEnumerable<Stmt> statements, Action emit,
-        object? declaration = null, Token? binding = null)
+        object? declaration = null, Token? binding = null, bool ordinaryHandler = false)
     {
         var body = statements as IReadOnlyList<Stmt> ?? statements.ToList();
         bool selected = binding is not null && Ctx.ClosureAnalyzer?.IsLoopBodyCellDeclaration(binding) == true
             || DirectLexicalDeclarations(body).Any(item => Ctx.ClosureAnalyzer?.IsLoopBodyCellDeclaration(item.Token) == true);
-        if (!selected) { emit(); return; }
+        bool lexicalHandler = ordinaryHandler && (binding is not null || DirectLexicalDeclarations(body).Any());
+        if (!selected && !lexicalHandler) { emit(); return; }
+        var variables = new HandlerVarCollector();
+        if (ordinaryHandler)
+            foreach (var statement in body) variables.Visit(statement);
         Ctx.Locals.EnterScope();
         List<LoopBodyCellScopeEntry> cells = [];
         try
         {
-            if (binding is not null) EnterLexicalCellBinding(declaration!, binding, cells);
-            EnterLoopBodyCellScope(body, cells);
+            if (binding is not null) EnterLexicalCellBinding(declaration!, binding, cells, ordinaryHandler);
+            EnterLoopBodyCellScope(body, cells, ordinaryHandler);
             emit();
         }
         finally
         {
+            // Keep the physical slots that flat ordinary handlers previously
+            // left in their surrounding scope, including nested handler vars.
+            var locals = variables.Names.Select(name =>
+                (Name: name, Local: Ctx.Locals.GetCurrentScopeLocal(name))).ToList();
             ExitLoopBodyCellScope(cells);
             Ctx.Locals.ExitScope();
+            foreach (var (name, local) in locals)
+                if (local is not null && !ReferenceEquals(local, Ctx.Locals.GetLocal(name)))
+                    Ctx.Locals.RegisterLocal(name, local);
         }
     }
 
-    protected void EmitGeneratorScopedStatements(List<Stmt> statements) =>
+    private sealed class HandlerVarCollector : AstVisitorBase
+    {
+        public HashSet<string> Names { get; } = [];
+        protected override void VisitVar(Stmt.Var stmt) { if (stmt.IsVar && !stmt.IsDeclare) Names.Add(stmt.Name.Lexeme); }
+        protected override void VisitForOf(Stmt.ForOf stmt) { if (stmt.IsDeclaration && stmt.IsVar) Names.Add(stmt.Variable.Lexeme); Visit(stmt.Body); }
+        protected override void VisitForIn(Stmt.ForIn stmt) { if (stmt.IsDeclaration && stmt.IsVar) Names.Add(stmt.Variable.Lexeme); Visit(stmt.Body); }
+        protected override void VisitArrowFunction(Expr.ArrowFunction expr) { }
+        protected override void VisitFunction(Stmt.Function stmt) { }
+        protected override void VisitClass(Stmt.Class stmt) { }
+        protected override void VisitClassExpr(Expr.ClassExpr expr) { }
+        protected override void VisitNamespace(Stmt.Namespace stmt) { }
+        protected override void VisitDeclareModule(Stmt.DeclareModule stmt) { }
+    }
+
+    protected void EmitGeneratorScopedStatements(List<Stmt> statements, bool ordinaryHandler = false) =>
         WithGeneratorLexicalScope(statements, () =>
         {
             foreach (var statement in statements) EmitStatement(statement);
-        });
+        }, ordinaryHandler: ordinaryHandler);
 
-    protected bool TryInitializeGeneratorCatchBinding(Token binding, LocalBuilder value)
+    protected bool TryInitializeGeneratorCatchBinding(Token binding, LocalBuilder value, bool ordinaryHandler = false)
     {
-        if (Ctx.ClosureAnalyzer?.IsLoopBodyCellDeclaration(binding) != true) return false;
+        if (Ctx.ClosureAnalyzer?.IsLoopBodyCellDeclaration(binding) != true)
+            return ordinaryHandler && TryInitializeLexicalShadow(binding, value);
         IL.Emit(OpCodes.Ldloc, value);
         if (!TryInitializeLexicalCell(binding))
             throw new InvalidOperationException($"Catch binding '{binding.Lexeme}' has no lexical cell.");

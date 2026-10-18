@@ -21,7 +21,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         public bool CanRelayClassSelf { get; } = canRelayClassSelf;
     }
 
-    private sealed class Binding(Token name, Owner owner, bool candidate, Binding? shadowOf, bool lexical)
+    private sealed class Binding(Token name, Owner owner, bool candidate, Binding? shadowOf, bool lexical,
+        bool ordinaryHandlerCandidate)
     {
         public Token Name { get; } = name;
         public Owner Owner { get; } = owner;
@@ -32,6 +33,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         public bool Lexical { get; } = lexical;
         public bool GeneratorCaptured { get; set; }
         public bool GeneratorEligible { get; set; } = lexical;
+        public bool OrdinaryHandlerCandidate { get; } = ordinaryHandlerCandidate;
     }
 
     private readonly List<Owner> _owners = [];
@@ -117,7 +119,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         return null;
     }
 
-    private void Declare(Token name, bool candidate = false, bool unsupportedShadow = false, Binding? shadowOf = null, bool lexical = false)
+    private void Declare(Token name, bool candidate = false, bool unsupportedShadow = false, Binding? shadowOf = null,
+        bool lexical = false, bool ordinaryHandlerCandidate = false)
     {
         // Header, catch and switch lists have their own selected-cell scope
         // emitters. A same-name binding must mask a selected generator cell
@@ -140,12 +143,13 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
                     break;
                 }
         if (!_declarations.TryGetValue(name, out var binding))
-            _declarations[name] = binding = new(name, _owners[^1], candidate, shadowOf, lexical);
+            _declarations[name] = binding = new(name, _owners[^1], candidate, shadowOf, lexical, ordinaryHandlerCandidate);
         if (lexical && !_owners[^1].CanOwnGeneratorCells) binding.GeneratorEligible = false;
         _scopes.Peek()[name.Lexeme] = binding;
     }
 
-    private void EnterScope(IEnumerable<Stmt> statements, bool allowCandidates, bool hoistVars = false, bool unsupportedShadows = false, bool generatorLexicals = false)
+    private void EnterScope(IEnumerable<Stmt> statements, bool allowCandidates, bool hoistVars = false,
+        bool unsupportedShadows = false, bool generatorLexicals = false, bool ordinaryHandler = false)
     {
         _scopes.Push(new(StringComparer.Ordinal));
         if (hoistVars)
@@ -154,21 +158,24 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             foreach (var statement in statements) vars.Visit(statement);
             foreach (var token in vars.Names) Declare(token);
         }
-        foreach (var statement in statements) Predeclare(statement, allowCandidates, unsupportedShadows, generatorLexicals);
+        foreach (var statement in statements) Predeclare(statement, allowCandidates, unsupportedShadows, generatorLexicals, ordinaryHandler);
     }
 
-    private void Predeclare(Stmt statement, bool allowCandidates, bool unsupportedShadows, bool generatorLexicals)
+    private void Predeclare(Stmt statement, bool allowCandidates, bool unsupportedShadows, bool generatorLexicals,
+        bool ordinaryHandler)
     {
         void Lexical(Token name)
         {
-            bool direct = allowCandidates && _loopBodyDepth > 0 && _owners[^1].CanOwnCells;
+            bool handlerCandidate = ordinaryHandler && _owners[^1].CanOwnCells;
+            bool direct = handlerCandidate || allowCandidates && _loopBodyDepth > 0 && _owners[^1].CanOwnCells;
             var parent = !direct && allowCandidates && _owners[^1].CanOwnGeneratorCells
                 ? VisibleBinding(name.Lexeme) : null;
             bool relatedShadow = parent is { Candidate: true } or { Lexical: true };
             // A callback's inner shadow also needs a cell when it masks an actual
             // outer cell. Final selection waits for that parent's selected status.
-            Declare(name, direct || (relatedShadow && _owners[^1].CanOwnCells), unsupportedShadows, relatedShadow ? parent : null,
-                lexical: generatorLexicals);
+            Declare(name, direct || (relatedShadow && _owners[^1].CanOwnCells),
+                unsupportedShadows && !handlerCandidate, relatedShadow ? parent : null,
+                lexical: generatorLexicals, ordinaryHandlerCandidate: handlerCandidate);
         }
         switch (statement)
         {
@@ -189,7 +196,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
                         }
                 break;
             case Stmt.Sequence sequence:
-                foreach (var child in sequence.Statements) Predeclare(child, allowCandidates, unsupportedShadows, generatorLexicals);
+                foreach (var child in sequence.Statements) Predeclare(child, allowCandidates, unsupportedShadows, generatorLexicals, ordinaryHandler);
                 break;
         }
     }
@@ -219,7 +226,9 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         for (int index = _owners.Count - 1; index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
         {
             var owner = _owners[index];
-            if (!owner.CanForward) { binding.Eligible = false; continue; }
+            if (!owner.CanForward || binding.OrdinaryHandlerCandidate &&
+                owner.Node is not Expr.ArrowFunction { IsAsync: false, IsGenerator: false })
+            { binding.Eligible = false; continue; }
             RecordCapture(owner.Node, name, binding);
         }
     }
@@ -310,21 +319,28 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
     protected override void VisitTryCatch(Stmt.TryCatch stmt)
     {
-        VisitStatementScope(stmt.TryBlock);
+        VisitStatementScope(stmt.TryBlock, ordinaryHandler: true);
         if (stmt.CatchBlock is { } catchBlock)
         {
-            EnterScope(catchBlock, allowCandidates: false, unsupportedShadows: true, generatorLexicals: true);
-            if (stmt.CatchParam is { } parameter) Declare(parameter, unsupportedShadow: true, lexical: true);
+            EnterScope(catchBlock, allowCandidates: false, unsupportedShadows: true,
+                generatorLexicals: true, ordinaryHandler: true);
+            if (stmt.CatchParam is { } parameter)
+            {
+                bool candidate = _owners[^1].CanOwnCells;
+                Declare(parameter, candidate, unsupportedShadow: !candidate, lexical: true,
+                    ordinaryHandlerCandidate: candidate);
+            }
             try { foreach (var statement in catchBlock) Visit(statement); }
             finally { _scopes.Pop(); }
         }
-        if (stmt.FinallyBlock is { } finallyBlock) VisitStatementScope(finallyBlock);
+        if (stmt.FinallyBlock is { } finallyBlock) VisitStatementScope(finallyBlock, ordinaryHandler: true);
     }
 
-    private void VisitStatementScope(List<Stmt> statements)
+    private void VisitStatementScope(List<Stmt> statements, bool ordinaryHandler = false)
     {
         // These AST lists are not emitted through EmitBlock's cell prologue.
-        EnterScope(statements, allowCandidates: false, unsupportedShadows: true, generatorLexicals: true);
+        EnterScope(statements, allowCandidates: false, unsupportedShadows: true,
+            generatorLexicals: true, ordinaryHandler: ordinaryHandler);
         try { foreach (var statement in statements) Visit(statement); }
         finally { _scopes.Pop(); }
     }

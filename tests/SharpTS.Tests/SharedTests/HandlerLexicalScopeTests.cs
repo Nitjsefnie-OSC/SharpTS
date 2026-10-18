@@ -62,6 +62,79 @@ public sealed class HandlerLexicalScopeTests
         try { overrideThrow(); } catch (error) { console.log(error === other); }
         """;
 
+    public const string UncapturedHandlerShadows = """
+        function run(): void {
+            let value = 1;
+            const read = () => value;
+            try {
+                let value = 10;
+                value += 1;
+                console.log("try", value);
+                throw 20;
+            } catch (value: any) {
+                value += 2;
+                console.log("catch", value);
+            } finally {
+                let value = 30;
+                value += 3;
+                console.log("finally", value);
+            }
+            console.log("outer", read(), value);
+        }
+        run();
+        """;
+
+    public const string RepeatedHandlerEntries = """
+        function collect(): any[] {
+            const entries: any[] = [];
+            for (const seed of [1, 10]) {
+                try {
+                    let value = seed;
+                    const read = () => value;
+                    const add = (step: number) => { value += step; return value; };
+                    entries.push({ read, add });
+                } finally {
+                    console.log("cleanup", seed);
+                }
+            }
+            return entries;
+        }
+        const entries = collect();
+        console.log(entries[0].read(), entries[1].read());
+        console.log(entries[0].add(2), entries[1].read(), entries[0].read());
+        console.log(entries[1].add(3), entries[0].read());
+        """;
+
+    public const string HandlerVarVisibility = """
+        class Box {
+            get read(): any {
+                try { var value = 1; } finally {}
+                return () => value;
+            }
+            get mixed(): any {
+                try { var value = 1; let inner = 2; value += inner; } finally {}
+                return () => value;
+            }
+            get nested(): number {
+                try {
+                    let outer = 2;
+                    try { var value = 1; let inner = 3; value += inner; } finally {}
+                    value += outer;
+                } finally {}
+                return value;
+            }
+        }
+        function make(): any {
+            try { var value = 1; let inner = 2; value += inner; } finally {}
+            return () => value;
+        }
+        const box = new Box();
+        console.log(box.read(), box.mixed(), box.nested, make()());
+        const read = () => typeof Number;
+        namespace Hidden { var Number = 1; }
+        console.log(read());
+        """;
+
     public const string ScriptRootVar = """
         var readHandlerRoot: any;
         try {
@@ -155,13 +228,29 @@ public sealed class HandlerLexicalScopeTests
         console.log("retained", first(), second());
         """;
 
-    public static IEnumerable<object[]> InterpreterCases()
+    private static IEnumerable<object[]> RetainedLexicalCases()
     {
         yield return ["exact-retained-try", Exact, "finally 2\nretained 1\n"];
         yield return ["retained-shadow-catch", RetainedShadowCatch, "1 true:11 21 1000\n3 true:13 23 1000\n"];
         yield return ["abrupt-handler-completion", AbruptControl, "cleanup 2\n1\ncleanup 4\ntrue:3\n2\ntrue\n"];
+    }
+
+    public static IEnumerable<object[]> LexicalCases()
+    {
+        foreach (var row in RetainedLexicalCases())
+            yield return row;
+        yield return ["uncaptured-handler-shadows", UncapturedHandlerShadows, "try 11\ncatch 22\nfinally 33\nouter 1 1\n"];
+        yield return ["repeated-handler-entries", RepeatedHandlerEntries, "cleanup 1\ncleanup 10\n1 10\n3 10 3\n13 3\n"];
+        yield return ["handler-var-visibility", HandlerVarVisibility, "1 3 6 3\nfunction\n"];
+    }
+
+    public static IEnumerable<object[]> InterpreterOnlyCases()
+    {
         yield return ["script-root-var", ScriptRootVar, "9 9 8\n5\n"];
     }
+
+    public static IEnumerable<object[]> InterpreterCases() => RetainedLexicalCases()
+        .Concat(InterpreterOnlyCases());
 
     public static IEnumerable<object[]> VarCases()
     {
@@ -180,8 +269,19 @@ public sealed class HandlerLexicalScopeTests
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
-    // Ordinary retained handler bindings still have the separate compiler owner #2530.
-    [Theory, MemberData(nameof(InterpreterCases))]
+    public static IEnumerable<object[]> LexicalModeCases() => LexicalCases().SelectMany(row =>
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            .Select(mode => new object[] { row[0], row[1], row[2], mode }));
+
+    [Theory, MemberData(nameof(LexicalModeCases))]
+    public void HandlerLexicalBindingsKeepIndependentStorage(
+        string name, string source, string expected, ExecutionMode mode)
+    {
+        Assert.NotEmpty(name);
+        Assert.Equal(expected, TestHarness.Run(source, mode));
+    }
+
+    [Theory, MemberData(nameof(InterpreterOnlyCases))]
     public void InterpreterPreservesHandlerLexicalEnvironments(string name, string source, string expected)
     {
         Assert.NotEmpty(name);

@@ -212,21 +212,74 @@ public abstract partial class AsyncFunctionMoveNextEmitter
     /// suspends the state machine until it settles, and leaves the awaited result on the stack. Shared by
     /// <see cref="EmitAwait"/> and the <c>for await…of</c> loop's implicit next()/return() awaits (#631);
     /// <paramref name="stateNumber"/> is the reserved suspension state for this await.
-    /// Private-call return adoption selects the existing coercion policy instead.
     /// </summary>
-    internal void EmitAwaitFromValueOnStack(int stateNumber, bool isReturnAdoption = false)
+    internal void EmitAwaitFromValueOnStack(int stateNumber)
+    {
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.RequirePromise().AwaitValueToTaskMethod);
+        EmitAwaitTaskOnStack(stateNumber);
+    }
+
+    /// <summary>
+    /// Resolves the final return after all guest handlers have completed. Primitive values
+    /// have no then lookup; objects capture their live then synchronously and invoke it as a job.
+    /// </summary>
+    protected void EmitAdoptCompletionValue(LocalBuilder value, int stateNumber)
+    {
+        if (NextAwaitState() != stateNumber)
+            throw new CompileException("Async return completion state does not follow the body await states.");
+
+        if (!_returnMayNeedAdoption)
+        {
+            // Bare/fallthrough returns are undefined; canonical primitive-chain awaits also
+            // cannot expose a then property. Keep the reserved dispatch target valid.
+            MarkAwaitResumeLabel(stateNumber);
+            return;
+        }
+
+        var completed = IL.DefineLabel();
+        var objectValue = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, value);
+        IL.Emit(OpCodes.Brfalse, completed);
+        var kind = IL.DeclareLocal(Types.String);
+        IL.Emit(OpCodes.Ldloc, value);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.Operators.TypeOf);
+        IL.Emit(OpCodes.Stloc, kind);
+        foreach (string name in new[] { "object", "function" })
+        {
+            IL.Emit(OpCodes.Ldloc, kind);
+            IL.Emit(OpCodes.Ldstr, name);
+            IL.Emit(OpCodes.Call, Types.StringOpEquality);
+            IL.Emit(OpCodes.Brtrue, objectValue);
+        }
+        IL.Emit(OpCodes.Br, completed);
+        IL.MarkLabel(objectValue);
+
+        // Check the public promise before an intermediate resolving task can hide its identity.
+        var distinct = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, value);
+        IL.Emit(OpCodes.Ldarg_0);
+        IL.Emit(OpCodes.Ldflda, AsyncBuilderField);
+        IL.Emit(OpCodes.Call, AsyncBuilder.GetBuilderTaskGetter());
+        IL.Emit(OpCodes.Bne_Un, distinct);
+        GuestErrorEmitter.ThrowTypeError(IL, Ctx.Runtime, "Chaining cycle detected for promise");
+        IL.MarkLabel(distinct);
+
+        IL.Emit(OpCodes.Ldloc, value);
+        IL.Emit(OpCodes.Call, Ctx.Runtime.RequirePromise().ResolveValueMethod);
+        EmitAwaitTaskOnStack(stateNumber);
+        IL.Emit(OpCodes.Stloc, value);
+        IL.MarkLabel(completed);
+    }
+
+    // Shared suspension machinery for an already-normalized Task<object>. Completion resolution
+    // and explicit await have different normalization policies but identical resume ownership.
+    private void EmitAwaitTaskOnStack(int stateNumber)
     {
         var continueLabel = IL.DefineLabel();
         var awaiterField = AwaiterFieldForState(stateNumber);
 
-        // 2. Actual awaits observe native Promise constructor identity. The
-        // private-call return path retains resolving-function coercion instead.
         var taskLocal = IL.DeclareLocal(typeof(Task<object>));
-        var promise = Ctx.Runtime!.RequirePromise();
-        IL.Emit(OpCodes.Call, isReturnAdoption
-            ? promise.CoerceAwaitableToTaskMethod
-            : promise.AwaitValueToTaskMethod);
-        if (Ctx.Runtime.EventLoop.Hosted is { } hostedEventLoop)
+        if (Ctx.Runtime!.EventLoop.Hosted is { } hostedEventLoop)
             IL.Emit(OpCodes.Call, hostedEventLoop.PrepareAwait);
         IL.Emit(OpCodes.Stloc, taskLocal);
         IL.Emit(OpCodes.Ldloc, taskLocal);

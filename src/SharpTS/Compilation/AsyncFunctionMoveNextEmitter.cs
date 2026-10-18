@@ -21,8 +21,8 @@ namespace SharpTS.Compilation;
 ///
 /// The await machinery is emitter-agnostic except for two seams, exposed as hooks:
 ///   * <see cref="EmitCompleteWithReturnValueOnStack"/> — completes the state machine using the boxed
-///     return value currently on the IL stack (async-fn stores it to its return-value local and leaves
-///     to its SetResult label; the arrow's EmitSetResult consumes the stack value);
+///     return value currently on the IL stack (both emitters store it and leave to their shared
+///     return-completion label);
 ///   * <see cref="EmitAwaitGetResult"/> — wraps the awaiter's GetResult in the flag-based capture
 ///     try/catch when emitting inside a try-with-awaits; called by each emitter's await step.
 /// (The third seam, <c>DefineStateMachineField</c>, is declared on the scaffolding base.)
@@ -39,6 +39,8 @@ public abstract partial class AsyncFunctionMoveNextEmitter : StateMachineExitRou
     // EmitTryBodyWithAwaits and consulted by the await emission via EmitAwaitGetResult.
     protected LocalBuilder? _currentTryCatchExceptionLocal = null;
     protected Label? _currentTryCatchSkipLabel = null;
+
+    private bool _returnMayNeedAdoption;
 
     // ---- Emitter-specific seams ----------------------------------------------------------------
 
@@ -101,29 +103,11 @@ public abstract partial class AsyncFunctionMoveNextEmitter : StateMachineExitRou
         // bare `return;` (resolves the promise with undefined, not null — #587).
         if (r.Value != null)
         {
+            // Reuse the canonical numeric-chain proof rather than a Promise<T> annotation:
+            // an ordinary typed promise can still fulfill with an object whose then changes.
+            _returnMayNeedAdoption |= !HasPrimitiveChainReturnProof(r.Value);
             EmitExpression(r.Value);
             EnsureBoxed();
-
-            // Async-function return performs PromiseResolve-style adoption. Private async
-            // methods and callable fields can return Tasks, Promises, or thenables, so consume
-            // the synthetic analyzer state and adopt their value before completing the outer
-            // function. This prevents a nested host Task from becoming the JavaScript result.
-            if (r.Value is Expr.CallPrivate privateCall)
-            {
-                int returnState = NextAwaitState();
-                if (PrivateCallNeedsReturnAdoption(privateCall))
-                    EmitAwaitFromValueOnStack(returnState, isReturnAdoption: true);
-                else
-                {
-                    // Analysis conservatively reserves a synthetic state for every private call.
-                    // A synchronous private method does not suspend, but its unreachable dispatch
-                    // label must still be materialized with the dispatcher's empty-stack shape.
-                    var synchronousResult = IL.DeclareLocal(typeof(object));
-                    IL.Emit(OpCodes.Stloc, synchronousResult);
-                    MarkAwaitResumeLabel(returnState);
-                    IL.Emit(OpCodes.Ldloc, synchronousResult);
-                }
-            }
         }
         else
         {
@@ -151,28 +135,25 @@ public abstract partial class AsyncFunctionMoveNextEmitter : StateMachineExitRou
         EmitCompleteWithReturnValueOnStack();
     }
 
-    private bool PrivateCallNeedsReturnAdoption(Expr.CallPrivate call)
+    private bool HasPrimitiveChainReturnProof(Expr expression)
     {
-        if (Ctx.TypeMap?.Get(call) is SharpTS.TypeSystem.TypeInfo.Promise)
-            return true;
-        string methodName = call.Name.Lexeme.TrimStart('#');
-        string? className = Ctx.CurrentClassName;
-        if (className == null || Ctx.ClassRegistry == null)
+        if (ExpressionUnwrapper.Unwrap(expression) is not Expr.Await awaited
+            || Ctx.TypeMap is not { } typeMap
+            || !typeMap.TryGetStablePrimitivePromiseAwait(awaited, out var handlers)
+            || Resolver.HasVariable("Promise")
+            || Ctx.HasVisibleValueBinding("Promise")
+            || Ctx.RuntimeFeatures?.UsesPromisePrototypeMutation == true)
+        {
             return false;
+        }
 
-        className = Ctx.ResolvePrivateMethodOwner(className, methodName);
-        // A field's callable value can return a Promise or thenable even when
-        // its declared result is any. Adopt the value at the async return boundary.
-        if (Ctx.ClassRegistry.GetPrivateElements(className) is { } declaration &&
-            (declaration.FieldNames.Contains(methodName) || declaration.StaticFields.ContainsKey(methodName)))
-            return true;
-        if (Ctx.ClassRegistry.TryGetPrivateMethod(className, methodName, out var instanceMethod)
-            && instanceMethod?.ReturnType == Ctx.Types.TaskOfObject)
-            return true;
-        if (Ctx.ClassRegistry.TryGetStaticPrivateMethod(className, methodName, out var staticMethod)
-            && staticMethod?.ReturnType == Ctx.Types.TaskOfObject)
-            return true;
-        return false;
+        // Return-slot widening runs after the chain analyzer. Its numeric annotation is
+        // insufficient if a raw-forwarding handler now has the general object ABI.
+        return handlers.All(handler =>
+            Ctx.ArrowMethods?.TryGetValue(handler, out var method) == true
+            && method.ReturnType == Types.Double
+            && method.GetParameters() is [var parameter]
+            && parameter.ParameterType == Types.Double);
     }
 
     /// <summary>

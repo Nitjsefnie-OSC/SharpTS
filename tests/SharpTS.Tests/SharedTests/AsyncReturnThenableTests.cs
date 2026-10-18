@@ -3,7 +3,7 @@ using Xunit;
 
 namespace SharpTS.Tests.SharedTests;
 
-public sealed class AsyncReturnThenableTests
+public sealed partial class AsyncReturnThenableTests
 {
     public const string IssueSource = """
         async function answer(): Promise<any> {
@@ -116,23 +116,26 @@ public sealed class AsyncReturnThenableTests
         run();
         """;
 
-    // General compiled async-return assimilation has a separately confirmed defect (#2335).
-    // The private-call-specific compiled route and ordinary return controls remain below.
-    public static IEnumerable<object[]> InterpretedCases()
+    public static IEnumerable<object[]> Cases()
     {
         yield return ["issue", IssueSource, "47\n"];
         yield return ["callable-forms", CallableFormsSource, "1 2 3 4 5 6 7 8 9\n"];
         yield return ["capture-and-pending-first-wins", CaptureAndPendingSource,
             "caller 47 get,after,then 1 1 0 true\n"];
         yield return ["rejection-and-finally", RejectionAndFinallySource, "true\ntrue\ntrue 1\n2 0 1\ntrue 0\n"];
+        foreach (var row in CompletionCases()) yield return row;
     }
 
-    [Theory, MemberData(nameof(InterpretedCases))]
-    public void InterpretedAsyncReturnsAssimilateThenablesAtTheFinalCompletionBoundary(
-        string name, string source, string expected)
+    public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }.Select(mode =>
+            new object[] { row[0], row[1], row[2], mode }));
+
+    [Theory, MemberData(nameof(ModeCases))]
+    public void AsyncReturnsAssimilateThenablesAtTheFinalCompletionBoundary(
+        string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
-        Assert.Equal(expected, TestHarness.RunInterpreted(source));
+        Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 
     public const string PreservationExpected = "true\ntrue\ntrue\ntrue\ntrue\n0\n7 object true undefined\n";

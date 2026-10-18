@@ -245,6 +245,9 @@ public partial class AsyncMoveNextEmitter : AsyncFunctionMoveNextEmitter, IEmitt
             EmitLockReleaseEpilogue();
         }
 
+        if (_returnValueLocal != null)
+            EmitAdoptCompletionValue(_returnValueLocal, _analysis.AwaitPointCount - 1);
+
         // this.<>1__state = -2
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, -2);
@@ -432,6 +435,12 @@ public partial class AsyncMoveNextEmitter : AsyncFunctionMoveNextEmitter, IEmitt
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldfld, _builder.LockAcquiredField!);
         _il.Emit(OpCodes.Brfalse, skipReleaseLabel);
+
+        // Completion adoption may reject after release. Consume ownership before
+        // that rejection can enter the outer exception-completion epilogue.
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldc_I4_0);
+        _il.Emit(OpCodes.Stfld, _builder.LockAcquiredField!);
 
         // Release the semaphore using state machine's reference field
         _il.Emit(OpCodes.Ldarg_0);

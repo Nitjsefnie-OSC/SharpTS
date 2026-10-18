@@ -740,7 +740,8 @@ public partial class ILCompiler
         var methodBuilder = _classes.StaticMethods[className][method.Name.Lexeme];
 
         // Analyze async function to determine await points and hoisted variables
-        var analysis = _async.Analyzer.Analyze(method, preserveDebugBindings: EmitDebugSymbols);
+        var analysis = AddAsyncReturnCompletionState(
+            _async.Analyzer.Analyze(method, preserveDebugBindings: EmitDebugSymbols));
 
         // Check if method has @lock decorator
         bool hasLock = HasLockDecorator(method);

@@ -27,6 +27,7 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
     private int _currentState = 0;
     private readonly List<Label> _stateLabels = [];
     private Label _exitLabel;
+    private Label _setResultLabel;
     private LocalBuilder? _resultLocal;
     private LocalBuilder? _exceptionLocal;
 
@@ -143,6 +144,7 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
             _stateLabels.Add(_il.DefineLabel());
         }
         _exitLabel = _il.DefineLabel();
+        _setResultLabel = _il.DefineLabel();
 
         // Declare locals
         _resultLocal = _il.DeclareLocal(_types.Object);
@@ -196,6 +198,11 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
 
         // Implicit completion: a body that runs off the end resolves with `undefined`.
         EmitImplicitReturnUndefined();
+
+        _il.MarkLabel(_setResultLabel);
+        EmitAdoptCompletionValue(_resultLocal!, _analysis.AwaitPointCount - 1);
+        EmitSetResult();
+        _il.Emit(OpCodes.Leave, _exitLabel);
 
         // Catch block
         _il.BeginCatchBlock(_types.Exception);
@@ -271,14 +278,12 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
         => _builder.StateMachineType.DefineField(_builder.DebugScaffoldingName(name), type, FieldAttributes.Private);
 
     /// <summary>
-    /// Completes the async-arrow state machine using the boxed value on the IL stack: the arrow's
-    /// <see cref="EmitSetResult"/> consumes it into <c>_resultLocal</c> and calls builder.SetResult,
-    /// then leave to the single Ret epilogue.
+    /// Stores the selected boxed return and leaves every guest handler before final resolution.
     /// </summary>
     protected override void EmitCompleteWithReturnValueOnStack()
     {
-        EmitSetResult();
-        _il.Emit(OpCodes.Leave, _exitLabel);
+        _il.Emit(OpCodes.Stloc, _resultLocal!);
+        _il.Emit(OpCodes.Leave, _setResultLabel);
     }
 
     #endregion

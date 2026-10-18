@@ -52,6 +52,7 @@ public class TypeMap
     private readonly Dictionary<Expr.ArrowFunction, StableCustomIteratorInfo> _stableCustomIteratorNextMethods =
         new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.Get> _stablePrimitivePromiseThenCalls = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Expr.Await, IReadOnlyList<Expr.ArrowFunction>> _stablePrimitivePromiseAwaits = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Expr.ArrowFunction, HashSet<string>> _stableNumericCaptureFields = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<object, HashSet<string>> _stableNumericFunctionCaptureFields = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _stableCustomIteratorNumericAccumulators = new(ReferenceEqualityComparer.Instance);
@@ -368,6 +369,14 @@ public class TypeMap
     /// </summary>
     public bool IsStablePrimitivePromiseThen(Expr.Get method) =>
         _stablePrimitivePromiseThenCalls.Contains(method);
+
+    /// <summary>Records a stable chain's terminal await and handlers for a later emitted-ABI check.</summary>
+    public void MarkStablePrimitivePromiseAwait(Expr.Await expression, IReadOnlyList<Expr.ArrowFunction> handlers) =>
+        _stablePrimitivePromiseAwaits[expression] = handlers;
+
+    /// <summary>Returns the candidate handlers whose actual CLR signatures must still be checked.</summary>
+    public bool TryGetStablePrimitivePromiseAwait(Expr.Await expression, out IReadOnlyList<Expr.ArrowFunction> handlers) =>
+        _stablePrimitivePromiseAwaits.TryGetValue(expression, out handlers!);
 
     /// <summary>
     /// Marks a captured binding whose value-snapshot field may use an unboxed

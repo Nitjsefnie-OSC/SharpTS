@@ -160,18 +160,6 @@ public partial class AsyncStateAnalyzer
         protected override void VisitClassExpr(Expr.ClassExpr expr) { }
     }
 
-    protected override void VisitReturn(Stmt.Return stmt)
-    {
-        base.VisitReturn(stmt);
-
-        // A private async method is emitted as Task<object>. When an async function returns
-        // that call directly, ECMAScript promise resolution adopts the returned promise rather
-        // than resolving with the host Task as an ordinary object. Reserve a suspension point
-        // for the matching implicit await in AsyncFunctionMoveNextEmitter.
-        if (stmt.Value is Expr.CallPrivate)
-            RecordAwaitPoint(null);
-    }
-
     protected override void VisitTryCatch(Stmt.TryCatch stmt)
     {
         _hasTryCatch = true;

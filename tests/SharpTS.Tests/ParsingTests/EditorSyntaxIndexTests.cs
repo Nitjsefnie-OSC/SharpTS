@@ -225,8 +225,11 @@ public sealed class EditorSyntaxIndexTests
         var statements = new Parser(new Lexer(text).ScanTokens()).WithSourceDocument(document).WithEditorSyntax().ParseOrThrow();
         var accessor = Assert.Single(Assert.IsType<Stmt.Class>(statements[0]).Accessors!);
         var function = Assert.IsType<Stmt.Function>(statements[1]);
+        var ordinary = new Parser(new Lexer(text).ScanTokens()).ParseOrThrow();
+        var ordinaryAccessor = Assert.Single(Assert.IsType<Stmt.Class>(ordinary[0]).Accessors!);
 
-        Assert.Equal(-1, accessor.Name.Start);
+        Assert.Equal(text.IndexOf("\"quoted\"", StringComparison.Ordinal), accessor.Name.Start);
+        Assert.Equal(ordinaryAccessor.Name, accessor.Name);
         Assert.Equal(-1, function.Parameters[0].Name.Start);
         var quoted = Assert.Single(document.EditorSyntax!.GetRecords(accessor), record => record.Role == EditorSyntaxRole.MemberName);
         Assert.Equal(TokenType.STRING, quoted.Token!.Type);

@@ -106,6 +106,19 @@ public sealed class DeletedObjectMethodDescriptorTests
 
     public static IEnumerable<object[]> SharedCases()
     {
+        yield return ["reflect-own-expando-2318", """
+            const O: any = Object;
+            Object.defineProperty(O, 'custom', { value: 7, enumerable: true, configurable: true });
+            console.log(Object.getOwnPropertyDescriptor(O, 'custom')!.value);
+            console.log(Reflect.getOwnPropertyDescriptor(O, 'custom') === undefined);
+            const reflected: any = Reflect.getOwnPropertyDescriptor(O, 'custom');
+            console.log(reflected.value, reflected.writable, reflected.enumerable, reflected.configurable);
+            let reads = 0;
+            Object.defineProperty(O, 'customGetter', { get() { reads++; return 1; }, configurable: true });
+            console.log(typeof Reflect.getOwnPropertyDescriptor(O, 'customGetter')!.get, reads);
+            delete O.custom;
+            console.log(Reflect.getOwnPropertyDescriptor(O, 'custom') === undefined);
+            """, "7\nfalse\n7 false true true\nfunction 0\ntrue\n"];
         yield return Cases().First();
         yield return ["restoration-object-descriptors", ObjectRestorationSource,
             "true replacement\ntrue true true\ntrue true\ntrue true true\n"
@@ -116,7 +129,9 @@ public sealed class DeletedObjectMethodDescriptorTests
     public static IEnumerable<object[]> ModeCases() => SharedCases().SelectMany(row =>
             new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
                 .Select(mode => new object[] { row[0], row[1], row[2], mode }))
-        // Interpreted Object's present Reflect descriptors and native freeze are #2318 and #2319.
+        .Concat(Cases().Where(row => (string)row[0] == "restoration-and-redelete")
+            .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted }))
+        // #2319 tracks interpreted Object constructor integrity operations.
         .Concat(Cases().Skip(1).Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Compiled }));
 
     [Theory, MemberData(nameof(ModeCases))]

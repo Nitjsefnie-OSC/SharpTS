@@ -406,6 +406,14 @@ public static class ReflectBuiltIns
                     return primitiveDescriptor is null ? RuntimeValue.Undefined
                         : RuntimeValue.FromBoxed(primitiveDescriptor.ToObject());
                 }
+                if (target is SharpTSObjectNamespace)
+                {
+                    var objectKey = interpreter.ToPropertyKey(args[1].ToObject());
+                    var ownDescriptor = objectKey is string name
+                        ? ObjectBuiltIns.OwnPropertyDescriptorOf(interpreter, target, name) : null;
+                    return ownDescriptor is null ? RuntimeValue.Undefined
+                        : RuntimeValue.FromBoxed(ownDescriptor.ToObject());
+                }
                 var propertyKey = args[1].ToObject()?.ToString() ?? "";
                 if (target is SharpTSProxy proxy)
                 {

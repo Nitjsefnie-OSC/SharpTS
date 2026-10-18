@@ -1047,6 +1047,10 @@ public sealed class RuntimeFeatureDetector
                 VisitExpr(superSet.Value);
                 break;
 
+            case Expr.AssertedAssignment assignment:
+                VisitExpr(assignment.LoweredAssignment);
+                break;
+
             case Expr.Set s:
                 MarkMutationTarget(s.Object);
                 MarkGlobalPropertyMutation(s.Object, s.Name.Lexeme);

@@ -37,6 +37,7 @@ public static class AstNodeCatalog
         typeof(Expr.Delete),
         typeof(Expr.Variable),
         typeof(Expr.Assign),
+        typeof(Expr.AssertedAssignment),
         typeof(Expr.Call),
         typeof(Expr.Get),
         typeof(Expr.Set),

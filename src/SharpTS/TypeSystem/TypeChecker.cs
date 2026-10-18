@@ -3184,6 +3184,7 @@ public partial class TypeChecker
 
     private static int? TryGetExprLine(Expr expr) => expr switch
     {
+        Expr.AssertedAssignment assignment => TryGetExprLine(assignment.LoweredAssignment),
         Expr.Grouping g => TryGetExprLine(g.Expression),
         Expr.Variable v => v.Name.Line,
         Expr.This t => t.Keyword.Line,

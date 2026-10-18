@@ -37,6 +37,7 @@ public abstract class AstVisitorBase
             case Expr.Delete e: VisitDelete(e); break;
             case Expr.Variable e: VisitVariable(e); break;
             case Expr.Assign e: VisitAssign(e); break;
+            case Expr.AssertedAssignment e: VisitAssertedAssignment(e); break;
             case Expr.Call e: VisitCall(e); break;
             case Expr.Get e: VisitGet(e); break;
             case Expr.Set e: VisitSet(e); break;
@@ -299,6 +300,8 @@ public abstract class AstVisitorBase
     {
         // Leaf node - no children to visit
     }
+
+    protected virtual void VisitAssertedAssignment(Expr.AssertedAssignment expr) => Visit(expr.LoweredAssignment);
 
     protected virtual void VisitSetSuper(Expr.SetSuper expr)
     {

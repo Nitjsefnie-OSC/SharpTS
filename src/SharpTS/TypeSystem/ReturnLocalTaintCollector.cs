@@ -52,6 +52,19 @@ internal sealed class ReturnLocalTaintCollector : AstVisitorBase
         Visit(expr.Value);
     }
 
+    protected override void VisitAssertedAssignment(Expr.AssertedAssignment expr)
+    {
+        string? name = expr.LoweredAssignment switch
+        {
+            Expr.Assign assignment => assignment.Name.Lexeme,
+            Expr.CompoundAssign assignment => assignment.Name.Lexeme,
+            Expr.LogicalAssign assignment => assignment.Name.Lexeme,
+            _ => null
+        };
+        if (name is not null) Assignments.Add((name, expr));
+        base.VisitAssertedAssignment(expr);
+    }
+
     // `x ||= e` / `x &&= e` / `x ??= e` can leave `x` holding `e`'s value (or, for `??=`/`&&=`,
     // an already-undefined `x`). Treat the right-hand side as a value flowing into the local.
     protected override void VisitLogicalAssign(Expr.LogicalAssign expr)

@@ -28,7 +28,7 @@ public sealed class EditorExpressionTests
             typeof(Expr.ImportMeta), typeof(Expr.Yield), typeof(Expr.RegexLiteral),
             typeof(Expr.NonNullAssertion), typeof(Expr.ClassExpr),
         ];
-        Type[] sourceEquivalentLowerings = [typeof(Expr.DestructuringAssign)];
+        Type[] sourceEquivalentLowerings = [typeof(Expr.DestructuringAssign), typeof(Expr.AssertedAssignment)];
         Assert.Equal(AstNodeCatalog.ExprTypes.OrderBy(type => type.FullName),
             written.Concat(sourceEquivalentLowerings).OrderBy(type => type.FullName));
     }

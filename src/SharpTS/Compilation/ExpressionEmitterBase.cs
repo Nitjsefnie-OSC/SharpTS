@@ -354,6 +354,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case Expr.TypeAssertion ta:
                 EmitTypeAssertion(ta);
                 break;
+            case Expr.AssertedAssignment assignment:
+                EmitAssertedAssignment(assignment);
+                break;
             case Expr.Satisfies sat:
                 EmitSatisfies(sat);
                 break;

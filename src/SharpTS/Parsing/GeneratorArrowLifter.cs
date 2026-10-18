@@ -622,6 +622,12 @@ internal sealed class GeneratorArrowLifter
                 var v = RewriteExpr(a.Value);
                 return ReferenceEquals(v, a.Value) ? a : a with { Value = v };
             }
+            case Expr.AssertedAssignment assignment:
+            {
+                var lowered = RewriteExpr(assignment.LoweredAssignment);
+                return ReferenceEquals(lowered, assignment.LoweredAssignment)
+                    ? assignment : assignment with { LoweredAssignment = lowered };
+            }
             case Expr.Set s:
             {
                 var o = RewriteExpr(s.Object); var v = RewriteExpr(s.Value);

@@ -1096,6 +1096,9 @@ public partial class ILCompiler
             case Expr.SetSuper s:
                 AnalyzeArrowExprForAwaits(s.Value, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
+            case Expr.AssertedAssignment assignment:
+                AnalyzeArrowExprForAwaits(assignment.LoweredAssignment, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
+                break;
             case Expr.GetIndex gi:
                 AnalyzeArrowExprForAwaits(gi.Object, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 AnalyzeArrowExprForAwaits(gi.Index, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);

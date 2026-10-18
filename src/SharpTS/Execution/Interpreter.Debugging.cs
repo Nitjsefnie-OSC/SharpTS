@@ -81,6 +81,7 @@ public partial class Interpreter
         protected override void VisitSetIndex(Expr.SetIndex expr) => Reject("assignment");
         protected override void VisitSetPrivate(Expr.SetPrivate expr) => Reject("assignment");
         protected override void VisitSetSuper(Expr.SetSuper expr) => Reject("assignment");
+        protected override void VisitAssertedAssignment(Expr.AssertedAssignment expr) => Reject("assignment");
         protected override void VisitCompoundAssign(Expr.CompoundAssign expr) => Reject("assignment");
         protected override void VisitCompoundSet(Expr.CompoundSet expr) => Reject("assignment");
         protected override void VisitCompoundSetPrivate(Expr.CompoundSetPrivate expr) => Reject("assignment");

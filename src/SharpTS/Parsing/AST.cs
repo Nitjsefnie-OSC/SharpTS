@@ -94,6 +94,12 @@ public abstract record Expr
         string? RedeclarationTypeAnnotation = null,
         TypeNode? RedeclarationTypeAnnotationNode = null,
         bool IsLexicalInitialization = false) : Expr;
+    /// <summary>
+    /// A write through erased TypeScript assertion syntax. The checker and editor retain
+    /// <paramref name="TargetSyntax"/>; runtime visitors execute only
+    /// <paramref name="LoweredAssignment"/> so the reference is evaluated once.
+    /// </summary>
+    public record AssertedAssignment(Expr TargetSyntax, Expr LoweredAssignment) : Expr;
     // TypeArgNodes: per-element node twins of TypeArgs (type-AST migration) — same length as
     // TypeArgs when non-null; an element without node support is null without discarding siblings.
     public record Call(Expr Callee, Token Paren, List<string>? TypeArgs, List<Expr> Arguments, bool Optional = false, List<TypeNode?>? TypeArgNodes = null) : Expr

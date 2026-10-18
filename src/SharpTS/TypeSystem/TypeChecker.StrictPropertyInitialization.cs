@@ -183,6 +183,9 @@ public partial class TypeChecker
         var assigned = new HashSet<string>(incoming, StringComparer.Ordinal);
         switch (expression)
         {
+            case Expr.AssertedAssignment assignment:
+                assigned = AnalyzeInitializationExpression(assignment.LoweredAssignment, assigned);
+                break;
             case Expr.Set { Object: Expr.This, Name: var name, Value: var value }:
                 assigned = AnalyzeInitializationExpression(value, assigned);
                 assigned.Add(name.Lexeme);

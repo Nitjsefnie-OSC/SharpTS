@@ -35,6 +35,7 @@ internal sealed class EditorSyntaxReachability(CancellationToken cancellationTok
         switch (expr)
         {
             case Expr.Assign assign: Type(assign.RedeclarationTypeAnnotationNode); break;
+            case Expr.AssertedAssignment assignment: Visit(assignment.TargetSyntax); break;
             case Expr.Call call:
                 Types(call.TypeArgNodes); Types(call.JsxOrigin?.TypeArgumentNodes); break;
             case Expr.New construct: Types(construct.TypeArgNodes); Visit(construct.Callee); break;

@@ -67,6 +67,7 @@ public partial class Interpreter
     internal RuntimeValue VisitDelete(Expr.Delete delete) => EvaluateDelete(delete);
     internal RuntimeValue VisitVariable(Expr.Variable variable) => LookupVariableRV(variable.Name, variable);
     internal RuntimeValue VisitAssign(Expr.Assign assign) => EvaluateAssign(assign);
+    internal RuntimeValue VisitAssertedAssignment(Expr.AssertedAssignment assignment) => EvaluateAssertedAssignmentCore(_syncContext, assignment).GetAwaiter().GetResult();
     internal RuntimeValue VisitCall(Expr.Call call) => EvaluateCall(call);
     internal RuntimeValue VisitGet(Expr.Get get) => EvaluateGet(get);
     internal RuntimeValue VisitSet(Expr.Set set) => EvaluateSet(set);
@@ -181,6 +182,7 @@ public partial class Interpreter
     internal ValueTask<RuntimeValue> VisitTemplateLiteralAsync(Expr.TemplateLiteral template) => new(EvaluateTemplateLiteralAsync(template));
     internal ValueTask<RuntimeValue> VisitTaggedTemplateLiteralAsync(Expr.TaggedTemplateLiteral tagged) => new(EvaluateTaggedTemplateLiteralAsync(tagged));
     internal ValueTask<RuntimeValue> VisitSpreadAsync(Expr.Spread spread) => EvaluateAsync(spread.Expression);
+    internal ValueTask<RuntimeValue> VisitAssertedAssignmentAsync(Expr.AssertedAssignment assignment) => EvaluateAssertedAssignmentCore(_asyncContext, assignment);
     internal ValueTask<RuntimeValue> VisitTypeAssertionAsync(Expr.TypeAssertion ta) => EvaluateAsync(ta.Expression);
     internal ValueTask<RuntimeValue> VisitSatisfiesAsync(Expr.Satisfies sat) => EvaluateAsync(sat.Expression);
     internal ValueTask<RuntimeValue> VisitNonNullAssertionAsync(Expr.NonNullAssertion nna) => EvaluateAsync(nna.Expression);

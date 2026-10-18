@@ -1044,6 +1044,9 @@ public partial class ILCompiler
             case Expr.SetSuper s:
                 CollectArrowsFromExpr(s.Value);
                 break;
+            case Expr.AssertedAssignment assignment:
+                CollectArrowsFromExpr(assignment.LoweredAssignment);
+                break;
             case Expr.GetIndex gi:
                 CollectArrowsFromExpr(gi.Object);
                 CollectArrowsFromExpr(gi.Index);

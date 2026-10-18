@@ -164,6 +164,10 @@ public static class LoopAssignmentAnalyzer
                 CollectAssignedPathsFromExpr(assign.Value, paths);
                 break;
 
+            case Expr.AssertedAssignment assignment:
+                CollectAssignedPathsFromExpr(assignment.LoweredAssignment, paths);
+                break;
+
             case Expr.Set set:
                 if (NarrowingPathExtractor.TryExtract(set.Object) is { } setBasePath)
                     paths.Add(new NarrowingPath.PropertyAccess(setBasePath, set.Name.Lexeme));

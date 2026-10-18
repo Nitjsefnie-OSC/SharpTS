@@ -1070,6 +1070,12 @@ internal sealed class NestedFunctionLifter
                 var value = ProcessExpr(e.Value);
                 return ReferenceEquals(value, e.Value) ? e : e with { Value = value };
             }
+            case Expr.AssertedAssignment assignment:
+            {
+                var lowered = ProcessExpr(assignment.LoweredAssignment);
+                return ReferenceEquals(lowered, assignment.LoweredAssignment)
+                    ? assignment : assignment with { LoweredAssignment = lowered };
+            }
             case Expr.Call e:
             {
                 var callee = ProcessExpr(e.Callee);

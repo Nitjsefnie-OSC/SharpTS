@@ -233,8 +233,7 @@ public partial class ILEmitter
 
             if (currentClassName != null)
             {
-                // Emit as static field access on the current class
-                if (EmitStaticMemberAccess(currentClassName, _ctx.CurrentClassBuilder, g.Object, g.Name.Lexeme))
+                if (EmitStaticMemberAccess(currentClassName, _ctx.CurrentClassBuilder, g.Object, g.Name.Lexeme, g.Optional))
                 {
                     return;
                 }
@@ -252,7 +251,7 @@ public partial class ILEmitter
             {
                 if (_ctx.ClassRegistry!.IsSourceStaticGetter(resolvedClassName, g.Name.Lexeme))
                 {
-                    EmitSourceStaticGetterRead(g.Object, g.Name.Lexeme);
+                    EmitRuntimeStaticMemberRead(g.Object, g.Name.Lexeme);
                     return;
                 }
 
@@ -283,7 +282,7 @@ public partial class ILEmitter
         {
             if (_ctx.ClassRegistry!.IsSourceStaticGetter(importedQualifiedClassName, g.Name.Lexeme))
             {
-                EmitSourceStaticGetterRead(g.Object, g.Name.Lexeme);
+                EmitRuntimeStaticMemberRead(g.Object, g.Name.Lexeme);
                 return;
             }
 

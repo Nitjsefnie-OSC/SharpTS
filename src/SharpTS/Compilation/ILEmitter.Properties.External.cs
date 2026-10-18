@@ -164,11 +164,11 @@ public partial class ILEmitter
     /// Emits static member access on a class (used for both ClassName.property and this.property in static context).
     /// Returns true if successful, false if property not found.
     /// </summary>
-    private bool EmitStaticMemberAccess(string className, System.Reflection.Emit.TypeBuilder classBuilder, Expr receiver, string propertyName)
+    private bool EmitStaticMemberAccess(string className, System.Reflection.Emit.TypeBuilder classBuilder, Expr receiver, string propertyName, bool optional = false)
     {
         if (_ctx.ClassRegistry!.IsSourceStaticGetter(className, propertyName))
         {
-            EmitSourceStaticGetterRead(receiver, propertyName);
+            EmitRuntimeStaticMemberRead(receiver, propertyName);
             return true;
         }
 
@@ -182,7 +182,15 @@ public partial class ILEmitter
         // Try to find static field using stored FieldBuilders
         if (_ctx.ClassRegistry!.TryGetCallableStaticField(className, propertyName, classBuilder, out var staticField))
         {
-            EmitStaticFieldLoadWithShadow(className, classBuilder, propertyName, staticField!);
+            if (receiver is Expr.This)
+            {
+                // Let the ordinary optional read perform its nullish check.
+                // Getter priority above remains unchanged for auto-accessors.
+                if (optional) return false;
+                EmitRuntimeStaticMemberRead(receiver, propertyName);
+            }
+            else
+                EmitStaticFieldLoadWithShadow(className, classBuilder, propertyName, staticField!);
             return true;
         }
 
@@ -221,10 +229,10 @@ public partial class ILEmitter
             SetStackUnknown();
     }
 
-    private void EmitSourceStaticGetterRead(Expr receiver, string propertyName)
+    private void EmitRuntimeStaticMemberRead(Expr receiver, string propertyName)
     {
-        // The source descriptor owns an accessor value with an explicit guest
-        // receiver. Calling the nominal CLR getter directly skips that receiver.
+        // Preserve the original constructor for descriptor getters, inherited
+        // data fields and live own shadows instead of selecting a lexical owner.
         EmitExpression(receiver);
         EmitBoxIfNeeded(receiver);
         IL.Emit(OpCodes.Ldstr, propertyName);

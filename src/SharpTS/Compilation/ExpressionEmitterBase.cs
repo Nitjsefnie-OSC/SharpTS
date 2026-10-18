@@ -2558,15 +2558,14 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
     /// <summary>
     /// Emits a static class method used as a value through <c>this.method</c>.
-    /// Static CLR bodies have no arg0 receiver, so the generic property path cannot
-    /// first evaluate <c>this</c>. Resolve the current declaration or class expression
-    /// from compiler metadata and materialize its JavaScript function wrapper directly.
+    /// Compiler metadata identifies eligible static members; the actual constructor
+    /// receiver selects their live runtime value, including inherited overrides.
     /// </summary>
     protected bool TryEmitStaticClassMethodValue(Expr.Get g)
     {
         if (Ctx.ClassDefinitionParameterIndex != null || Ctx.ClassDefinitionVariableName != null
             || Ctx.HasGuestReceiver || Ctx.GuestThisVariableName != null) return false;
-        if (g.Object is not Expr.This || Ctx.IsInstanceMethod || Ctx.CurrentClassBuilder == null)
+        if (g.Optional || g.Object is not Expr.This || Ctx.IsInstanceMethod || Ctx.CurrentClassBuilder == null)
             return false;
 
         System.Reflection.MethodInfo? method = null;
@@ -2597,9 +2596,10 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         if (method == null)
             return false;
 
-        IL.Emit(OpCodes.Ldnull);
-        Types.EmitLoadMethodInfoViaHandle(IL, method);
-        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.FunctionConstruction.Constructor);
+        EmitExpression(g.Object);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Property);
         SetStackUnknown();
         return true;
     }

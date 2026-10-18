@@ -498,6 +498,7 @@ public partial class Parser
         {
             Token op = Previous();
             Expr operand = Unary();
+            ValidateOptionalAssignmentTarget(operand);
             if (operand is not (Expr.Variable or Expr.Get or Expr.GetIndex))
             {
                 throw new Exception("Invalid operand for prefix increment/decrement.");
@@ -679,6 +680,7 @@ public partial class Parser
                 Token op = Previous();
                 if (expr is not (Expr.Variable or Expr.Get or Expr.GetIndex))
                     throw new Exception("Invalid operand for postfix increment/decrement.");
+                ValidateOptionalAssignmentTarget(expr);
                 expr = CompleteExpression(new Expr.PostfixIncrement(expr, op), start);
             }
             else if (Match(TokenType.AS))

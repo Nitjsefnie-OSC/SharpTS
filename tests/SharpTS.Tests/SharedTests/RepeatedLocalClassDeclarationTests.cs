@@ -41,6 +41,41 @@ public sealed class RepeatedLocalClassDeclarationTests
     {
         yield return ["original", OriginalSource, "false\nfalse\nfalse false\nfalse false\n"];
 
+        yield return ["issue2239-first-local-key", """
+            function make() {
+                const key = "method";
+                class Local { [key]() { return 7; } }
+                return Local;
+            }
+            const C = new make();
+            console.log(typeof new C().method);
+            """, "function\n"];
+
+        yield return ["issue2239-local-keys-per-evaluation", """
+            function make(key: string, value: number): any {
+                class Local {
+                    [key]() { return value; }
+                    static [key]() { return value + 1; }
+                }
+                return Local;
+            }
+            const First: any = make("first", 3), Second: any = make("second", 7);
+            const first: any = new First(), second: any = new Second();
+            console.log(first.first(), second.second(), First.first(), Second.second());
+            console.log(typeof first.second, typeof second.first);
+            """, "3 7 4 8\nundefined undefined\n"];
+
+        yield return ["issue2239-expression-and-global-controls", """
+            const globalKey = "global";
+            class Global { [globalKey]() { return 2; } }
+            function make(): any {
+                const key = "expression";
+                return class { [key]() { return 3; } };
+            }
+            const C: any = make(), global: any = new Global();
+            console.log(global.global(), new C().expression());
+            """, "2 3\n"];
+
         yield return ["excluded-nominal-capture", """
             function make() {
                 class C extends Array<any> {}

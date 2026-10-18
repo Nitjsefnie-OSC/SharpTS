@@ -484,6 +484,10 @@ public static partial class ObjectBuiltIns
             case BoundFunction bound:
                 bound.FreezeOwnProperties();
                 return RuntimeValue.FromObject(bound);
+            case SharpTSClass klass:
+                klass.FreezeOwnStaticProperties();
+                PropertyDescriptorStore.Freeze(klass);
+                return RuntimeValue.FromObject(klass);
             case SharpTSObject obj:
                 obj.Freeze();
                 return RuntimeValue.FromObject(obj);
@@ -540,6 +544,10 @@ public static partial class ObjectBuiltIns
             case BoundFunction bound:
                 bound.SealOwnProperties();
                 return RuntimeValue.FromObject(bound);
+            case SharpTSClass klass:
+                klass.SealOwnStaticProperties();
+                PropertyDescriptorStore.Seal(klass);
+                return RuntimeValue.FromObject(klass);
             case SharpTSObject obj:
                 obj.Seal();
                 return RuntimeValue.FromObject(obj);

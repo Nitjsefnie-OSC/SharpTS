@@ -461,7 +461,7 @@ public partial class SharpTSClass(
     internal bool DeleteStaticProperty(string name)
     {
         if (name == "prototype") return false;
-        MaterializeStaticAccessors();
+        if (GetOwnStaticPropertyDescriptor(name) is null) return true;
         if (_staticPropertyObject is not null && !_staticPropertyObject.DeleteProperty(name))
             return false;
         _staticProperties.Remove(name);

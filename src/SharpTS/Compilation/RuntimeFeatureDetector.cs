@@ -1041,6 +1041,9 @@ public sealed class RuntimeFeatureDetector
                 // Super writes reuse receiver-aware OrdinarySet, even when the
                 // program does not mention Reflect or Proxy explicitly.
                 _set.UsesReflect = true;
+                // The receiver can gain an own method/property which shadows
+                // its class prototype; do not prove class dispatch stable.
+                _set.UsesClassPrototypeMutation = true;
                 VisitExpr(superSet.Value);
                 break;
 

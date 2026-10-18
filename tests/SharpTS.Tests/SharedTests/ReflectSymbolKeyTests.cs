@@ -258,6 +258,35 @@ public sealed class ReflectSymbolKeyTests
             function receiver() { order += "R"; return {}; }
             console.log(Reflect.get(target, propertyKey, receiver()), order, correctReceiver);
             """, "7 RGC true\n"];
+        yield return ["coercion-proxy-receiver", """
+            const key = Symbol("coerced"), marker = {}, target: any = {}, receiver = { slot: 7 };
+            const state = { conversions: 0, traps: 0, valid: true };
+            const propertyKey: any = {
+                [Symbol.toPrimitive](hint: string) {
+                    state.conversions++; state.valid = state.valid && this === propertyKey && hint === "string";
+                    return key;
+                }
+            };
+            Object.defineProperty(target, key, {
+                get: function(this: any) { return this.slot; },
+                set: function(this: any, value: any) { this.slot = value; }, configurable: true
+            });
+            const proxy = new Proxy(target, {
+                get(object: any, actualKey: any, actualReceiver: any) {
+                    state.traps++; state.valid = state.valid && actualKey === key && actualReceiver === receiver;
+                    return Reflect.get(object, actualKey, actualReceiver);
+                },
+                set(object: any, actualKey: any, value: any, actualReceiver: any) {
+                    state.traps++; state.valid = state.valid && actualKey === key && actualReceiver === receiver;
+                    return Reflect.set(object, actualKey, value, actualReceiver);
+                }
+            });
+            console.log(Reflect.get(proxy, propertyKey, receiver), Reflect.set(proxy, propertyKey, 9, receiver),
+                receiver.slot, state.conversions, state.traps, state.valid);
+            const bad: any = { [Symbol.toPrimitive]() { throw marker; } };
+            try { Reflect.set(proxy, bad, 10, receiver); }
+            catch (error) { console.log(error === marker, state.traps, receiver.slot); }
+            """, "7 true 9 2 2 true\ntrue 2 9\n"];
         yield return ["string-receiver-issue", StringReceiverIssueSource, "7\n"];
         yield return ["string-inherited-receiver-and-order", StringInheritedReceiverSource, "7 7 3 3 4\ntrue true 4\n7 TKRG 5\ntrue TK 5\ntrue TKR 5\ntrue true 6\ntrue true true\n"];
     }
@@ -274,13 +303,31 @@ public sealed class ReflectSymbolKeyTests
         Assert.Equal("3\ntrue 4\n", TestHarness.Run(source, mode));
     }
 
+    [Fact]
+    public void PrimitiveTargetsAreRejectedBeforeKeyConversion()
+    {
+        // #2588: compiled Reflect.get/set validate primitive targets inconsistently.
+        const string source = """
+            let keyCalls = 0;
+            const key: any = { [Symbol.toPrimitive]() { keyCalls++; return "marker"; } };
+            const get: any = Reflect.get, set: any = Reflect.set;
+            for (const target of [null, undefined, true, 1, "text", 1n, Symbol("target")] as any[]) {
+                try { get(target, key); }
+                catch (error) { console.log(error instanceof TypeError, keyCalls); }
+                try { set(target, key, 7); }
+                catch (error) { console.log(error instanceof TypeError, keyCalls); }
+            }
+            """;
+        Assert.Equal(string.Concat(Enumerable.Repeat("true 0\n", 14)),
+            TestHarness.Run(source, ExecutionMode.Interpreted));
+    }
+
     public static IEnumerable<object[]> ModeCases()
     {
         foreach (var row in Cases())
         {
-            // Interpreter Symbol-producing key coercion is tracked in #2354.
             // Class method lookup retains its existing compiler-only coverage.
-            if ((string)row[0] is not ("coercion" or "coercion-errors" or "coercion-order" or "class-methods" or "number-key-coercion"))
+            if ((string)row[0] != "class-methods")
                 yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             // Compiled null data receivers fail in descriptor lookup (#2356).
             if ((string)row[0] != "receiver-data-presence")

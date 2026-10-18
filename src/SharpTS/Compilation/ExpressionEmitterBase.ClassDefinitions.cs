@@ -305,7 +305,7 @@ public abstract partial class ExpressionEmitterBase
         return true;
     }
 
-    protected bool TryEmitOwnedClassDefinition()
+    protected internal bool TryEmitOwnedClassDefinition()
     {
         if (Ctx.ClassDefinitionOwnerField is { } ownerField)
         {

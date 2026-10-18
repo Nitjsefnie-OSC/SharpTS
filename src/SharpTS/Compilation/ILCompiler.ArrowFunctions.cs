@@ -1229,14 +1229,16 @@ public partial class ILCompiler
 
     private bool ArrowUsesClassDefinition(Expr.ArrowFunction arrow)
     {
-        var visitor = new ArrowClassDefinitionVisitor(declaration =>
+        var visitor = CreateClassDefinitionVisitor();
+        visitor.Visit(arrow);
+        return visitor.UsesDefinition;
+    }
+
+    private ArrowClassDefinitionVisitor CreateClassDefinitionVisitor() => new(declaration =>
             _runtimeClassDeclarations.TryGetValue(declaration, out var expression)
                 && _classExprs.CaptureSlots.TryGetValue(expression, out var slots)
                 && slots.ContainsKey(CompilationContext.PrivateOwnerCaptureName),
             reference => _closures.Analyzer.TryGetClassSelfOwner(reference, out _));
-        visitor.Visit(arrow);
-        return visitor.UsesDefinition;
-    }
 
     private HashSet<string> GetArrowClassDefinitionCaptures(
         Expr.ArrowFunction arrow, HashSet<string> captures)

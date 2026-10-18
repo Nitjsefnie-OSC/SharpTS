@@ -19,6 +19,7 @@ public partial class ILCompiler
     private readonly Dictionary<Stmt.Function, Dictionary<string, FieldBuilder>> _innerFunctionDCFields = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Stmt.Function, ConstructorBuilder> _innerFunctionDCCtors = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Stmt.Function> _strictInnerFunctions = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Stmt.Function, string> _innerFunctionEnclosingClassNames = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Stmt.Function, FieldBuilder> _innerFunctionEntryPointDCFields = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Stmt.Function, FieldBuilder> _innerFunctionFunctionDCFields = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Stmt.Function, Type[]> _innerFunctionParamTypes = new(ReferenceEqualityComparer.Instance);
@@ -74,11 +75,19 @@ public partial class ILCompiler
         // is available; body emission happens later, after the cursor is gone.
         if (_currentCollectStrict || _currentCollectClassName != null)
             _strictInnerFunctions.Add(funcStmt);
+        if (_currentCollectClassName != null)
+            _innerFunctionEnclosingClassNames[funcStmt] = _currentCollectClassName;
 
         var captures = new HashSet<string>(_closures.Analyzer.GetCaptures(funcStmt));
         // Remove self-reference: the function's own name is not a true capture.
         // Self-calls are handled via InnerFunctionMethodsByName direct dispatch.
         captures.Remove(funcStmt.Name.Lexeme);
+        // Private names on evaluated classes belong to that evaluation, rather
+        // than the emitted template. Carry its definition through ordinary
+        // functions too, including frames that only create a nested closure.
+        if (_currentCollectClassName != null && _classExprs.Names.ContainsValue(_currentCollectClassName)
+            && InnerFunctionUsesClassDefinition(funcStmt))
+            captures.Add(CompilationContext.SuperOwnerCaptureName);
         // _currentEnclosingFunctionName is null when the enclosing callable is an arrow
         // function (Expr.ArrowFunction) rather than a named Stmt.Function — there's no
         // qualified name to key a function-level display class on. Empty string is used
@@ -89,6 +98,13 @@ public partial class ILCompiler
         // Record the callable whose body this declaration is hoisted into.
         if (_currentEnclosingCallable != null)
             _innerFunctionParentCallable[funcStmt] = _currentEnclosingCallable;
+    }
+
+    private bool InnerFunctionUsesClassDefinition(Stmt.Function function)
+    {
+        var visitor = CreateClassDefinitionVisitor();
+        visitor.Visit(function);
+        return visitor.UsesDefinition;
     }
 
     /// <summary>
@@ -458,6 +474,20 @@ public partial class ILCompiler
             _innerFunctionParamTypes.TryGetValue(func, out var innerParamTypes);
 
             var ctx = CreateModuleMemberContext(il, ((MethodBuilder)method));
+            if (_innerFunctionEnclosingClassNames.TryGetValue(func, out var className))
+            {
+                ctx.CurrentClassName = className;
+                // The lexical class supplies private names; ordinary functions
+                // still receive their own dynamic JavaScript this value.
+                ctx.HasGuestReceiver = true;
+                ctx.CurrentClassBuilder = _classes.Builders.GetValueOrDefault(className);
+                if (ctx.CurrentClassBuilder == null)
+                {
+                    ctx.CurrentClassExpr = _classExprs.Names.FirstOrDefault(entry => entry.Value == className).Key;
+                    if (ctx.CurrentClassExpr != null)
+                        ctx.CurrentClassBuilder = _classExprs.Builders.GetValueOrDefault(ctx.CurrentClassExpr);
+                }
+            }
             ConfigureNewTargetBody(ctx, (MethodBuilder)method);
             ctx.IsStrictMode = _strictInnerFunctions.Contains(func)
                 || _isStrictMode
@@ -490,7 +520,11 @@ public partial class ILCompiler
                 ctx.IsInnerFunctionOnDisplayClass = true;
 
                 if (_innerFunctionDCFields.TryGetValue(func, out var fieldMap))
+                {
                     ctx.CapturedFields = fieldMap;
+                    if (fieldMap.TryGetValue(CompilationContext.SuperOwnerCaptureName, out var ownerField))
+                        ctx.ClassDefinitionOwnerField = ownerField;
+                }
                 else
                     ctx.CapturedFields = [];
 
@@ -1042,7 +1076,12 @@ public partial class ILCompiler
         {
             il.Emit(OpCodes.Ldloc, dcTemp);
 
-            if (ctx.TryGetParameter(capturedVar, out var argIndex))
+            if (capturedVar == CompilationContext.SuperOwnerCaptureName)
+            {
+                if (!new ILEmitter(ctx).TryEmitOwnedClassDefinition())
+                    throw new InvalidOperationException("Inner function has no lexical class evaluation owner.");
+            }
+            else if (ctx.TryGetParameter(capturedVar, out var argIndex))
             {
                 il.Emit(OpCodes.Ldarg, argIndex);
                 if (ctx.TryGetParameterType(capturedVar, out var paramType) && paramType != null && paramType.IsValueType)

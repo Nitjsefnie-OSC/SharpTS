@@ -23,6 +23,7 @@ public sealed class ClassValueDeclarationOrderTests
     [InlineData("function read() { (((function() { return Later; })))(); class Later {} }")]
     [InlineData("function read() { (() => (() => Later)())(); class Later {} }")]
     [InlineData("function read() { ((value = Later) => value)(); class Later {} }")]
+    [InlineData("function read() { ((value: any = Later) => 0)(1); class Later {} }")]
     [InlineData("function read() { (({ value = Later } = {}) => value)(); class Later {} }")]
     [InlineData("function read() { (function({ value = Later } = {}) { return value; })(); class Later {} }")]
     [InlineData("function read() { { (function*() { yield Later; })(); class Later {} } }")]

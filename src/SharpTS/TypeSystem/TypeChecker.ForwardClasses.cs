@@ -73,6 +73,13 @@ public partial class TypeChecker
 
     private bool IsClassValueReadBeforeDeclaration(Token use, ForwardClassDeclaration forward)
     {
+        // Offsets belong to one parsed source. Scripts can share a flow frame,
+        // and imported aliases can retain a binding from another source.
+        if (!ReferenceEquals(forward.Module, _currentModule) ||
+            forward.Module is null &&
+            !ReferenceEquals(forward.StandaloneSourceDocument, _standaloneSourceDocument))
+            return false;
+
         if (!_definiteAssignmentStack.TryPeek(out var currentFlow)) return false;
 
         while (!ReferenceEquals(forward.DeclarationFlow, currentFlow))

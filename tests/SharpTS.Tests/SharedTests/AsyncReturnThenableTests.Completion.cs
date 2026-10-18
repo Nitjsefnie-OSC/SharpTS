@@ -243,10 +243,9 @@ public sealed partial class AsyncReturnThenableTests
         Assert.Equal(expected, TestHarness.RunCompiled(source, DecoratorMode.Stage3));
     }
 
-    [Fact]
-    public void SelfResolutionRejectsTheCurrentPublicTask()
+    [Theory, ModeData]
+    public void SelfResolutionRejectsTheCurrentPublicTask(ExecutionMode mode)
     {
-        // The interpreter's direct-return self-resolution gap is tracked separately in #2336.
-        Assert.Equal("declared true\narrow true\n", TestHarness.RunCompiled(SelfResolutionSource));
+        Assert.Equal("declared true\narrow true\n", TestHarness.Run(SelfResolutionSource, mode));
     }
 }

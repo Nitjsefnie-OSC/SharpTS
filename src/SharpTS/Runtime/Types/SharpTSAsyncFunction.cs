@@ -73,10 +73,26 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
 
     /// <summary>
     /// Invokes the async function, returning a Promise immediately.
-    /// The actual execution happens asynchronously.
     /// </summary>
     public object? Call(Interpreter interpreter, List<object?> arguments)
+        => StartInvocation(interpreter, () => ExecuteBodyAsync(interpreter, arguments));
+
+    /// <summary>
+    /// Asynchronously invokes the function and returns its adopted result.
+    /// </summary>
+    public Task<object?> CallAsync(Interpreter interpreter, List<object?> arguments)
+        => StartInvocation(interpreter, () => ExecuteBodyAsync(interpreter, arguments)).Task;
+
+    internal static SharpTSPromise StartInvocation(
+        Interpreter interpreter, Func<Task<object?>> executeBody)
     {
+        // Allocate the exposed capability before running any guest code. Every
+        // recursive return-adoption step must resolve this exact public task so
+        // a thenable resolving with the current async result rejects itself.
+        // Inline settlement keeps continuations visible to the event loop.
+        var completion = new TaskCompletionSource<object?>();
+        var promise = new SharpTSPromise(completion.Task);
+
         // An async function runs synchronously until its first suspension, but calling it
         // still returns to the caller's lexical environment immediately. ExecuteBlockAsync
         // keeps the function environment installed across awaits so its continuation can
@@ -85,52 +101,44 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         RuntimeEnvironment callerEnvironment = interpreter.Environment;
         try
         {
-            var task = NormalizePromiseRejection(CallAsync(interpreter, arguments), interpreter);
-            return new SharpTSPromise(task);
+            _ = CompleteInvocationAsync(interpreter, completion, executeBody);
         }
         finally
         {
             interpreter.SetEnvironment(callerEnvironment);
         }
+        return promise;
     }
 
-    internal static async Task<object?> NormalizePromiseRejection(
-        Task<object?> task,
-        Interpreter interpreter)
+    private static async Task CompleteInvocationAsync(
+        Interpreter interpreter,
+        TaskCompletionSource<object?> completion,
+        Func<Task<object?>> executeBody)
     {
         try
         {
-            return await task;
+            object? value = await executeBody();
+            // Body catches/finally have finished before reading the final
+            // value's then. Its assimilation belongs to the public promise.
+            PromiseBuiltIns.ResolveThenableIntoCapability(interpreter, completion, value);
         }
-        catch (SharpTSPromiseRejectedException)
+        catch (SharpTSPromiseRejectedException rejected)
         {
-            throw;
+            completion.TrySetException(rejected);
         }
         catch (ThrowException thrown)
         {
-            throw new SharpTSPromiseRejectedException(thrown.Value);
+            completion.TrySetException(new SharpTSPromiseRejectedException(thrown.Value));
         }
         catch (Exception ex)
         {
             object? reason = interpreter.CoerceCaughtValueForBinding(
                 interpreter.TranslateException(ex));
-            throw new SharpTSPromiseRejectedException(reason);
+            completion.TrySetException(new SharpTSPromiseRejectedException(reason));
         }
     }
 
-    internal static Task<object?> ResolveReturnValue(Interpreter interpreter, object? value)
-    {
-        // Inline settlement keeps captured interpreter continuations visible to the
-        // event loop before its next quiescence check, as with combinator capabilities.
-        var completion = new TaskCompletionSource<object?>();
-        PromiseBuiltIns.ResolveThenableIntoCapability(interpreter, completion, value);
-        return completion.Task;
-    }
-
-    /// <summary>
-    /// Asynchronously executes the function body.
-    /// </summary>
-    public async Task<object?> CallAsync(Interpreter interpreter, List<object?> arguments)
+    private async Task<object?> ExecuteBodyAsync(Interpreter interpreter, List<object?> arguments)
     {
         // Bound async methods already carry the resolver's class `this` scope.
         // Canonical methods invoked without a receiver need the same scope depth.
@@ -162,8 +170,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         var result = await interpreter.ExecuteBlockAsync(_declaration.Body, environment);
         if (result.Type == ExecutionResult.ResultType.Return)
         {
-            return await interpreter.AwaitPreservingEnvironment(
-                ResolveReturnValue(interpreter, result.Value.ToObject()));
+            return result.Value.ToObject();
         }
         if (result.Type == ExecutionResult.ResultType.Throw)
         {
@@ -288,26 +295,15 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
     /// Invokes the async arrow function, returning a Promise immediately.
     /// </summary>
     public object? Call(Interpreter interpreter, List<object?> arguments)
-    {
-        // Mirror SharpTSAsyncFunction.Call: a pending async arrow owns its suspended
-        // environment, but must not leave that environment ambient in its caller.
-        RuntimeEnvironment callerEnvironment = interpreter.Environment;
-        try
-        {
-            var task = SharpTSAsyncFunction.NormalizePromiseRejection(
-                CallAsync(interpreter, arguments), interpreter);
-            return new SharpTSPromise(task);
-        }
-        finally
-        {
-            interpreter.SetEnvironment(callerEnvironment);
-        }
-    }
+        => SharpTSAsyncFunction.StartInvocation(interpreter, () => ExecuteBodyAsync(interpreter, arguments));
 
     /// <summary>
-    /// Asynchronously executes the arrow function.
+    /// Asynchronously invokes the arrow function and returns its adopted result.
     /// </summary>
-    public async Task<object?> CallAsync(Interpreter interpreter, List<object?> arguments)
+    public Task<object?> CallAsync(Interpreter interpreter, List<object?> arguments)
+        => SharpTSAsyncFunction.StartInvocation(interpreter, () => ExecuteBodyAsync(interpreter, arguments)).Task;
+
+    private async Task<object?> ExecuteBodyAsync(Interpreter interpreter, List<object?> arguments)
     {
         RuntimeEnvironment environment = new(_closure);
         if (HasOwnThis)
@@ -333,9 +329,7 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
             try
             {
                 interpreter.SetEnvironment(environment);
-                object? result = (await interpreter.EvaluateAsync(_declaration.ExpressionBody)).ToObject();
-                return await interpreter.AwaitPreservingEnvironment(
-                    SharpTSAsyncFunction.ResolveReturnValue(interpreter, result));
+                return (await interpreter.EvaluateAsync(_declaration.ExpressionBody)).ToObject();
             }
             finally
             {
@@ -347,14 +341,13 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
             var result = await interpreter.ExecuteBlockAsync(_declaration.BlockBody, environment);
             if (result.Type == ExecutionResult.ResultType.Return)
             {
-                return await interpreter.AwaitPreservingEnvironment(
-                    SharpTSAsyncFunction.ResolveReturnValue(interpreter, result.Value.ToObject()));
+                return result.Value.ToObject();
             }
             if (result.Type == ExecutionResult.ResultType.Throw)
             {
                 // Propagate the original throw value through ThrowException — see
-            // SharpTSFunction.Call for the full rationale.
-            throw ThrowException.FromResult(result.Value.ToObject(), result.FromGuestThrow);
+                // SharpTSFunction.Call for the full rationale.
+                throw ThrowException.FromResult(result.Value.ToObject(), result.FromGuestThrow);
             }
         }
 

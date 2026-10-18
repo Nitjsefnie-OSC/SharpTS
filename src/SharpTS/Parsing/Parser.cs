@@ -365,7 +365,7 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
     private static bool IsContextualKeyword(TokenType type) => type switch
     {
         // TypeScript-only keywords that are valid identifiers in JavaScript
-        TokenType.TYPE or TokenType.MODULE or TokenType.NAMESPACE or TokenType.ASYNC or
+        TokenType.TYPE or TokenType.MODULE or TokenType.NAMESPACE or TokenType.ASYNC or TokenType.AS or TokenType.USING or
         TokenType.DECLARE or TokenType.ABSTRACT or TokenType.READONLY or
         TokenType.OVERRIDE or TokenType.GLOBAL or TokenType.OF or
         TokenType.FROM or TokenType.SATISFIES or TokenType.ACCESSOR or

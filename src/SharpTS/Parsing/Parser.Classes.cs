@@ -6,6 +6,29 @@ public partial class Parser
         => Check(TokenType.CONSTRUCTOR)
             || Check(TokenType.STRING) && Peek().Literal is "constructor";
 
+    private static bool IsContextualClassDeclarationName(TokenType type) => type switch
+    {
+        // These identifier-like type keywords cannot introduce a class (TS2414).
+        TokenType.TYPE_STRING or TokenType.TYPE_NUMBER or TokenType.TYPE_BOOLEAN or
+        TokenType.TYPE_SYMBOL or TokenType.TYPE_BIGINT or TokenType.UNKNOWN or
+        TokenType.NEVER or TokenType.UNDEFINED => false,
+        _ => IsContextualKeyword(type),
+    };
+
+    private Token ConsumeClassDeclarationName()
+    {
+        if (Check(TokenType.IDENTIFIER)) return Advance();
+        Token written = Peek();
+        if (!IsContextualClassDeclarationName(written.Type))
+            throw new Exception("Expect class name.");
+        Advance();
+        return AliasEditorToken(new Token(TokenType.IDENTIFIER, written.Lexeme, null, written.Line, written.Start)
+        {
+            SourceIdentity = written.SourceIdentity,
+            SourceOrderOffset = written.SourceOrderOffset,
+        }, written);
+    }
+
     private Token ParseQualifiedImplementedTypeName()
     {
         Token first = ConsumeIdentifierName("Expect interface name.");
@@ -23,7 +46,7 @@ public partial class Parser
         int headerStart = _current > 0 ? _tokens[_current - 1].Start : CurrentSourceStart();
         isDeclare |= _isDeclarationFile;
 
-        Token name = Consume(TokenType.IDENTIFIER, "Expect class name.");
+        Token name = ConsumeClassDeclarationName();
         List<TypeParam>? typeParams = ParseTypeParameters();
 
         Expr? superclassExpr = null;

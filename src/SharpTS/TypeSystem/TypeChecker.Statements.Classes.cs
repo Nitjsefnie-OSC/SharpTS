@@ -480,22 +480,21 @@ public partial class TypeChecker
                         throw new TypeCheckException($" Cannot use 'override' for auto-accessor '{propName}' in a class that does not extend another class.", tsCode: "TS4112");
                     }
 
-                    // Check if parent has a matching getter
+                    // Static accessor reads are published on the constructor's
+                    // property map; instance accessors keep their getter map.
                     bool parentHasGetter = false;
                     TypeInfo? currentSuperclass = superclass;
                     while (currentSuperclass != null)
                     {
-                        if (currentSuperclass is TypeInfo.Class sc && sc.Getters.ContainsKey(propName))
+                        bool hasMatchingGetter = autoAccessor.IsStatic
+                            ? GetStaticProperties(currentSuperclass)?.ContainsKey(propName) == true
+                            : GetGetters(currentSuperclass)?.ContainsKey(propName) == true;
+                        if (hasMatchingGetter)
                         {
                             parentHasGetter = true;
                             break;
                         }
-                        currentSuperclass = currentSuperclass switch
-                        {
-                            TypeInfo.Class c => c.Superclass,
-                            TypeInfo.InstantiatedGeneric ig when ig.GenericDefinition is TypeInfo.GenericClass gc => gc.Superclass,
-                            _ => null
-                        };
+                        currentSuperclass = GetSuperclass(currentSuperclass);
                     }
 
                     if (!parentHasGetter)

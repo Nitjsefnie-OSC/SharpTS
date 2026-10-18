@@ -41,8 +41,8 @@ public sealed class ForwardAutoAccessorTests
             Assert.True(shape.StaticProperties.ContainsKey("stable"));
             Assert.False(shape.Core.StaticSetterTypes.ContainsKey("stable"));
             Assert.NotNull(shape.Core.StaticReadonlyFields);
-            Assert.True(shape.Core.StaticReadonlyFields.Contains("stable"));
-            Assert.False(shape.Core.StaticReadonlyFields.Contains("count"));
+            Assert.Contains("stable", shape.Core.StaticReadonlyFields.AsEnumerable());
+            Assert.DoesNotContain("count", shape.Core.StaticReadonlyFields.AsEnumerable());
         }
     }
 
@@ -96,5 +96,85 @@ public sealed class ForwardAutoAccessorTests
             console.log(update());
             """;
         Assert.Equal("7\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
+    public void AutoAccessorOverridesUseTheirStaticOrInstanceFacet(ExecutionMode mode)
+    {
+        const string source = """
+            class Base {
+                static accessor staticValue: string = "base-static";
+                accessor value: string = "base-instance";
+            }
+            class Derived extends Base {
+                static override accessor staticValue: string = "derived-static";
+                override accessor value: string = "derived-instance";
+            }
+            const instance = new Derived();
+            console.log(Base.staticValue, Derived.staticValue, new Base().value, instance.value);
+            Derived.staticValue = "changed-static";
+            instance.value = "changed-instance";
+            console.log(Base.staticValue, Derived.staticValue, new Base().value, instance.value);
+            """;
+        Assert.Equal("base-static derived-static base-instance derived-instance\n" +
+            "base-static changed-static base-instance changed-instance\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void StaticAutoAccessorOverridesNeedNoInstanceGetter()
+    {
+        const string source = """
+            class Base { static accessor value: number = 1; }
+            class Derived extends Base { static override accessor value: number = 2; }
+            const value: number = Derived.value;
+            """;
+        new TypeChecker().Check(TestHarness.ParseOrThrow(source));
+    }
+
+    [Fact]
+    public void SameNamedStaticAndInstanceAutoAccessorOverridesUseIndependentFacets()
+    {
+        const string source = """
+            class Base {
+                static accessor value: number = 1;
+                accessor value: number = 2;
+            }
+            class Derived extends Base {
+                static override accessor value: number = 3;
+                override accessor value: number = 4;
+            }
+            """;
+        new TypeChecker().Check(TestHarness.ParseOrThrow(source));
+    }
+
+    [Fact]
+    public void AutoAccessorOverridesFollowTheirFacetThroughGenericAncestors()
+    {
+        const string source = """
+            class Base<T> {
+                static accessor value: number = 1;
+                accessor value: number = 2;
+            }
+            class Middle extends Base<number> {}
+            class Derived extends Middle {
+                static override accessor value: number = 3;
+                override accessor value: number = 4;
+            }
+            """;
+        new TypeChecker().Check(TestHarness.ParseOrThrow(source));
+    }
+
+    [Theory]
+    [InlineData("", "static ")]
+    [InlineData("static ", "")]
+    public void AutoAccessorOverrideRejectsAnAccessorOnTheWrongFacet(string baseModifier, string derivedModifier)
+    {
+        string source = $$"""
+            class Base { {{baseModifier}}accessor value: number = 1; }
+            class Derived extends Base { {{derivedModifier}}override accessor value: number = 2; }
+            """;
+        var error = Assert.ThrowsAny<TypeCheckException>(() =>
+            new TypeChecker().Check(TestHarness.ParseOrThrow(source)));
+        Assert.Equal("TS4113", error.Diagnostic.TsCode);
     }
 }

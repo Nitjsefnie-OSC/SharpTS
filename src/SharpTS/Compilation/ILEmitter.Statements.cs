@@ -3224,7 +3224,7 @@ public partial class ILEmitter
         List<LoopBodyCellScopeEntry> cells = [];
         try
         {
-            EnterLoopBodyCellScope(b.Statements, cells);
+            EnterOrdinaryBlockCellScope(b.Statements, cells);
             RegisterRuntimeClassBindingScopes(b.Statements);
             _ctx.PredeclareCapturedLexicalLocals?.Invoke(IL, _ctx, b.Statements);
             InitializeCapturedLexicalTdzBindings(b.Statements);

@@ -16,6 +16,13 @@ public abstract partial class StatementEmitterBase
             EnterLexicalCellBinding(declaration, token, prior, ordinaryHandler);
     }
 
+    private protected void EnterOrdinaryBlockCellScope(IEnumerable<Stmt> statements, List<LoopBodyCellScopeEntry> prior)
+    {
+        foreach (var (declaration, token) in DirectLexicalDeclarations(statements))
+            EnterLexicalCellBinding(declaration, token, prior,
+                Ctx.ClosureAnalyzer?.IsOrdinaryBlockShadowDeclaration(token) == true);
+    }
+
     protected void EnterLexicalCellBinding(object declaration, Token token, List<LoopBodyCellScopeEntry> prior,
         bool ordinaryHandler = false)
     {

@@ -157,6 +157,7 @@ public class ClosureAnalyzer : AstVisitorBase
     private readonly LoopBodyCellAnalyzer _bodyCells = new();
 
     internal bool IsLoopBodyCellDeclaration(Token declaration) => _bodyCells.IsCellDeclaration(declaration);
+    internal bool IsOrdinaryBlockShadowDeclaration(Token declaration) => _bodyCells.IsOrdinaryBlockShadowDeclaration(declaration);
     internal bool TryGetLoopBodyCellCapture(object closure, string name, out Token declaration) =>
         _bodyCells.TryGetCaptureDeclaration(closure, name, out declaration);
     internal IReadOnlyDictionary<string, Token>? GetLoopBodyCellCaptures(object closure) =>
@@ -303,11 +304,18 @@ public class ClosureAnalyzer : AstVisitorBase
         List<Stmt> statements,
         TypeMap? checkedTypes,
         IReadOnlyDictionary<Stmt, IReadOnlySet<string>>? moduleClrImports)
+        => Analyze(statements, checkedTypes, moduleClrImports, null);
+
+    internal void Analyze(
+        List<Stmt> statements,
+        TypeMap? checkedTypes,
+        IReadOnlyDictionary<Stmt, IReadOnlySet<string>>? moduleClrImports,
+        IReadOnlyDictionary<Stmt, object>? moduleOwners)
     {
         // Resolve lexical declaration identities before ordinary capture discovery.
         // A named class expression's immutable self is carried by its evaluated
         // definition, independently of any same-spelled outer variable storage.
-        _bodyCells.Analyze(statements);
+        _bodyCells.Analyze(statements, moduleOwners);
         _checkedTypes = checkedTypes;
         _scopeStack.Push([]);
         HoistFunctionDeclarations(statements, hoistOwnedVars: true);

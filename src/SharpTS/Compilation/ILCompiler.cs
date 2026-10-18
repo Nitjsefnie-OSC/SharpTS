@@ -759,10 +759,16 @@ public partial class ILCompiler
     {
         _closures.Analyzer = new ClosureAnalyzer(_runtimeClassDeclarations);
         Dictionary<Stmt, IReadOnlySet<string>>? moduleClrImports = null;
+        Dictionary<Stmt, object>? moduleOwners = null;
         if (modules != null)
         {
+            moduleOwners = new(ReferenceEqualityComparer.Instance);
+            // Script files share a global scope; external modules own separate roots.
+            object scriptOwner = new();
             foreach (var module in modules)
             {
+                foreach (var statement in module.Statements)
+                    moduleOwners[statement] = module.IsScript ? scriptOwner : module;
                 var names = module.Statements.OfType<Stmt.Import>()
                     .Where(import => !import.IsTypeOnly && DotNetImports.IsDotNetSpecifier(import.ModulePath))
                     .SelectMany(import => import.NamedImports ?? [])
@@ -775,7 +781,7 @@ public partial class ILCompiler
                     moduleClrImports[statement] = names;
             }
         }
-        _closures.Analyzer.Analyze(statements, _typeMap, moduleClrImports);
+        _closures.Analyzer.Analyze(statements, _typeMap, moduleClrImports, moduleOwners);
     }
 
     /// <summary>

@@ -1931,7 +1931,8 @@ public class SharpTSProxy : ISharpTSCallable
         if (_target is SharpTSProxy proxy)
             return proxy.TrapDeleteProperty(prop, interp);
         if (_target is ISharpTSOwnPropertyObject ownPropertyObject)
-            return ownPropertyObject.OwnProperties.DeletePropertyStrict(prop, false);
+            return ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(prop) is null
+                || ownPropertyObject.OwnProperties.DeletePropertyStrict(prop, false);
         if (_target is SharpTSObject obj)
             return obj.DeletePropertyStrict(prop, false);
         if (_target is SharpTSInstance inst)

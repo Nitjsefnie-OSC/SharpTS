@@ -1088,7 +1088,8 @@ public partial class Interpreter
 
         return obj switch
         {
-            ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.DeletePropertyStrict(name, strictMode),
+            ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(name) is null
+                || ownPropertyObject.OwnProperties.DeletePropertyStrict(name, strictMode),
             SharpTSArray array => array.DeletePropertyStrict(name, strictMode),
             SharpTSObject tsObj => tsObj.DeletePropertyStrict(name, strictMode),
             ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, this)
@@ -1140,6 +1141,15 @@ public partial class Interpreter
         object? obj = (await ctx.EvaluateExprAsync(getIndex.Object)).ToObject();
         object? key = (await ctx.EvaluateExprAsync(getIndex.Index)).ToObject();
 
+        if (obj is ISharpTSOwnPropertyObject carrier)
+        {
+            var propertyKey = ToPropertyKey(key);
+            return propertyKey is SharpTSSymbol ownSymbol
+                ? !carrier.OwnProperties.HasSymbolProperty(ownSymbol)
+                    || carrier.OwnProperties.DeleteBySymbolStrict(ownSymbol, strictMode)
+                : DeleteProperty(obj, (string)propertyKey, strictMode);
+        }
+
         // Handle proxy
         if (obj is SharpTSProxy proxy)
         {
@@ -1154,9 +1164,6 @@ public partial class Interpreter
         // Handle symbol keys
         if (key is SharpTSSymbol symbol)
         {
-            if (obj is ISharpTSOwnPropertyObject ownPropertyObject)
-                return !ownPropertyObject.OwnProperties.HasSymbolProperty(symbol)
-                    || ownPropertyObject.OwnProperties.DeleteBySymbolStrict(symbol, strictMode);
             if (FunctionObjectProperties.TryGetStorage(obj, this, out var properties))
             {
                 return !properties.HasSymbolProperty(symbol)

@@ -16,6 +16,30 @@ public sealed class GeneratorOwnPropertyTests
                 console.log(iterator.extra, Object.hasOwn(iterator, 'extra'));
             }
             """, "7 true\n7 true\n"];
+        yield return ["delete-semantics", """
+            function* values() {}
+            async function* asyncValues() {}
+            function remove(target: any) { 'use strict'; return delete target.missing; }
+            for (const factory of [values, asyncValues]) {
+                const iterator: any = factory();
+                Object.freeze(iterator);
+                console.log(delete iterator.missing, delete iterator.next, remove(iterator),
+                    Reflect.deleteProperty(new Proxy(iterator, {}), 'missing'));
+            }
+            """, "true true true true\ntrue true true true\n"];
+        yield return ["delete-key-coercion", """
+            function* values() {}
+            async function* asyncValues() {}
+            for (const factory of [values, asyncValues]) {
+                const iterator: any = factory(), symbol = Symbol('key'), marker = {}, state = { calls: 0 };
+                iterator[symbol] = 7;
+                const key: any = { [Symbol.toPrimitive]() { state.calls++; return symbol; } };
+                console.log(delete iterator[key], Object.hasOwn(iterator, symbol), state.calls);
+                const throwing: any = { [Symbol.toPrimitive]() { throw marker; } };
+                try { delete iterator[throwing]; }
+                catch (error) { console.log(error === marker); }
+            }
+            """, "true false 1\ntrue\ntrue false 1\ntrue\n"];
         yield return ["compound-and-updates", """
             function* values() {}
             async function* asyncValues() {}
@@ -149,7 +173,8 @@ public sealed class GeneratorOwnPropertyTests
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
         // Compiled generator string assignments are lost (#2576).
         // Compiled object rest independently omits enumerable Symbols (#2577).
-        ((string)row[0] is "all-descriptors" or "dot-updates" or "rest-symbol"
+        // Compiled indexed deletion also stringifies object-to-Symbol keys (#2579).
+        ((string)row[0] is "all-descriptors" or "dot-updates" or "rest-symbol" or "delete-key-coercion"
             ? new[] { ExecutionMode.Interpreted }
             : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));

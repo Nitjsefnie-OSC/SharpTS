@@ -46,7 +46,8 @@ public partial class Parser
         }
 
         var parameter = new Stmt.Parameter(paramName, paramType, defaultValue, isRest,
-            isParameterProperty, access, isReadonly, isOptional, decorators, paramTypeNode);
+            isParameterProperty, access, isReadonly, isOptional, decorators, paramTypeNode,
+            HasBindingExpressions: defaultValue != null);
         RecordEditorName(paramName, parameter, EditorSyntaxRole.DeclarationName);
         RecordEditorRange(parameter, new SourceSpan(start, ConsumedSourceEnd),
             EditorSyntaxKind.Name, EditorSyntaxRole.Parameter);
@@ -96,7 +97,8 @@ public partial class Parser
             : null;
         var parameter = new Stmt.Parameter(synthName, paramType, defaultValue,
             Decorators: decorators, TypeAnnotationNode: paramTypeNode,
-            DestructuredProperties: destructuredProperties);
+            DestructuredProperties: destructuredProperties,
+            HasBindingExpressions: defaultValue != null || ContainsBindingExpressions(pattern));
         RecordEditorRange(parameter, new SourceSpan(start, ConsumedSourceEnd),
             EditorSyntaxKind.Name, EditorSyntaxRole.Parameter);
         // The generated _paramN identifier has no written name. Original binding/key tokens
@@ -109,6 +111,17 @@ public partial class Parser
             }
         return (parameter, pattern);
     }
+
+    private static bool ContainsBindingExpressions(DestructurePattern pattern) => pattern switch
+    {
+        IdentifierPattern identifier => identifier.DefaultValue != null,
+        ArrayPattern array => array.Elements.Any(element => element.Pattern != null
+            && ContainsBindingExpressions(element.Pattern)),
+        ObjectPattern objectPattern => objectPattern.Properties.Any(property => property.DefaultValue != null
+            || ContainsBindingExpressions(property.Value)),
+        RestPattern => false,
+        _ => false
+    };
 
     /// <summary>
     /// Lowers destructured parameters into a body prologue: each synthetic <c>_paramN</c> is
@@ -131,7 +144,9 @@ public partial class Parser
                 ObjectPattern op => DesugarObjectPattern(op, paramVar),
                 _ => throw new Exception("Unknown pattern type")
             };
-            prologue.Add(desugar);
+            prologue.Add(desugar is Stmt.Sequence sequence
+                ? sequence with { ParameterName = synthName }
+                : new Stmt.Sequence([desugar], ParameterName: synthName));
         }
         return prologue.Concat(body).ToList();
     }

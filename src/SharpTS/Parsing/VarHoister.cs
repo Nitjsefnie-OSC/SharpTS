@@ -170,7 +170,7 @@ public static class VarHoister
                 if (seqChanged)
                 {
                     changed = true;
-                    return new Stmt.Sequence(newStmts);
+                    return seq with { Statements = newStmts };
                 }
                 return seq;
             }

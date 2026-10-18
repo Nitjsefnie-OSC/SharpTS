@@ -263,9 +263,10 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         {
             environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
         }
-        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
+        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter, _declaration.Body);
+        var prepared = ParameterBinder.PrepareBody(_declaration.Parameters, _declaration.Body, environment);
 
-        List<Stmt> body = _declaration.Body;
+        List<Stmt> body = prepared.Statements;
         if (constructionFrame?.Owner.Superclass is not null)
         {
             // The parser prepends these assignments before the source body.
@@ -277,7 +278,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
                 body = body.Where(statement => !IsSyntheticParameterProperty(statement)).ToList();
                 constructionFrame.SetParameterPropertyInitializer(() =>
                 {
-                    var initialization = interpreter.ExecuteBlock(parameterProperties, environment);
+                    var initialization = interpreter.ExecuteBlock(parameterProperties, prepared.Environment);
                     if (initialization.Type == ExecutionResult.ResultType.Throw)
                         throw ThrowException.FromResult(initialization.Value.ToObject(), initialization.FromGuestThrow);
                 });
@@ -285,8 +286,8 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         }
 
         using var debugFrame = interpreter.EnterDebugFrame(
-            _declaration.Name.Lexeme, environment, _declaration);
-        var result = interpreter.ExecuteBlock(body, environment);
+            _declaration.Name.Lexeme, prepared.Environment, _declaration);
+        var result = interpreter.ExecuteBlock(body, prepared.Environment);
         if (result.Type == ExecutionResult.ResultType.Return)
         {
             return result.Value.ToObject();
@@ -417,11 +418,12 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             for (int i = 0; i < arguments.Length; i++) argsList.Add(arguments[i].ToObject());
             environment.Define("arguments", SharpTSArguments.Create(argsList, interpreter));
         }
-        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
+        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter, _declaration.Body);
+        var prepared = ParameterBinder.PrepareBody(_declaration.Parameters, _declaration.Body, environment);
 
         using var debugFrame = interpreter.EnterDebugFrame(
-            _declaration.Name.Lexeme, environment, _declaration);
-        var result = interpreter.ExecuteBlock(_declaration.Body, environment);
+            _declaration.Name.Lexeme, prepared.Environment, _declaration);
+        var result = interpreter.ExecuteBlock(prepared.Statements, prepared.Environment);
         if (result.Type == ExecutionResult.ResultType.Return)
         {
             return result.Value;
@@ -759,17 +761,18 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
-        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
+        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter, _declaration.BlockBody);
+        var prepared = ParameterBinder.PrepareBody(_declaration.Parameters, _declaration.BlockBody, environment);
 
         using var debugFrame = interpreter.EnterDebugFrame(
-            _declaration.Name?.Lexeme ?? "<arrow>", environment, _declaration);
+            _declaration.Name?.Lexeme ?? "<arrow>", prepared.Environment, _declaration);
         if (_declaration.ExpressionBody != null)
         {
             // Expression body - evaluate and return directly
             RuntimeEnvironment previous = interpreter.Environment;
             try
             {
-                interpreter.SetEnvironment(environment);
+                interpreter.SetEnvironment(prepared.Environment);
                 return interpreter.Evaluate(_declaration.ExpressionBody);
             }
             finally
@@ -780,7 +783,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
         else if (_declaration.BlockBody != null)
         {
             // Block body - execute statements, catch return
-            var result = interpreter.ExecuteBlock(_declaration.BlockBody, environment);
+            var result = interpreter.ExecuteBlock(prepared.Statements, prepared.Environment);
             if (result.Type == ExecutionResult.ResultType.Return)
             {
                 return result.Value.ToObject();
@@ -836,16 +839,17 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             environment.Define("this",
                 functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
-        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
+        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter, _declaration.BlockBody);
+        var prepared = ParameterBinder.PrepareBody(_declaration.Parameters, _declaration.BlockBody, environment);
 
         using var debugFrame = interpreter.EnterDebugFrame(
-            _declaration.Name?.Lexeme ?? "<arrow>", environment, _declaration);
+            _declaration.Name?.Lexeme ?? "<arrow>", prepared.Environment, _declaration);
         if (_declaration.ExpressionBody != null)
         {
             RuntimeEnvironment previous = interpreter.Environment;
             try
             {
-                interpreter.SetEnvironment(environment);
+                interpreter.SetEnvironment(prepared.Environment);
                 return interpreter.EvaluateRV(_declaration.ExpressionBody);
             }
             finally
@@ -855,7 +859,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
         }
         else if (_declaration.BlockBody != null)
         {
-            var result = interpreter.ExecuteBlock(_declaration.BlockBody, environment);
+            var result = interpreter.ExecuteBlock(prepared.Statements, prepared.Environment);
             if (result.Type == ExecutionResult.ResultType.Return)
             {
                 return result.Value;

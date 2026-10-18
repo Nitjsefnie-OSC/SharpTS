@@ -158,7 +158,8 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         // Snapshot the caller values before defaults; this binding survives every await.
         if (ArgumentsUsage.UsesArguments(_declaration))
             environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
-        await ParameterBinder.BindAsync(_declaration.Parameters, arguments, environment, interpreter);
+        await ParameterBinder.BindAsync(_declaration.Parameters, arguments, environment, interpreter, _declaration.Body);
+        var prepared = ParameterBinder.PrepareBody(_declaration.Parameters, _declaration.Body, environment);
 
         if (_declaration.Body == null)
         {
@@ -166,8 +167,8 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         }
 
         using var debugFrame = interpreter.EnterDebugFrame(
-            _declaration.Name.Lexeme, environment, _declaration);
-        var result = await interpreter.ExecuteBlockAsync(_declaration.Body, environment);
+            _declaration.Name.Lexeme, prepared.Environment, _declaration);
+        var result = await interpreter.ExecuteBlockAsync(prepared.Statements, prepared.Environment);
         if (result.Type == ExecutionResult.ResultType.Return)
         {
             return result.Value.ToObject();
@@ -319,16 +320,17 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
         // Function expressions own arguments; true arrows retain the enclosing binding.
         if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
             environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
-        await ParameterBinder.BindAsync(_declaration.Parameters, arguments, environment, interpreter);
+        await ParameterBinder.BindAsync(_declaration.Parameters, arguments, environment, interpreter, _declaration.BlockBody);
+        var prepared = ParameterBinder.PrepareBody(_declaration.Parameters, _declaration.BlockBody, environment);
 
         using var debugFrame = interpreter.EnterDebugFrame(
-            _declaration.Name?.Lexeme ?? "<async arrow>", environment, _declaration);
+            _declaration.Name?.Lexeme ?? "<async arrow>", prepared.Environment, _declaration);
         if (_declaration.ExpressionBody != null)
         {
             RuntimeEnvironment previous = interpreter.Environment;
             try
             {
-                interpreter.SetEnvironment(environment);
+                interpreter.SetEnvironment(prepared.Environment);
                 return (await interpreter.EvaluateAsync(_declaration.ExpressionBody)).ToObject();
             }
             finally
@@ -338,7 +340,7 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
         }
         else if (_declaration.BlockBody != null)
         {
-            var result = await interpreter.ExecuteBlockAsync(_declaration.BlockBody, environment);
+            var result = await interpreter.ExecuteBlockAsync(prepared.Statements, prepared.Environment);
             if (result.Type == ExecutionResult.ResultType.Return)
             {
                 return result.Value.ToObject();

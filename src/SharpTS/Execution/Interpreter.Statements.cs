@@ -2021,6 +2021,8 @@ public partial class Interpreter
             value = Evaluate(varStmt.Initializer);
         }
         var target = varStmt.IsVar ? _environment.VarDeclarationTarget ?? _environment : _environment;
+        if (varStmt.IsVar && varStmt.Initializer is null && target.IsDefinedLocally(varStmt.Name.Lexeme))
+            return ExecutionResult.Success();
         target.Define(varStmt.Name.Lexeme, value);
         if (varStmt.IsVar && target.Enclosing is null)
             GlobalThis.SetProperty(varStmt.Name.Lexeme, value);

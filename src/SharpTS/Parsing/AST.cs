@@ -383,7 +383,7 @@ public abstract record Stmt
         // Ambient optional methods retain presence information for structural checking.
         public bool IsOptional { get; init; }
     }
-    public record Parameter(Token Name, string? Type, Expr? DefaultValue = null, bool IsRest = false, bool IsParameterProperty = false, AccessModifier? Access = null, bool IsReadonly = false, bool IsOptional = false, List<Decorator>? Decorators = null, TypeNode? TypeAnnotationNode = null, List<DestructuredParameterProperty>? DestructuredProperties = null);
+    public record Parameter(Token Name, string? Type, Expr? DefaultValue = null, bool IsRest = false, bool IsParameterProperty = false, AccessModifier? Access = null, bool IsReadonly = false, bool IsOptional = false, List<Decorator>? Decorators = null, TypeNode? TypeAnnotationNode = null, List<DestructuredParameterProperty>? DestructuredProperties = null, bool HasBindingExpressions = false);
     public record DestructuredParameterProperty(Token Key, Token Binding, Expr? DefaultValue, bool IsRenamed);
     /// <summary>
     /// Class field declaration. For computed property names (e.g., [Symbol("key")]: type),
@@ -473,7 +473,8 @@ public abstract record Stmt
     /// <param name="ReturnTypeNode">Node twin of <paramref name="ReturnType"/> (type-AST migration), when the parser produced one.</param>
     public record ConstructorSignature(List<TypeParam>? TypeParams, List<Parameter> Parameters, string ReturnType, TypeNode? ReturnTypeNode = null);
     public record Block(List<Stmt> Statements) : Stmt;
-    public record Sequence(List<Stmt> Statements) : Stmt;  // Like Block but without creating a new scope
+    // ParameterName identifies a lowered destructuring prologue without inferring meaning from a generated name.
+    public record Sequence(List<Stmt> Statements, Token? ParameterName = null) : Stmt;  // Like Block but without creating a new scope
     public record Return(Token Keyword, Expr? Value) : Stmt;
     public record While(Expr Condition, Stmt Body) : Stmt;
     public record For(Stmt? Initializer, Expr? Condition, Expr? Increment, Stmt Body) : Stmt;

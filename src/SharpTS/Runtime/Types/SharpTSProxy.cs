@@ -852,10 +852,18 @@ public class SharpTSProxy : ISharpTSCallable
     }
 
     public bool TrapDeleteProperty(string prop, Interpreter? interp)
+        => TrapDeletePropertyCore(prop, interp);
+
+    internal bool TrapDeleteProperty(SharpTSSymbol prop, Interpreter interp)
+        => TrapDeletePropertyCore(prop, interp);
+
+    private bool TrapDeletePropertyCore(object prop, Interpreter? interp)
     {
         var trap = GetTrapCallable("deleteProperty", interp);
         if (trap == null)
-            return ForwardDeleteProperty(prop, interp);
+            return prop is SharpTSSymbol symbol
+                ? interp!.DeleteSymbolProperty(_target, symbol, strictMode: false)
+                : ForwardDeleteProperty((string)prop, interp);
 
         bool result = ToBoolean(InvokeTrap(trap, interp, [_target, prop]));
         if (!result) return false;

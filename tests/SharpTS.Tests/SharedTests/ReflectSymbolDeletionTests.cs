@@ -115,6 +115,25 @@ public sealed class ReflectSymbolDeletionTests
 
     public static IEnumerable<object[]> ProxyCases()
     {
+        yield return ["proxy-direct-symbol-identity", """
+            const key = Symbol("direct"), target: any = {}, state = { calls: 0, valid: true };
+            const handler = {
+                deleteProperty(object: any, actualKey: any) {
+                    state.calls++; state.valid = state.valid && this === handler && object === target && actualKey === key;
+                    return Reflect.deleteProperty(object, actualKey);
+                }
+            };
+            const proxy: any = new Proxy(target, handler);
+            Object.defineProperty(target, key, { value: 3, configurable: true });
+            console.log(Reflect.deleteProperty(proxy, key), target[key] === undefined);
+            Object.defineProperty(target, key, { value: 4, configurable: true });
+            console.log(delete proxy[key], target[key] === undefined, state.calls, state.valid);
+            const refuses: any = new Proxy(target, { deleteProperty() { return false; } });
+            console.log(Reflect.deleteProperty(refuses, key));
+            function strictDelete(object: any) { "use strict"; return delete object[key]; }
+            try { strictDelete(refuses); }
+            catch (error) { console.log(error instanceof TypeError); }
+            """, "true true\ntrue true 2 true\nfalse\ntrue\n"];
         yield return ["proxy-forwarding", """
             const key = Symbol("same"), other = Symbol("same"), target: any = {};
             Object.defineProperty(target, key, { value: 3, configurable: true });
@@ -190,8 +209,8 @@ public sealed class ReflectSymbolDeletionTests
     {
         foreach (var row in OrdinaryCases())
         {
-            // #2358 owns interpreted ordinary Symbol deletion and #2393 key coercion.
-            if ((string)row[0] is "string-bound-controls" or "target-before-key")
+            // #2393 owns interpreted object-key coercion.
+            if ((string)row[0] is not ("coercion-once" or "coercion-errors"))
                 yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
@@ -205,11 +224,18 @@ public sealed class ReflectSymbolDeletionTests
         Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 
-    [Theory, MemberData(nameof(ProxyCases))]
-    public void CompiledProxyDeletionPreservesSymbolForwardingAndInvariants(
-        string name, string source, string expected)
+    public static IEnumerable<object[]> ProxyModeCases() => ProxyCases().SelectMany(row =>
+        // #2393: the identity case includes an object key that produces a Symbol.
+        ((string)row[0] == "proxy-trap-identity"
+            ? new[] { ExecutionMode.Compiled }
+            : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }).Select(mode =>
+            new object[] { row[0], row[1], row[2], mode }));
+
+    [Theory, MemberData(nameof(ProxyModeCases))]
+    public void ProxyDeletionPreservesSymbolForwardingAndInvariants(
+        string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
-        Assert.Equal(expected, TestHarness.RunCompiled(source));
+        Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 }

@@ -1153,8 +1153,10 @@ public partial class Interpreter
         // Handle proxy
         if (obj is SharpTSProxy proxy)
         {
-            string proxyKey = key is SharpTSSymbol ? key.ToString()! : Stringify(key);
-            bool deleted = proxy.TrapDeleteProperty(proxyKey, this);
+            object proxyKey = key is SharpTSSymbol ? key : Stringify(key);
+            bool deleted = proxyKey is SharpTSSymbol proxySymbol
+                ? proxy.TrapDeleteProperty(proxySymbol, this)
+                : proxy.TrapDeleteProperty((string)proxyKey, this);
             if (!deleted && strictMode)
                 throw new ThrowException(new SharpTSTypeError(
                     $"Cannot delete property '{proxyKey}' through proxy"));
@@ -1163,34 +1165,42 @@ public partial class Interpreter
 
         // Handle symbol keys
         if (key is SharpTSSymbol symbol)
-        {
-            if (FunctionObjectProperties.TryGetStorage(obj, this, out var properties))
-            {
-                return !properties.HasSymbolProperty(symbol)
-                    || properties.DeleteBySymbolStrict(symbol, strictMode);
-            }
-            return obj switch
-            {
-                SharpTSObject tsObj => tsObj.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSInstance tsInst => tsInst.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSClass klass => klass.DeleteStaticSymbolProperty(symbol, strictMode),
-                SharpTSClassPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSArray array => array.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSMath math => math.DeleteBySymbolStrict(symbol, strictMode),
-                ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSStringPrototype stringPrototype
-                    => stringPrototype.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSJSON json => json.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSBigIntPrototype bigIntPrototype
-                    => bigIntPrototype.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSFunctionPrototype functionPrototype
-                    => functionPrototype.DeleteBySymbolStrict(symbol, strictMode),
-                _ => true
-            };
-        }
+            return DeleteSymbolProperty(obj, symbol, strictMode);
 
         string keyStr = Stringify(key);
         return DeleteProperty(obj, keyStr, strictMode);
+    }
+
+    internal bool DeleteSymbolProperty(object? target, SharpTSSymbol symbol, bool strictMode)
+    {
+        if (target is SharpTSProxy proxy)
+        {
+            bool deleted = proxy.TrapDeleteProperty(symbol, this);
+            if (!deleted && strictMode)
+                throw new ThrowException(new SharpTSTypeError($"Cannot delete property '{symbol}' through proxy"));
+            return deleted;
+        }
+        if (target is ISharpTSOwnPropertyObject carrier)
+            return !carrier.OwnProperties.HasSymbolProperty(symbol)
+                || carrier.OwnProperties.DeleteBySymbolStrict(symbol, strictMode);
+        if (FunctionObjectProperties.TryGetStorage(target, this, out var properties))
+            return !properties.HasSymbolProperty(symbol)
+                || properties.DeleteBySymbolStrict(symbol, strictMode);
+        return target switch
+        {
+            SharpTSObject obj => obj.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSInstance instance => instance.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSClass klass => klass.DeleteStaticSymbolProperty(symbol, strictMode),
+            SharpTSClassPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSArray array => array.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSMath math => math.DeleteBySymbolStrict(symbol, strictMode),
+            ISharpTSPrimitiveConstructor constructor => constructor.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSStringPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSJSON json => json.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSBigIntPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSFunctionPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
+            _ => true
+        };
     }
 
     private static bool DeleteNonConfigurableClassPrototype(

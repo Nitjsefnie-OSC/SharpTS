@@ -151,19 +151,7 @@ public static class ReflectBuiltIns
                         || objectNamespace.DeleteProperty((string)key));
                 }
                 if (args[1].ToObject() is SharpTSSymbol symbol)
-                {
-                    if (target is SharpTSClass klassBySymbol)
-                        return RuntimeValue.FromBoolean(klassBySymbol.DeleteStaticSymbolProperty(symbol, false));
-                    if (target is SharpTSClassPrototype prototypeBySymbol)
-                        return RuntimeValue.FromBoolean(prototypeBySymbol.DeleteBySymbolStrict(symbol, false));
-                    if (target is ISharpTSPrimitiveConstructor primitiveConstructorBySymbol)
-                        return RuntimeValue.FromBoolean(primitiveConstructorBySymbol.DeleteBySymbolStrict(symbol, false));
-                    if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var properties))
-                        return RuntimeValue.FromBoolean(!properties.HasSymbolProperty(symbol)
-                            || properties.DeleteBySymbolStrict(symbol, false));
-                    if (target is SharpTSFunctionPrototype functionPrototypeBySymbol)
-                        return RuntimeValue.FromBoolean(functionPrototypeBySymbol.DeleteBySymbolStrict(symbol, false));
-                }
+                    return RuntimeValue.FromBoolean(interpreter.DeleteSymbolProperty(target, symbol, strictMode: false));
                 var propertyKey = target is ISharpTSPrimitiveConstructor
                     ? interpreter.ToPropertyKeyString(args[1].ToObject())
                     : args[1].ToObject()?.ToString() ?? "";

@@ -106,4 +106,3 @@ public sealed class ForwardedReturnValueTests
         Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 }
-

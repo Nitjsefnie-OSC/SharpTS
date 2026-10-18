@@ -1264,6 +1264,23 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// Captures an array-like's length now, then reads each element when the
+    /// consumer advances so a mapper can change an unvisited property.
+    /// </summary>
+    internal IEnumerable<object?> EnumerateArrayLikeElements(object? value)
+    {
+        long length = ArrayBuiltIns.ToLength(GetPropertyValue(value, "length"), this);
+        return Enumerate();
+
+        IEnumerable<object?> Enumerate()
+        {
+            for (long index = 0; index < length; index++)
+                yield return GetPropertyValue(value,
+                    index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
+
+    /// <summary>
     /// Normalizes an array binding-pattern source through the iterator protocol (#685). Array
     /// destructuring (<c>const [a, b] = src</c>) desugars to positional index access, which is only
     /// correct for index-addressable sources. Plain arrays pass through unchanged (fast path). Typed

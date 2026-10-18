@@ -62,14 +62,14 @@ public static class ArrayStaticBuiltIns
                     // lazy iteration here gives both — when mapfn throws, the C#
                     // enumerator over the retained elements is disposed, which runs
                     // EnumerateWithIteratorProtocol's finally → the iterator's
-                    // return(). Array-likes (ReadArrayLikeElements) have no iterator
+                    // return(). Array-likes have no guest iterator
                     // to close, matching the spec.
                     var result = new List<object?>();
                     var callbackArgs = new List<object?>(2) { null, null };
                     var source = isIterable
                         ? iterableElements!
-                        : interpreter.ReadArrayLikeElements(iterable);
-                    int i = 0;
+                        : interpreter.EnumerateArrayLikeElements(iterable);
+                    long i = 0;
                     var enumerator = source.GetEnumerator();
                     bool abruptCompletion = false;
                     try

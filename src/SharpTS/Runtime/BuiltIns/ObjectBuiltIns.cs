@@ -431,6 +431,10 @@ public static partial class ObjectBuiltIns
         var arg = args[0].ToObject();
         switch (arg)
         {
+            case SharpTSObjectNamespace objectNamespace:
+                objectNamespace.FreezeOwnProperties(interpreter);
+                PropertyDescriptorStore.Freeze(objectNamespace);
+                return RuntimeValue.FromObject(objectNamespace);
             case ISharpTSFunctionObject function:
                 FunctionObjectProperties.GetProperties(function, interpreter).Freeze();
                 return RuntimeValue.FromObject(function);
@@ -480,6 +484,10 @@ public static partial class ObjectBuiltIns
         var arg = args[0].ToObject();
         switch (arg)
         {
+            case SharpTSObjectNamespace objectNamespace:
+                objectNamespace.SealOwnProperties(interpreter);
+                PropertyDescriptorStore.Seal(objectNamespace);
+                return RuntimeValue.FromObject(objectNamespace);
             case ISharpTSFunctionObject function:
                 FunctionObjectProperties.GetProperties(function, interpreter).Seal();
                 return RuntimeValue.FromObject(function);
@@ -701,6 +709,8 @@ public static partial class ObjectBuiltIns
                 break;
             case SharpTSObjectNamespace objectNamespace:
                 success = objectNamespace.DefineProperty(propertyKey, descriptor);
+                if (!success)
+                    throw new ThrowException(new SharpTSTypeError($"Cannot redefine property '{propertyKey}'"));
                 break;
             case ISharpTSPrimitiveConstructor primitiveConstructor:
                 success = primitiveConstructor.DefineExtraProperty(propertyKey, descriptor);
@@ -1725,6 +1735,10 @@ public static partial class ObjectBuiltIns
         }
         switch (args[0])
         {
+            case SharpTSObjectNamespace objectNamespace:
+                objectNamespace.PreventExtensions(interpreter);
+                PropertyDescriptorStore.PreventExtensions(objectNamespace);
+                return objectNamespace;
             case SharpTSObject obj:
                 obj.PreventExtensions();
                 return obj;
@@ -1771,6 +1785,10 @@ public static partial class ObjectBuiltIns
     {
         switch (target)
         {
+            case SharpTSObjectNamespace objectNamespace:
+                objectNamespace.PreventExtensions(interpreter);
+                PropertyDescriptorStore.PreventExtensions(objectNamespace);
+                return true;
             case SharpTSProxy proxy:
                 return proxy.TrapPreventExtensions(interpreter);
             case SharpTSObject obj:

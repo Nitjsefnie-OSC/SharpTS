@@ -2315,6 +2315,14 @@ public partial class Interpreter
         FunctionObjectProperties.GetProperties(function, this).SetPropertyStrict(name, value, strictMode);
     }
 
+    private void SetObjectNamespaceProperty(
+        SharpTSObjectNamespace target, string name, object? value, bool strictMode)
+    {
+        if (!TryAssignThroughDescriptor(ObjectBuiltIns.OwnPropertyDescriptorOf(this, target, name),
+                target, name, value, strictMode))
+            target.SetPropertyStrict(name, value, strictMode);
+    }
+
     private void SetOrdinaryFunctionOwnProperty(
         object function, SharpTSObject properties, string name, object? value, bool strictMode)
     {
@@ -2810,6 +2818,11 @@ public partial class Interpreter
         if (obj is SharpTSAsyncArrowFunction asyncArrowFn)
         {
             asyncArrowFn.SetProperty(set.Name.Lexeme, value);
+            return value;
+        }
+        if (obj is SharpTSObjectNamespace objectNamespace)
+        {
+            SetObjectNamespaceProperty(objectNamespace, set.Name.Lexeme, value, strictMode);
             return value;
         }
         if (obj is BoundFunction boundFunction)

@@ -46,16 +46,39 @@ public class SharpTSObjectNamespace : ISharpTSCallable
     }
 
     public void SetProperty(string name, object? value)
+        => SetPropertyStrict(name, value, false);
+
+    internal void SetPropertyStrict(string name, object? value, bool strictMode)
     {
-        _deletedBuiltIns.Remove(name);
-        _extras.SetProperty(name, value);
+        _extras.SetPropertyStrict(name, value, strictMode);
+        if (_extras.GetOwnPropertyDescriptor(name) is not null)
+            _deletedBuiltIns.Remove(name);
     }
 
     public bool DefineProperty(string name, SharpTSPropertyDescriptor descriptor)
     {
-        _deletedBuiltIns.Remove(name);
-        return _extras.DefineProperty(name, descriptor);
+        bool defined = _extras.DefineProperty(name, descriptor);
+        if (defined) _deletedBuiltIns.Remove(name);
+        return defined;
     }
+
+    private SharpTSObject MaterializeOwnProperties(Interpreter interpreter)
+    {
+        foreach (var name in new[] { "length", "name", "prototype" }.Concat(ObjectBuiltIns.StaticMemberNames))
+        {
+            if (!HasOwnProperty(name) || _extras.GetOwnPropertyDescriptor(name) is not null) continue;
+            var descriptor = name is "length" or "name"
+                ? new SharpTSPropertyDescriptor(GetMember(name), writable: false, enumerable: false, configurable: true)
+                : ObjectBuiltIns.OwnPropertyDescriptorOf(interpreter, this, name);
+            if (descriptor is not null && !_extras.DefineProperty(name, descriptor))
+                throw new InvalidOperationException("Cannot materialize Object constructor property descriptors.");
+        }
+        return _extras;
+    }
+
+    internal void FreezeOwnProperties(Interpreter interpreter) => MaterializeOwnProperties(interpreter).Freeze();
+    internal void SealOwnProperties(Interpreter interpreter) => MaterializeOwnProperties(interpreter).Seal();
+    internal void PreventExtensions(Interpreter interpreter) => MaterializeOwnProperties(interpreter).PreventExtensions();
 
     public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
         => _extras.GetOwnPropertyDescriptor(name);

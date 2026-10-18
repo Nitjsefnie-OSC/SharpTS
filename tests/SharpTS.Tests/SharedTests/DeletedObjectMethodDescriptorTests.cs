@@ -129,10 +129,8 @@ public sealed class DeletedObjectMethodDescriptorTests
     public static IEnumerable<object[]> ModeCases() => SharedCases().SelectMany(row =>
             new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
                 .Select(mode => new object[] { row[0], row[1], row[2], mode }))
-        .Concat(Cases().Where(row => (string)row[0] == "restoration-and-redelete")
-            .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted }))
-        // #2319 tracks interpreted Object constructor integrity operations.
-        .Concat(Cases().Skip(1).Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Compiled }));
+        .Concat(Cases().Skip(1).SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            .Select(mode => new object[] { row[0], row[1], row[2], mode })));
 
     [Theory, MemberData(nameof(ModeCases))]
     public void DeletedObjectMethodsStopSynthesizingOwnDescriptors(

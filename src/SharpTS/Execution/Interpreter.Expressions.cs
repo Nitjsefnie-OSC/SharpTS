@@ -1666,7 +1666,7 @@ public partial class Interpreter
         }
         if (obj is SharpTSObjectNamespace objectNamespace)
         {
-            objectNamespace.SetProperty(PropertyKeyConverter.ToPropertyKeyString(index), value);
+            SetObjectNamespaceProperty(objectNamespace, PropertyKeyConverter.ToPropertyKeyString(index), value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
 

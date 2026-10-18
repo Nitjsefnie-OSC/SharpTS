@@ -1,6 +1,7 @@
 using SharpTS.Execution;
 using SharpTS.Diagnostics;
 using SharpTS.Tests.Infrastructure;
+using SharpTS.Tests.SharedTests;
 using Xunit;
 
 namespace SharpTS.Tests.Compilation;
@@ -8,6 +9,17 @@ namespace SharpTS.Tests.Compilation;
 [Collection("CompilationService")]
 public class SourceExecutionServiceTests
 {
+    [Theory, MemberData(nameof(HandlerLexicalScopeTests.ResolverCases), MemberType = typeof(HandlerLexicalScopeTests))]
+    public void Interpret_HandlerScopesPreserveResolvedBindingHomes(string name, string source, string expected)
+    {
+        Assert.NotEmpty(name);
+        var result = SourceExecutionService.Interpret(source);
+
+        Assert.True(result.Success, string.Join("\n", result.Errors) + result.Output);
+        Assert.Empty(result.Errors);
+        Assert.Equal(expected, Normalize(result.Output));
+    }
+
     [Fact]
     public void Interpret_ValidSource_CapturesOutput()
     {

@@ -157,11 +157,9 @@ public sealed class GeneratorExpressionLexicalExitTests
         yield return ["async-generator-owner", AsyncGeneratorOwnerSource, "ready 1\ncatch boom:11 3\ncaught 3\nfinal 21\ntrue 3\n"];
     }
 
-    // Interpreter try/finally shadows overwrite retained bindings: https://github.com/nickna/SharpTS/issues/2405.
-    public static IEnumerable<object[]> ModeCases() => Cases()
-        .Where(row => (string)row[0] is not ("sync-generator-owner" or "async-generator-owner"))
-        .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted })
-        .Concat(Cases().Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Compiled }));
+    public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]
     public void CapturedLexicalCellsSurviveSuspensionAndProtectedRegionExits(

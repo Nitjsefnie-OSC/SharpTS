@@ -125,6 +125,32 @@ public sealed class ForOfBodyLexicalCellTests
         console.log(headers[0](), headers[1]());
         """;
 
+    public const string ForwardLetSource = """
+        for (const seed of [1]) {
+            const read = () => value;
+            let value = seed;
+            console.log(read());
+        }
+        """;
+
+    public const string ForwardConstSource = """
+        for (const seed of [1]) {
+            const read = () => value;
+            const value = seed;
+            console.log(read());
+        }
+        """;
+
+    public const string AnnotatedShadowSource = """
+        let value: number = 100;
+        {
+            const read = (): string => value;
+            let value: string = "inner";
+            console.log(read());
+        }
+        console.log(value);
+        """;
+
     public static IEnumerable<object[]> Cases()
     {
         yield return ["issue", IssueSource, "42 42 2\n43 43 2\n42 42 2\n43 43 2\n"];
@@ -134,23 +160,16 @@ public sealed class ForOfBodyLexicalCellTests
         yield return ["ordinary-for-accessor", OrdinaryForAccessorSource, "1\n"];
         yield return ["ordinary-for-escaped-siblings", OrdinaryForEscapedSiblingSource,
             "1 11\n5 11 5\n13 5\n0 1\n"];
-    }
-
-    // Forward lexical references in closures are rejected by the checker (#2341) before
-    // these valid runtime initialization and binding-lifetime controls can run.
-    public static IEnumerable<object[]> RuntimeOnlyCases()
-    {
         yield return ["callable-forward-shadow", CallableForwardShadowSource,
             "2 11 101 110\n7 11 22 22\n31 22 11 1000\n7,50 11,50\n"];
         yield return ["initialization-preservation", InitializationAndPreservationSource,
             "ReferenceError\nReferenceError\n1\n11\nReferenceError\nReferenceError\n2\n12\n3 4\n0 1\n"];
+        yield return ["forward-let", ForwardLetSource, "1\n"];
+        yield return ["forward-const", ForwardConstSource, "1\n"];
+        yield return ["annotated-shadow", AnnotatedShadowSource, "inner\n100\n"];
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
-        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            .Select(mode => new object[] { row[0], row[1], row[2], mode }));
-
-    public static IEnumerable<object[]> RuntimeOnlyModeCases() => RuntimeOnlyCases().SelectMany(row =>
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
@@ -160,14 +179,6 @@ public sealed class ForOfBodyLexicalCellTests
     {
         Assert.NotEmpty(name);
         Assert.Equal(expected, TestHarness.Run(source, mode));
-    }
-
-    [Theory, MemberData(nameof(RuntimeOnlyModeCases))]
-    public void ForwardClosuresRetainCellsAndInitializationChecks(
-        string name, string source, string expected, ExecutionMode mode)
-    {
-        Assert.NotEmpty(name);
-        Assert.Equal(expected, TestHarness.RunUnchecked(source, mode));
     }
 
     [Theory, ModeData]

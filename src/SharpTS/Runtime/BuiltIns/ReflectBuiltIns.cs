@@ -115,6 +115,13 @@ public static class ReflectBuiltIns
             "has" => BuiltInMethod.CreateV2("has", 2, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.has requires a target object.");
+                if (target is ISharpTSOwnPropertyObject)
+                {
+                    var ownKey = interpreter.ToPropertyKey(args[1].ToObject());
+                    return RuntimeValue.FromBoolean(ownKey is SharpTSSymbol ownSymbol
+                        ? interpreter.HasSymbolProperty(target, ownSymbol)
+                        : interpreter.HasProperty(target, (string)ownKey));
+                }
                 var propertyKey = args[1].ToObject();
                 return RuntimeValue.FromBoolean(propertyKey is SharpTSSymbol symbol
                     ? interpreter.HasSymbolProperty(target, symbol)
@@ -126,6 +133,15 @@ public static class ReflectBuiltIns
                 if (!args[0].IsObject)
                     throw new ThrowException(new SharpTSTypeError("Reflect.deleteProperty requires a target object"));
                 var target = args[0].ToObject()!;
+                if (target is ISharpTSOwnPropertyObject carrier)
+                {
+                    var ownKey = interpreter.ToPropertyKey(args[1].ToObject());
+                    return RuntimeValue.FromBoolean(ownKey is SharpTSSymbol ownSymbol
+                        ? carrier.OwnProperties.GetOwnPropertyDescriptor(ownSymbol) is null
+                            || carrier.OwnProperties.DeleteBySymbolStrict(ownSymbol, false)
+                        : carrier.OwnProperties.GetOwnPropertyDescriptor((string)ownKey) is null
+                            || carrier.OwnProperties.DeletePropertyStrict((string)ownKey, false));
+                }
                 if (target is SharpTSObjectNamespace objectNamespace)
                 {
                     var key = interpreter.ToPropertyKey(args[1].ToObject());
@@ -188,6 +204,14 @@ public static class ReflectBuiltIns
             "get" => BuiltInMethod.CreateV2("get", 2, 3, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.get requires a target object.");
+                if (target is ISharpTSOwnPropertyObject)
+                {
+                    var ownKey = interpreter.ToPropertyKey(args[1].ToObject());
+                    object? ownReceiver = args.Length > 2 ? args[2].ToObject() : target;
+                    return RuntimeValue.FromBoxed(ownKey is SharpTSSymbol ownSymbol
+                        ? interpreter.GetSymbolPropertyValue(target, ownSymbol, ownReceiver!)
+                        : interpreter.GetPropertyValue(target, (string)ownKey, ownReceiver));
+                }
                 if (target is SharpTSFunctionPrototype functionPrototype && args[1].ToObject() is SharpTSSymbol prototypeSymbol)
                 {
                     object? prototypeReceiver = args.Length > 2 ? args[2].ToObject() : target;
@@ -236,6 +260,13 @@ public static class ReflectBuiltIns
             "set" => BuiltInMethod.CreateV2("set", 3, 4, static (interpreter, unusedReceiver, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.set requires a target object.");
+                if (target is ISharpTSOwnPropertyObject)
+                {
+                    var ownKey = interpreter.ToPropertyKey(args[1].ToObject());
+                    object? ownReceiver = args.Length > 3 ? args[3].ToObject() : target;
+                    return RuntimeValue.FromBoolean(SharpTSProxy.OrdinarySet(
+                        interpreter, target, ownKey, args[2].ToObject(), ownReceiver));
+                }
                 if (target is SharpTSFunctionPrototype functionPrototype && args[1].ToObject() is SharpTSSymbol prototypeSymbol)
                 {
                     object? prototypeReceiver = args.Length > 3 ? args[3].ToObject() : target;
@@ -331,6 +362,8 @@ public static class ReflectBuiltIns
             "isExtensible" => BuiltInMethod.CreateV2("isExtensible", 1, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.isExtensible requires a target object.");
+                if (target is ISharpTSOwnPropertyObject carrier)
+                    return RuntimeValue.FromBoolean(carrier.OwnProperties.IsExtensible);
                 if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var properties))
                     return RuntimeValue.FromBoolean(properties.IsExtensible);
                 return RuntimeValue.FromBoolean(target switch
@@ -349,6 +382,11 @@ public static class ReflectBuiltIns
             "preventExtensions" => BuiltInMethod.CreateV2("preventExtensions", 1, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.preventExtensions requires a target object.");
+                if (target is ISharpTSOwnPropertyObject carrier)
+                {
+                    carrier.OwnProperties.PreventExtensions();
+                    return RuntimeValue.True;
+                }
                 if (target is SharpTSProxy proxy)
                     return RuntimeValue.FromBoolean(proxy.TrapPreventExtensions(interpreter));
                 if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var properties))
@@ -384,6 +422,15 @@ public static class ReflectBuiltIns
             "getOwnPropertyDescriptor" => BuiltInMethod.CreateV2("getOwnPropertyDescriptor", 2, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.getOwnPropertyDescriptor requires a target object.");
+                if (target is ISharpTSOwnPropertyObject carrier)
+                {
+                    var ownKey = interpreter.ToPropertyKey(args[1].ToObject());
+                    var ownDescriptor = ownKey is SharpTSSymbol ownSymbol
+                        ? carrier.OwnProperties.GetOwnPropertyDescriptor(ownSymbol)
+                        : carrier.OwnProperties.GetOwnPropertyDescriptor((string)ownKey);
+                    return ownDescriptor is null ? RuntimeValue.Undefined
+                        : RuntimeValue.FromBoxed(ownDescriptor.ToObject());
+                }
                 if (target is SharpTSFunctionPrototype functionPrototype && args[1].ToObject() is SharpTSSymbol prototypeSymbol)
                 {
                     var prototypeDescriptor = functionPrototype.GetOwnPropertyDescriptor(prototypeSymbol);
@@ -432,6 +479,16 @@ public static class ReflectBuiltIns
             "defineProperty" => BuiltInMethod.CreateV2("defineProperty", 3, static (interpreter, _, args) =>
             {
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.defineProperty requires a target object.");
+                if (target is ISharpTSOwnPropertyObject carrier)
+                {
+                    var ownKey = interpreter.ToPropertyKey(args[1].ToObject());
+                    if (!args[2].IsObject)
+                        throw new ThrowException(new SharpTSTypeError("Property description must be an object"));
+                    var ownDescriptor = ObjectBuiltIns.ToPropertyDescriptor(interpreter, args[2].ToObject()!);
+                    return RuntimeValue.FromBoolean(ownKey is SharpTSSymbol ownSymbol
+                        ? carrier.OwnProperties.DefineProperty(ownSymbol, ownDescriptor)
+                        : carrier.OwnProperties.DefineProperty((string)ownKey, ownDescriptor));
+                }
                 var propertyKey = target is ISharpTSPrimitiveConstructor && args[1].ToObject() is not SharpTSSymbol
                     ? interpreter.ToPropertyKeyString(args[1].ToObject())
                     : args[1].ToObject()?.ToString() ?? "";
@@ -505,6 +562,10 @@ public static class ReflectBuiltIns
                 }
                 switch (target)
                 {
+                    case ISharpTSOwnPropertyObject carrier:
+                        keys.AddRange(carrier.OwnProperties.OwnVisibleStringKeys().Cast<object?>());
+                        keys.AddRange(carrier.OwnProperties.GetSymbolPropertyNames().Cast<object?>());
+                        break;
                     case SharpTSProxy proxy:
                         keys.AddRange(proxy.TrapOwnPropertyKeys(interpreter));
                         break;

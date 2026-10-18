@@ -269,13 +269,6 @@ public sealed class GeneratorPrototypeGraphTests
             "false false\ntrue true true true\ntrue true\ntrue\ntrue true\nfunction\ntrue\ntrue\nfalse\ntrue true true true\n"];
     }
 
-    private const string OwnIteratorDescriptorStatements = """
-            Object.defineProperty(earlier, "next", { value: replacement, configurable: true });
-            console.log(earlier.next === replacement, state.iterator.next === next);
-            delete earlier.next;
-            console.log(earlier.next === next);
-        """;
-
     private const string InvalidSyncReceiverStatement = """
         console.log(rejectsReceiver(syncNext), rejectsReceiver(syncReturn), rejectsReceiver(syncThrow));
         """;
@@ -287,17 +280,11 @@ public sealed class GeneratorPrototypeGraphTests
             console.log(invalidNext, invalidReturn, invalidThrow);
         """;
 
-    // Iterator own descriptors (#2327) and intrinsic invalid-receiver brands (#2328)
-    // remain full compiled and saved-output regressions. The common controls exercise
-    // valid protocol calls and inherited graph mutations in both execution modes.
+    // Intrinsic invalid-receiver brands (#2328) remain compiled regressions.
     public static IEnumerable<object[]> SharedCases()
     {
-        foreach (var row in Cases().Where(row => (string)row[0] is "issue" or "live-prototype" or "empty-constructor"))
+        foreach (var row in Cases().Where(row => (string)row[0] is "issue" or "live-prototype" or "empty-constructor" or "intrinsic-properties"))
             yield return row;
-        yield return ["intrinsic-properties-shared",
-            IntrinsicPropertiesSource.Replace(OwnIteratorDescriptorStatements, ""),
-            string.Concat(Enumerable.Repeat("true true true next 1 true false true\ntrue 1 true\n"
-                + "true true\ntrue true\ntrue true\ntrue\ntrue\n", 2))];
         yield return ["intrinsic-invocation-shared",
             IntrinsicInvocationSource.Replace(InvalidSyncReceiverStatement, "")
                 .Replace(InvalidAsyncReceiverStatements, ""),
@@ -308,7 +295,7 @@ public sealed class GeneratorPrototypeGraphTests
     public static IEnumerable<object[]> CompiledOnlyCases() => Cases()
         // The new empty async path adopts return values and queues requests;
         // existing interpreted async generators retain their separate return boundary (#2401).
-        .Where(row => (string)row[0] is "intrinsic-properties" or "intrinsic-invocation" or "empty-async-return");
+        .Where(row => (string)row[0] is "intrinsic-invocation" or "empty-async-return");
 
     public static IEnumerable<object[]> ModeCases() => SharedCases().SelectMany(row =>
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }

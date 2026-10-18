@@ -25,6 +25,9 @@ public partial class Interpreter
             case SharpTSProxy proxy:
                 value = proxy.TrapGet(name.Lexeme, this);
                 return true;
+            case ISharpTSOwnPropertyObject ownPropertyObject:
+                value = GetPropertyValue(ownPropertyObject, name.Lexeme);
+                return true;
             case SharpTSClass klass:
                 value = EvaluateGetOnClass(klass, name.Lexeme);
                 return true;
@@ -56,6 +59,9 @@ public partial class Interpreter
         {
             case SharpTSProxy proxy:
                 value = proxy.TrapGetRV(name.Lexeme, this);
+                return true;
+            case ISharpTSOwnPropertyObject ownPropertyObject:
+                value = RuntimeValue.FromBoxed(GetPropertyValue(ownPropertyObject, name.Lexeme));
                 return true;
             case SharpTSClass klass:
                 value = RuntimeValue.FromBoxed(EvaluateGetOnClass(klass, name.Lexeme));
@@ -91,6 +97,9 @@ public partial class Interpreter
             case SharpTSProxy proxy:
                 proxy.TrapSet(name.Lexeme, value, this);
                 return true;
+            case ISharpTSOwnPropertyObject ownPropertyObject:
+                SetOwnPropertyObjectValue(ownPropertyObject, name.Lexeme, value, _environment.IsStrictMode);
+                return true;
             case SharpTSClass klass:
                 if (!TryAssignThroughDescriptor(klass.FindStaticPropertyDescriptor(name.Lexeme),
                         klass, name.Lexeme, value, _environment.IsStrictMode))
@@ -123,6 +132,11 @@ public partial class Interpreter
     /// <returns><c>true</c> if the element was found; otherwise <c>false</c>.</returns>
     private bool TryGetIndex(object? obj, object? index, out object? value)
     {
+        if (obj is ISharpTSOwnPropertyObject)
+        {
+            value = GetOwnPropertyObjectValue(obj, index!);
+            return true;
+        }
         if (obj is SharpTSArray array && index is double idx)
         {
             value = array.Get((int)idx);
@@ -146,6 +160,11 @@ public partial class Interpreter
     /// <returns><c>true</c> if the element was set; otherwise <c>false</c>.</returns>
     private bool TrySetIndex(object? obj, object? index, object? value)
     {
+        if (obj is ISharpTSOwnPropertyObject)
+        {
+            SetOwnPropertyObjectValue(obj, index!, value, _environment.IsStrictMode);
+            return true;
+        }
         if (obj is SharpTSArray array && index is double idx)
         {
             array.Set((int)idx, value);
@@ -158,6 +177,13 @@ public partial class Interpreter
         }
         return false;
     }
+
+    // Read-modify-write callers retain one canonical property key for both
+    // operations, so object-key coercion runs once before getters and the RHS.
+    private object? GetOwnPropertyObjectValue(object target, object key)
+        => key is SharpTSSymbol symbol
+            ? GetSymbolPropertyValue(target, symbol)
+            : GetPropertyValue(target, (string)key);
 
     #endregion
 
@@ -328,6 +354,9 @@ public partial class Interpreter
     /// </summary>
     private RuntimeValue IncrementIndex(object? obj, object? index, double delta, bool returnOld)
     {
+        if (obj is ISharpTSOwnPropertyObject)
+            index = ToPropertyKey(index);
+
         if (TryGetIndex(obj, index, out object? currentObj))
         {
             RuntimeValue oldValue = RuntimeValue.FromBoxed(currentObj);

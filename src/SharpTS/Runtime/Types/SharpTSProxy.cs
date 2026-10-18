@@ -736,6 +736,12 @@ public class SharpTSProxy : ISharpTSCallable
                 ? proxy.TrapGetOwnPropertyDescriptor(symbol, interpreter)
                 : proxy.TrapGetOwnPropertyDescriptor((string)prop, interpreter);
         }
+        else if (target is ISharpTSOwnPropertyObject ownPropertyObject)
+        {
+            return prop is SharpTSSymbol symbol
+                ? ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(symbol)
+                : ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor((string)prop);
+        }
         else if (prop is string name)
         {
             return ObjectBuiltIns.OwnPropertyDescriptorOf(interpreter, target, name);
@@ -1410,6 +1416,7 @@ public class SharpTSProxy : ISharpTSCallable
 
     private static bool TargetIsExtensible(object target) => target switch
     {
+        ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.IsExtensible,
         ISharpTSFunctionObject function => function.OwnProperties.IsExtensible,
         SharpTSProxy proxy => TargetIsExtensible(proxy.Target),
         SharpTSObject obj => obj.IsExtensible,
@@ -1625,6 +1632,10 @@ public class SharpTSProxy : ISharpTSCallable
         {
             case SharpTSProxy proxy:
                 keys.AddRange(proxy.TrapOwnPropertyKeys(interpreter));
+                break;
+            case ISharpTSOwnPropertyObject ownPropertyObject:
+                keys.AddRange(ownPropertyObject.OwnProperties.OwnVisibleStringKeys());
+                keys.AddRange(ownPropertyObject.OwnProperties.GetSymbolPropertyNames());
                 break;
             case SharpTSObject obj:
                 keys.AddRange(obj.OwnVisibleStringKeys());
@@ -1919,6 +1930,8 @@ public class SharpTSProxy : ISharpTSCallable
     {
         if (_target is SharpTSProxy proxy)
             return proxy.TrapDeleteProperty(prop, interp);
+        if (_target is ISharpTSOwnPropertyObject ownPropertyObject)
+            return ownPropertyObject.OwnProperties.DeletePropertyStrict(prop, false);
         if (_target is SharpTSObject obj)
             return obj.DeletePropertyStrict(prop, false);
         if (_target is SharpTSInstance inst)

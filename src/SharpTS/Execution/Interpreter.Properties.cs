@@ -422,8 +422,11 @@ public partial class Interpreter
                 current = ObjectBuiltIns.PrototypeOf(this, generatorFunction);
                 continue;
             }
-            if (current is SharpTSGenerator or SharpTSAsyncGenerator)
+            if (current is ISharpTSOwnPropertyObject ownPropertyObject)
             {
+                if (TryReadDescriptor(ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(name),
+                        receiver, out var ownValue))
+                    return ownValue;
                 current = ObjectBuiltIns.PrototypeOf(this, current);
                 continue;
             }
@@ -693,8 +696,11 @@ public partial class Interpreter
                 current = ObjectBuiltIns.PrototypeOf(this, generatorFunction);
                 continue;
             }
-            if (current is SharpTSGenerator or SharpTSAsyncGenerator)
+            if (current is ISharpTSOwnPropertyObject ownPropertyObject)
             {
+                if (TryReadDescriptor(ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(symbol),
+                        receiver, out var ownValue))
+                    return ownValue;
                 current = ObjectBuiltIns.PrototypeOf(this, current);
                 continue;
             }
@@ -868,6 +874,14 @@ public partial class Interpreter
             if (obj is SharpTSProxy prototypeProxy)
                 return prototypeProxy.TrapHas(name, this);
 
+            if (obj is ISharpTSOwnPropertyObject ownPropertyObject)
+            {
+                if (ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(name) is not null)
+                    return true;
+                obj = ObjectBuiltIns.PrototypeOf(this, obj);
+                continue;
+            }
+
             if (obj is SharpTSArray array)
             {
                 if (array.HasOwnProperty(name)) return true;
@@ -958,6 +972,12 @@ public partial class Interpreter
         {
             if (current is SharpTSProxy prototypeProxy)
                 return prototypeProxy.TrapHas(symbol, this);
+            if (current is ISharpTSOwnPropertyObject ownPropertyObject)
+            {
+                if (ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(symbol) is not null) return true;
+                current = ObjectBuiltIns.PrototypeOf(this, current);
+                continue;
+            }
             if (current is SharpTSClassPrototype classPrototype)
             {
                 if (classPrototype.GetOwnPropertyDescriptor(symbol) is not null) return true;
@@ -2323,6 +2343,12 @@ public partial class Interpreter
             target.SetPropertyStrict(name, value, strictMode);
     }
 
+    private void SetOwnPropertyObjectValue(object target, object key, object? value, bool strictMode)
+    {
+        if (!SharpTSProxy.OrdinarySet(this, target, key, value, target) && strictMode)
+            throw StrictModeErrors.TypeError($"Cannot assign to property '{key}'");
+    }
+
     private void SetOrdinaryFunctionOwnProperty(
         object function, SharpTSObject properties, string name, object? value, bool strictMode)
     {
@@ -2780,6 +2806,12 @@ public partial class Interpreter
             if (!assigned && strictMode)
                 throw new ThrowException(new SharpTSTypeError(
                     $"Proxy set trap rejected property '{set.Name.Lexeme}'"));
+            return value;
+        }
+
+        if (obj is ISharpTSOwnPropertyObject)
+        {
+            SetOwnPropertyObjectValue(obj, set.Name.Lexeme, value, strictMode);
             return value;
         }
 

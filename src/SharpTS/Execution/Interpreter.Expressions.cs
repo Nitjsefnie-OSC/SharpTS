@@ -827,7 +827,19 @@ public partial class Interpreter
             or SharpTSSymbol or SharpTSBigInt or System.Numerics.BigInteger)
             return symbolFields;
 
-        if (spreadValue is SharpTSObject spreadObj)
+        if (spreadValue is ISharpTSOwnPropertyObject ownPropertyObject)
+        {
+            var properties = ownPropertyObject.OwnProperties;
+            var stringKeys = properties.OwnVisibleStringKeys().ToList();
+            var symbolKeys = properties.GetSymbolPropertyNames().ToList();
+            foreach (var key in stringKeys)
+                if (properties.GetOwnPropertyDescriptor(key) is { Enumerable: true })
+                    stringFields[key] = GetPropertyValue(spreadValue, key);
+            foreach (var symbol in symbolKeys)
+                if (properties.GetOwnPropertyDescriptor(symbol) is { Enumerable: true })
+                    (symbolFields ??= [])[symbol] = GetSymbolPropertyValue(spreadValue, symbol);
+        }
+        else if (spreadValue is SharpTSObject spreadObj)
         {
             if (spreadObj.TryCopyPlainSpreadFields(stringFields))
                 return symbolFields;
@@ -1154,6 +1166,14 @@ public partial class Interpreter
             {
                 return RuntimeValue.FromBoxed(directValue);
             }
+        }
+
+        if (obj is ISharpTSOwnPropertyObject)
+        {
+            object key = ToPropertyKey(index);
+            return RuntimeValue.FromBoxed(key is SharpTSSymbol symbol
+                ? GetSymbolPropertyValue(obj, symbol)
+                : GetPropertyValue(obj, (string)key));
         }
 
         if (obj is ISharpTSFunctionObject functionObject)
@@ -1557,6 +1577,12 @@ public partial class Interpreter
             if (!assigned && strictMode)
                 throw new ThrowException(new SharpTSTypeError(
                     $"Proxy set trap rejected property '{key}'"));
+            return RuntimeValue.FromBoxed(value);
+        }
+
+        if (obj is ISharpTSOwnPropertyObject)
+        {
+            SetOwnPropertyObjectValue(obj, ToPropertyKey(index), value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
 

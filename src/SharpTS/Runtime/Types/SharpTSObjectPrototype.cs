@@ -204,6 +204,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
         // symbol-keyed dispatch instead of being stringified.
         if (args[0] is SharpTSSymbol sym)
         {
+            if (target is ISharpTSOwnPropertyObject ownPropertyObject)
+                return ownPropertyObject.OwnProperties.HasSymbolProperty(sym);
             if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var properties))
                 return properties.HasSymbolProperty(sym);
             return target switch
@@ -228,6 +230,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
         var key = args[0]?.ToString() ?? "";
         return target switch
         {
+            ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(key) is not null,
             SharpTSProxy proxy => proxy.TrapGetOwnPropertyDescriptor(key, interpreter)
                 is not (null or SharpTSUndefined),
             SharpTSObject obj => obj.HasProperty(key) || obj.HasSetter(key),
@@ -440,6 +443,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
         if (args.Count == 0) return false;
         if (args[0] is SharpTSSymbol symbol)
         {
+            if (target is ISharpTSOwnPropertyObject ownPropertyObject)
+                return ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(symbol) is { Enumerable: true };
             if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var properties))
                 return properties.GetOwnPropertyDescriptor(symbol) is { Enumerable: true };
             return target switch
@@ -475,6 +480,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                     is { } descriptor
                     && descriptor is not SharpTSUndefined
                     && SharpTSPropertyDescriptor.FromAnyObject(descriptor).Enumerable,
+            ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSObject obj => obj.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSMath math => math.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSNumberNamespace number => number.GetOwnPropertyDescriptor(key) is { Enumerable: true },

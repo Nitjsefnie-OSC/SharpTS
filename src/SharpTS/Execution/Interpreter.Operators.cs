@@ -150,6 +150,16 @@ public partial class Interpreter
             ThrowCannotReadProperty(obj, index?.ToString() ?? "");
         }
 
+        if (obj is ISharpTSOwnPropertyObject)
+        {
+            object key = ToPropertyKey(index);
+            RuntimeValue current = RuntimeValue.FromBoxed(GetOwnPropertyObjectValue(obj, key));
+            RuntimeValue addValue = await ctx.EvaluateExprAsync(compound.Value);
+            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, current, addValue);
+            SetOwnPropertyObjectValue(obj, key, newValue.ToObject(), _environment.IsStrictMode);
+            return newValue;
+        }
+
         if (obj is SharpTSArray array && index is double idx)
         {
             RuntimeValue addValue = await ctx.EvaluateExprAsync(compound.Value);
@@ -291,6 +301,28 @@ public partial class Interpreter
         if (obj is null or SharpTSUndefined)
         {
             ThrowCannotReadProperty(obj, index?.ToString() ?? "");
+        }
+
+        if (obj is ISharpTSOwnPropertyObject)
+        {
+            object key = ToPropertyKey(index);
+            RuntimeValue currentRV = RuntimeValue.FromBoxed(GetOwnPropertyObjectValue(obj, key));
+            switch (logical.Operator.Type)
+            {
+                case TokenType.AND_AND_EQUAL:
+                    if (!currentRV.IsTruthy()) return currentRV;
+                    break;
+                case TokenType.OR_OR_EQUAL:
+                    if (currentRV.IsTruthy()) return currentRV;
+                    break;
+                case TokenType.QUESTION_QUESTION_EQUAL:
+                    if (!currentRV.IsNullish) return currentRV;
+                    break;
+            }
+
+            RuntimeValue newValue = await ctx.EvaluateExprAsync(logical.Value);
+            SetOwnPropertyObjectValue(obj, key, newValue.ToObject(), _environment.IsStrictMode);
+            return newValue;
         }
 
         if (obj is SharpTSArray array && index is double idx)
@@ -1056,6 +1088,7 @@ public partial class Interpreter
 
         return obj switch
         {
+            ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.DeletePropertyStrict(name, strictMode),
             SharpTSArray array => array.DeletePropertyStrict(name, strictMode),
             SharpTSObject tsObj => tsObj.DeletePropertyStrict(name, strictMode),
             ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, this)
@@ -1121,6 +1154,9 @@ public partial class Interpreter
         // Handle symbol keys
         if (key is SharpTSSymbol symbol)
         {
+            if (obj is ISharpTSOwnPropertyObject ownPropertyObject)
+                return !ownPropertyObject.OwnProperties.HasSymbolProperty(symbol)
+                    || ownPropertyObject.OwnProperties.DeleteBySymbolStrict(symbol, strictMode);
             if (FunctionObjectProperties.TryGetStorage(obj, this, out var properties))
             {
                 return !properties.HasSymbolProperty(symbol)

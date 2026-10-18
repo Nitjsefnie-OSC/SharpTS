@@ -484,6 +484,10 @@ public partial class SharpTSClass(
                 && !(descriptor.HasConfigurable && descriptor.Configurable)
                 && (!descriptor.HasValue || PropertySemantics.SameValue(descriptor.Value, Prototype));
         MaterializeStaticAccessors();
+        // Intrinsic name/length still live in callable metadata rather than this bag.
+        if (!HasOwnStaticMember(name) && name is not ("name" or "length")
+            && !Compilation.PropertyDescriptorStore.IsExtensible(this))
+            return false;
         _staticPropertyObject ??= new SharpTSObject(_staticProperties);
         if (!_staticPropertyObject.DefineProperty(name, descriptor))
             return false;

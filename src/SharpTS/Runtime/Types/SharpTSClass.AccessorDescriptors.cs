@@ -119,6 +119,9 @@ public partial class SharpTSClass
 
     internal bool DefineStaticSymbolProperty(SharpTSSymbol symbol, SharpTSPropertyDescriptor descriptor)
     {
+        if (GetOwnStaticSymbolPropertyDescriptor(symbol) is null
+            && !Compilation.PropertyDescriptorStore.IsExtensible(this))
+            return false;
         if (!(_staticSymbolAccessorObject ??= new SharpTSObject([])).DefineProperty(symbol, descriptor)) return false;
         RecordOwnStaticKey(symbol);
         return true;
@@ -128,6 +131,7 @@ public partial class SharpTSClass
     {
         if (_staticSymbolAccessorObject?.DeleteBySymbolStrict(symbol, strictMode) == false) return false;
         _staticSymbolProperties?.Remove(symbol);
+        _staticSymbolMethods?.Remove(symbol);
         if (GetOwnStaticSymbolPropertyDescriptor(symbol) is null) _ownStaticPropertyOrder.Remove(symbol);
         return true;
     }

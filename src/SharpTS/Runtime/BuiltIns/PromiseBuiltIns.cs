@@ -28,16 +28,19 @@ public static class PromiseBuiltIns
         {
             // Per ECMA-262 the handler arguments are all optional: §27.2.5.4
             // then(onFulfilled?, onRejected?), §27.2.5.1 catch(onRejected?),
-            // §27.2.5.3 finally(onFinally?). minArity is 0; maxArity pins the
-            // spec shape. The impls null-default any missing args (#382).
-            "then" => new BuiltInAsyncMethod("then", 0, 2, (interp, recv, args) =>
-                ThenImpl((SharpTSPromise)recv!, args, interp), speciesResolver: SpeciesResolver).Bind(receiver),
+            // §27.2.5.3 finally(onFinally?). Missing handlers default to undefined
+            // and surplus arguments are ignored; spec length is separate metadata.
+            "then" => new BuiltInAsyncMethod("then", 0, int.MaxValue, (interp, recv, args) =>
+                ThenImpl((SharpTSPromise)recv!, args, interp), speciesResolver: SpeciesResolver)
+                .WithSpecLength(2).Bind(receiver),
 
-            "catch" => new BuiltInAsyncMethod("catch", 0, 1, (interp, recv, args) =>
-                CatchImpl((SharpTSPromise)recv!, args, interp), speciesResolver: SpeciesResolver).Bind(receiver),
+            "catch" => new BuiltInAsyncMethod("catch", 0, int.MaxValue, (interp, recv, args) =>
+                CatchImpl((SharpTSPromise)recv!, args, interp), speciesResolver: SpeciesResolver)
+                .WithSpecLength(1).Bind(receiver),
 
-            "finally" => new BuiltInAsyncMethod("finally", 0, 1, (interp, recv, args) =>
-                FinallyImpl((SharpTSPromise)recv!, args, interp), speciesResolver: SpeciesResolver).Bind(receiver),
+            "finally" => new BuiltInAsyncMethod("finally", 0, int.MaxValue, (interp, recv, args) =>
+                FinallyImpl((SharpTSPromise)recv!, args, interp), speciesResolver: SpeciesResolver)
+                .WithSpecLength(1).Bind(receiver),
 
             // ECMA-262 §27.2.5.1: Promise.prototype.constructor is %Promise%.
             // (Subclass instances report their own class — see
@@ -57,7 +60,7 @@ public static class PromiseBuiltIns
     /// </summary>
     internal static ISharpTSCallable? GetPrototypeMethod(string name) => name switch
     {
-        "then" => new BuiltInAsyncMethod("then", 0, 2, (interp, recv, args) =>
+        "then" => new BuiltInAsyncMethod("then", 0, int.MaxValue, (interp, recv, args) =>
             ThenImpl(RequirePromiseReceiver(recv, "then"), args, interp),
             speciesResolver: SpeciesResolver).WithSpecLength(2),
         "catch" => BuiltInMethod.CreateV2("catch", 0, int.MaxValue, CatchInvoke)

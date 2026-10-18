@@ -173,6 +173,9 @@ public partial class ILCompiler
         ApplyModuleMaps(ctx);
         ctx.CurrentModulePath = _modules.CurrentPath;
         ctx.CurrentNamespacePath = _currentNamespacePath;
+        ctx.AsyncArrowBuilders = _async.ArrowBuilders.Count > 0 ? _async.ArrowBuilders : null;
+        ctx.AsyncArrowOuterBuilders = _async.ArrowOuterBuilders;
+        ctx.AsyncArrowParentBuilders = _async.ArrowParentBuilders;
         ApplyCapturedTopLevelVariableAccess(ctx, memberBodyExports: true);
         AttachLocalSymbols(ctx);
         return ctx;

@@ -2317,6 +2317,17 @@ public partial class Interpreter
                 }
             }
 
+            List<Stmt.AutoAccessor> instanceAutoAccessors = [];
+            Dictionary<string, object?> staticAutoAccessors = [];
+            foreach (var autoAccessor in classExpr.AutoAccessors ?? [])
+            {
+                if (autoAccessor.IsStatic)
+                    staticAutoAccessors[autoAccessor.Name.Lexeme] = autoAccessor.Initializer is { } initializer
+                        ? EvaluateEarlyStaticInitializer(initializer) : null;
+                else
+                    instanceAutoAccessors.Add(autoAccessor);
+            }
+
             var memberProperties = NormalizeClassMemberDefinitions(memberDefinitions, methods, staticMethods,
                 getters, setters, staticGetters, staticSetters);
 
@@ -2333,6 +2344,8 @@ public partial class Interpreter
                     setters,
                     classExpr.IsAbstract,
                     instanceFields,
+                    instanceAutoAccessors: instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                    staticAutoAccessors: staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
                     staticGetters: staticGetters.Count > 0 ? staticGetters : null,
                     staticSetters: staticSetters.Count > 0 ? staticSetters : null, instancePrivateFields: instancePrivateFields, privateMethods: privateMethods, staticPrivateFields: staticPrivateFields, staticPrivateMethods: staticPrivateMethods)
                 : superclass is SharpTSArrayClass arraySuper
@@ -2346,6 +2359,8 @@ public partial class Interpreter
                     setters,
                     classExpr.IsAbstract,
                     instanceFields,
+                    instanceAutoAccessors: instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                    staticAutoAccessors: staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
                     staticGetters: staticGetters.Count > 0 ? staticGetters : null,
                     staticSetters: staticSetters.Count > 0 ? staticSetters : null, instancePrivateFields: instancePrivateFields, privateMethods: privateMethods, staticPrivateFields: staticPrivateFields, staticPrivateMethods: staticPrivateMethods)
                 : superclass is SharpTSPromiseClass promiseSuper
@@ -2359,6 +2374,8 @@ public partial class Interpreter
                     setters,
                     classExpr.IsAbstract,
                     instanceFields,
+                    instanceAutoAccessors: instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                    staticAutoAccessors: staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
                     staticGetters: staticGetters.Count > 0 ? staticGetters : null,
                     staticSetters: staticSetters.Count > 0 ? staticSetters : null, instancePrivateFields: instancePrivateFields, privateMethods: privateMethods, staticPrivateFields: staticPrivateFields, staticPrivateMethods: staticPrivateMethods)
                 : new SharpTSClass(
@@ -2371,6 +2388,8 @@ public partial class Interpreter
                     setters,
                     classExpr.IsAbstract,
                     instanceFields,
+                    instanceAutoAccessors: instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                    staticAutoAccessors: staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
                     staticGetters: staticGetters.Count > 0 ? staticGetters : null,
                     staticSetters: staticSetters.Count > 0 ? staticSetters : null, instancePrivateFields: instancePrivateFields, privateMethods: privateMethods, staticPrivateFields: staticPrivateFields, staticPrivateMethods: staticPrivateMethods);
 

@@ -1,3 +1,4 @@
+using SharpTS.Parsing;
 using SharpTS.Tests.Infrastructure;
 using SharpTS.TypeSystem;
 using SharpTS.TypeSystem.Exceptions;
@@ -7,6 +8,46 @@ namespace SharpTS.Tests.TypeCheckerTests;
 
 public sealed class ClassValueDeclarationOrderTests
 {
+    [Theory]
+    [InlineData("Later;")]
+    [InlineData("new Later();")]
+    [InlineData("class Earlier extends Later {}")]
+    public void SeparatelyParsedDocumentlessInputsDoNotCompareOffsets(string use)
+    {
+        var declaration = TestHarness.ParseOrThrow(new string(' ', 200) + "class Later {}");
+        var receiver = TestHarness.ParseOrThrow(use);
+
+        var result = new TypeChecker().CheckWithRecovery([.. declaration, .. receiver]);
+
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void ExplicitDocumentStillOwnsSeparatelyLexedFragments()
+    {
+        const string use = "new Later();";
+        string declaration = new string(' ', use.Length) + "class Later {}";
+        var fragments = TestHarness.ParseOrThrow(use);
+        fragments.AddRange(TestHarness.ParseOrThrow(declaration));
+        var document = new SourceDocument("same.ts", use + "class Later {}", isVirtual: true);
+
+        var result = new TypeChecker().CheckWithRecovery(fragments, document);
+
+        Assert.Single(result.Diagnostics, diagnostic => diagnostic.TsCode == "TS2449");
+    }
+
+    [Fact]
+    public void JsxSuffixRelexKeepsDeclarationOrderInTheSameSource()
+    {
+        const string source = "Later; const view = <div>don't panic</div>; class Later {}";
+        var tokens = new Lexer(source) { JsxTolerant = true }.ScanTokens();
+        var statements = new Parser(tokens).WithJsx(source, JsxParseOptions.Default).ParseOrThrow();
+
+        var result = new TypeChecker().CheckWithRecovery(statements);
+
+        Assert.Single(result.Diagnostics, diagnostic => diagnostic.TsCode == "TS2449");
+    }
+
     [Theory]
     [InlineData("function read() { return Later; class Later {} }")]
     [InlineData("class C { read() { return Later; class Later {} } }")]

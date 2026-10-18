@@ -80,6 +80,14 @@ public partial class TypeChecker
             !ReferenceEquals(forward.StandaloneSourceDocument, _standaloneSourceDocument))
             return false;
 
+        Token declaration = forward.Declaration.Name;
+        // REPL submissions can combine separately parsed ASTs without documents.
+        // A retained document/module remains authoritative for re-lexed fragments.
+        if (forward.Module is null && forward.StandaloneSourceDocument is null &&
+            use.SourceIdentity is { } useSource && declaration.SourceIdentity is { } declarationSource &&
+            !ReferenceEquals(useSource, declarationSource))
+            return false;
+
         if (!_definiteAssignmentStack.TryPeek(out var currentFlow)) return false;
 
         while (!ReferenceEquals(forward.DeclarationFlow, currentFlow))
@@ -96,7 +104,6 @@ public partial class TypeChecker
             if (ReferenceEquals(scope, forward.Environment))
                 return false;
 
-        Token declaration = forward.Declaration.Name;
         // Synthetic AST tokens have no source offset; their diagnostic line
         // does not establish declaration order in the surrounding parsed source.
         return use.Start >= 0 && declaration.Start >= 0 && use.Start < declaration.Start;

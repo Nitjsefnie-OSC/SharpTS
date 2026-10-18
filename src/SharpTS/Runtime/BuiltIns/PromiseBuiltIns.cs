@@ -355,7 +355,7 @@ public static class PromiseBuiltIns
         // The receiver's own class drives species: a subclass reads its static
         // @@species (#221); a plain promise stays %Promise% (null factory).
         return receiver is SharpTSPromiseSubclassInstance sub
-            ? SpeciesMaterializer(ResolveSpeciesConstructor(sub.Klass, interp))
+            ? SpeciesMaterializer(ResolveSpeciesConstructor(sub.Klass, interp), interp)
             : null;
     }
 
@@ -365,26 +365,27 @@ public static class PromiseBuiltIns
     /// is null.
     /// </summary>
     /// <remarks>
-    /// A <see cref="SharpTSPromiseClass"/> species delegates through
-    /// <see cref="SharpTSPromiseClass.ConstructDerived"/>. Every constructor
+    /// Every constructor
     /// — including a general guest class or a plain function/function
     /// expression used via the <c>new</c> protocol — uses the shared
     /// NewPromiseCapability (§27.2.4.5): the result is
     /// <c>new S((resolve, reject) =&gt; …)</c> with the captured capability
-    /// adopting the settled task (#349/#390). A species that is neither
+    /// adopting the settled task (#349/#390). Construct and validate the
+    /// capability before registering any reaction on the source (#2347).
+    /// A species that is neither
     /// <c>undefined</c>/<c>null</c> (filtered earlier, → <c>%Promise%</c>) nor a
     /// constructor throws <c>TypeError</c> per SpeciesConstructor §7.3.22 step 5;
     /// this runs synchronously during the <c>then</c>/<c>catch</c>/<c>finally</c>
     /// call (the <c>SpeciesResolver</c> pre-step), so the throw propagates out of
     /// that call rather than rejecting the result (#390).
     /// </remarks>
-    private static Func<Interpreter, Task<object?>, object?>? SpeciesMaterializer(object? species)
+    private static Func<Interpreter, Task<object?>, object?>? SpeciesMaterializer(
+        object? species, Interpreter interp)
         => species switch
         {
             null => null,
-            SharpTSPromiseClass pc => (interp, task) => pc.ConstructDerived(interp, task),
             _ when IsConstructorSpecies(species) =>
-                (interp, task) => ConstructPromiseCapabilityAndAdopt(interp, species, task),
+                PreparePromiseCapability(interp, species),
             _ => throw new Exceptions.ThrowException(new SharpTSTypeError(
                 "Promise resolution species is not a constructor"))
         };
@@ -418,9 +419,8 @@ public static class PromiseBuiltIns
     /// the executor is handed, then adopts the settled <paramref name="source"/>
     /// task into that capability and returns the constructed object — which need
     /// not be a SharpTSPromise (it behaves as a promise downstream only insofar as
-    /// it is a thenable; <c>await</c> adopts thenables, #349). The caller
-    /// (<see cref="SpeciesMaterializer"/>) has already verified
-    /// <paramref name="speciesCtor"/> is a constructor.
+    /// it is a thenable; <c>await</c> adopts thenables, #349). The caller has
+    /// already verified <paramref name="speciesCtor"/> is a constructor.
     /// </summary>
     internal static object? ConstructPromiseCapabilityAndAdopt(
         Interpreter interp, object? speciesCtor, Task<object?> source)
@@ -576,8 +576,8 @@ public static class PromiseBuiltIns
             SharpTSBuiltInConstructor { Name: BuiltInNames.Promise } => null,  // `return Promise`
             SharpTSPromiseClass sc when ReferenceEquals(sc, SharpTSPromiseClass.PromiseBase) => null,
             // A Promise subclass or a general non-Promise class flows to
-            // SpeciesMaterializer, which picks the subclass fast path or the
-            // general NewPromiseCapability path (#349) respectively.
+            // SpeciesMaterializer, which prepares NewPromiseCapability before
+            // attaching reactions (#349/#2347).
             _ => species
         };
     }

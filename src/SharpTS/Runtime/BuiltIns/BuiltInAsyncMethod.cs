@@ -184,11 +184,10 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable, IBuil
             ? _speciesResolver(interpreter, _receiver)
             : _promiseFactory;
 
+        Task<object?> task;
         try
         {
-            var task = _implementation(interpreter, _receiver, arguments);
-            KeepEventLoopAliveUntilComplete(interpreter, task);
-            return SuppressLegacyReactionWait(WrapResult(interpreter, factory, task));
+            task = _implementation(interpreter, _receiver, arguments);
         }
         catch (Exception ex)
         {
@@ -199,12 +198,12 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable, IBuil
                 SharpTSPromiseRejectedException rex => rex.Reason,
                 _ => ex.Message
             };
-            if (factory == null)
-                return SuppressLegacyReactionWait(SharpTSPromise.Reject(errorValue));
-            var tcs = new TaskCompletionSource<object?>();
-            tcs.SetException(new SharpTSPromiseRejectedException(errorValue));
-            return SuppressLegacyReactionWait(WrapResult(interpreter, factory, tcs.Task));
+            task = Task.FromException<object?>(new SharpTSPromiseRejectedException(errorValue));
         }
+        // A factory failure is a synchronous construction failure, not an
+        // implementation rejection. Never retry construction through the catch.
+        KeepEventLoopAliveUntilComplete(interpreter, task);
+        return SuppressLegacyReactionWait(WrapResult(interpreter, factory, task));
     }
 
     private object? SuppressLegacyReactionWait(object? result)

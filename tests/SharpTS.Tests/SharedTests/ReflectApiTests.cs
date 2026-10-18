@@ -10,6 +10,23 @@ namespace SharpTS.Tests.SharedTests;
 public class ReflectApiTests
 {
     [Theory, ModeData]
+    public void DeletePropertyRejectsEveryPrimitiveBeforeKeyCoercion(ExecutionMode mode)
+    {
+        const string source = """
+            let reads = 0;
+            const key: any = { get [Symbol.toPrimitive]() { reads++; return () => 'value'; } };
+            for (const target of [undefined, null, 1, true, 'text', Symbol('target'), 1n]) {
+                try { Reflect.deleteProperty(target as any, key); }
+                catch (error) { console.log(error instanceof TypeError); }
+            }
+            console.log(reads);
+            const target: any = { value: 1 };
+            console.log(Reflect.deleteProperty(target, 'value'), Object.hasOwn(target, 'value'));
+            """;
+        Assert.Equal(string.Concat(Enumerable.Repeat("true\n", 7)) + "0\ntrue false\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory, ModeData]
     public void Reflect_Has_ChecksPropertyExistence(ExecutionMode mode)
     {
         var source = """

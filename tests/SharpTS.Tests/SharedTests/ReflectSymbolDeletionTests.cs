@@ -190,10 +190,8 @@ public sealed class ReflectSymbolDeletionTests
     {
         foreach (var row in OrdinaryCases())
         {
-            // #2358 owns interpreted ordinary Symbol deletion, #2393 key coercion,
-            // and #2314 primitive targets, including the #2413 target-order collateral control.
-            // Preserve the ordinary string control in both modes.
-            if ((string)row[0] == "string-bound-controls")
+            // #2358 owns interpreted ordinary Symbol deletion and #2393 key coercion.
+            if ((string)row[0] is "string-bound-controls" or "target-before-key")
                 yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }

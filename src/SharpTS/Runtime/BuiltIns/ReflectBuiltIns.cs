@@ -123,7 +123,9 @@ public static class ReflectBuiltIns
 
             "deleteProperty" => BuiltInMethod.CreateV2("deleteProperty", 2, static (interpreter, _, args) =>
             {
-                var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.deleteProperty requires a target object.");
+                if (!args[0].IsObject)
+                    throw new ThrowException(new SharpTSTypeError("Reflect.deleteProperty requires a target object"));
+                var target = args[0].ToObject()!;
                 if (target is SharpTSObjectNamespace objectNamespace)
                 {
                     var key = interpreter.ToPropertyKey(args[1].ToObject());

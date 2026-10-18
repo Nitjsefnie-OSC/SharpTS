@@ -2167,6 +2167,7 @@ public static partial class ObjectBuiltIns
         // §10.2.5: a derived constructor's [[Prototype]] is its base constructor, so
         // `Object.getPrototypeOf(RangeError) === Error`. A base class falls back to
         // Function.prototype like any other function object.
+        SharpTSClass { HasExplicitPrototype: true } klass => klass.ExplicitPrototype,
         SharpTSClass klass when ReferenceEquals(klass.Superclass, SharpTSArrayClass.ArrayBase)
             => interp?.GetArrayGlobal(),
         SharpTSClass klass => (object?)klass.Superclass ?? interp?.GetFunctionPrototype(),
@@ -2251,6 +2252,13 @@ public static partial class ObjectBuiltIns
                 if (!PropertyDescriptorStore.IsExtensible(arrayGlobal)) return false;
                 if (WouldCreatePrototypeCycle(interpreter, arrayGlobal, proto)) return false;
                 arrayGlobal.SetExplicitPrototype(proto);
+                return true;
+
+            case SharpTSClass klass:
+                if (ReferenceEquals(PrototypeOf(interpreter, klass), proto)) return true;
+                if (!PropertyDescriptorStore.IsExtensible(klass)) return false;
+                if (WouldCreatePrototypeCycle(interpreter, klass, proto)) return false;
+                klass.SetExplicitPrototype(proto);
                 return true;
 
             case ISharpTSCallable function when FunctionObjectProperties.TryGetStorage(function, interpreter, out var storage):

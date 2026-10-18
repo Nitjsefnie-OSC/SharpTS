@@ -111,8 +111,7 @@ public partial class Interpreter
                 SetOwnPropertyObjectValue(nativeMethod, name.Lexeme, value, _environment.IsStrictMode);
                 return true;
             case SharpTSClass klass:
-                if (!TryAssignThroughDescriptor(klass.FindStaticPropertyDescriptor(name.Lexeme),
-                        klass, name.Lexeme, value, _environment.IsStrictMode))
+                if (!TryAssignThroughClassDescriptor(klass, name.Lexeme, value, _environment.IsStrictMode))
                     klass.SetStaticProperty(name.Lexeme, value, _environment.IsStrictMode);
                 return true;
             case SharpTSInstance instance:

@@ -596,9 +596,22 @@ public partial class Interpreter
                     return FunctionBuiltIns.GetMember(asyncArrow, name, this);
             }
 
-            if (current is SharpTSClass klass
-                && TryReadDescriptor(klass.FindStaticPropertyDescriptor(name), receiver, out var classValue))
-                return classValue;
+            if (current is SharpTSClass klass)
+            {
+                if (TryReadDescriptor(klass.GetOwnStaticPropertyDescriptor(name), receiver, out var classValue))
+                    return classValue;
+                if (klass.HasOwnStaticAutoAccessor(name)) return klass.GetStaticAutoAccessorValue(name);
+                if (name == "name") return klass.Name;
+                if (name == "length") return (double)klass.Arity();
+                // The native Promise bridge exposes its statics outside the class
+                // descriptor tables. Only its actual position in the live chain
+                // supplies those inherited methods.
+                if (ReferenceEquals(klass, SharpTSPromiseClass.PromiseBase)
+                    && PromiseBuiltIns.GetStaticMethod(name, receiver as SharpTSPromiseClass) is { } promiseStatic)
+                    return promiseStatic;
+                current = ObjectBuiltIns.PrototypeOf(this, klass);
+                continue;
+            }
 
             if (current is BoundFunction bound
                 && TryReadDescriptor(bound.GetOwnPropertyDescriptor(name), receiver, out var boundValue))
@@ -635,6 +648,10 @@ public partial class Interpreter
                 current = explicitPrototype;
                 continue;
             }
+
+            if (current is SharpTSBuiltInConstructor nativeConstructor
+                && nativeConstructor.GetMember(name) is { } nativeStatic)
+                return nativeStatic;
 
             if (current is ISharpTSCallable callable)
             {
@@ -831,8 +848,10 @@ public partial class Interpreter
 
             if (current is SharpTSClass klass)
             {
-                if (TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), receiver, out var value))
+                if (TryReadDescriptor(klass.GetOwnStaticSymbolPropertyDescriptor(symbol), receiver, out var value))
                     return value;
+                if (ReferenceEquals(klass, SharpTSPromiseClass.PromiseBase) && symbol == SharpTSSymbol.Species)
+                    return receiver;
                 current = ObjectBuiltIns.PrototypeOf(this, klass);
                 continue;
             }
@@ -845,6 +864,9 @@ public partial class Interpreter
                 current = ObjectBuiltIns.PrototypeOf(this, arrayGlobal);
                 continue;
             }
+            if (current is SharpTSBuiltInConstructor { Name: BuiltInNames.Promise }
+                && symbol == SharpTSSymbol.Species)
+                return receiver;
             if (current is ISharpTSCallable)
             {
                 current = GetFunctionPrototype();
@@ -971,6 +993,17 @@ public partial class Interpreter
                 obj = ObjectBuiltIns.PrototypeOf(this, classPrototype);
                 continue;
             }
+            if (obj is SharpTSClass klass)
+            {
+                if (klass.HasOwnStaticMember(name) || name is "name" or "length") return true;
+                if (ReferenceEquals(klass, SharpTSPromiseClass.PromiseBase)
+                    && PromiseBuiltIns.GetStaticMethod(name, SharpTSPromiseClass.PromiseBase) is not null)
+                    return true;
+                obj = ObjectBuiltIns.PrototypeOf(this, klass);
+                continue;
+            }
+            if (obj is SharpTSBuiltInConstructor nativeConstructor && nativeConstructor.GetMember(name) is not null)
+                return true;
             // Non-record receivers (instances, built-ins like RegExp, boxed
             // primitives): defer to Get semantics over the full chain from here.
             // A defined result means present; this misses only a setter-only
@@ -1004,6 +1037,17 @@ public partial class Interpreter
                 current = ObjectBuiltIns.PrototypeOf(this, classPrototype);
                 continue;
             }
+            if (current is SharpTSClass klass)
+            {
+                if (klass.GetOwnStaticSymbolPropertyDescriptor(symbol) is not null) return true;
+                if (ReferenceEquals(klass, SharpTSPromiseClass.PromiseBase) && symbol == SharpTSSymbol.Species)
+                    return true;
+                current = ObjectBuiltIns.PrototypeOf(this, klass);
+                continue;
+            }
+            if (current is SharpTSBuiltInConstructor { Name: BuiltInNames.Promise }
+                && symbol == SharpTSSymbol.Species)
+                return true;
             if (current is SharpTSInstance { UsesDynamicPrototypeChain: true } instance)
             {
                 if (instance.HasSymbolProperty(symbol)) return true;
@@ -1745,74 +1789,7 @@ public partial class Interpreter
         => EvaluateGetOnClass(klass, memberName, klass);
 
     private object? EvaluateGetOnClass(SharpTSClass klass, string memberName, object? receiver)
-    {
-        if (TryReadDescriptor(klass.FindStaticPropertyDescriptor(memberName), receiver, out var definedValue))
-            return definedValue;
-        // ECMA-262: every class has exactly one `prototype` (an ordinary object whose
-        // props are the instance methods + constructor back-ref). Without this,
-        // `Error.prototype.toString` and friends throw "Static member 'prototype' does
-        // not exist on class 'Error'". The object is created lazily and cached on the
-        // class, so repeated reads are reference-equal — `X.prototype === X.prototype`
-        // and `Object.getPrototypeOf(new X()) === X.prototype`.
-        if (memberName == "prototype")
-        {
-            return klass.Prototype;
-        }
-
-        // Try static auto-accessor first (TypeScript 4.9+)
-        if (klass.HasStaticAutoAccessor(memberName))
-        {
-            return klass.GetStaticAutoAccessorValue(memberName);
-        }
-
-        // Try static getter (`static get name() { ... }`).
-        var staticGetter = klass.FindStaticGetter(memberName);
-        if (staticGetter != null)
-        {
-            return staticGetter.BindThis(receiver).CallBoxed(this, []);
-        }
-
-        // Try static method
-        ISharpTSCallable? staticMethod = klass.FindStaticMethod(memberName);
-        if (staticMethod != null) return staticMethod;
-
-        // Try static property
-        if (klass.HasStaticProperty(memberName))
-        {
-            return klass.GetStaticProperty(memberName);
-        }
-
-        // Function-object slots: every class exposes `name` and `length` per
-        // spec. Falls back to the class name / 0 only when the user hasn't
-        // shadowed them with a static property (handled above).
-        if (memberName == "name") return klass.Name;
-        if (memberName == "length") return (double)klass.Arity();
-        if (memberName is "bind" or "call" or "apply")
-            return FunctionBuiltIns.GetMember(klass, memberName, this);
-
-        // Preserve inherited values and accessor receivers through the full
-        // constructor prototype chain, including the function prototype tail.
-        var inherited = GetPropertyValueFromChain(
-            ObjectBuiltIns.PrototypeOf(this, klass), memberName, receiver);
-        if (inherited is not SharpTSUndefined)
-            return inherited;
-
-        // Promise subclasses (#242) inherit the Promise static side
-        // (resolve/reject/all/race/allSettled/any/withResolvers); inherited
-        // statics construct subclass-typed result promises.
-        if (klass is SharpTSPromiseClass promiseKlass)
-        {
-            var promiseStatic = Runtime.BuiltIns.PromiseBuiltIns.GetStaticMethod(memberName, promiseKlass);
-            if (promiseStatic != null) return promiseStatic;
-        }
-
-        // ECMA-262 §7.3.2 (Get): reading an absent own/inherited property
-        // returns `undefined` — it never throws. A statically-typed
-        // `Klass.missing` is already rejected at compile time (TS2339), so
-        // reaching here means the read came through an `any`/dynamic value
-        // position; mirror compiled mode and JS by yielding `undefined`.
-        return SharpTSUndefined.Instance;
-    }
+        => GetPropertyValueFromChain(klass, memberName, receiver);
 
     /// <summary>
     /// Evaluates property access on a namespace.
@@ -2288,10 +2265,10 @@ public partial class Interpreter
     private bool TryAssignThroughClassDescriptor(
         SharpTSClass klass, string name, object? value, bool strictMode)
     {
-        if (klass.FindStaticPropertyDescriptor(name) is { } staticDescriptor)
+        if (klass.GetOwnStaticPropertyDescriptor(name) is { } staticDescriptor)
             return TryAssignThroughDescriptor(staticDescriptor, klass, name, value, strictMode);
         // Static auto-accessors still use their class-owned backing storage.
-        if (klass.HasStaticAutoAccessor(name)) return false;
+        if (klass.HasOwnStaticAutoAccessor(name)) return false;
 
         object? current = ObjectBuiltIns.PrototypeOf(this, klass);
         for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
@@ -2304,6 +2281,11 @@ public partial class Interpreter
             }
             if (ObjectBuiltIns.OwnPropertyDescriptorOf(this, current, name) is { } descriptor)
                 return TryAssignThroughDescriptor(descriptor, klass, name, value, strictMode);
+            if (current is SharpTSClass parentClass && parentClass.HasOwnStaticAutoAccessor(name))
+            {
+                parentClass.SetStaticAutoAccessorValue(name, value);
+                return true;
+            }
             current = ObjectBuiltIns.PrototypeOf(this, current);
         }
         return false;
@@ -2978,15 +2960,9 @@ public partial class Interpreter
             case TypeCategory.Class when obj is SharpTSClass klass:
                 if (TryAssignThroughClassDescriptor(klass, memberName, value, strictMode))
                     return value;
-                if (klass.HasStaticAutoAccessor(memberName))
+                if (klass.HasOwnStaticAutoAccessor(memberName))
                 {
                     klass.SetStaticAutoAccessorValue(memberName, value);
-                    return value;
-                }
-                var staticSetterClass = klass.FindStaticSetter(memberName);
-                if (staticSetterClass != null)
-                {
-                    staticSetterClass.BindStatic(klass).CallBoxed(this, [value]);
                     return value;
                 }
                 klass.SetStaticProperty(memberName, value, strictMode);

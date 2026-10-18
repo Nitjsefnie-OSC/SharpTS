@@ -565,12 +565,6 @@ public static class PromiseBuiltIns
     /// </remarks>
     private static object? ResolveSpeciesConstructor(SharpTSPromiseClass klass, Interpreter interp)
     {
-        // PromiseBase's intrinsic species getter is implicit in this runtime.
-        // Only an absent descriptor uses that default; a present getterless
-        // accessor reads undefined and must shadow any inherited override.
-        if (klass.FindStaticSymbolAccessorDescriptor(SharpTSSymbol.Species) is null)
-            return klass;
-
         object? species = interp.GetSymbolPropertyValue(klass, SharpTSSymbol.Species);
 
         return species switch

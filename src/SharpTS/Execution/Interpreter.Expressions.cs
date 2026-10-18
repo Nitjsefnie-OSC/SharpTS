@@ -423,7 +423,9 @@ public partial class Interpreter
             // callbacks must not replace this pending constructor boundary.
             var frame = _environment.ConstructionFrame
                 ?? throw new ThrowException(new SharpTSReferenceError("super() is not available outside a constructor"));
-            return RuntimeValue.FromObject(new SuperConstructorCallable(superclass, frame));
+            object? parent = frame.Owner.HasExplicitPrototype
+                ? ObjectBuiltIns.PrototypeOf(this, frame.Owner) : superclass;
+            return RuntimeValue.FromObject(new SuperConstructorCallable(parent, frame, frame.Owner.CanReuseSuperAllocation(parent)));
         }
         // `this` is usually a SharpTSInstance, but built-in-backed instances
         // (Array subclass instances) are SharpTSArrays — bind generically.
@@ -433,8 +435,12 @@ public partial class Interpreter
         if (expr.Method is { } property)
         {
             if (_environment.StaticSuper)
-                return RuntimeValue.FromBoxed(EvaluateGetOnClass(
-                    superclass, property.Lexeme, thisReceiver));
+            {
+                object? parent = _environment.PrivateClass is { } staticOwner
+                    ? ObjectBuiltIns.PrototypeOf(this, staticOwner) : superclass;
+                if (parent is null) ThrowCannotReadProperty(parent, property.Lexeme);
+                return RuntimeValue.FromBoxed(GetPropertyValueFromChain(parent, property.Lexeme, thisReceiver));
+            }
 
             // The lexical method owner remains fixed when a method is inherited
             // or borrowed, while the home prototype's parent is read live.
@@ -451,14 +457,14 @@ public partial class Interpreter
     }
 
     private sealed class SuperConstructorCallable(
-        SharpTSClass superclass, ClassConstructionFrame frame) : ISharpTSNonConstructorCallable
+        object? superclass, ClassConstructionFrame frame, bool reuseAllocation) : ISharpTSNonConstructorCallable
     {
-        public int Arity() => superclass.Arity();
+        public int Arity() => (superclass as ISharpTSCallable)?.Arity() ?? 0;
         public object? Call(Interpreter interpreter, List<object?> arguments)
         {
             var allocation = frame.BeginSuperAttempt(interpreter);
-            var parentResult = superclass.ExecuteConstructorLevel(
-                interpreter, allocation, arguments, frame.NewTarget);
+            var parentResult = SharpTSClass.ExecuteSuperConstructor(
+                interpreter, superclass, allocation, arguments, frame.NewTarget, reuseAllocation);
             return frame.CompleteSuper(interpreter, parentResult);
         }
     }
@@ -1460,10 +1466,7 @@ public partial class Interpreter
     /// of declared methods and own properties shadowing inherited members.
     /// </summary>
     private object? GetClassSymbolValue(SharpTSClass klass, SharpTSSymbol symbol)
-    {
-        return TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), klass, out var value)
-            ? value : GetSymbolPropertyValue(GetFunctionPrototype(), symbol, klass);
-    }
+        => GetSymbolPropertyValue(klass, symbol, klass);
 
     /// <summary>
     /// Evaluates an index assignment expression (bracket notation with assignment).
@@ -1951,15 +1954,7 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.ClassSymbol t:
-                if (TryAssignThroughDescriptor(t.Target.FindStaticSymbolAccessorDescriptor(t.Key)
-                        ?? FindInheritedSymbolDescriptor(t.Target, t.Key),
-                        t.Target, t.Key.ToString(), value, strictMode)) break;
-                if (t.Target.FindStaticSymbolSetter(t.Key) is { } staticSymSetter)
-                {
-                    staticSymSetter.BindStatic(t.Target).Call(this, [value]);
-                    break;
-                }
-                t.Target.SetStaticBySymbol(t.Key, value, strictMode);
+                SetOwnPropertyObjectValue(t.Target, t.Key, value, strictMode);
                 break;
 
             case IndexTarget.ClassPrototypeSymbol t:

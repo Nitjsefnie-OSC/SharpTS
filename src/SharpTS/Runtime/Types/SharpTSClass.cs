@@ -17,7 +17,7 @@ namespace SharpTS.Runtime.Types;
 /// Stores class metadata: name, superclass reference, instance methods, static methods,
 /// static properties, and getter/setter accessors. Implements <see cref="ISharpTSCallable"/>
 /// so that calling a class (e.g., <c>new MyClass()</c>) constructs a new <see cref="SharpTSInstance"/>.
-/// Method and property lookups walk the inheritance chain via <see cref="Superclass"/>.
+/// Instance heritage is retained separately from the constructor's mutable prototype.
 /// </remarks>
 /// <seealso cref="SharpTSInstance"/>
 /// <seealso cref="SharpTSFunction"/>
@@ -45,6 +45,21 @@ public partial class SharpTSClass(
 
     public string Name { get; } = name;
     public SharpTSClass? Superclass { get; } = superclass;
+    internal bool HasExplicitPrototype { get; private set; }
+    internal object? ExplicitPrototype { get; private set; }
+
+    internal void SetExplicitPrototype(object? prototype)
+    {
+        ExplicitPrototype = prototype;
+        HasExplicitPrototype = true;
+    }
+
+    internal bool CanReuseSuperAllocation(object? parent)
+        => ReferenceEquals(parent, Superclass)
+            || parent is SharpTSArrayGlobal && ReferenceEquals(Superclass, SharpTSArrayClass.ArrayBase)
+            || parent is SharpTSBuiltInConstructor { Name: BuiltInNames.Promise }
+                && ReferenceEquals(Superclass, SharpTSPromiseClass.PromiseBase);
+
     public bool IsAbstract { get; } = isAbstract;
     internal RuntimeEnvironment? InitializerEnvironment { get; set; }
     internal virtual bool RequiresNew => true;
@@ -79,8 +94,8 @@ public partial class SharpTSClass(
     public SharpTSClassPrototype Prototype => _prototype ??= new SharpTSClassPrototype(this);
 
     // Cached instance lookups remain valid until a prototype's parent changes.
-    // Constructor inheritance is fixed, so it can conservatively detect any
-    // modified home along the original instance chain without altering statics.
+    // The original instance heritage remains fixed when constructor prototypes
+    // change, so this only tracks mutations to the instance prototype chain.
     internal bool HasModifiedInstancePrototypeChain
         => _prototype?.HasExplicitPrototype == true
             || Superclass?.HasModifiedInstancePrototypeChain == true;
@@ -136,6 +151,10 @@ public partial class SharpTSClass(
     internal object? ExecuteConstructorLevel(
         Interpreter interpreter, object allocation, List<object?> arguments, object? newTarget)
     {
+        if (ReferenceEquals(this, SharpTSArrayClass.ArrayBase)
+            && allocation is SharpTSArraySubclassInstance array
+            && !ReferenceEquals(newTarget, array.Klass))
+            array.SetExplicitPrototype(interpreter.GetConstructorPrototype(newTarget));
         if (TryExecuteNativeConstructor(interpreter, allocation, arguments)) return allocation;
 
         var frame = new ClassConstructionFrame(this, allocation, newTarget);
@@ -160,13 +179,30 @@ public partial class SharpTSClass(
             // An implicit derived constructor is still a class level: forward
             // first, then install only this owner's elements, preserving the
             // ancestor completion selected by existing constructor-return rules.
-            var parentResult = Superclass.ExecuteConstructorLevel(
-                interpreter, allocation, arguments, newTarget);
+            object? parent = HasExplicitPrototype ? ObjectBuiltIns.PrototypeOf(interpreter, this) : Superclass;
+            var parentResult = ExecuteSuperConstructor(
+                interpreter, parent, allocation, arguments, newTarget, CanReuseSuperAllocation(parent));
             return frame.CompleteSuper(interpreter, parentResult);
         }
 
         return ResolveOwnConstructorReturn(
             InvokeConstructorBody(interpreter, constructor, allocation, arguments, newTarget, frame), frame);
+    }
+
+    internal static object? ExecuteSuperConstructor(
+        Interpreter interpreter, object? parent, object allocation, List<object?> arguments, object? newTarget,
+        bool reuseAllocation)
+    {
+        // A changed parent can select a different native backing (or an ordinary
+        // object), so its own [[Construct]] must choose the allocation.
+        if (parent is SharpTSArrayGlobal)
+            parent = SharpTSArrayClass.ArrayBase;
+        if (reuseAllocation && parent is SharpTSBuiltInConstructor { Name: BuiltInNames.Promise })
+            parent = SharpTSPromiseClass.PromiseBase;
+        if (!reuseAllocation) return interpreter.Construct(parent, arguments, newTarget);
+        return parent is SharpTSClass klass
+            ? klass.ExecuteConstructorLevel(interpreter, allocation, arguments, newTarget)
+            : interpreter.Construct(parent, arguments, newTarget);
     }
 
     // Built-in-backed bridge roots initialize the existing native allocation;
@@ -397,7 +433,7 @@ public partial class SharpTSClass(
 
     public void SetStaticProperty(string name, object? value, bool strictMode = false)
     {
-        if (FindStaticPropertyDescriptor(name) is { HasWritable: true, Writable: false }
+        if (GetOwnStaticPropertyDescriptor(name) is { HasWritable: true, Writable: false }
             || !Compilation.PropertyDescriptorStore.IsWritable(this, name))
         {
             if (strictMode)
@@ -974,6 +1010,8 @@ public partial class SharpTSClass(
         return _staticAutoAccessorStorage.ContainsKey(name) ||
                (Superclass?.HasStaticAutoAccessor(name) ?? false);
     }
+
+    internal bool HasOwnStaticAutoAccessor(string name) => _staticAutoAccessorStorage.ContainsKey(name);
 
     #endregion
 

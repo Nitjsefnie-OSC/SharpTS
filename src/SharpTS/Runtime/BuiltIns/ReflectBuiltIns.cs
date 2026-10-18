@@ -326,7 +326,7 @@ public static class ReflectBuiltIns
                 if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var functionStorage))
                     return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
                 if (target is ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator
-                    or SharpTSClassPrototype or SharpTSArrayGlobal)
+                    or SharpTSClassPrototype or SharpTSArrayGlobal or SharpTSClass)
                     return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
                 return RuntimeValue.FromBoxed(target switch
                 {

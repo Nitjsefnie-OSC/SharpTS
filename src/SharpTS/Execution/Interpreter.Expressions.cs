@@ -1207,30 +1207,19 @@ public partial class Interpreter
             && index is SharpTSSymbol generatorSymbol)
             return RuntimeValue.FromBoxed(GetSymbolPropertyValue(obj, generatorSymbol));
 
-        // JS functions are objects — bracket access reads user properties.
+        // Ordinary functions use the same descriptor-aware Get for own and
+        // inherited members, with one guest property-key conversion.
+        if (obj is SharpTSFunction or SharpTSArrowFunction)
+        {
+            object key = ToPropertyKey(index);
+            return RuntimeValue.FromBoxed(key is SharpTSSymbol symbol
+                ? GetSymbolPropertyValue(obj, symbol)
+                : GetPropertyValue(obj, (string)key));
+        }
         if (FunctionObjectProperties.TryGetExplicitPrototype(obj, this, out _))
             return RuntimeValue.FromBoxed(index is SharpTSSymbol inheritedSymbol
                 ? GetSymbolPropertyValue(obj!, inheritedSymbol)
                 : GetPropertyValue(obj, ToPropertyKeyString(index)));
-        if (obj is SharpTSFunction fn)
-        {
-            if (index is SharpTSSymbol fnSym)
-                return RuntimeValue.FromBoxed(GetSymbolPropertyValue(fn, fnSym));
-            string fnKey = index?.ToString() ?? "";
-            if (fn.TryGetProperty(fnKey, out var propVal))
-                return RuntimeValue.FromBoxed(propVal);
-            return RuntimeValue.Undefined;
-        }
-        // Same for arrow functions / function expressions.
-        if (obj is SharpTSArrowFunction afn)
-        {
-            if (index is SharpTSSymbol arrSym)
-                return RuntimeValue.FromBoxed(GetSymbolPropertyValue(afn, arrSym));
-            string arrKey = index?.ToString() ?? "";
-            if (afn.TryGetProperty(arrKey, out var arrPropVal))
-                return RuntimeValue.FromBoxed(arrPropVal);
-            return RuntimeValue.Undefined;
-        }
 
         // Bound functions and native callable values inherit the same Symbol
         // protocol surface, while classes first consult their static descriptors.

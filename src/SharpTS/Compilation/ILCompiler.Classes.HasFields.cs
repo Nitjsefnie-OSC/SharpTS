@@ -190,6 +190,16 @@ public partial class ILCompiler
     {
         var il = method.GetILGenerator();
         var owner = (TypeBuilder)method.DeclaringType!;
+        var instanceFields = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _runtime.ClassPrototypes.IsPrototype);
+        il.Emit(OpCodes.Brfalse, instanceFields);
+        // Prototype carriers have never initialized the class's instance data.
+        // Their compatibility view contains only explicitly stored own values.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(ensureFields));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(instanceFields);
         var ownFields = GetClassRegistry().GetOwnGuestDataFields(owner).ToArray();
         var parent = owner.BaseType;
         var parentDefinition = parent?.IsConstructedGenericType == true ? parent.GetGenericTypeDefinition() : parent;
@@ -309,6 +319,10 @@ public partial class ILCompiler
         var il = method.GetILGenerator();
         var returnTrueLabel = il.DefineLabel();
         var noFieldsLabel = il.DefineLabel();
+        var dynamicFieldsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _runtime.ClassPrototypes.IsPrototype);
+        il.Emit(OpCodes.Brtrue, dynamicFieldsLabel);
 
         // Check typed backing field names
         if (backingFields != null)
@@ -327,6 +341,7 @@ public partial class ILCompiler
 
         // A missing expando store is observably equivalent to an empty one. Do not
         // allocate merely to answer a property probe.
+        il.MarkLabel(dynamicFieldsLabel);
         var fieldsLocal = il.DeclareLocal(_types.DictionaryStringObject);
         EmitLoadDynamicFieldsOrBranch(il, fieldsField, fieldsLocal, noFieldsLabel);
         il.Emit(OpCodes.Ldloc, fieldsLocal);
@@ -417,6 +432,7 @@ public partial class ILCompiler
         FieldInfo fieldsField)
     {
         var il = method.GetILGenerator();
+        EmitClassPrototypeReadBranch(il);
         var valueLocal = il.DeclareLocal(_types.Object);
         var fieldsLocal = il.DeclareLocal(_types.DictionaryStringObject);
         var returnValueLabel = il.DefineLabel();
@@ -615,6 +631,7 @@ public partial class ILCompiler
         MethodInfo ensureFields)
     {
         var il = method.GetILGenerator();
+        EmitClassPrototypeWriteBranch(il);
         var setFieldsLabel = il.DefineLabel();
         EmitDictionaryGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: true);
 
@@ -821,6 +838,7 @@ public partial class ILCompiler
         FieldInfo fieldsField)
     {
         var il = method.GetILGenerator();
+        EmitClassPrototypeReadBranch(il);
         var valueLocal = il.DeclareLocal(_types.Object);
         var fieldsLocal = il.DeclareLocal(_types.DictionaryStringObject);
         var returnValueLabel = il.DefineLabel();
@@ -1266,6 +1284,7 @@ public partial class ILCompiler
         MethodInfo ensureFields)
     {
         var il = method.GetILGenerator();
+        EmitClassPrototypeWriteBranch(il);
         var setFieldsLabel = il.DefineLabel();
         EmitDictionaryGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: true);
 
@@ -1357,6 +1376,54 @@ public partial class ILCompiler
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", [_types.String, _types.Object])!);
         il.Emit(OpCodes.Ret);
     }
+    private void EmitClassPrototypeReadBranch(ILGenerator il)
+    {
+        var instance = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _runtime.ClassPrototypes.IsPrototype);
+        il.Emit(OpCodes.Brfalse, instance);
+        // Read descriptors/dynamic storage from the prototype itself. Falling
+        // through to typed getters would expose uninitialized instance slots.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _runtime.ClassDefinitions.ReadPrototypeProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(instance);
+    }
+
+    private void EmitClassPrototypeWriteBranch(ILGenerator il)
+    {
+        var instance = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _runtime.ClassPrototypes.IsPrototype);
+        il.Emit(OpCodes.Brfalse, instance);
+        // Existing descriptors are handled by the shared setter before this
+        // dispatch. New prototype properties need presence independent of CLR
+        // default values, including explicit undefined/null, and normal deletion.
+        var storage = _runtime.DescriptorStorage;
+        var descriptor = il.DeclareLocal(storage.DescriptorType);
+        il.Emit(OpCodes.Newobj, storage.DescriptorConstructor);
+        il.Emit(OpCodes.Stloc, descriptor);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, storage.DescriptorValue.GetSetMethod()!);
+        foreach (var property in new[] { storage.DescriptorWritable, storage.DescriptorEnumerable,
+                     storage.DescriptorConfigurable })
+        {
+            il.Emit(OpCodes.Ldloc, descriptor);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Callvirt, property.GetSetMethod()!);
+        }
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Call, storage.DefineProperty);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(instance);
+    }
+
     private void EmitComputedInstanceGetterFallback(ILGenerator il)
     {
         // Computed declaration accessors are installed as live prototype

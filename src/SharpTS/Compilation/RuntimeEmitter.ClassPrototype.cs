@@ -79,6 +79,10 @@ public partial class RuntimeEmitter
             _types.Boolean,
             [_types.Type]);
         classPrototypes.HasModifiedChain = hasModifiedChain;
+        var isPrototype = typeBuilder.DefineMethod(
+            "IsClassPrototype", MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean, [_types.Object]);
+        classPrototypes.IsPrototype = isPrototype;
         var normalizePrototype = typeBuilder.DefineMethod(
             "NormalizeClassPrototype", MethodAttributes.Public | MethodAttributes.Static,
             _types.Object, [_types.Object]);
@@ -199,6 +203,9 @@ public partial class RuntimeEmitter
         // Hosted runtimes can receive guest class values from their host.
         if (!_emitHosted && !_features.UsesUserClasses)
         {
+            var isPrototypeIL = isPrototype.GetILGenerator();
+            isPrototypeIL.Emit(OpCodes.Ldc_I4_0);
+            isPrototypeIL.Emit(OpCodes.Ret);
             var normalizeIL = normalizePrototype.GetILGenerator();
             normalizeIL.Emit(OpCodes.Ldarg_0);
             normalizeIL.Emit(OpCodes.Ret);
@@ -254,6 +261,27 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, _types.GetMethodNoParams(enumeratorType, "MoveNext"));
             il.Emit(OpCodes.Brtrue, next);
             il.MarkLabel(missing); il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Ret);
+        }
+
+        // The ordinary instance path needs only one identity lookup. Abstract
+        // prototypes use an ordinary object carrier and need the owner search.
+        {
+            var il = isPrototype.GetILGenerator();
+            var cached = il.DeclareLocal(_types.Object);
+            var search = il.DefineLabel();
+            var missing = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Brfalse, missing);
+            il.Emit(OpCodes.Ldsfld, cacheField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+            il.Emit(OpCodes.Ldloca, cached);
+            il.Emit(OpCodes.Callvirt, tryGetValue); il.Emit(OpCodes.Brfalse, search);
+            il.Emit(OpCodes.Ldloc, cached); il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ceq); il.Emit(OpCodes.Ret);
+            il.MarkLabel(search);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, findOwner);
+            il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Cgt_Un); il.Emit(OpCodes.Ret);
+            il.MarkLabel(missing); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ret);
         }
 
         // Generic prototype carriers retain their CLR storage identities, but

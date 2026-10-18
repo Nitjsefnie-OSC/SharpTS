@@ -37,6 +37,13 @@ public sealed class EmittedClassPrototypeRuntime
         internal set => SetHandle(ref _hasModifiedChain, value);
     }
 
+    private MethodBuilder? _isPrototype;
+    public MethodBuilder IsPrototype
+    {
+        get => Require(_isPrototype);
+        internal set => SetHandle(ref _isPrototype, value);
+    }
+
     private MethodBuilder? _normalizePrototype;
     public MethodBuilder NormalizePrototype
     {
@@ -76,6 +83,7 @@ public sealed class EmittedClassPrototypeRuntime
         _ = Get;
         _ = Register;
         _ = HasModifiedChain;
+        _ = IsPrototype;
         _ = NormalizePrototype;
         _ = UpdateParent;
         IsComplete = true;

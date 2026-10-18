@@ -18,7 +18,9 @@ public sealed class CallableFunctionPrototypeTests
             const prototype: any = Function.prototype;
             console.log([1, 2].map(prototype).every((value: any) => value === undefined));
             console.log(Array.from([1, 2], prototype).every((value: any) => value === undefined));
-            """, "true\ntrue\n"];
+            console.log([1, 2].reduceRight(prototype) === undefined,
+                [1, 2].reduceRight(prototype, 0) === undefined);
+            """, "true\ntrue\ntrue true\n"];
         yield return ["proxy", """
             const prototype: any = Function.prototype, proxy: any = new Proxy(prototype, {});
             console.log(typeof proxy, proxy() === undefined);

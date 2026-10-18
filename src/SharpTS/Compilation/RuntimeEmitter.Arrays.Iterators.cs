@@ -2268,6 +2268,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, reduceRCallableThrow);
         // Positive callable check (mirrors reduce / EmitThrowIfCallbackNotCallable).
         il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.FunctionPrototypes.Type);
+        il.Emit(OpCodes.Brtrue, reduceRCallableOk);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
         il.Emit(OpCodes.Isinst, runtime.FunctionValues.Type);
         il.Emit(OpCodes.Brtrue, reduceRCallableOk);
         il.Emit(OpCodes.Ldloc, callbackLocal);

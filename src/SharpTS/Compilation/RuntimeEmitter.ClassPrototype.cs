@@ -37,6 +37,13 @@ public partial class RuntimeEmitter
             var ready = il.DefineLabel();
             il.Emit(OpCodes.Ldloc, parentType);
             il.Emit(OpCodes.Brfalse, objectParent);
+            // Explicit registrations are authoritative even for native carrier
+            // types that do not implement the generated user-class interface.
+            il.Emit(OpCodes.Ldsfld, cacheField);
+            il.Emit(OpCodes.Ldloc, parentType);
+            il.Emit(OpCodes.Ldloca, parent);
+            il.Emit(OpCodes.Callvirt, tryGetValue);
+            il.Emit(OpCodes.Brtrue, ready);
             il.Emit(OpCodes.Ldtoken, userClassInterface);
             il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
             il.Emit(OpCodes.Ldloc, parentType);

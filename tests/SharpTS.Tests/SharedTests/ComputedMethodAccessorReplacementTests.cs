@@ -60,6 +60,28 @@ public sealed class ComputedMethodAccessorReplacementTests
             const accessor: any = Object.getOwnPropertyDescriptor(Setter.prototype, key);
             console.log(typeof method.value, method.set === undefined, accessor.value === undefined, typeof accessor.set);
             """, "5 true 6 true\nfunction true true function\n"];
+        yield return ["literal-computed-accessors", """
+            const key: any = "value", numeric: any = "1";
+            class Getter { [key]() { return 5; } get ["value"]() { return 7; } }
+            const Setter = class { [numeric]() { return 5; } set [1](next: any) {} };
+            class Static { static [key]() { return 5; } static get ["value"]() { return 8; } }
+            const StaticSetter = class { static [numeric]() { return 5; } static set [1](next: any) {} };
+            class Method { get ["value"]() { return 1; } [key]() { return 6; } }
+            const first: any = new Getter(), second: any = new Setter(), third: any = Static,
+                fourth: any = StaticSetter, method: any = new Method();
+            console.log(first.value, second[1] === undefined, third.value, fourth[1] === undefined, method.value());
+            const getter: any = Object.getOwnPropertyDescriptor(Getter.prototype, "value");
+            const setter: any = Object.getOwnPropertyDescriptor(Setter.prototype, "1");
+            console.log(typeof getter.get, getter.value === undefined, typeof setter.set, setter.value === undefined);
+            """, "7 true 8 true 6\nfunction true function true\n"];
+        yield return ["normalized-literal-and-keyword-names", """
+            const key: any = "value", numeric: any = "1", keyword: any = "get";
+            class Quoted { [key]() { return 5; } get "value"() { return 7; } }
+            const Numeric = class { [numeric]() { return 5; } get 1() { return 8; } };
+            class Keyword { get [keyword]() { return 1; } get() { return 6; } }
+            const quoted: any = new Quoted(), number: any = new Numeric(), word: any = new Keyword();
+            console.log(quoted.value, number[1], word.get());
+            """, "7 8 6\n"];
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>

@@ -486,35 +486,20 @@ public partial class Interpreter
 
             if (current is SharpTSArray array)
             {
-                if (name == "length") return (double)array.LongLength;
-                if (long.TryParse(name, System.Globalization.NumberStyles.None,
-                        System.Globalization.CultureInfo.InvariantCulture, out long index)
-                    && index >= 0 && array.HasIndex(index))
-                {
-                    if (array.TryGetIndexAccessor(index, out var indexGetter, out _))
-                        return indexGetter is null
-                            ? SharpTSUndefined.Instance
-                            : BindAccessorToObject(indexGetter, receiver!).CallBoxed(this, []);
-                    return GetArrayIndexValue(array, index).ToObject();
-                }
-                if (array.HasNamedProperty(name))
-                    return GetArrayNamedProperty(array, name, receiver);
-                if (array.HasExplicitPrototype)
-                {
-                    current = array.ExplicitPrototype;
-                    continue;
-                }
-                if (GetArrayPrototype().GetExtraGetter(name) is { } arrayGetter)
-                    return BindAccessorToObject(arrayGetter, receiver!).CallBoxed(this, []);
-                if (GetArrayPrototype().HasExtra(name))
-                    return GetArrayPrototype().TryGetExtra(name);
-                if (GetArrayPrototype().GetMember(name) is { } arrayMember)
-                    return arrayMember;
-                if (GetObjectPrototype().GetExtraGetter(name) is { } objectGetter)
-                    return BindAccessorToObject(objectGetter, receiver!).CallBoxed(this, []);
-                if (GetObjectPrototype().GetMember(name) is { } objectMember)
-                    return objectMember;
-                return SharpTSUndefined.Instance;
+                if (TryReadDescriptor(array.GetOwnPropertyDescriptor(name), receiver, out var ownValue))
+                    return ownValue;
+                current = ObjectBuiltIns.PrototypeOf(this, array);
+                continue;
+            }
+
+            if (current is SharpTSArrayPrototype arrayPrototype)
+            {
+                if (TryReadDescriptor(arrayPrototype.GetOwnPropertyDescriptor(name), receiver, out var prototypeValue))
+                    return prototypeValue;
+                if (arrayPrototype.GetMember(name) is { } member)
+                    return member;
+                current = ObjectBuiltIns.PrototypeOf(this, arrayPrototype);
+                continue;
             }
 
             if (current is SharpTSObject record)
@@ -738,11 +723,7 @@ public partial class Interpreter
             {
                 if (TryReadDescriptor(prototype.GetOwnPropertyDescriptor(symbol), receiver, out var value))
                     return value;
-                current = prototype.HasExplicitPrototype
-                    ? prototype.ExplicitPrototype
-                    : prototype.Class.Superclass?.Prototype
-                    ?? (ReferenceEquals(prototype.Class, SharpTSArrayClass.ArrayBase)
-                        ? (object)GetArrayPrototype() : GetObjectPrototype());
+                current = ObjectBuiltIns.PrototypeOf(this, prototype);
                 continue;
             }
             if (current is SharpTSArrayPrototype arrayPrototype)
@@ -825,16 +806,7 @@ public partial class Interpreter
                         : BindAccessorToObject(getter, receiver).CallBoxed(this, []);
                 if (array.HasSymbolProperty(symbol))
                     return array.GetBySymbol(symbol);
-                if (array.HasExplicitPrototype)
-                {
-                    current = array.ExplicitPrototype;
-                    continue;
-                }
-                if (array is SharpTSArraySubclassInstance subclass
-                    && TryReadDescriptor(subclass.Klass.FindInstanceSymbolPropertyDescriptor(symbol),
-                        receiver, out var inheritedValue))
-                    return inheritedValue;
-                current = GetArrayPrototype();
+                current = ObjectBuiltIns.PrototypeOf(this, array);
                 continue;
             }
 
@@ -915,16 +887,17 @@ public partial class Interpreter
             if (obj is SharpTSArray array)
             {
                 if (array.HasOwnProperty(name)) return true;
-                if (array.HasExplicitPrototype)
-                {
-                    obj = array.ExplicitPrototype;
-                    continue;
-                }
-                if (GetArrayPrototype().HasOwnProperty(name)) return true;
-                return GetObjectPrototype().HasOwnProperty(name);
+                obj = ObjectBuiltIns.PrototypeOf(this, array);
+                continue;
+            }
+            if (obj is SharpTSArrayPrototype arrayPrototype)
+            {
+                if (arrayPrototype.HasOwnProperty(name)) return true;
+                obj = ObjectBuiltIns.PrototypeOf(this, arrayPrototype);
+                continue;
             }
             if (obj is SharpTSObjectPrototype objectPrototype)
-                return objectPrototype.GetOwnPropertyDescriptor(name) is not null;
+                return objectPrototype.HasOwnProperty(name);
             if (obj is ISharpTSPrimitiveConstructor primitiveConstructor)
             {
                 if (primitiveConstructor.HasOwnProperty(name)) return true;
@@ -1011,11 +984,7 @@ public partial class Interpreter
             if (current is SharpTSClassPrototype classPrototype)
             {
                 if (classPrototype.GetOwnPropertyDescriptor(symbol) is not null) return true;
-                current = classPrototype.HasExplicitPrototype
-                    ? classPrototype.ExplicitPrototype
-                    : (object?)classPrototype.Class.Superclass?.Prototype
-                        ?? (ReferenceEquals(classPrototype.Class, SharpTSArrayClass.ArrayBase)
-                            ? GetArrayPrototype() : GetObjectPrototype());
+                current = ObjectBuiltIns.PrototypeOf(this, classPrototype);
                 continue;
             }
             if (current is SharpTSInstance { UsesDynamicPrototypeChain: true } instance)
@@ -1066,11 +1035,8 @@ public partial class Interpreter
             if (current is SharpTSArray array)
             {
                 if (array.HasSymbolProperty(symbol)
-                    || array.TryGetSymbolAccessor(symbol, out _, out _)
-                    || ReferenceEquals(symbol, SharpTSSymbol.Iterator)) return true;
-                current = array.HasExplicitPrototype
-                    ? array.ExplicitPrototype
-                    : GetArrayPrototype();
+                    || array.TryGetSymbolAccessor(symbol, out _, out _)) return true;
+                current = ObjectBuiltIns.PrototypeOf(this, array);
                 continue;
             }
             if (current is ISharpTSSymbolPropertyBag symbolBag
@@ -1631,6 +1597,9 @@ public partial class Interpreter
     /// </summary>
     private RuntimeValue EvaluateGetOnArrayRV(object obj, string memberName)
     {
+        if (obj is SharpTSArraySubclassInstance subclassArray)
+            return RuntimeValue.FromBoxed(GetPropertyValue(subclassArray, memberName));
+
         if (obj is SharpTSArray lengthArray && memberName == "length")
             return RuntimeValue.FromNumber(lengthArray.LongLength);
 
@@ -1642,21 +1611,6 @@ public partial class Interpreter
         if (obj is SharpTSArray array && array.HasNamedProperty(memberName))
             return RuntimeValue.FromBoxed(
                 GetArrayNamedProperty(array, memberName, array));
-
-        // Array subclass instances (#233): class getters and methods resolve
-        // before built-in Array members so user overrides win; declared fields
-        // were handled above as named properties (own props shadow methods).
-        if (obj is SharpTSArraySubclassInstance subclassArray)
-        {
-            if (memberName == "constructor")
-                return RuntimeValue.FromObject(subclassArray.Klass);
-            var classGetter = subclassArray.Klass.FindGetter(memberName);
-            if (classGetter != null)
-                return RuntimeValue.FromBoxed(classGetter.BindThis(subclassArray).CallBoxed(this, []));
-            var classMethod = subclassArray.Klass.FindMethod(memberName);
-            if (classMethod != null)
-                return RuntimeValue.FromObject(SharpTSClass.BindMethodToReceiver(classMethod, subclassArray));
-        }
 
         // Numeric-string index on $Array — `arr["0"]` is equivalent to
         // `arr[0]` per JS semantics. ECMA-262 §10.4.2 (Array exotic objects)
@@ -1955,6 +1909,7 @@ public partial class Interpreter
         {
             SharpTSObjectUnboundMethod m when !m.HasBoundThis => m.BindTo(receiver),
             SharpTSArrayUnboundMethod m when !m.HasBoundThis => m.BindTo(receiver),
+            ArrayPrototypeMethodWrapper m when receiver is SharpTSArray => m.Bind(receiver),
             // These methods have complete generic array-like dispatch in the wrapper. Other
             // methods need additional live Get/Set semantics before copied calls can
             // be rebound without changing their observable behavior.
@@ -2624,20 +2579,10 @@ public partial class Interpreter
         if (obj is SharpTSArray array && array.HasNamedProperty(memberName))
             return GetArrayNamedProperty(array, memberName, array);
 
-        // Array subclass instances (#233): class getters and methods resolve
-        // before the built-in Array members so user overrides win; fields were
-        // handled above as named properties (own properties shadow methods).
+        // Array subclass reads share the descriptor-aware effective chain with
+        // internal Get and Reflect.get, preserving the canonical method value.
         if (obj is SharpTSArraySubclassInstance subclassArray)
-        {
-            if (memberName == "constructor")
-                return subclassArray.Klass;
-            var classGetter = subclassArray.Klass.FindGetter(memberName);
-            if (classGetter != null)
-                return classGetter.BindThis(subclassArray).CallBoxed(this, []);
-            var classMethod = subclassArray.Klass.FindMethod(memberName);
-            if (classMethod != null)
-                return SharpTSClass.BindMethodToReceiver(classMethod, subclassArray);
-        }
+            return GetPropertyValue(subclassArray, memberName);
 
         if (obj is SharpTSArray)
         {

@@ -214,6 +214,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                     => proxy.TrapGetOwnPropertyDescriptor(sym, interpreter)
                         is not (null or SharpTSUndefined),
                 SharpTSObject obj => obj.HasSymbolProperty(sym),
+                SharpTSArray array => array.HasSymbolProperty(sym),
                 SharpTSInstance inst => inst.HasSymbolProperty(sym),
                 SharpTSClass klass => klass.GetOwnStaticSymbolPropertyDescriptor(sym) is not null,
                 SharpTSClassPrototype prototype => prototype.GetOwnPropertyDescriptor(sym) is not null,

@@ -157,7 +157,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         }
         // Snapshot the caller values before defaults; this binding survives every await.
         if (ArgumentsUsage.UsesArguments(_declaration))
-            environment.Define("arguments", new SharpTSArguments(arguments));
+            environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
         await ParameterBinder.BindAsync(_declaration.Parameters, arguments, environment, interpreter);
 
         if (_declaration.Body == null)
@@ -318,7 +318,7 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
         }
         // Function expressions own arguments; true arrows retain the enclosing binding.
         if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
-            environment.Define("arguments", new SharpTSArguments(arguments));
+            environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
         await ParameterBinder.BindAsync(_declaration.Parameters, arguments, environment, interpreter);
 
         using var debugFrame = interpreter.EnterDebugFrame(

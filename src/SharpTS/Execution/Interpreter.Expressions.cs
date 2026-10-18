@@ -1440,24 +1440,8 @@ public partial class Interpreter
         if (!array.HasIndex(index))
         {
             string key = index.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (array.HasExplicitPrototype)
-            {
-                return RuntimeValue.FromBoxed(GetPropertyValueFromChain(
-                    array.ExplicitPrototype, key, array));
-            }
-            var prototype = GetArrayPrototype();
-            if (prototype.GetExtraGetter(key) is { } inheritedGetter)
-                return BindAccessorToObject(inheritedGetter, array).CallV2(
-                    this, ReadOnlySpan<RuntimeValue>.Empty);
-            if (prototype.HasExtra(key))
-                return RuntimeValue.FromBoxed(prototype.TryGetExtra(key));
-
-            var objectPrototype = GetObjectPrototype();
-            if (objectPrototype.GetExtraGetter(key) is { } objectGetter)
-                return BindAccessorToObject(objectGetter, array).CallV2(
-                    this, ReadOnlySpan<RuntimeValue>.Empty);
-            if (objectPrototype.HasExtra(key))
-                return RuntimeValue.FromBoxed(objectPrototype.TryGetExtra(key));
+            return RuntimeValue.FromBoxed(GetPropertyValueFromChain(
+                ObjectBuiltIns.PrototypeOf(this, array), key, array));
         }
         return RuntimeValue.FromBoxed(array.Get(index));
     }

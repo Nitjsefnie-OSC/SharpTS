@@ -103,7 +103,7 @@ public class SharpTSGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceive
         }
         // Capture at invocation, before defaults and before the lazy body can suspend.
         if (ArgumentsUsage.UsesArguments(_declaration))
-            environment.Define("arguments", new SharpTSArguments(arguments));
+            environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         // Return a generator that will execute the body lazily
@@ -208,7 +208,7 @@ public class SharpTSArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
         else if (HasOwnThis)
             environment.Define("this", interpreter.GlobalThis); // sloppy-mode `this` = globalThis (#775)
         if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
-            environment.Define("arguments", new SharpTSArguments(arguments));
+            environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         // A generator function expression drives the same SharpTSGenerator as a declaration — only the

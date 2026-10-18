@@ -97,7 +97,7 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
 
         // Snapshot before defaults and before the lazy async generator is returned.
         if (ArgumentsUsage.UsesArguments(_declaration))
-            environment.Define("arguments", new SharpTSArguments(arguments));
+            environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
         // Bind parameters to arguments
         ParameterBinder.Bind(_declaration.Parameters ?? [], arguments, environment, interpreter);
 
@@ -204,7 +204,7 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSGeneratorFunctionValue
         else if (HasOwnThis)
             environment.Define("this", interpreter.GlobalThis); // sloppy-mode `this` = globalThis (#775)
         if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
-            environment.Define("arguments", new SharpTSArguments(arguments));
+            environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         // Generator expressions always have a block body (the parser never produces an

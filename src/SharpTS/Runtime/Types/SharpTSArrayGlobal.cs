@@ -149,6 +149,9 @@ public sealed class SharpTSArrayPrototype : ISharpTSMutableBuiltIn, ISharpTSSymb
             : _methodCache.GetOrAdd(name, _ => new ArrayPrototypeMethodWrapper(name, method));
     }
 
+    internal ISharpTSCallable GetIntrinsicValuesMethod()
+        => (ISharpTSCallable)GetBuiltInMember("values")!;
+
     private bool IsBuiltIn(string name) => GetBuiltInMember(name) != null;
 
     public bool HasOwnProperty(string name) => _overlay.HasOwnProperty(name);

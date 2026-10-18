@@ -1932,11 +1932,11 @@ public partial class TypeChecker
                     {
                         throw new TypeCheckException($" Arrow function declared to return '{returnType}' but expression evaluates to '{exprType}'.", tsCode: "TS2322");
                     }
-
-                    // Expression-bodied arrows have no Stmt.Return; the body expression is
-                    // the return value. Flag it the same way block returns are flagged (#344).
-                    MarkIfUndefinedReachableTypedReturn(arrow.ExpressionBody, exprType);
                 }
+
+                // Expression-bodied arrows have no Stmt.Return. Inferred returns need the
+                // same representation hint as annotated ones, including accessor reads (#2234).
+                MarkIfUndefinedReachableTypedReturn(arrow.ExpressionBody, exprType, returnType);
             }
             else if (arrow.BlockBody != null)
             {

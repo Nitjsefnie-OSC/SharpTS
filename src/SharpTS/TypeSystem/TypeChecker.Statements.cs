@@ -763,6 +763,7 @@ public partial class TypeChecker
             {
                 TypeInfo actualType = CheckExpr(stmt.Value);
                 _inferredReturnTypes.Add(actualType);
+                MarkIfUndefinedReachableTypedReturn(stmt.Value, actualType);
             }
             else
             {
@@ -818,14 +819,16 @@ public partial class TypeChecker
     /// cast would throw (#2034). Record the value expression so the compiler widens that function's
     /// return slot to <c>object</c>. This is a compiler hint; caller-side checking keeps the declared type.
     /// </summary>
-    private void MarkIfUndefinedReachableTypedReturn(Expr? value, TypeInfo actualType)
+    private void MarkIfUndefinedReachableTypedReturn(
+        Expr? value, TypeInfo actualType, TypeInfo? resolvedReturnType = null)
     {
         if (value == null) return;
 
-        TypeInfo declared = _currentFunctionReturnType ?? actualType;
+        TypeInfo declared = resolvedReturnType ?? _currentFunctionReturnType ?? actualType;
+        if (declared is TypeInfo.Inferred) declared = actualType;
         if (_inAsyncFunction && declared is TypeInfo.Promise promised) declared = promised.ValueType;
         if (declared is not (TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER or TokenType.TYPE_BOOLEAN }
-            or TypeInfo.Instance))
+            or TypeInfo.NumberLiteral or TypeInfo.BooleanLiteral or TypeInfo.Instance))
             return;
 
         if (ReturnValueMayBeUndefinedSentinel(value))
@@ -855,6 +858,10 @@ public partial class TypeChecker
     private bool ValueMayBeUndefinedSentinel(Expr value, HashSet<string>? taintedLocals) => value switch
     {
         Expr.Grouping g => ValueMayBeUndefinedSentinel(g.Expression, taintedLocals),
+        Expr.TypeAssertion a => TypeAdmitsUndefinedSentinel(_typeMap.Get(a))
+                             || ValueMayBeUndefinedSentinel(a.Expression, taintedLocals),
+        Expr.NonNullAssertion a => ValueMayBeUndefinedSentinel(a.Expression, taintedLocals),
+        Expr.Satisfies s => ValueMayBeUndefinedSentinel(s.Expression, taintedLocals),
         Expr.Ternary t => ValueMayBeUndefinedSentinel(t.ThenBranch, taintedLocals)
                        || ValueMayBeUndefinedSentinel(t.ElseBranch, taintedLocals),
         Expr.Logical l => ValueMayBeUndefinedSentinel(l.Left, taintedLocals)
@@ -863,8 +870,71 @@ public partial class TypeChecker
                                  || ValueMayBeUndefinedSentinel(n.Right, taintedLocals),
         Expr.Assign a => ValueMayBeUndefinedSentinel(a.Value, taintedLocals),
         Expr.Variable v when taintedLocals != null && taintedLocals.Contains(v.Name.Lexeme) => true,
+        Expr.Get get when ClassAccessorReadMayBeUndefined(_typeMap.Get(get.Object), get.Name.Lexeme) => true,
+        Expr.GetIndex get when _typeMap.Get(get.Index) is TypeInfo.StringLiteral key &&
+            ClassAccessorReadMayBeUndefined(_typeMap.Get(get.Object), key.Value) => true,
         _ => TypeAdmitsUndefinedSentinel(_typeMap.Get(value))
     };
+
+    /// <summary>
+    /// Accessor annotations describe their checked value type, but a derived setter-only
+    /// descriptor can shadow even a numeric/boolean getter and produce undefined (#2234).
+    /// Preserve that possibility at return and local/parameter representation boundaries.
+    /// Ordinary data fields keep their separate storage analysis and primitive fast paths.
+    /// </summary>
+    private bool ClassAccessorReadMayBeUndefined(TypeInfo? receiver, string name)
+    {
+        if (receiver is TypeInfo.TypeParameter parameter)
+            return ClassAccessorReadMayBeUndefined(parameter.Constraint, name);
+        if (receiver is TypeInfo.Union union)
+            return union.Types.Any(type => ClassAccessorReadMayBeUndefined(type, name));
+        if (receiver is TypeInfo.Intersection intersection)
+            return intersection.Types.Any(type => ClassAccessorReadMayBeUndefined(type, name));
+
+        bool isStatic = receiver is not TypeInfo.Instance;
+        TypeInfo? current = receiver is TypeInfo.Instance instance ? instance.ResolvedClassType : receiver;
+        HashSet<TypeInfo> visited = new(ReferenceEqualityComparer.Instance);
+        while (current is not null && visited.Add(current))
+        {
+            if (current is TypeInfo.MutableClass mutable)
+            {
+                if (isStatic)
+                {
+                    if (mutable.StaticGetters.ContainsKey(name) || mutable.StaticSetters.ContainsKey(name))
+                        return true;
+                    if (mutable.StaticProperties.ContainsKey(name) || mutable.StaticMethods.ContainsKey(name))
+                        return false;
+                }
+                else
+                {
+                    if (mutable.Getters.ContainsKey(name) || mutable.Setters.ContainsKey(name))
+                        return true;
+                    if (mutable.FieldTypes.ContainsKey(name) || mutable.Methods.ContainsKey(name))
+                        return false;
+                }
+                current = mutable.Superclass;
+                continue;
+            }
+
+            if (isStatic)
+            {
+                if (TryGetAccessorSetterAccess(current, isStatic: true, name, out _))
+                    return true;
+                if (GetStaticProperties(current)?.ContainsKey(name) == true ||
+                    GetStaticMethods(current)?.ContainsKey(name) == true)
+                    return false;
+            }
+            else
+            {
+                if (GetGetters(current)?.ContainsKey(name) == true || GetSetters(current)?.ContainsKey(name) == true)
+                    return true;
+                if (GetFieldTypes(current)?.ContainsKey(name) == true || GetMethods(current)?.ContainsKey(name) == true)
+                    return false;
+            }
+            current = GetSuperclass(current);
+        }
+        return false;
+    }
 
     private static bool TypeAdmitsUndefinedSentinel(TypeInfo? type) => type switch
     {

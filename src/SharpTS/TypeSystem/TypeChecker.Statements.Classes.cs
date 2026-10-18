@@ -471,6 +471,10 @@ public partial class TypeChecker
 
                 // Track as auto-accessor for decorator context
                 mutableClass.AutoAccessors.Add(propName);
+                // Frozen static properties otherwise lose their accessor identity when
+                // the getter map is projected into StaticProperties.
+                mutableClass.AccessorSetterAccess[(autoAccessor.IsStatic, propName)] =
+                    autoAccessor.IsReadonly ? null : autoAccessor.Access;
 
                 // Validate override if specified
                 if (autoAccessor.IsOverride)

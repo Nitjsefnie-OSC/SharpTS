@@ -59,6 +59,7 @@ public partial class RuntimeEmitter
         List<Type> callableTypes =
         [
             runtime.FunctionValues.Type,
+            runtime.FunctionPrototypes.Type,
             runtime.FunctionBindings.BoundType,
             runtime.FunctionBindings.AnyType,
             runtime.FunctionBindings.BindType,

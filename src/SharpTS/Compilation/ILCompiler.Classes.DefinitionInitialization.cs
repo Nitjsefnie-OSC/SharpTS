@@ -35,18 +35,18 @@ public partial class ILCompiler
         {
             var builder = method.IsStatic ? _classExprs.StaticMethods[expression][method.Name.Lexeme]
                 : _classExprs.InstanceMethods[expression][method.Name.Lexeme];
-            members.Add((method.Name.Start, method.IsStatic, new Expr.Literal(method.Name.Lexeme), builder, null, method.Parameters));
+            members.Add((method.Name.SourceOrderOffset, method.IsStatic, new Expr.Literal(method.Name.Lexeme), builder, null, method.Parameters));
         }
         foreach (var (method, key, builder) in _classes.ComputedMembers.GetMethods(template))
-            members.Add((method.Name.Start, method.IsStatic, key, builder, null, method.Parameters));
+            members.Add((method.Name.SourceOrderOffset, method.IsStatic, key, builder, null, method.Parameters));
         foreach (var (accessor, builder) in _classes.ComputedMembers.GetAccessors(template))
-            members.Add((accessor.Name.Start, accessor.IsStatic, accessor.ComputedKey!, builder, accessor.Kind.Type == TokenType.GET,
+            members.Add((accessor.Name.SourceOrderOffset, accessor.IsStatic, accessor.ComputedKey!, builder, accessor.Kind.Type == TokenType.GET,
                 accessor.SetterParam == null ? [] : [accessor.SetterParam]));
         foreach (var accessor in (expression.Accessors ?? []).Where(accessor => !accessor.IsStatic && accessor.ComputedKey == null))
         {
             var name = NamingConventions.ToPascalCase(accessor.Name.Lexeme);
             var builder = accessor.Kind.Type == TokenType.GET ? _classExprs.Getters[expression][name] : _classExprs.Setters[expression][name];
-            members.Add((accessor.Name.Start, false, new Expr.Literal(accessor.Name.Lexeme), builder, accessor.Kind.Type == TokenType.GET,
+            members.Add((accessor.Name.SourceOrderOffset, false, new Expr.Literal(accessor.Name.Lexeme), builder, accessor.Kind.Type == TokenType.GET,
                 accessor.SetterParam == null ? [] : [accessor.SetterParam]));
         }
         foreach (var member in members.OrderBy(member => member.Position))

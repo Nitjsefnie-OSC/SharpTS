@@ -139,6 +139,9 @@ public partial class RuntimeEmitter
         // throws TypeError. ECMA-262 IsCallable returns true only for
         // function-like values; tests like `arr.every(true)` rely on the throw.
         il.Emit(loadOp);
+        il.Emit(OpCodes.Isinst, runtime.FunctionPrototypes.Type);
+        il.Emit(OpCodes.Brtrue, okLabel);
+        il.Emit(loadOp);
         il.Emit(OpCodes.Isinst, runtime.FunctionValues.Type);
         il.Emit(OpCodes.Brtrue, okLabel);
         il.Emit(loadOp);
@@ -2065,6 +2068,9 @@ public partial class RuntimeEmitter
         // throw TypeError per ECMA-262 IsCallable. Mirrors
         // EmitThrowIfCallbackNotCallable used by every/filter/map.
         il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.FunctionPrototypes.Type);
+        il.Emit(OpCodes.Brtrue, reduceCallableOk);
+        il.Emit(OpCodes.Ldloc, callbackLocal);
         il.Emit(OpCodes.Isinst, runtime.FunctionValues.Type);
         il.Emit(OpCodes.Brtrue, reduceCallableOk);
         il.Emit(OpCodes.Ldloc, callbackLocal);
@@ -2261,6 +2267,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
         il.Emit(OpCodes.Brtrue, reduceRCallableThrow);
         // Positive callable check (mirrors reduce / EmitThrowIfCallbackNotCallable).
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Isinst, runtime.FunctionPrototypes.Type);
+        il.Emit(OpCodes.Brtrue, reduceRCallableOk);
         il.Emit(OpCodes.Ldloc, callbackLocal);
         il.Emit(OpCodes.Isinst, runtime.FunctionValues.Type);
         il.Emit(OpCodes.Brtrue, reduceRCallableOk);

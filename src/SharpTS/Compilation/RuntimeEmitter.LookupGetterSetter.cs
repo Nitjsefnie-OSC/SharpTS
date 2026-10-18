@@ -14,7 +14,8 @@ public partial class RuntimeEmitter
         EmittedStringCoercionRuntime StringCoercion,
         TypeBuilder TSFunctionType,
         FieldInfo UndefinedInstance,
-        Type UndefinedType
+        Type UndefinedType,
+        Type FunctionPrototypeType
     );
 
     private readonly record struct AccessorHelperInputs(
@@ -22,7 +23,8 @@ public partial class RuntimeEmitter
         EmittedErrorRuntime Errors,
         EmittedObjectDescriptorRuntime ObjectDescriptors,
         TypeBuilder TSFunctionType,
-        FieldInfo UndefinedInstance
+        FieldInfo UndefinedInstance,
+        Type FunctionPrototypeType
     );
 
     private readonly record struct LookupAccessorHelperInputs(
@@ -83,7 +85,8 @@ public partial class RuntimeEmitter
                 inputs.Errors,
                 inputs.ObjectDescriptors,
                 inputs.TSFunctionType,
-                inputs.UndefinedInstance
+                inputs.UndefinedInstance,
+                inputs.FunctionPrototypeType
             ),
             isGetter: true
         );
@@ -94,7 +97,8 @@ public partial class RuntimeEmitter
                 inputs.Errors,
                 inputs.ObjectDescriptors,
                 inputs.TSFunctionType,
-                inputs.UndefinedInstance
+                inputs.UndefinedInstance,
+                inputs.FunctionPrototypeType
             ),
             isGetter: false
         );
@@ -129,6 +133,9 @@ public partial class RuntimeEmitter
         // MethodInfo (raw helper). Everything else (string/number/null/undefined/
         // plain object) triggers the throw.
         var isCallableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, inputs.FunctionPrototypeType);
+        il.Emit(OpCodes.Brtrue, isCallableLabel);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
         il.Emit(OpCodes.Brtrue, isCallableLabel);

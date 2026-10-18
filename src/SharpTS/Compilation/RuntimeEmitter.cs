@@ -154,6 +154,7 @@ public partial class RuntimeEmitter
 
         // Emit $Undefined singleton class first (other methods need this type)
         EmitUndefinedClass(moduleBuilder, runtime.Sentinels);
+        EmitFunctionPrototypeType(moduleBuilder, runtime.FunctionPrototypes, runtime.Sentinels.UndefinedInstance);
         runtime.ArrayStorage.NumberQueue = EmitArrayQueue(moduleBuilder, runtime, ArrayElements.Double);
         runtime.ArrayStorage.BooleanQueue = EmitArrayQueue(moduleBuilder, runtime, ArrayElements.Bool);
         runtime.ArrayStorage.NumberQueueWithHoles = EmitArrayQueue(moduleBuilder, runtime, ArrayElements.Double, true);
@@ -626,7 +627,8 @@ public partial class RuntimeEmitter
                 runtime.Map,
                 runtime.Set,
                 runtime.Sentinels.UndefinedInstance,
-                runtime.Errors
+                runtime.Errors,
+                runtime.FunctionPrototypes.Type
             )
         );
         runtime.FunctionBindings.CompleteEmission();

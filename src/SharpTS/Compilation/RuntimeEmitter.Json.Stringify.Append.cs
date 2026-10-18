@@ -249,10 +249,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, inputs.TSSymbolType);
         il.Emit(OpCodes.Brtrue, falseLabel);
         il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
-        il.Emit(OpCodes.Brtrue, falseLabel);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, inputs.BoundTSFunctionType);
+        il.Emit(OpCodes.Call, inputs.TypeOf);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
         il.Emit(OpCodes.Brtrue, falseLabel);
 
         EmitBoxedPrimitiveJsonCoerce(

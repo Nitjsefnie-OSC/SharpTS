@@ -2160,9 +2160,7 @@ public partial class Interpreter
             }
         }
 
-        // Symbol-keyed computed methods (`[Symbol.iterator]() {...}`) can't go into the string
-        // dictionaries; collected here and attached to the class after construction.
-        List<(SharpTSSymbol Symbol, ISharpTSCallable Func, bool IsStatic)>? symbolMethods = null;
+        List<ClassMemberDefinition> memberDefinitions = [];
         List<(int Position, ISharpTSCallable Function, bool? IsGetter)>? constructorProperties = null;
 
         // Separate static and instance methods (skip overload signatures with no body)
@@ -2187,17 +2185,18 @@ public partial class Interpreter
                 object? key = computedMemberKeys[method.ComputedKey];
                 if (key is SharpTSSymbol symbolKey)
                 {
-                    (symbolMethods ??= []).Add((symbolKey, func, method.IsStatic));
+                    memberDefinitions.Add(new(method.Name.SourceOrderOffset, symbolKey, func, method.IsStatic, null));
                     continue;
                 }
                 string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
                 SharpTSClass.SetComputedMethodName(func, keyStr);
                 if (!method.IsStatic && keyStr == "constructor")
                 {
-                    (constructorProperties ??= []).Add((method.Name.Start, func, null));
+                    (constructorProperties ??= []).Add((method.Name.SourceOrderOffset, func, null));
                     continue;
                 }
                 (method.IsStatic ? staticMethods : methods)[keyStr] = func;
+                memberDefinitions.Add(new(method.Name.SourceOrderOffset, keyStr, func, method.IsStatic, null));
                 continue;
             }
 
@@ -2216,10 +2215,13 @@ public partial class Interpreter
             else if (method.IsStatic)
             {
                 staticMethods[method.Name.Lexeme] = func;
+                memberDefinitions.Add(new(method.Name.SourceOrderOffset, method.Name.Lexeme, func, true, null));
             }
             else
             {
                 methods[method.Name.Lexeme] = func;
+                if (method.Name.Lexeme != "constructor")
+                    memberDefinitions.Add(new(method.Name.SourceOrderOffset, method.Name.Lexeme, func, false, null));
             }
         }
 
@@ -2228,10 +2230,6 @@ public partial class Interpreter
         Dictionary<string, SharpTSFunction> setters = [];
         Dictionary<string, SharpTSFunction> staticGetters = [];
         Dictionary<string, SharpTSFunction> staticSetters = [];
-
-        // Symbol-keyed accessors can't go into the string dictionaries; collected
-        // here and attached to the class after construction.
-        List<(SharpTSSymbol Symbol, SharpTSFunction Func, bool IsStatic, bool IsGetter)>? symbolAccessors = null;
 
         if (classStmt.Accessors != null)
         {
@@ -2257,21 +2255,23 @@ public partial class Interpreter
                     object? key = computedMemberKeys[accessor.ComputedKey];
                     if (key is SharpTSSymbol symbolKey)
                     {
-                        (symbolAccessors ??= []).Add((symbolKey, func, accessor.IsStatic, isGetter));
+                        memberDefinitions.Add(new(accessor.Name.SourceOrderOffset, symbolKey, func, accessor.IsStatic, isGetter));
                         continue;
                     }
                     string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
                     if (!accessor.IsStatic && keyStr == "constructor")
-                        (constructorProperties ??= []).Add((accessor.Name.Start, func, isGetter));
+                        (constructorProperties ??= []).Add((accessor.Name.SourceOrderOffset, func, isGetter));
                     if (isGetter) (accessor.IsStatic ? staticGetters : getters)[keyStr] = func;
                     else (accessor.IsStatic ? staticSetters : setters)[keyStr] = func;
+                    if (accessor.IsStatic || keyStr != "constructor")
+                        memberDefinitions.Add(new(accessor.Name.SourceOrderOffset, keyStr, func, accessor.IsStatic, isGetter));
                     continue;
                 }
 
                 var targetGet = accessor.IsStatic ? staticGetters : getters;
                 var targetSet = accessor.IsStatic ? staticSetters : setters;
                 if (!accessor.IsStatic && accessor.Name.Lexeme == "constructor")
-                    (constructorProperties ??= []).Add((accessor.Name.Start, func, isGetter));
+                    (constructorProperties ??= []).Add((accessor.Name.SourceOrderOffset, func, isGetter));
 
                 if (isGetter)
                 {
@@ -2281,8 +2281,13 @@ public partial class Interpreter
                 {
                     targetSet[accessor.Name.Lexeme] = func;
                 }
+                if (accessor.IsStatic || accessor.Name.Lexeme != "constructor")
+                    memberDefinitions.Add(new(accessor.Name.SourceOrderOffset, accessor.Name.Lexeme, func, accessor.IsStatic, isGetter));
             }
         }
+
+        var memberProperties = NormalizeClassMemberDefinitions(memberDefinitions, methods, staticMethods,
+            getters, setters, staticGetters, staticSetters);
 
         // Process auto-accessors (TypeScript 4.9+)
         List<Stmt.AutoAccessor> instanceAutoAccessors = [];
@@ -2396,21 +2401,7 @@ public partial class Interpreter
                 .Where(captured => captured.Name == field.Name)).ToList();
         InstallInstanceConstructorProperties(klass, constructorProperties);
 
-        if (symbolAccessors != null)
-        {
-            foreach (var (symbol, func, isStatic, isGetter) in symbolAccessors)
-            {
-                klass.AddSymbolAccessor(symbol, func, isStatic, isGetter);
-            }
-        }
-
-        if (symbolMethods != null)
-        {
-            foreach (var (symbol, func, isStatic) in symbolMethods)
-            {
-                klass.AddSymbolMethod(symbol, func, isStatic);
-            }
-        }
+        InstallClassSymbolMembers(klass, memberProperties);
 
         // Execute static initializers in declaration order (if present)
         if (hasStaticInitializers)

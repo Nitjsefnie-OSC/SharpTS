@@ -116,7 +116,7 @@ public partial class ILCompiler
         foreach (var later in GetNominalClassDeclaration(owner)?.Methods ?? [])
         {
             if (later.Body == null || later.IsPrivate || later.ComputedKey != null
-                || later.IsStatic != source.IsStatic || later.Name.Start <= source.Name.Start
+                || later.IsStatic != source.IsStatic || later.Name.SourceOrderOffset <= source.Name.SourceOrderOffset
                 || (!later.IsStatic && later.Name.Lexeme == "constructor")) continue;
             il.Emit(OpCodes.Ldloc, key);
             il.Emit(OpCodes.Isinst, _types.String);
@@ -127,7 +127,7 @@ public partial class ILCompiler
         foreach (var later in GetNominalClassDeclaration(owner)?.Accessors ?? [])
         {
             if (later.IsAbstract || later.IsStatic != source.IsStatic
-                || later.Name.Start <= source.Name.Start) continue;
+                || later.Name.SourceOrderOffset <= source.Name.SourceOrderOffset) continue;
             // Literal static computed accessors are also installed eagerly by
             // prototype registration, rather than replayed after static blocks.
             var laterName = later.ComputedKey == null ? later.Name.Lexeme

@@ -154,6 +154,9 @@ public partial class ILCompiler
         // also lets registration preserve a generic family's explicit override.
         if (baseType == _runtime.ArrayStorage.Type)
             il.Emit(OpCodes.Call, _runtime.ArrayOperations.PrototypePopulateMethod);
+        var nativeErrorPrototypePopulate = GetNativeErrorPrototypePopulate(baseType);
+        if (nativeErrorPrototypePopulate != null)
+            il.Emit(OpCodes.Call, nativeErrorPrototypePopulate);
 
         il.Emit(OpCodes.Ldtoken, selfType);
         il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
@@ -172,6 +175,7 @@ public partial class ILCompiler
 
         Type? basePrototypeType = null;
         if (baseType != null && (baseType == _runtime.ArrayStorage.Type
+            || nativeErrorPrototypePopulate != null
             || TryResolveClassPrototypeConstructor(baseType, out _)))
             basePrototypeType = baseType;
 
@@ -364,6 +368,26 @@ public partial class ILCompiler
         }
     }
 
+    private MethodBuilder? GetNativeErrorPrototypePopulate(Type? baseType)
+    {
+        var errors = _runtime.Errors;
+        foreach (var (errorType, populate) in new[]
+        {
+            (errors.Type, errors.PrototypePopulate),
+            (errors.TypeErrorType, errors.TypeErrorPrototypePopulate),
+            (errors.RangeErrorType, errors.RangeErrorPrototypePopulate),
+            (errors.ReferenceErrorType, errors.ReferenceErrorPrototypePopulate),
+            (errors.SyntaxErrorType, errors.SyntaxErrorPrototypePopulate),
+            (errors.URIErrorType, errors.URIErrorPrototypePopulate),
+            (errors.EvalErrorType, errors.EvalErrorPrototypePopulate),
+            (errors.AggregateErrorType, errors.AggregateErrorPrototypePopulate)
+        })
+        {
+            if (baseType == errorType) return populate;
+        }
+        return null;
+    }
+
     private Stmt.Class? GetNominalClassDeclaration(TypeBuilder typeBuilder)
         => _classes.Declarations.FirstOrDefault(source => !_runtimeClassDeclarations.ContainsKey(source)
             && _classes.DeclarationNames.GetValueOrDefault(source) == typeBuilder.FullName);
@@ -373,7 +397,7 @@ public partial class ILCompiler
         var declaration = GetNominalClassDeclaration(typeBuilder);
         bool hasDeferredKeys = _classes.DeferredDefinitions.TryGet(typeBuilder, out _);
         var computedAccessors = _classes.ComputedMembers.GetAccessors(typeBuilder);
-        foreach (var accessor in (declaration?.Accessors ?? []).OrderBy(accessor => accessor.Name.Start))
+        foreach (var accessor in (declaration?.Accessors ?? []).OrderBy(accessor => accessor.Name.SourceOrderOffset))
         {
             if (staticOnly && !accessor.IsStatic) continue;
             string? name = accessor.ComputedKey == null ? accessor.Name.Lexeme
@@ -383,7 +407,7 @@ public partial class ILCompiler
             // A later data method replaces both halves of an earlier accessor.
             if (declaration!.Methods.Any(method => method.Body != null && !method.IsPrivate && method.ComputedKey == null
                     && method.IsStatic == accessor.IsStatic && (method.IsStatic || method.Name.Lexeme != "constructor")
-                    && method.Name.Lexeme == name && method.Name.Start > accessor.Name.Start)) continue;
+                    && method.Name.Lexeme == name && method.Name.SourceOrderOffset > accessor.Name.SourceOrderOffset)) continue;
             MethodBuilder? accessorMethod = null;
             if (accessor.ComputedKey == null)
                 _classes.AccessorBuilders.TryGetValue(accessor, out accessorMethod);

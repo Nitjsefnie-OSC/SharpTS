@@ -46,7 +46,8 @@ public partial class RuntimeEmitter
         FieldInfo UndefinedInstance,
         EmittedNumericCoercionRuntime NumericCoercion,
         EmittedBigIntRuntime BigInt,
-        EmittedBooleanRuntime Booleans
+        EmittedBooleanRuntime Booleans,
+        EmittedFunctionPrototypeRuntime FunctionPrototypes
     );
 
     private readonly record struct InvokeMethodValueInputs(
@@ -69,7 +70,9 @@ public partial class RuntimeEmitter
         bool HasAnyTypedArray,
         bool UsesNodeStreams,
         bool UsesPromise,
-        bool UsesTextEncoding
+        bool UsesTextEncoding,
+        EmittedFunctionPrototypeRuntime FunctionPrototypes,
+        FieldInfo UndefinedInstance
     );
 
     /// <summary>
@@ -125,6 +128,7 @@ public partial class RuntimeEmitter
         // Check if obj is List<object>
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brfalse, notArrayLabel);
@@ -194,6 +198,16 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // Function.prototype retains its ordinary descriptor-backed singleton
+        // storage, but also has [[Call]] and always returns undefined (#2240).
+        var notFunctionPrototype = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypes.Prototype);
+        il.Emit(OpCodes.Bne_Un, notFunctionPrototype);
+        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notFunctionPrototype);
 
         // ECMA-262 §22.2.6: a RegExp object is not callable — calling one throws
         // TypeError. Checked early so it doesn't fall into the dispatch chain.
@@ -776,6 +790,14 @@ public partial class RuntimeEmitter
             () => il.Emit(OpCodes.Ldarg_1)
         );
         il.MarkLabel(notNullLabel);
+
+        var notFunctionPrototype = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypes.Prototype);
+        il.Emit(OpCodes.Bne_Un, notFunctionPrototype);
+        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notFunctionPrototype);
 
         // A reflected MethodBase (a computed symbol-keyed method resolved from the symbol-method
         // registry, #647) is invoked directly: function.Invoke(receiver, args). A static method

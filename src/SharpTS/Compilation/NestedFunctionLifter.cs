@@ -610,12 +610,25 @@ internal sealed class NestedFunctionLifter
     private static void CollectShapeCandidatesExpr(Expr expr, HashSet<string> enclosingBlockBindings, ShapeScan scan) =>
         new ClassExpressionShapeScanner(enclosingBlockBindings, scan).Visit(expr);
 
-    /// <summary>Finds class expressions anywhere under an expression and scans each method body using
-    /// function-like candidate semantics. The ordinary visitor supplies exhaustive expression traversal;
-    /// the override supplements class-definition children not covered by its generic class visitor.</summary>
+    /// <summary>Finds function and class expressions and scans their bodies using function-like
+    /// candidate semantics. The ordinary visitor supplies exhaustive expression traversal; these
+    /// overrides preserve the enclosing callable kind when discovering nested declarations.</summary>
     private sealed class ClassExpressionShapeScanner(HashSet<string> enclosingBlockBindings, ShapeScan scan)
         : Parsing.Visitors.AstVisitorBase
     {
+        protected override void VisitArrowFunction(Expr.ArrowFunction expression)
+        {
+            // Ordinary function expressions use the same AST node as arrows, with
+            // HasOwnThis set. A generic visitor descends into their declarations
+            // without classifying them for generator/async lowering (#2237).
+            foreach (var parameter in expression.Parameters)
+                if (parameter.DefaultValue != null) Visit(parameter.DefaultValue);
+            if (expression.ExpressionBody != null) Visit(expression.ExpressionBody);
+            if (expression.BlockBody != null)
+                CollectShapeCandidates(expression.BlockBody, expression.IsGenerator || expression.IsAsync,
+                    insideFunction: true, insideModuleBlock: false, enclosingBlockBindings, scan);
+        }
+
         protected override void VisitClassExpr(Expr.ClassExpr expr)
         {
             if (expr.SuperclassExpr != null) Visit(expr.SuperclassExpr);

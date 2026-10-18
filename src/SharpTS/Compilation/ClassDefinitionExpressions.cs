@@ -22,10 +22,10 @@ internal static class ClassDefinitionExpressions
 
     internal static IEnumerable<Expr> MemberKeys(IEnumerable<Stmt.Field> fields,
         IEnumerable<Stmt.Function> methods, IEnumerable<Stmt.Accessor>? accessors) =>
-        fields.Select(field => (field.Name.Start, field.ComputedKey))
-            .Concat(methods.Select(method => (method.Name.Start, method.ComputedKey)))
-            .Concat((accessors ?? []).Select(accessor => (accessor.Name.Start, accessor.ComputedKey)))
+        fields.Select(field => (field.Name.SourceOrderOffset, field.ComputedKey))
+            .Concat(methods.Select(method => (method.Name.SourceOrderOffset, method.ComputedKey)))
+            .Concat((accessors ?? []).Select(accessor => (accessor.Name.SourceOrderOffset, accessor.ComputedKey)))
             .Where(member => member.ComputedKey != null)
-            .OrderBy(member => member.Start)
+            .OrderBy(member => member.SourceOrderOffset)
             .Select(member => member.ComputedKey!);
 }

@@ -89,9 +89,8 @@ public partial class RuntimeEmitter
     );
 
     private readonly record struct FunctionSkipCheckInputs(
-        TypeBuilder BoundTSFunctionType,
-        TypeBuilder TSFunctionType,
-        TypeBuilder TSSymbolType
+        TypeBuilder TSSymbolType,
+        MethodBuilder TypeOf
     );
 
     private readonly record struct ToJsonCheckInputs(
@@ -1198,7 +1197,7 @@ public partial class RuntimeEmitter
         EmitFunctionSkipCheck(
             il,
             valueLocal,
-            new FunctionSkipCheckInputs(inputs.BoundTSFunctionType, inputs.TSFunctionType, inputs.TSSymbolType)
+            new FunctionSkipCheckInputs(inputs.TSSymbolType, inputs.TypeOf)
         );
 
         // Boxed-primitive unwrap (ECMA-262 25.5.2.3 step 4.a-c). $Object and
@@ -1397,8 +1396,8 @@ public partial class RuntimeEmitter
     /// is true, set value to undefined. We model "value becomes undefined" by
     /// returning C# null from the helper — the caller treats null as "drop"
     /// for object properties and "null" for array elements, matching the spec.
-    /// Functions/bound functions/arrow functions all isinst $TSFunction or
-    /// $BoundTSFunction (the only callable shapes the compiler emits for JS).
+    /// Uses the shared callable classification, including the Function.prototype
+    /// intrinsic, bound wrappers, and callable proxies.
     /// </summary>
     private void EmitFunctionSkipCheck(ILGenerator il, LocalBuilder valueLocal, FunctionSkipCheckInputs inputs)
     {
@@ -1412,11 +1411,9 @@ public partial class RuntimeEmitter
 
         // Functions / bound functions (ECMA-262 25.5.2.3 step 9) → undefined.
         il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
-        il.Emit(OpCodes.Brtrue, skipLabel);
-
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, inputs.BoundTSFunctionType);
+        il.Emit(OpCodes.Call, inputs.TypeOf);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
         il.Emit(OpCodes.Brfalse, notSkippedLabel);
 
         il.MarkLabel(skipLabel);

@@ -940,8 +940,10 @@ public static partial class ObjectBuiltIns
                 ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
             SharpTSSymbolPrototype symbolPrototype => symbolPrototype.GetOwnPropertyDescriptor(propertyKey)
                 ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
+            SharpTSFunctionPrototype functionPrototype when !functionPrototype.HasOwnProperty(propertyKey) => null,
             SharpTSFunctionPrototype functionPrototype => functionPrototype.GetOwnPropertyDescriptor(propertyKey)
                 ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
+            SharpTSObjectPrototype objectPrototype when !objectPrototype.HasOwnProperty(propertyKey) => null,
             SharpTSObjectPrototype objectPrototype => objectPrototype.GetOwnPropertyDescriptor(propertyKey)
                 ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
             SharpTSClassPrototype classPrototype => GetClassPrototypeOwnPropertyDescriptor(classPrototype, propertyKey),
@@ -1154,8 +1156,11 @@ public static partial class ObjectBuiltIns
         Value = value,
         HasValue = true,
         Writable = writable,
+        HasWritable = true,
         Enumerable = enumerable,
+        HasEnumerable = true,
         Configurable = configurable,
+        HasConfigurable = true,
     };
 
     /// <summary>

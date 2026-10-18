@@ -1760,9 +1760,11 @@ public partial class Interpreter
         if (memberName is "bind" or "call" or "apply")
             return FunctionBuiltIns.GetMember(klass, memberName, this);
 
-        // Class constructors are function objects and therefore inherit the
-        // ordinary Object.prototype methods through Function.prototype.
-        if (InheritedObjectPrototypeMember(klass, memberName) is { } inherited)
+        // Preserve inherited values and accessor receivers through the full
+        // constructor prototype chain, including the function prototype tail.
+        var inherited = GetPropertyValueFromChain(
+            ObjectBuiltIns.PrototypeOf(this, klass), memberName, receiver);
+        if (inherited is not SharpTSUndefined)
             return inherited;
 
         // Promise subclasses (#242) inherit the Promise static side
@@ -2247,6 +2249,30 @@ public partial class Interpreter
             return true;
         }
 
+        return false;
+    }
+
+    private bool TryAssignThroughClassDescriptor(
+        SharpTSClass klass, string name, object? value, bool strictMode)
+    {
+        if (klass.FindStaticPropertyDescriptor(name) is { } staticDescriptor)
+            return TryAssignThroughDescriptor(staticDescriptor, klass, name, value, strictMode);
+        // Static auto-accessors still use their class-owned backing storage.
+        if (klass.HasStaticAutoAccessor(name)) return false;
+
+        object? current = ObjectBuiltIns.PrototypeOf(this, klass);
+        for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
+        {
+            if (current is SharpTSProxy proxy)
+            {
+                if (!proxy.TrapSetProperty(name, value, this, klass) && strictMode)
+                    throw new ThrowException(new SharpTSTypeError($"Proxy set trap rejected property '{name}'"));
+                return true;
+            }
+            if (ObjectBuiltIns.OwnPropertyDescriptorOf(this, current, name) is { } descriptor)
+                return TryAssignThroughDescriptor(descriptor, klass, name, value, strictMode);
+            current = ObjectBuiltIns.PrototypeOf(this, current);
+        }
         return false;
     }
 
@@ -2902,8 +2928,7 @@ public partial class Interpreter
                 return value;
 
             case TypeCategory.Class when obj is SharpTSClass klass:
-                if (TryAssignThroughDescriptor(klass.FindStaticPropertyDescriptor(memberName),
-                        klass, memberName, value, strictMode))
+                if (TryAssignThroughClassDescriptor(klass, memberName, value, strictMode))
                     return value;
                 if (klass.HasStaticAutoAccessor(memberName))
                 {

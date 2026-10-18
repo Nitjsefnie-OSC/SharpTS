@@ -1943,8 +1943,7 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.ClassString t:
-                if (!TryAssignThroughDescriptor(t.Target.FindStaticPropertyDescriptor(t.Key),
-                        t.Target, t.Key, value, strictMode))
+                if (!TryAssignThroughClassDescriptor(t.Target, t.Key, value, strictMode))
                     t.Target.SetStaticProperty(t.Key, value, strictMode);
                 break;
 

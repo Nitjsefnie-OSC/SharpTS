@@ -682,13 +682,17 @@ public partial class TypeChecker
     /// Validates that methods/accessors marked with 'override' actually override a member in the superclass chain.
     /// </summary>
     private void ValidateOverrideMembers(Stmt.Class classStmt, TypeInfo.Class classType, bool staticOnly = false)
+        => ValidateOverrideMembers(classStmt.Methods, classStmt.Accessors, classType, staticOnly);
+
+    private void ValidateOverrideMembers(IReadOnlyList<Stmt.Function> methods,
+        IReadOnlyList<Stmt.Accessor>? accessors, TypeInfo.Class classType, bool staticOnly = false)
     {
         // Check methods marked with override
-        foreach (var method in classStmt.Methods)
+        foreach (var method in methods)
         {
             if (method.IsOverride && (!staticOnly || method.IsStatic))
             {
-                string? methodName = method.IsStatic && method.ComputedKey != null
+                string? methodName = method.ComputedKey != null
                     ? TryGetWellKnownSymbolMemberName(method.ComputedKey) : method.Name.Lexeme;
                 if (methodName == null) continue;
                 bool hasParent = method.IsStatic
@@ -702,9 +706,9 @@ public partial class TypeChecker
         }
 
         // Check accessors marked with override
-        if (classStmt.Accessors != null)
+        if (accessors != null)
         {
-            foreach (var accessor in classStmt.Accessors)
+            foreach (var accessor in accessors)
             {
                 // Computed accessor names can't be validated against parent members.
                 if (accessor.ComputedKey != null)
@@ -752,6 +756,11 @@ public partial class TypeChecker
     }
 
     private void ValidateStaticOverrideCompatibility(Stmt.Class declaration, TypeInfo.Class classType)
+        => ValidateStaticOverrideCompatibility(declaration.Methods, declaration.Accessors,
+            declaration.Name.Lexeme, classType);
+
+    private void ValidateStaticOverrideCompatibility(IReadOnlyList<Stmt.Function> methods,
+        IReadOnlyList<Stmt.Accessor>? accessors, string className, TypeInfo.Class classType)
     {
         void Check(string name, TypeInfo actual, int line, bool method)
         {
@@ -759,18 +768,18 @@ public partial class TypeChecker
             if (expected == null) return;
             if (!IsMemberCompatible(expected, actual, method))
                 throw new TypeCheckException(
-                    $" Static override '{name}' in class '{declaration.Name.Lexeme}' is not compatible with the static member in its base class.",
+                    $" Static override '{name}' in class '{className}' is not compatible with the static member in its base class.",
                     line: line, tsCode: "TS2417");
         }
 
-        foreach (var method in declaration.Methods.Where(method => method.IsStatic && method.IsOverride))
+        foreach (var method in methods.Where(method => method.IsStatic && method.IsOverride))
         {
             string? name = method.ComputedKey == null ? method.Name.Lexeme
                 : TryGetWellKnownSymbolMemberName(method.ComputedKey);
             if (name != null && classType.StaticMethods.TryGetValue(name, out var actual))
                 Check(name, actual, method.Name.Line, method: true);
         }
-        foreach (var accessor in declaration.Accessors ?? [])
+        foreach (var accessor in accessors ?? [])
         {
             if (accessor.IsStatic && accessor.IsOverride && accessor.ComputedKey == null
                 && classType.StaticProperties.TryGetValue(accessor.Name.Lexeme, out var actual))

@@ -781,11 +781,13 @@ public partial class Parser
             AccessModifier access = AccessModifier.Public;
             bool isStatic = false;
             bool isReadonly = false;
+            bool isOverride = false;
             bool isMemberAsync = false;
             bool isMemberDeclare = false;
 
             while (!IsMethodOrFieldOpener(PeekNext().Type) &&
-                   Match(TokenType.PUBLIC, TokenType.PRIVATE, TokenType.PROTECTED, TokenType.STATIC, TokenType.READONLY, TokenType.ASYNC, TokenType.DECLARE))
+                   !(Check(TokenType.OVERRIDE) && PeekNext().Type == TokenType.RIGHT_BRACE) &&
+                   Match(TokenType.PUBLIC, TokenType.PRIVATE, TokenType.PROTECTED, TokenType.STATIC, TokenType.READONLY, TokenType.OVERRIDE, TokenType.ASYNC, TokenType.DECLARE))
             {
                 var modifier = Previous().Type;
                 switch (modifier)
@@ -793,18 +795,28 @@ public partial class Parser
                     case TokenType.PUBLIC: access = AccessModifier.Public; break;
                     case TokenType.PRIVATE: access = AccessModifier.Private; break;
                     case TokenType.PROTECTED: access = AccessModifier.Protected; break;
-                    case TokenType.STATIC: isStatic = true; break;
+                    case TokenType.STATIC:
+                        if (isOverride)
+                            throw new Exception("Parse Error: 'static' modifier must precede 'override' modifier.");
+                        isStatic = true;
+                        break;
                     case TokenType.READONLY: isReadonly = true; break;
+                    case TokenType.OVERRIDE: isOverride = true; break;
                     case TokenType.ASYNC: isMemberAsync = true; break;
                     case TokenType.DECLARE: isMemberDeclare = true; break;
                 }
             }
 
+            if (isOverride && superclassExpr == null)
+                throw new Exception("Parse Error: Cannot use 'override' modifier in a class that does not extend another class.");
+            if (isMemberDeclare && isOverride)
+                throw new Exception("Parse Error: 'declare' modifier cannot be used with 'override'.");
+
             // Check for static block: static { ... }
             if (isStatic && Check(TokenType.LEFT_BRACE))
             {
                 // Validate: no other modifiers allowed with static blocks
-                if (access != AccessModifier.Public || isReadonly || isMemberAsync || isMemberDeclare)
+                if (access != AccessModifier.Public || isReadonly || isOverride || isMemberAsync || isMemberDeclare)
                 {
                     throw new Exception($"Parse Error at line {Previous().Line}: Static blocks cannot have access modifiers or other keywords.");
                 }
@@ -864,7 +876,7 @@ public partial class Parser
                     isStatic,
                     access,
                     isReadonly,
-                    IsOverride: false,  // Class expressions don't support override
+                    IsOverride: isOverride,
                     Decorators: null,   // Class expressions don't support decorators on members
                     TypeAnnotationNode: typeAnnotationNode
                 );
@@ -918,7 +930,7 @@ public partial class Parser
                 Token accessorBodyOpen = Consume(TokenType.LEFT_BRACE, "Expect '{' before accessor body.");
                 List<Stmt> body = Block();
 
-                var accessor = new Stmt.Accessor(accessorName, kind, setterParam, body, returnType, access, IsStatic: isStatic, ComputedKey: accessorComputedKey, ReturnTypeNode: returnTypeNode);
+                var accessor = new Stmt.Accessor(accessorName, kind, setterParam, body, returnType, access, IsOverride: isOverride, IsStatic: isStatic, ComputedKey: accessorComputedKey, ReturnTypeNode: returnTypeNode);
                 RecordWrittenMember(accessor, accessorName);
                 RecordAccessorSyntax(accessor, kind, accessorParametersOpen, accessorParametersClose,
                     new SourceSpan(accessorBodyOpen.Start, ConsumedSourceEnd));
@@ -1064,7 +1076,7 @@ public partial class Parser
                 {
                     throw new Exception($"Parse Error at line {Peek().Line}: 'declare' modifier cannot be used with computed property names.");
                 }
-                ParseComputedClassMember(isStatic, isMemberAsync, isMemberGenerator, isOverride: false, isReadonly, access, memberDecorators: null, methods, fields, staticInitializers);
+                ParseComputedClassMember(isStatic, isMemberAsync, isMemberGenerator, isOverride, isReadonly, access, memberDecorators: null, methods, fields, staticInitializers);
             }
             else
             {
@@ -1075,6 +1087,9 @@ public partial class Parser
                 }
 
                 bool isConstructor = IsConstructorPropertyName();
+
+                if (isOverride && isConstructor)
+                    throw new Exception("Parse Error: A constructor cannot use the 'override' modifier.");
 
                 // Validate: generator cannot be used with constructor
                 if (isMemberGenerator && isConstructor)
@@ -1090,7 +1105,7 @@ public partial class Parser
                 string kind = isConstructor ? "constructor" : "method";
                 var func = (Stmt.Function)FunctionDeclaration(kind, isMemberAsync, isMemberGenerator);
                 var originalFunction = func;
-                func = func with { IsStatic = isStatic, Access = access };
+                func = func with { IsStatic = isStatic, Access = access, IsOverride = isOverride };
                 CopyEditorSyntax(originalFunction, func);
                 methods.Add(func);
 

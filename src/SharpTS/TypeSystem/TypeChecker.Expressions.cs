@@ -2771,6 +2771,10 @@ public partial class TypeChecker
             classExprResultType = classType;
         }
 
+        ValidateOverrideMembers(classExpr.Methods, classExpr.Accessors, classTypeForBody,
+            staticOnly: classTypeParams != null);
+        ValidateStaticOverrideCompatibility(classExpr.Methods, classExpr.Accessors, className, classTypeForBody);
+
         // Validate interface implementations (skip for generic - validated at instantiation)
         if (classExpr.Interfaces != null && classTypeParams == null)
         {

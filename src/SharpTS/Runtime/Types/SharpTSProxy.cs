@@ -1608,6 +1608,8 @@ public class SharpTSProxy : ISharpTSCallable
             {
                 string name when _target is SharpTSProxy proxy
                     => proxy.TrapGetOwnPropertyDescriptor(name, interpreter),
+                string name when _target is SharpTSClass klass && interpreter != null
+                    => ObjectBuiltIns.OwnPropertyDescriptorOf(interpreter, klass, name)?.ToObject(),
                 string name
                     => ObjectBuiltIns.RuntimeGetOwnPropertyDescriptor(_target, name),
                 SharpTSSymbol symbol when _target is SharpTSProxy proxy
@@ -1650,6 +1652,10 @@ public class SharpTSProxy : ISharpTSCallable
             case ISharpTSOwnPropertyObject ownPropertyObject:
                 keys.AddRange(ownPropertyObject.OwnProperties.OwnVisibleStringKeys());
                 keys.AddRange(ownPropertyObject.OwnProperties.GetSymbolPropertyNames());
+                break;
+            case SharpTSClass klass:
+                keys.AddRange(klass.OwnStaticStringKeys());
+                keys.AddRange(klass.OwnStaticSymbolKeys());
                 break;
             case SharpTSObject obj:
                 keys.AddRange(obj.OwnVisibleStringKeys());

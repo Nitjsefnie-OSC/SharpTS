@@ -417,6 +417,7 @@ public partial class SharpTSClass(
             _staticPropertyObject.SetPropertyStrict(name, value, strictMode);
         else
             _staticProperties[name] = value;
+        if (HasOwnStaticMember(name)) RecordOwnStaticKey(name);
     }
 
     internal void InitializeStaticProperty(string name, object? value)
@@ -468,6 +469,7 @@ public partial class SharpTSClass(
         if (_staticMethods.ContainsKey(name))
             _deletedStaticMethods.Add(name);
         _staticMethodCache.TryRemove(name, out _);
+        _ownStaticPropertyOrder.Remove(name);
         return true;
     }
 
@@ -488,6 +490,7 @@ public partial class SharpTSClass(
         if (_staticMethods.ContainsKey(name))
             _deletedStaticMethods.Add(name);
         _staticMethodCache.TryRemove(name, out _);
+        RecordOwnStaticKey(name);
         return true;
     }
 
@@ -516,9 +519,11 @@ public partial class SharpTSClass(
         if (_staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol) is not null)
         {
             _staticSymbolAccessorObject.SetBySymbol(symbol, value);
+            RecordOwnStaticKey(symbol);
             return;
         }
         (_staticSymbolProperties ??= [])[symbol] = value;
+        RecordOwnStaticKey(symbol);
     }
 
     /// <summary>
@@ -566,7 +571,10 @@ public partial class SharpTSClass(
         }
         var descriptor = OwnSymbolAccessorDescriptor(symbol, isStatic);
         if (isStatic)
+        {
             (_staticSymbolAccessorObject ??= new SharpTSObject([])).DefineProperty(symbol, descriptor!);
+            RecordOwnStaticKey(symbol);
+        }
         else
             _prototype?.DefineDeclaredSymbolAccessor(symbol, descriptor!);
     }
@@ -599,7 +607,11 @@ public partial class SharpTSClass(
         string name = symbol.Description is { } description ? $"[{description}]" : "";
         SetComputedMethodName(func, name);
         BindPrivateMemberOwner(func);
-        if (isStatic) (_staticSymbolMethods ??= [])[symbol] = func;
+        if (isStatic)
+        {
+            (_staticSymbolMethods ??= [])[symbol] = func;
+            RecordOwnStaticKey(symbol);
+        }
         else
         {
             (_symbolMethods ??= [])[symbol] = func;

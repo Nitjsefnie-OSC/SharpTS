@@ -2403,6 +2403,7 @@ public partial class Interpreter
                     .Where(captured => captured.Name == field.Name)).ToList();
             InstallInstanceConstructorProperties(klass, constructorProperties);
 
+            InitializeClassStaticKeyOrder(klass, memberDefinitions, classExpr.AutoAccessors);
             InstallClassSymbolMembers(klass, memberProperties);
 
             // Initialize the captured lexical self before static initializers

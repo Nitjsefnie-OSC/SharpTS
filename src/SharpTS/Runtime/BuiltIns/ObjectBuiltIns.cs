@@ -174,6 +174,13 @@ public static partial class ObjectBuiltIns
                 foreach (var key in FunctionObjectProperties.GetProperties(function, interpreter).OwnEnumerableKeys().ToList())
                     yield return new(key, includeValues ? interpreter.GetPropertyValue(function, key) : null);
                 yield break;
+            case SharpTSClass klass:
+                foreach (var key in klass.OwnStaticStringKeys())
+                {
+                    if (OwnPropertyDescriptorOf(interpreter, klass, key)?.Enumerable != true) continue;
+                    yield return new(key, includeValues ? interpreter.GetPropertyValue(klass, key) : null);
+                }
+                yield break;
             case ISharpTSCallable:
                 yield break;
             default:
@@ -382,6 +389,30 @@ public static partial class ObjectBuiltIns
                     else
                         SetAssignedProperty(interpreter, target, (string)key,
                             interpreter.GetPropertyValue(ownSource, (string)key));
+                }
+                continue;
+            }
+
+            if (args[i] is SharpTSClass classSource)
+            {
+                // Snapshot both categories before any getter can add Symbols.
+                var keys = classSource.OwnStaticStringKeys().Cast<object>()
+                    .Concat(classSource.OwnStaticSymbolKeys()).ToList();
+                foreach (var key in keys)
+                {
+                    if (key is SharpTSSymbol symbol)
+                    {
+                        if (classSource.GetOwnStaticSymbolPropertyDescriptor(symbol)?.Enumerable != true) continue;
+                        SetAssignedSymbol(interpreter, target, symbol,
+                            interpreter.GetSymbolPropertyValue(classSource, symbol));
+                    }
+                    else
+                    {
+                        string name = (string)key;
+                        if (OwnPropertyDescriptorOf(interpreter, classSource, name)?.Enumerable != true) continue;
+                        SetAssignedProperty(interpreter, target, name,
+                            interpreter.GetPropertyValue(classSource, name));
+                    }
                 }
                 continue;
             }
@@ -1512,6 +1543,8 @@ public static partial class ObjectBuiltIns
                 .Concat(primitiveConstructor.GetSymbolPropertyNames().Cast<object?>()).ToList(),
             SharpTSFunctionPrototype functionPrototype => ((SharpTSArray)GetOwnPropertyNames(interpreter, [target])!)
                 .Concat(functionPrototype.GetSymbolPropertyNames().Cast<object?>()).ToList(),
+            SharpTSClass klass => klass.OwnStaticStringKeys().Cast<object?>()
+                .Concat(klass.OwnStaticSymbolKeys()).ToList(),
             SharpTSInstance inst => inst.GetFieldNames().Cast<object?>().ToList(),
             SharpTSArray arr => GetOwnPropertyNamesFromArray(arr),
             SharpTSRegExp regex => regex.OwnStringKeys().Cast<object?>().ToList(),
@@ -1565,6 +1598,7 @@ public static partial class ObjectBuiltIns
             SharpTSObject obj => GetOwnPropertyNamesFromObject(obj),
             ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.OwnStringKeys().Cast<object?>().ToList(),
             SharpTSFunctionPrototype functionPrototype => functionPrototype.OwnStringKeys().Cast<object?>().ToList(),
+            SharpTSClass klass => klass.OwnStaticStringKeys().Cast<object?>().ToList(),
             SharpTSProxy proxy => proxy.TrapOwnPropertyKeys(interpreter)
                 .OfType<string>().Cast<object?>().ToList(),
             SharpTSInstance inst => inst.GetFieldNames().Select(k => (object?)k).ToList(),
@@ -2024,6 +2058,7 @@ public static partial class ObjectBuiltIns
                 => stringPrototype.GetSymbolPropertyNames().Select(s => (object?)s).ToList(),
             SharpTSFunctionPrototype functionPrototype
                 => functionPrototype.GetSymbolPropertyNames().Cast<object?>().ToList(),
+            SharpTSClass klass => klass.OwnStaticSymbolKeys().Cast<object?>().ToList(),
             Dictionary<string, object?> dict => PropertyDescriptorStore.GetSymbolKeys(dict)
                                                   .Select(s => (object?)s).ToList(),
             _ => []

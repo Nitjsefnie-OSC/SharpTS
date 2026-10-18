@@ -2429,6 +2429,7 @@ public partial class Interpreter
                 .Where(captured => captured.Name == field.Name)).ToList();
         InstallInstanceConstructorProperties(klass, constructorProperties);
 
+        InitializeClassStaticKeyOrder(klass, memberDefinitions, classStmt.AutoAccessors);
         InstallClassSymbolMembers(klass, memberProperties);
 
         // Execute static initializers in declaration order (if present)

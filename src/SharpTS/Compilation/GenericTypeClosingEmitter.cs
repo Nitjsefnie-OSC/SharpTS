@@ -20,10 +20,16 @@ internal static class GenericTypeClosingEmitter
         var remainingBounds = il.DeclareLocal(types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, argumentIndex);
-        var fillArguments = il.DefineLabel();
         var checkArguments = il.DefineLabel();
-        il.Emit(OpCodes.Br, checkArguments);
-        il.MarkLabel(fillArguments);
+        var argumentsFilled = il.DefineLabel();
+        // Constructor closing can run beneath an enclosing call's stack values.
+        // Keep the loop header reachable in a single forward scan of the IL.
+        il.MarkLabel(checkArguments);
+        il.Emit(OpCodes.Ldloc, argumentIndex);
+        il.Emit(OpCodes.Ldloc, argumentsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, argumentsFilled);
         il.Emit(OpCodes.Ldloc, argumentsLocal);
         il.Emit(OpCodes.Ldloc, argumentIndex);
         il.Emit(OpCodes.Ldelem_Ref);
@@ -86,12 +92,8 @@ internal static class GenericTypeClosingEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Stloc, argumentIndex);
-        il.MarkLabel(checkArguments);
-        il.Emit(OpCodes.Ldloc, argumentIndex);
-        il.Emit(OpCodes.Ldloc, argumentsLocal);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Blt, fillArguments);
+        il.Emit(OpCodes.Br, checkArguments);
+        il.MarkLabel(argumentsFilled);
         il.Emit(OpCodes.Ldloc, owner);
         il.Emit(OpCodes.Ldloc, argumentsLocal);
         il.Emit(OpCodes.Callvirt, types.GetMethod(types.Type, "MakeGenericType", types.MakeArrayType(types.Type)));

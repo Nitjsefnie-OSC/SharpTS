@@ -1860,46 +1860,48 @@ public class GeneratorTests
         Assert.Equal("[11]\n", TestHarness.Run(source, mode));
     }
 
+    public const string ClassExpressionMethodsLiveStorageSource = """
+        const C: any = true ? class {
+          *m(seed: number) {
+            const g = function*() { yield seed; };
+            seed += 1;
+            yield* g();
+          }
+          static *m(seed: number) {
+            const g = function*() { yield seed; };
+            seed += 2;
+            yield* g();
+          }
+          async *am(seed: number) {
+            const g = async function*() { yield seed; };
+            seed += 3;
+            for await (const value of g()) yield value;
+          }
+          static async *am(seed: number) {
+            const g = async function*() { yield seed; };
+            seed += 4;
+            for await (const value of g()) yield value;
+          }
+        } : class {};
+
+        async function main() {
+          const values: number[] = [];
+          values.push(new C().m(10).next().value);
+          values.push(C.m(10).next().value);
+          for await (const value of new C().am(10)) values.push(value);
+          for await (const value of C.am(10)) values.push(value);
+          console.log(values.join(","));
+        }
+        main();
+        """;
+
     [Theory, ModeData]
     public void GeneratorExpressions_ClassExpressionMethods_AllKindsUseIndependentLiveStorage(ExecutionMode mode)
     {
         // A ternary forces NestedFunctionLifter to reach the class expression through a non-trivial
         // expression path. Same-named static/instance methods must receive distinct DC keys. The static
         // parameter cases also pin argument offset zero for both iterator families.
-        var source = """
-            const C: any = true ? class {
-              *m(seed: number) {
-                const g = function*() { yield seed; };
-                seed += 1;
-                yield* g();
-              }
-              static *m(seed: number) {
-                const g = function*() { yield seed; };
-                seed += 2;
-                yield* g();
-              }
-              async *am(seed: number) {
-                const g = async function*() { yield seed; };
-                seed += 3;
-                for await (const value of g()) yield value;
-              }
-              static async *am(seed: number) {
-                const g = async function*() { yield seed; };
-                seed += 4;
-                for await (const value of g()) yield value;
-              }
-            } : class {};
-
-            async function main() {
-              const values: number[] = [];
-              values.push(new C().m(10).next().value);
-              values.push(C.m(10).next().value);
-              for await (const value of new C().am(10)) values.push(value);
-              for await (const value of C.am(10)) values.push(value);
-              console.log(values.join(","));
-            }
-            main();
-            """;
+        var source = ClassExpressionMethodsLiveStorageSource;
 
         Assert.Equal("11,12,13,14\n", TestHarness.Run(source, mode));
     }

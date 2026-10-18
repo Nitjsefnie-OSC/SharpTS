@@ -430,6 +430,11 @@ public class TypeMapper
     {
         var types = union.FlattenedTypes;
 
+        // Both guest null and the undefined sentinel need an object slot; there is no T
+        // to wrap in Nullable<T> when the union contains only nullish members.
+        if (types.Count > 0 && types.All(t => t is TypeInfo.Null or TypeInfo.Undefined))
+            return _types.Object;
+
         // Special case: T | null or T | undefined for value types → Nullable<T>
         // For reference types, they're already nullable (can hold $Undefined.Instance)
         if (types.Count == 2)

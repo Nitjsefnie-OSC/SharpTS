@@ -602,6 +602,10 @@ public static partial class ObjectBuiltIns
             bool isAccessor = descriptor.Get != null || descriptor.Set != null;
             switch (target)
             {
+                case SharpTSProxy symbolProxy:
+                    if (!symbolProxy.TrapDefineProperty(symKey, descriptorArg, interpreter))
+                        throw new ThrowException(new SharpTSTypeError("Proxy defineProperty trap returned false"));
+                    return target;
                 case SharpTSObject symObj:
                     if (!symObj.DefineProperty(symKey, descriptor))
                     {

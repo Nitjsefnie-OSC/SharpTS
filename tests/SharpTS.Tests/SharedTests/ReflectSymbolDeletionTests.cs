@@ -92,6 +92,39 @@ public sealed class ReflectSymbolDeletionTests
                 catch (error) { console.log(error instanceof TypeError, target[key]); }
             }
             """, "true 1 string 3\ntrue 3\ntrue 3\n"];
+        yield return ["coercion-fallback-and-string", """
+            const exactState = { calls: 0, hint: "" }, exactTarget: any = { key: 1 };
+            const exactKey: any = {
+                [Symbol.toPrimitive](hint: string) {
+                    exactState.calls++; exactState.hint = hint; return "key";
+                }
+            };
+            console.log(Reflect.deleteProperty(exactTarget, exactKey), Object.hasOwn(exactTarget, "key"),
+                exactState.calls, exactState.hint);
+            const symbol = Symbol("fallback"), target: any = {};
+            const state = { order: "", correct: true, stringCalls: 0, valueCalls: 0 };
+            Object.defineProperty(target, symbol, { value: 7, configurable: true });
+            const fallback: any = {
+                toString: function(this: any) {
+                    state.order += "S"; state.correct = state.correct && this === fallback; return {};
+                },
+                valueOf: function(this: any) {
+                    state.order += "V"; state.correct = state.correct && this === fallback; return symbol;
+                }
+            };
+            console.log(Reflect.deleteProperty(target, fallback), Object.hasOwn(target, symbol),
+                state.order, state.correct);
+            Object.defineProperty(target, "locked", { value: 8, configurable: false });
+            const stringKey: any = {
+                toString: function(this: any) {
+                    state.order += "T"; state.stringCalls++;
+                    state.correct = state.correct && this === stringKey; return "locked";
+                },
+                valueOf() { state.valueCalls++; throw "unexpected valueOf"; }
+            };
+            console.log(Reflect.deleteProperty(target, stringKey), target.locked, state.stringCalls,
+                state.valueCalls, state.order, state.correct);
+            """, "true false 1 string\ntrue false SV true\nfalse 8 1 0 SVT true\n"];
         yield return ["target-before-key", """
             const state = { calls: 0 }, propertyKey: any = {
                 [Symbol.toPrimitive]() { state.calls++; return Symbol("unused"); }
@@ -187,6 +220,33 @@ public sealed class ReflectSymbolDeletionTests
             try { Reflect.deleteProperty(revocable.proxy, key); }
             catch (error) { console.log(error instanceof TypeError); }
             """, "false true\nfalse true\nfalse true\ntrue true 4\ntrue\ntrue\ntrue\n"];
+        yield return ["proxy-revoked-coercion-order", """
+            const marker = {}, key = Symbol("retained"), target: any = {};
+            const state = { order: "", calls: 0 };
+            Object.defineProperty(target, key, { value: 3, configurable: true });
+            const revocable: any = Proxy.revocable(target, {
+                deleteProperty() { state.order += "trap;"; return true; }
+            });
+            revocable.revoke();
+            const throwing: any = {
+                [Symbol.toPrimitive](hint: string) {
+                    state.order += "A:" + hint + ";"; state.calls++; throw marker;
+                }
+            };
+            try { Reflect.deleteProperty(revocable.proxy, throwing); }
+            catch (error) {
+                console.log(error === marker, state.calls, state.order, Object.hasOwn(target, key));
+            }
+            const converted: any = {
+                [Symbol.toPrimitive](hint: string) {
+                    state.order += "B:" + hint + ";"; state.calls++; return key;
+                }
+            };
+            try { Reflect.deleteProperty(revocable.proxy, converted); }
+            catch (error) {
+                console.log(error instanceof TypeError, state.calls, state.order, target[key]);
+            }
+            """, "true 1 A:string; true\ntrue 2 A:string;B:string; 3\n"];
         yield return ["proxy-invariants", """
             const key = Symbol("fixed"), locked: any = {};
             Object.defineProperty(locked, key, { value: 3, configurable: false });
@@ -209,9 +269,7 @@ public sealed class ReflectSymbolDeletionTests
     {
         foreach (var row in OrdinaryCases())
         {
-            // #2393 owns interpreted object-key coercion.
-            if ((string)row[0] is not ("coercion-once" or "coercion-errors"))
-                yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
+            yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
     }
@@ -221,14 +279,14 @@ public sealed class ReflectSymbolDeletionTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
-        Assert.Equal(expected, TestHarness.Run(source, mode));
+        AssertDeletionOutput(name, source, expected, mode);
     }
 
     public static IEnumerable<object[]> ProxyModeCases() => ProxyCases().SelectMany(row =>
-        // #2393: the identity case includes an object key that produces a Symbol.
-        ((string)row[0] == "proxy-trap-identity"
-            ? new[] { ExecutionMode.Compiled }
-            : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }).Select(mode =>
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            // #2617: compiled computed Symbol deletion skips the Proxy's delete trap.
+            .Where(mode => mode == ExecutionMode.Interpreted || (string)row[0] != "proxy-direct-symbol-identity")
+            .Select(mode =>
             new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ProxyModeCases))]
@@ -236,6 +294,22 @@ public sealed class ReflectSymbolDeletionTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
-        Assert.Equal(expected, TestHarness.Run(source, mode));
+        AssertDeletionOutput(name, source, expected, mode);
+    }
+
+    private static void AssertDeletionOutput(
+        string name, string source, string expected, ExecutionMode mode)
+    {
+        if (mode == ExecutionMode.Compiled && name is
+            ("coercion-fallback-and-string" or "proxy-revoked-coercion-order"))
+        {
+            var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            Assert.Equal(expected, output);
+        }
+        else
+        {
+            Assert.Equal(expected, TestHarness.Run(source, mode));
+        }
     }
 }

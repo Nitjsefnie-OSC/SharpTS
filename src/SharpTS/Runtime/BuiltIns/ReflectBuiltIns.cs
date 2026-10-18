@@ -133,28 +133,25 @@ public static class ReflectBuiltIns
                 if (!args[0].IsObject)
                     throw new ThrowException(new SharpTSTypeError("Reflect.deleteProperty requires a target object"));
                 var target = args[0].ToObject()!;
+                var key = interpreter.ToPropertyKey(args[1].ToObject());
                 if (target is ISharpTSOwnPropertyObject carrier)
                 {
-                    var ownKey = interpreter.ToPropertyKey(args[1].ToObject());
-                    return RuntimeValue.FromBoolean(ownKey is SharpTSSymbol ownSymbol
+                    return RuntimeValue.FromBoolean(key is SharpTSSymbol ownSymbol
                         ? carrier.OwnProperties.GetOwnPropertyDescriptor(ownSymbol) is null
                             || carrier.OwnProperties.DeleteBySymbolStrict(ownSymbol, false)
-                        : carrier.OwnProperties.GetOwnPropertyDescriptor((string)ownKey) is null
-                            || carrier.OwnProperties.DeletePropertyStrict((string)ownKey, false));
+                        : carrier.OwnProperties.GetOwnPropertyDescriptor((string)key) is null
+                            || carrier.OwnProperties.DeletePropertyStrict((string)key, false));
                 }
                 if (target is SharpTSObjectNamespace objectNamespace)
                 {
-                    var key = interpreter.ToPropertyKey(args[1].ToObject());
                     // This namespace has no Symbol storage. Absent Symbols must
                     // remain distinct from same-spelled string properties.
                     return RuntimeValue.FromBoolean(key is SharpTSSymbol
                         || objectNamespace.DeleteProperty((string)key));
                 }
-                if (args[1].ToObject() is SharpTSSymbol symbol)
+                if (key is SharpTSSymbol symbol)
                     return RuntimeValue.FromBoolean(interpreter.DeleteSymbolProperty(target, symbol, strictMode: false));
-                var propertyKey = target is ISharpTSPrimitiveConstructor
-                    ? interpreter.ToPropertyKeyString(args[1].ToObject())
-                    : args[1].ToObject()?.ToString() ?? "";
+                var propertyKey = (string)key;
                 switch (target)
                 {
                     case SharpTSProxy proxy:

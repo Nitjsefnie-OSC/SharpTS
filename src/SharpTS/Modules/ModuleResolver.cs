@@ -988,6 +988,7 @@ public class ModuleResolver
             var module = new ParsedModule(absolutePath, statements)
             {
                 Tokens = retainedTokens,
+                Pragmas = lexer.Pragmas,
                 HitParseErrorLimit = parseResult.HitErrorLimit,
                 IsDeclarationFile = IsDeclarationFilePath(absolutePath),
                 Document = document,

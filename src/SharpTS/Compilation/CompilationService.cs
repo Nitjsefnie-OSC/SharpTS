@@ -36,7 +36,9 @@ namespace SharpTS.Compilation;
 /// <param name="FileName">
 /// Logical file name used as the <see cref="SourceLocation.FilePath"/> on diagnostics.
 /// Purely informational for I/O — nothing is read from or written to this path — but a
-/// .tsx/.jsx extension switches the parser into the TSX dialect.
+/// .tsx/.jsx extension switches the parser into the TSX dialect. JavaScript extensions omit
+/// semantic type diagnostics unless the source opts in with <c>@ts-check</c>; <c>@ts-nocheck</c>
+/// suppresses those diagnostics for either language. Syntax errors are always reported.
 /// </param>
 /// <param name="Jsx">
 /// JSX settings applied when the source parses in the TSX dialect. Null uses

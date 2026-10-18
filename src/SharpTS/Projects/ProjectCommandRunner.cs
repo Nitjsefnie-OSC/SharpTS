@@ -167,7 +167,8 @@ public static class ProjectCommandRunner
             .ToArray();
         var modules = resolver.GetModulesInOrder(declarationRoots.Concat(sourceRoots));
 
-        var checker = new TypeChecker(options.TypeCheckerOptions);
+        var checker = new TypeChecker(options.TypeCheckerOptions)
+            .WithSourceDiagnosticPolicy(options.CheckJs);
         checker.SetDecoratorMode(options.DecoratorMode);
         TypeMap typeMap = checker.CheckModules(modules, resolver);
 

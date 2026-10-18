@@ -167,6 +167,20 @@ public class SourceExecutionServiceTests
     }
 
     [Fact]
+    public void Interpret_TsNoCheckContinuesBeyondTheSemanticErrorBudget()
+    {
+        var source = "// @ts-nocheck\n" + string.Concat(Enumerable.Range(0, 12)
+            .Select(index => $"let value{index}: number = 'wrong';\n")) +
+            "// @ts-expect-error\nconsole.log('ok');";
+
+        var result = SourceExecutionService.Interpret(source);
+
+        Assert.True(result.Success, string.Join("\n", result.Errors));
+        Assert.Empty(result.Errors);
+        Assert.Equal("ok\n", Normalize(result.Output));
+    }
+
+    [Fact]
     public void Execution_NeverWritesToHostConsole()
     {
         using var capture = AsyncLocalConsoleRedirector.Capture();

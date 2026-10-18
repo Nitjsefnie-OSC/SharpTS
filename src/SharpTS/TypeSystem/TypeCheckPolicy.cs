@@ -4,7 +4,7 @@ using SharpTS.Parsing;
 namespace SharpTS.TypeSystem;
 
 /// <summary>
-/// Decides whether a given source file should be type-checked.
+/// Decides whether semantic type diagnostics should be reported for a source file.
 /// Mirrors tsc's <c>checkJs</c> behavior: <c>.ts</c> files are checked by default,
 /// <c>.js</c> files are not unless opted in. File-level <c>// @ts-check</c> /
 /// <c>// @ts-nocheck</c> pragmas override the extension default.
@@ -12,7 +12,8 @@ namespace SharpTS.TypeSystem;
 public static class TypeCheckPolicy
 {
     /// <summary>
-    /// Returns true when the type checker should run for this source.
+    /// Returns true when semantic type diagnostics should be reported for this source.
+    /// Execution pipelines can still analyze unchecked sources to retain inferred types.
     /// </summary>
     /// <param name="filePath">
     /// Source file path (extension matters). Pass null/empty for in-memory sources

@@ -965,6 +965,19 @@ public partial class TypeChecker
     /// </summary>
     public IReadOnlyList<Diagnostic> GetDiagnostics() => _diagnostics.Diagnostics;
     private string? _filePath = null;
+    private bool _applySourceDiagnosticPolicy;
+    private bool _checkJsDiagnostics;
+    private TypeScriptPragmas _standalonePragmas = TypeScriptPragmas.Empty;
+
+    // Execution pipelines still need the checked graph for inference and emission. Only diagnostic
+    // publication follows checkJs/pragmas; direct checker consumers keep their existing contract.
+    internal TypeChecker WithSourceDiagnosticPolicy(bool checkJs, TypeScriptPragmas? pragmas = null)
+    {
+        _applySourceDiagnosticPolicy = true;
+        _checkJsDiagnostics = checkJs;
+        _standalonePragmas = pragmas ?? TypeScriptPragmas.Empty;
+        return this;
+    }
 
     /// <summary>
     /// Best-guess line of the statement currently being checked. Used as a fallback
@@ -1563,6 +1576,16 @@ public partial class TypeChecker
     {
         if (_suppressDiagnostics > 0) return;
         Diagnostic diagnostic = ex.Diagnostic;
+        // TS1196 is a semantic catch-annotation restriction. Other TypeOperation diagnostics
+        // enforce JavaScript control-flow rules and still apply to unchecked sources.
+        if (_applySourceDiagnosticPolicy &&
+            (diagnostic.Code is DiagnosticCode.TypeError or DiagnosticCode.TypeMismatch ||
+                diagnostic.Code == DiagnosticCode.TypeOperation && diagnostic.TsCode == "TS1196") &&
+            !TypeCheckPolicy.ShouldTypeCheck(
+                _currentModule?.Path ?? _filePath,
+                _currentModule?.Pragmas ?? _standalonePragmas,
+                _checkJsDiagnostics))
+            return;
         // Keep an explicit file and span; fill only missing attribution. The statement-line
         // fallback lets @ts-ignore / @ts-expect-error target throw sites without token locations.
         SourceLocation? location = diagnostic.Location is { } explicitLocation
@@ -1579,13 +1602,12 @@ public partial class TypeChecker
 
     /// <summary>
     /// Determines if the current module should use lenient type checking.
-    /// CJS dependency modules are always lenient — type errors become warnings
-    /// that don't block execution, matching TypeScript's default behavior for
-    /// JavaScript files (checkJs: false).
+    /// Direct checker callers retain the legacy CJS warning policy. Execution pipelines
+    /// explicitly select diagnostics from checkJs and file pragmas instead.
     /// </summary>
     private bool IsLenientModule()
     {
-        if (_currentModule == null) return false;
+        if (_applySourceDiagnosticPolicy || _currentModule == null) return false;
         return _currentModule.IsCommonJs;
     }
 
@@ -1894,25 +1916,37 @@ public partial class TypeChecker
             foreach (var module in augmentationOrder)
             {
                 ThrowIfCancellationRequested();
-                foreach (var augmentation in module.GlobalAugmentations)
+                var previousModule = _currentModule;
+                var previousFilePath = _filePath;
+                _currentModule = module;
+                _filePath = module.Path;
+                try
                 {
-                    bool previousRecoveryMode = _recoveryMode;
-                    _recoveryMode = previousRecoveryMode ||
-                        augmentation is Stmt.Namespace or Stmt.Export { Declaration: Stmt.Namespace };
-                    if (module.IsDeclarationFile)
-                        _suppressDiagnostics++;
-                    try { CheckAndMergeGlobalMember(augmentation); }
-                    catch (TypeCheckException ex)
+                    foreach (var augmentation in module.GlobalAugmentations)
                     {
-                        if (!module.IsDeclarationFile)
-                            RecordTypeError(ex);
-                    }
-                    finally
-                    {
+                        bool previousRecoveryMode = _recoveryMode;
+                        _recoveryMode = previousRecoveryMode ||
+                            augmentation is Stmt.Namespace or Stmt.Export { Declaration: Stmt.Namespace };
                         if (module.IsDeclarationFile)
-                            _suppressDiagnostics--;
-                        _recoveryMode = previousRecoveryMode;
+                            _suppressDiagnostics++;
+                        try { CheckAndMergeGlobalMember(augmentation); }
+                        catch (TypeCheckException ex)
+                        {
+                            if (!module.IsDeclarationFile)
+                                RecordTypeError(ex);
+                        }
+                        finally
+                        {
+                            if (module.IsDeclarationFile)
+                                _suppressDiagnostics--;
+                            _recoveryMode = previousRecoveryMode;
+                        }
                     }
+                }
+                finally
+                {
+                    _currentModule = previousModule;
+                    _filePath = previousFilePath;
                 }
             }
         }

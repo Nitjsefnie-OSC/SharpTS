@@ -116,6 +116,29 @@ public class CompilationServiceTests : IDisposable
         Assert.NotNull(result.AssemblyBytes);
     }
 
+    [Theory]
+    [InlineData("main.js", "", true)]
+    [InlineData("main.ts", "// @ts-nocheck\n", true)]
+    [InlineData("main.js", "// @ts-check\n", false)]
+    [InlineData("main.ts", "", false)]
+    public void Compile_UsesFileDiagnosticPolicy(string fileName, string pragma, bool success)
+    {
+        var result = CompilationService.Compile(pragma + "let value = 1; value = 'wrong';",
+            new CompileOptions(FileName: fileName));
+
+        Assert.Equal(success, result.Success);
+        Assert.Equal(success, result.AssemblyBytes is not null);
+    }
+
+    [Fact]
+    public void Compile_TsNoCheckRetainsParseErrors()
+    {
+        var result = CompilationService.Compile("// @ts-nocheck\nconst value = ;");
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == DiagnosticCode.ParseError);
+    }
+
     [Fact]
     public void Compile_FileNameOption_StampsDiagnosticLocations()
     {

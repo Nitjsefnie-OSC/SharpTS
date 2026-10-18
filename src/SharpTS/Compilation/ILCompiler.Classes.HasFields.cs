@@ -367,6 +367,16 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldstr, propName);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, skipLabel);
+        if (propName is "name" or "message")
+        {
+            // Constructor-created own messages are PDS data properties and have already
+            // won at the runtime read boundary. The native name and absent-message slots
+            // here represent inherited defaults, so an intervening prototype descriptor
+            // must win even when its getter is missing and its value is undefined (#2236).
+            // Walk the complete receiver chain so a further derived class cannot restore
+            // the native default before an inherited source accessor is considered.
+            EmitComputedInstanceGetterFallback(il);
+        }
         // Call the runtime helper: ErrorGetName(object obj) -> string
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtimeGetter);

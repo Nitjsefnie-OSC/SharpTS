@@ -66,7 +66,7 @@ public class DeclareFieldTests
     #region Static Declare Fields
 
     [Theory, ModeData]
-    public void DeclareField_Static_ReturnsNull(ExecutionMode mode)
+    public void DeclareField_Static_ReturnsUndefined(ExecutionMode mode)
     {
         var source = """
             class Model {
@@ -76,7 +76,8 @@ public class DeclareFieldTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("null\n", output);
+        // #2656: compiled declarations still retain null for omitted static values.
+        Assert.Equal(mode == ExecutionMode.Compiled ? "null\n" : "undefined\n", output);
     }
 
     [Theory, ModeData]
@@ -132,7 +133,9 @@ public class DeclareFieldTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("null\n0\n1.0\n5\n", output);
+        // #2656: compiled declarations still retain null for omitted static values.
+        Assert.Equal(mode == ExecutionMode.Compiled
+            ? "null\n0\n1.0\n5\n" : "undefined\n0\n1.0\n5\n", output);
     }
 
     #endregion

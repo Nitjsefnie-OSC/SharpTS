@@ -2199,7 +2199,7 @@ public partial class Interpreter
                         // Old behavior: evaluate immediately
                         object? fieldValue = field.Initializer != null
                             ? EvaluateEarlyStaticInitializer(field.Initializer)
-                            : null;
+                            : SharpTSUndefined.Instance;
                         staticProperties[field.Name.Lexeme] = fieldValue;
                     }
                     // else: will be evaluated via StaticInitializers with proper 'this' binding
@@ -2432,7 +2432,7 @@ public partial class Interpreter
                             case Stmt.Field field when field.IsStatic:
                                 object? fieldValue = field.Initializer != null
                                     ? Evaluate(field.Initializer)
-                                    : field.ComputedKey != null ? SharpTSUndefined.Instance : null;
+                                    : SharpTSUndefined.Instance;
                                 if (field.IsPrivate) klass.InstallStaticPrivateField(field.Name.Lexeme, fieldValue);
                                 else if (field.ComputedKey != null && computedMemberKeys[field.ComputedKey] is SharpTSSymbol symbol)
                                     klass.DefineStaticSymbolProperty(symbol,

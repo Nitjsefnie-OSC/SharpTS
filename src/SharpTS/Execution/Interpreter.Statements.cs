@@ -2133,7 +2133,7 @@ public partial class Interpreter
 
         // Process fields: collect instance fields, defer static field initialization if using StaticInitializers
         // Note: Declare fields are processed normally - they can't have initializers (enforced by parser),
-        // so they'll be added with null/undefined values and can be set externally later.
+        // so they'll be added with undefined values and can be set externally later.
         bool hasStaticInitializers = classStmt.StaticInitializers != null && classStmt.StaticInitializers.Count > 0;
 
         // Evaluate every computed key exactly once, in source order, before
@@ -2157,7 +2157,7 @@ public partial class Interpreter
                         // Old behavior: evaluate immediately
                         object? fieldValue = field.Initializer != null
                             ? EvaluateEarlyStaticInitializer(field.Initializer)
-                            : null;
+                            : SharpTSUndefined.Instance;
                         staticPrivateFields[field.Name.Lexeme] = fieldValue;
                     }
                     else staticPrivateFields[field.Name.Lexeme] = SharpTSUndefined.Instance;
@@ -2175,7 +2175,7 @@ public partial class Interpreter
                     // Old behavior: evaluate immediately
                     object? fieldValue = field.Initializer != null
                         ? EvaluateEarlyStaticInitializer(field.Initializer)
-                        : null;
+                        : SharpTSUndefined.Instance;
                     staticProperties[field.Name.Lexeme] = fieldValue;
                 }
                 // else: will be evaluated via StaticInitializers with proper 'this' binding
@@ -2456,7 +2456,7 @@ public partial class Interpreter
                         case Stmt.Field field when field.IsStatic:
                             object? fieldValue = field.Initializer != null
                                 ? Evaluate(field.Initializer)
-                                : field.ComputedKey != null ? SharpTSUndefined.Instance : null;
+                                : SharpTSUndefined.Instance;
                             if (field.IsPrivate)
                                 klass.InstallStaticPrivateField(field.Name.Lexeme, fieldValue);
                             else if (field.ComputedKey != null && computedMemberKeys[field.ComputedKey] is SharpTSSymbol symbol)

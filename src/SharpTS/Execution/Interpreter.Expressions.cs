@@ -385,9 +385,6 @@ public partial class Interpreter
     {
         object? tag = EvaluateMemberCallReference(_syncContext, tagged.Tag).GetAwaiter().GetResult();
 
-        if (tag is not ISharpTSCallable callable)
-            throw new InterpreterException("Tagged template tag must be a function.");
-
         // Create template strings array with raw property
         // Cooked values: null becomes undefined (or just null in our runtime)
         var cookedList = tagged.CookedStrings.Cast<object?>().ToList();
@@ -397,6 +394,9 @@ public partial class Interpreter
         List<object?> args = [stringsArray];
         foreach (var expr in tagged.Expressions)
             args.Add(Evaluate(expr));
+
+        if (tag is not ISharpTSCallable callable)
+            throw new ThrowException(new SharpTSTypeError($"{GetTypeofString(tag)} is not a function"));
 
         return RuntimeValue.FromBoxed(callable.Call(this, args));
     }

@@ -154,6 +154,9 @@ public partial class ILCompiler
         // also lets registration preserve a generic family's explicit override.
         if (baseType == _runtime.ArrayStorage.Type)
             il.Emit(OpCodes.Call, _runtime.ArrayOperations.PrototypePopulateMethod);
+        var nativeErrorPrototypePopulate = GetNativeErrorPrototypePopulate(baseType);
+        if (nativeErrorPrototypePopulate != null)
+            il.Emit(OpCodes.Call, nativeErrorPrototypePopulate);
 
         il.Emit(OpCodes.Ldtoken, selfType);
         il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
@@ -172,6 +175,7 @@ public partial class ILCompiler
 
         Type? basePrototypeType = null;
         if (baseType != null && (baseType == _runtime.ArrayStorage.Type
+            || nativeErrorPrototypePopulate != null
             || TryResolveClassPrototypeConstructor(baseType, out _)))
             basePrototypeType = baseType;
 
@@ -362,6 +366,26 @@ public partial class ILCompiler
             }
             il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.Constructor);
         }
+    }
+
+    private MethodBuilder? GetNativeErrorPrototypePopulate(Type? baseType)
+    {
+        var errors = _runtime.Errors;
+        foreach (var (errorType, populate) in new[]
+        {
+            (errors.Type, errors.PrototypePopulate),
+            (errors.TypeErrorType, errors.TypeErrorPrototypePopulate),
+            (errors.RangeErrorType, errors.RangeErrorPrototypePopulate),
+            (errors.ReferenceErrorType, errors.ReferenceErrorPrototypePopulate),
+            (errors.SyntaxErrorType, errors.SyntaxErrorPrototypePopulate),
+            (errors.URIErrorType, errors.URIErrorPrototypePopulate),
+            (errors.EvalErrorType, errors.EvalErrorPrototypePopulate),
+            (errors.AggregateErrorType, errors.AggregateErrorPrototypePopulate)
+        })
+        {
+            if (baseType == errorType) return populate;
+        }
+        return null;
     }
 
     private Stmt.Class? GetNominalClassDeclaration(TypeBuilder typeBuilder)

@@ -41,6 +41,31 @@ public sealed class ErrorAccessorShadowTests
             console.log(JSON.stringify(plain.message), plain.name, Object.hasOwn(plain, "message"));
             console.log(typed.name, typed.message);
             """, "\"\" Error false\nTypeError typed\n"];
+        yield return ["native-prototype-defaults", """
+            class E extends Error {}
+            class T extends TypeError {}
+            class D extends T {}
+            class G<T> extends TypeError {}
+            const Expression = class extends TypeError { constructor(message?: string) { super(message); } };
+            for (const owner of [E, T, D, G, Expression]) {
+                const prototype: any = (owner as any).prototype;
+                console.log(prototype.name, JSON.stringify(prototype.message), typeof prototype.toString);
+            }
+            console.log(Object.getPrototypeOf(E.prototype) === Error.prototype,
+                Object.getPrototypeOf(T.prototype) === TypeError.prototype,
+                Object.getPrototypeOf(D.prototype) === T.prototype);
+            """, "Error \"\" function\nTypeError \"\" function\nTypeError \"\" function\nTypeError \"\" function\nTypeError \"\" function\ntrue true true\n"];
+        yield return ["object-prototype-defaults", """
+            Object.defineProperty(Object.prototype, "message", { value: "polluted", configurable: true });
+            Object.defineProperty(Object.prototype, "name", { value: "polluted", configurable: true });
+            Object.defineProperty(Object.prototype, "extra", { value: "inherited", configurable: true });
+            class E extends Error {}
+            class T extends TypeError {}
+            const plain: any = new E(), typed: any = new T();
+            const prototype: any = E.prototype;
+            console.log(plain.name, JSON.stringify(plain.message), typed.name, JSON.stringify(typed.message));
+            console.log(prototype.name, JSON.stringify(prototype.message), plain.extra, prototype.extra);
+            """, "Error \"\" TypeError \"\"\nError \"\" inherited inherited\n"];
     }
 
     public static IEnumerable<object[]> ModeCases()
@@ -48,7 +73,7 @@ public sealed class ErrorAccessorShadowTests
         foreach (var row in Cases())
         {
             // Inherited native Error prototype defaults are absent in interpretation (#2295).
-            if ((string)row[0] != "native-defaults")
+            if ((string)row[0] is not ("native-defaults" or "native-prototype-defaults" or "object-prototype-defaults"))
                 yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }

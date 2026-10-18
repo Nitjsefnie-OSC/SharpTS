@@ -250,6 +250,7 @@ public partial class RuntimeEmitter
             runtime.ClassPrototypes,
             runtime.ObjectPrototypes,
             runtime.DescriptorStorage,
+            runtime.Errors,
             runtime.ObjectFields.Interface,
             classPrototypeCacheField,
             classPrototypeParentsField,

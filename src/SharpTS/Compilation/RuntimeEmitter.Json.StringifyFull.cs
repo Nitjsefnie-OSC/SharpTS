@@ -85,7 +85,7 @@ public partial class RuntimeEmitter
     private readonly record struct CallReplacerIfNeededInputs(
         MethodBuilder BoundTSFunctionInvokeWithThis,
         TypeBuilder BoundTSFunctionType,
-        MethodBuilder InvokeValue,
+        MethodBuilder InvokeMethodValue,
         MethodBuilder TSFunctionInvokeWithThis,
         TypeBuilder TSFunctionType
     );
@@ -93,7 +93,7 @@ public partial class RuntimeEmitter
     private readonly record struct CallReplacerWithKeyInputs(
         MethodBuilder BoundTSFunctionInvokeWithThis,
         TypeBuilder BoundTSFunctionType,
-        MethodBuilder InvokeValue,
+        MethodBuilder InvokeMethodValue,
         MethodBuilder TSFunctionInvokeWithThis,
         TypeBuilder TSFunctionType
     );
@@ -988,7 +988,7 @@ public partial class RuntimeEmitter
             new CallReplacerIfNeededInputs(
                 inputs.BoundTSFunctionInvokeWithThis,
                 inputs.BoundTSFunctionType,
-                inputs.InvokeValue,
+                inputs.InvokeMethodValue,
                 inputs.TSFunctionInvokeWithThis,
                 inputs.TSFunctionType
             )
@@ -1181,10 +1181,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, inputs.BoundTSFunctionType);
         il.Emit(OpCodes.Brtrue, isBoundLabel);
 
-        // Unknown type - use InvokeValue fallback
+        // Other callable carriers receive the parent array as their receiver,
+        // matching the root replacer and the direct function paths below.
+        il.Emit(OpCodes.Ldloc, holderLocal);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, inputs.InvokeValue);
+        il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
         il.Emit(OpCodes.Stloc, elemLocal);
         il.Emit(OpCodes.Br, callDoneLabel);
 
@@ -1254,10 +1256,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, inputs.BoundTSFunctionType);
         il.Emit(OpCodes.Brtrue, isBoundLabel);
 
-        // Unknown type - use InvokeValue fallback
+        // Other callable carriers receive the original parent object as their
+        // receiver, including objects materialized for JSON traversal.
+        il.Emit(OpCodes.Ldloc, holderLocal);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, inputs.InvokeValue);
+        il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
         il.Emit(OpCodes.Stloc, valueLocal);
         il.Emit(OpCodes.Br, callDoneLabel);
 
@@ -1473,7 +1477,7 @@ public partial class RuntimeEmitter
             new CallReplacerWithKeyInputs(
                 inputs.BoundTSFunctionInvokeWithThis,
                 inputs.BoundTSFunctionType,
-                inputs.InvokeValue,
+                inputs.InvokeMethodValue,
                 inputs.TSFunctionInvokeWithThis,
                 inputs.TSFunctionType
             )

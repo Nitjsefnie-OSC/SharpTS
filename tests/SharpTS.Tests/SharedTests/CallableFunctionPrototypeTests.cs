@@ -23,7 +23,20 @@ public sealed class CallableFunctionPrototypeTests
             const prototype: any = Function.prototype, proxy: any = new Proxy(prototype, {});
             console.log(typeof proxy, proxy() === undefined);
             try { new proxy(); } catch (error) { console.log(error instanceof TypeError); }
-            """, "function true\ntrue\n"];
+            const root: any = { items: [{ value: 1 }] }, receivers: any[] = [];
+            const replacer: any = new Proxy(prototype, {
+                apply(target: any, holder: any, args: any[]) {
+                    const key = args[0];
+                    if (key === "") receivers.push(holder[""] === root);
+                    if (key === "items") receivers.push(holder === root);
+                    if (key === "0") receivers.push(holder === root.items);
+                    if (key === "value") receivers.push(holder === root.items[0]);
+                    return args[1];
+                }
+            });
+            console.log(JSON.stringify(root, replacer));
+            console.log(receivers.join(","));
+            """, "function true\ntrue\n{\"items\":[{\"value\":1}]}\ntrue,true,true,true\n"];
         yield return ["ordinary-has-instance-order", """
             const prototype: any = Function.prototype, ordinary: any = prototype[Symbol.hasInstance];
             console.log(ordinary.call(prototype, 1), ordinary.call(prototype, null));

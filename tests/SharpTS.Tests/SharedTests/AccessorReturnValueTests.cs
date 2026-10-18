@@ -38,6 +38,19 @@ public sealed class AccessorReturnValueTests
             console.log(indexed(instance), readStatic(constructor));
             console.log(indexed(new Base()), readStatic(Base));
             """, "undefined undefined\n1 2\n"];
+        yield return ["static-auto-accessors", """
+            class Base { static accessor value = 2; }
+            class Derived extends Base { static set value(next: number) {} }
+            function inferred(value: typeof Base) { return value.value; }
+            function annotated(value: typeof Base): number { return value.value; }
+            function local(value: typeof Base) { const result = value.value; return result; }
+            const arrow = (value: typeof Base) => value.value;
+            const value: any = Derived;
+            console.log(inferred(value), annotated(value), local(value), arrow(value));
+            class Plain { static get value() { return 2; } }
+            const plain: any = Plain;
+            console.log(inferred(plain), annotated(plain), local(plain), arrow(plain));
+            """, "undefined undefined undefined undefined\n2 2 2 2\n"];
         yield return ["locals-and-wrappers", """
             class Base { get value() { return 1; } }
             class Derived extends Base { set value(next: number) {} }

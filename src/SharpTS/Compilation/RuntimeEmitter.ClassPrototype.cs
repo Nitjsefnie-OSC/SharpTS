@@ -16,6 +16,7 @@ public partial class RuntimeEmitter
         EmittedClassPrototypeRuntime classPrototypes,
         EmittedObjectPrototypeRuntime objectPrototypes,
         EmittedDescriptorStorageRuntime descriptorStorage,
+        EmittedErrorRuntime errors,
         Type userClassInterface,
         FieldBuilder cacheField,
         FieldBuilder parentsField,
@@ -49,10 +50,34 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, parentType);
             il.Emit(OpCodes.Ldtoken, arrayType);
             il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-            il.Emit(OpCodes.Bne_Un, objectParent);
+            var nativeErrorParent = il.DefineLabel();
+            il.Emit(OpCodes.Bne_Un, nativeErrorParent);
             il.Emit(OpCodes.Ldsfld, arrayPrototype);
             il.Emit(OpCodes.Stloc, parent);
             il.Emit(OpCodes.Br, ready);
+            il.MarkLabel(nativeErrorParent);
+            foreach (var (errorType, prototype) in new[]
+            {
+                (errors.Type, errors.Prototype),
+                (errors.TypeErrorType, errors.TypeErrorPrototype),
+                (errors.RangeErrorType, errors.RangeErrorPrototype),
+                (errors.ReferenceErrorType, errors.ReferenceErrorPrototype),
+                (errors.SyntaxErrorType, errors.SyntaxErrorPrototype),
+                (errors.URIErrorType, errors.URIErrorPrototype),
+                (errors.EvalErrorType, errors.EvalErrorPrototype),
+                (errors.AggregateErrorType, errors.AggregateErrorPrototype)
+            })
+            {
+                var nextError = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, parentType);
+                il.Emit(OpCodes.Ldtoken, errorType);
+                il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+                il.Emit(OpCodes.Bne_Un, nextError);
+                il.Emit(OpCodes.Ldsfld, prototype);
+                il.Emit(OpCodes.Stloc, parent);
+                il.Emit(OpCodes.Br, ready);
+                il.MarkLabel(nextError);
+            }
             il.MarkLabel(objectParent);
             il.Emit(OpCodes.Ldsfld, objectPrototypes.Prototype);
             il.Emit(OpCodes.Stloc, parent);
@@ -147,8 +172,7 @@ public partial class RuntimeEmitter
         // the base. Publishing first keeps recursive prototype resolution stable.
         {
             var il = registerMethod.GetILGenerator();
-            var useObjectPrototype = il.DefineLabel();
-            var prototypeReady = il.DefineLabel();
+            var baseTypeLocal = il.DeclareLocal(_types.Type);
             var basePrototypeLocal = il.DeclareLocal(_types.Object);
 
             il.Emit(OpCodes.Ldsfld, cacheField);
@@ -157,26 +181,9 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, setItem);
 
             il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Brfalse, useObjectPrototype);
-            var guestBase = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Ldtoken, arrayType);
-            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-            il.Emit(OpCodes.Bne_Un, guestBase);
-            il.Emit(OpCodes.Ldsfld, arrayPrototype);
-            il.Emit(OpCodes.Stloc, basePrototypeLocal);
-            il.Emit(OpCodes.Br, prototypeReady);
-            il.MarkLabel(guestBase);
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Call, getMethod);
-            il.Emit(OpCodes.Stloc, basePrototypeLocal);
-            il.Emit(OpCodes.Br, prototypeReady);
+            il.Emit(OpCodes.Stloc, baseTypeLocal);
+            EmitNominalParent(il, baseTypeLocal, basePrototypeLocal);
 
-            il.MarkLabel(useObjectPrototype);
-            il.Emit(OpCodes.Ldsfld, objectPrototypes.Prototype);
-            il.Emit(OpCodes.Stloc, basePrototypeLocal);
-
-            il.MarkLabel(prototypeReady);
             var parentSelected = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsGenericType")!.GetGetMethod()!);

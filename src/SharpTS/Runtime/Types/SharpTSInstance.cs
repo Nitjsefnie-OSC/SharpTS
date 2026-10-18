@@ -147,8 +147,13 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         if ((_getters?.ContainsKey(name) ?? false) || (_setters?.ContainsKey(name) ?? false))
             return new PropertyResolution { Type = ResolutionType.OwnAccessor };
 
-        // Check for auto-accessor first (TypeScript 4.9+)
-        // Auto-accessors take precedence since they're a specific declaration
+        // Own data properties shadow inherited accessors (don't cache the value!).
+        if (_fields.ContainsKey(name))
+        {
+            return new PropertyResolution { Type = ResolutionType.Field };
+        }
+
+        // Check for an inherited auto-accessor (TypeScript 4.9+).
         if (_klass.HasInstanceAutoAccessor(name))
         {
             return new PropertyResolution { Type = ResolutionType.AutoAccessor };
@@ -163,12 +168,6 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
                 Type = ResolutionType.Getter,
                 Function = getter
             };
-        }
-
-        // Check if it's a field (don't cache the value!)
-        if (_fields.ContainsKey(name))
-        {
-            return new PropertyResolution { Type = ResolutionType.Field };
         }
 
         // Check for method

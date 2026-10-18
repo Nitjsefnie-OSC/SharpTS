@@ -2061,6 +2061,8 @@ public partial class ILCompiler
             }
         }
 
+        ctx.UseOwnedCapturedParameterStorage = true;
+
         if (arrow.ExpressionBody != null)
         {
             if (exactRecordFastBranchParameters is { Count: > 0 })

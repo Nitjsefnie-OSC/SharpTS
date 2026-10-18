@@ -722,6 +722,8 @@ public partial class ILCompiler
                 }
             }
 
+            ctx.UseOwnedCapturedParameterStorage = true;
+
             // Emit function body
             if (func.Body != null)
             {

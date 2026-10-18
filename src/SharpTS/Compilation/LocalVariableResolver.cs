@@ -285,10 +285,28 @@ public class LocalVariableResolver : IVariableResolver
     {
         if (!_ctx.TryGetParameter(name, out var argIndex)) return null;
 
-        if (_ctx.UseFunctionDisplayClassParameterStorage &&
-            _ctx.FunctionDisplayClassLocal is { } displayClass &&
+        // Once seeded, this callable's own shared storage is authoritative.
+        // A parent display-class reference never supplies an owned parameter.
+        LocalBuilder? displayClass = null;
+        FieldBuilder? field = null;
+        if (_ctx.UseOwnedCapturedParameterStorage &&
+            _ctx.FunctionDisplayClassLocal is { } functionDisplayClass &&
             _ctx.CapturedFunctionLocals?.Contains(name) == true &&
-            _ctx.FunctionDisplayClassFields?.TryGetValue(name, out var field) == true)
+            _ctx.FunctionDisplayClassFields?.TryGetValue(name, out var functionField) == true)
+        {
+            displayClass = functionDisplayClass;
+            field = functionField;
+        }
+        else if (_ctx.UseOwnedCapturedParameterStorage &&
+            _ctx.ArrowScopeDisplayClassLocal is { } scopeDisplayClass &&
+            _ctx.CapturedArrowLocals?.Contains(name) == true &&
+            _ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var scopeField) == true)
+        {
+            displayClass = scopeDisplayClass;
+            field = scopeField;
+        }
+
+        if (displayClass is not null && field is not null)
         {
             _il.Emit(OpCodes.Ldloc, displayClass);
             _il.Emit(OpCodes.Ldfld, field);

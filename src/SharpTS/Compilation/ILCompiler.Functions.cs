@@ -94,7 +94,7 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Box, parameterType);
             il.Emit(OpCodes.Stfld, field);
         }
-        ctx.UseFunctionDisplayClassParameterStorage = true;
+        ctx.UseOwnedCapturedParameterStorage = true;
     }
 
     private void DefineFunction(Stmt.Function funcStmt)
@@ -650,6 +650,8 @@ public partial class ILCompiler
                 }
             }
         }
+
+        ctx.UseOwnedCapturedParameterStorage = true;
 
         // Captured lexical slots must enter TDZ before hoisted functions can
         // retain a reference to their environment.

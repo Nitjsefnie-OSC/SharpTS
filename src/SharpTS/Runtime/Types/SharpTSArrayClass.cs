@@ -8,7 +8,7 @@ namespace SharpTS.Runtime.Types;
 /// A <see cref="SharpTSArray"/> created by a guest class that extends
 /// <c>Array</c>. IS an array (all array built-ins, indexing, iteration, and
 /// <c>Array.isArray</c> work unchanged) and additionally carries the guest
-/// class for method/getter lookup and <c>instanceof</c> brand checks.
+/// class for construction and its default prototype chain.
 /// </summary>
 /// <seealso cref="SharpTSArrayClass"/>
 public sealed class SharpTSArraySubclassInstance(SharpTSClass klass) : SharpTSArray

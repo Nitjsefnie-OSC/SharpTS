@@ -15,6 +15,74 @@ public sealed class ArraySubclassPrototypeMutationTests
             console.log(array instanceof ArrayChild, array instanceof ArrayParent,
                 array instanceof Array, array instanceof Object);
             """, "false false false false\n"];
+        yield return ["default-membership-chain", """
+            class Parent extends Array {}
+            class Child extends Parent {}
+            const values: any = new Child();
+            console.log(Object.getPrototypeOf(values) === Child.prototype,
+                Object.getPrototypeOf(Child.prototype) === Parent.prototype,
+                Object.getPrototypeOf(Parent.prototype) === Array.prototype);
+            console.log(values instanceof Child, values instanceof Parent,
+                values instanceof Array, values instanceof Object, Array.isArray(values));
+            const structural: any = Object.create(Child.prototype);
+            console.log(structural instanceof Child, structural instanceof Parent,
+                structural instanceof Array, Array.isArray(structural));
+            """, "true true true\ntrue true true true true\ntrue true true false\n"];
+        yield return ["constructor-prototype-identity", """
+            class Parent extends Array {}
+            class Child extends Parent {}
+            const values: any = new Child();
+            console.log(Object.getPrototypeOf(Parent) === Array, Object.getPrototypeOf(Child) === Parent,
+                Object.getPrototypeOf(Parent).prototype === Array.prototype,
+                values instanceof Object.getPrototypeOf(Parent));
+            """, "true true true true\n"];
+        yield return ["live-prototype-membership", """
+            class Parent extends Array {}
+            class Child extends Parent {}
+            const values: any = new Child();
+            const original = Object.getPrototypeOf(Child.prototype);
+            Object.setPrototypeOf(Child.prototype, null);
+            console.log(values instanceof Child, values instanceof Parent,
+                values instanceof Array, values instanceof Object, Array.isArray(values));
+            Object.setPrototypeOf(Child.prototype, original);
+            console.log(values instanceof Child, values instanceof Parent,
+                values instanceof Array, values instanceof Object);
+            Object.setPrototypeOf(values, {});
+            console.log(values instanceof Child, values instanceof Parent,
+                values instanceof Array, values instanceof Object, Array.isArray(values));
+            Object.setPrototypeOf(values, Child.prototype);
+            console.log(values instanceof Child, values instanceof Parent,
+                values instanceof Array, values instanceof Object);
+            """, "true false false false true\ntrue true true true\nfalse false false true true\ntrue true true true\n"];
+        yield return ["intrinsic-and-structural-membership", """
+            class Values extends Array {}
+            const hasInstance: any = (Function.prototype as any)[Symbol.hasInstance];
+            const values: any = new Values();
+            console.log(hasInstance.call(Values, values), hasInstance.call(Array, values));
+            Object.setPrototypeOf(values, null);
+            console.log(hasInstance.call(Values, values), hasInstance.call(Array, values));
+            Object.setPrototypeOf(values, Array.prototype);
+            console.log(hasInstance.call(Values, values), hasInstance.call(Array, values));
+            console.log(Array.prototype instanceof Array, Array.isArray(Array.prototype));
+            const structural: any = Object.create(Array.prototype);
+            console.log(structural instanceof Array, Array.isArray(structural));
+            const plain: any = [];
+            Object.setPrototypeOf(plain, null);
+            console.log(plain instanceof Array, plain instanceof Object, Array.isArray(plain));
+            Object.setPrototypeOf(plain, Array.prototype);
+            console.log(plain instanceof Array, plain instanceof Object);
+            """, "true true\nfalse false\nfalse true\nfalse true\ntrue false\nfalse false true\ntrue true\n"];
+        yield return ["arguments-membership", """
+            function inspect() {
+                console.log(Object.getPrototypeOf(arguments) === Object.prototype,
+                    arguments instanceof Array, arguments instanceof Object, Array.isArray(arguments));
+                Object.setPrototypeOf(arguments, Array.prototype);
+                console.log(arguments instanceof Array, arguments instanceof Object, Array.isArray(arguments));
+                Object.setPrototypeOf(arguments, null);
+                console.log(arguments instanceof Array, arguments instanceof Object, Array.isArray(arguments));
+            }
+            inspect();
+            """, "true false true false\ntrue true false\nfalse false false\n"];
         yield return ["null-preserves-exotic-storage", """
             class Values extends Array { tag = 'own'; read() { return this.tag; } }
             const values: any = new Values(3, 4);
@@ -46,8 +114,15 @@ public sealed class ArraySubclassPrototypeMutationTests
             console.log(Reflect.setPrototypeOf(values, null), Object.getPrototypeOf(values) === null);
             console.log(Reflect.setPrototypeOf(values, original), Object.getPrototypeOf(values) === original);
             console.log(values instanceof Child, values instanceof Parent, values instanceof Array, values instanceof Object);
+            """, "true true\ntrue true\ntrue true true true\n"];
+        yield return ["restored-prototype-properties", """
+            class Child extends Array {}
+            const values: any = new Child(1, 2);
+            const original = Object.getPrototypeOf(values);
+            Object.setPrototypeOf(values, null);
+            Object.setPrototypeOf(values, original);
             console.log(values.push(3), values.length, values[2]);
-            """, "true true\ntrue true\ntrue true true true\n3 3 3\n"];
+            """, "3 3 3\n"];
         yield return ["array-prototype-custom-chain", """
             class Values extends Array {}
             const values: any = new Values(4, 5);
@@ -55,8 +130,15 @@ public sealed class ArraySubclassPrototypeMutationTests
             custom.marker = 17;
             Object.setPrototypeOf(values, custom);
             console.log(values instanceof Values, values instanceof Array, values instanceof Object);
+            """, "false true true\n"];
+        yield return ["array-prototype-custom-properties", """
+            class Values extends Array {}
+            const values: any = new Values(4, 5);
+            const custom: any = Object.create(Array.prototype);
+            custom.marker = 17;
+            Object.setPrototypeOf(values, custom);
             console.log(values.marker, values.push(6), values[2], Array.isArray(values));
-            """, "false true true\n17 3 6 true\n"];
+            """, "17 3 6 true\n"];
         yield return ["nonextensible-same-prototype", """
             class Values extends Array {}
             const values: any = new Values(1, 2);
@@ -94,9 +176,13 @@ public sealed class ArraySubclassPrototypeMutationTests
 
     public static IEnumerable<object[]> ParityCases()
         => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            // Interpreter membership and prototype lookup are tracked separately in #2365/#2366.
-            .Where(mode => mode == ExecutionMode.Compiled || (string)row[0] is
-                ("nonextensible-same-prototype" or "cycle-rejection"))
+            // Remaining interpreter exclusions cover inherited property reads (#2366).
+            .Where(mode => mode == ExecutionMode.Compiled || (string)row[0] is not
+                ("null-preserves-exotic-storage" or "custom-prototype-properties" or
+                 "restored-prototype-properties" or "array-prototype-custom-properties" or "noncanonical-index-fields"))
+            // Compiled counterparts are tracked independently in #2602, #2603 and #2605.
+            .Where(mode => mode == ExecutionMode.Interpreted || (string)row[0] is not
+                ("arguments-membership" or "live-prototype-membership" or "constructor-prototype-identity"))
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ParityCases))]

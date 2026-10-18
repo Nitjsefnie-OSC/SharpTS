@@ -2059,7 +2059,8 @@ public static partial class ObjectBuiltIns
         // ECMA-262 §23.1.3: ordinary Array exotic objects have Array.prototype as their
         // [[Prototype]]. Subclass instances keep their class chain instead.
         SharpTSArray { HasExplicitPrototype: true } array => array.ExplicitPrototype,
-        SharpTSArraySubclassInstance sub => sub.Klass,
+        SharpTSArraySubclassInstance sub => sub.Klass.Prototype,
+        SharpTSArguments => interp?.GetObjectPrototype(),
         SharpTSArray => interp?.GetArrayPrototype(),
         SharpTSPromiseSubclassInstance promiseSub => promiseSub.Klass.Prototype,
         SharpTSPromise => interp?.GetPromisePrototype(),
@@ -2086,6 +2087,8 @@ public static partial class ObjectBuiltIns
         SharpTSStringPrototype => interp?.GetObjectPrototype(),
         SharpTSClassPrototype { HasExplicitPrototype: true } classPrototype
             => classPrototype.ExplicitPrototype,
+        SharpTSClassPrototype classPrototype when ReferenceEquals(classPrototype.Class.Superclass, SharpTSArrayClass.ArrayBase)
+            => interp?.GetArrayPrototype(),
         SharpTSClassPrototype classPrototype
             => (object?)classPrototype.Class.Superclass?.Prototype ?? interp?.GetObjectPrototype(),
         // The Number prototype object is ordinary and inherits from this realm's
@@ -2121,6 +2124,8 @@ public static partial class ObjectBuiltIns
         // §10.2.5: a derived constructor's [[Prototype]] is its base constructor, so
         // `Object.getPrototypeOf(RangeError) === Error`. A base class falls back to
         // Function.prototype like any other function object.
+        SharpTSClass klass when ReferenceEquals(klass.Superclass, SharpTSArrayClass.ArrayBase)
+            => interp?.GetArrayGlobal(),
         SharpTSClass klass => (object?)klass.Superclass ?? interp?.GetFunctionPrototype(),
         ISharpTSCallable function when FunctionObjectProperties.TryGetExplicitPrototype(function, interp, out var prototype)
             => prototype,

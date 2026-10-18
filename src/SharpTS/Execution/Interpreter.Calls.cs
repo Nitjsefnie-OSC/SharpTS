@@ -1095,21 +1095,9 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Evaluates the <c>instanceof</c> operator.
-    /// </summary>
-    /// <param name="left">The instance to check.</param>
-    /// <param name="right">The class to check against.</param>
-    /// <returns><c>true</c> if the instance is of the specified class or a subclass; otherwise <c>false</c>.</returns>
-    /// <remarks>
-    /// Walks up the inheritance chain to check if the instance's class or any superclass
-    /// matches the target class name.
-    /// </remarks>
-    /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/narrowing.html#instanceof-narrowing">TypeScript instanceof Narrowing</seealso>
-    /// <summary>
     /// ECMA-262 §7.3.21 OrdinaryHasInstance — walks <paramref name="left"/>'s
     /// __proto__ chain looking for a link === <paramref name="ctor"/>.prototype.
-    /// Capped at depth 64 to prevent runaway loops on cyclic chains. Used by
-    /// both the SharpTSFunction and SharpTSArrowFunction instanceof arms.
+    /// Capped at depth 64 to prevent runaway loops on cyclic chains.
     /// </summary>
     private bool InstanceOfByPrototype(object? left, ISharpTSCallable ctor)
     {
@@ -1187,7 +1175,7 @@ public partial class Interpreter
         // Namespace-style constructors still require their prototype to occur
         // in the candidate's actual chain. A null-rooted object or callable
         // does not inherit Object.prototype or Function.prototype.
-        if (right is SharpTSObjectNamespace or SharpTSFunctionGlobal)
+        if (right is SharpTSObjectNamespace or SharpTSFunctionGlobal or SharpTSArrayGlobal)
             return InstanceOfByPrototype(left, (ISharpTSCallable)right);
 
         // `x instanceof Number/String/Boolean` — the RHS resolves to the namespace
@@ -1252,14 +1240,6 @@ public partial class Interpreter
         if (right is SharpTSTransformStreamConstructor)
             return left is SharpTSTransformStream;
 
-        // Array is registered as a namespace singleton (SharpTSArrayGlobal), not
-        // as a SharpTSBuiltInConstructor — so `arr instanceof Array` lands here.
-        // Real arrays AND the Array.prototype dict itself satisfy the check
-        // (ECMA-262 23.1.3 — Array.prototype is itself an Array exotic object).
-        if (right is SharpTSArrayGlobal)
-            return left is SharpTSArray and not SharpTSArguments
-                || left is SharpTSArrayPrototype;
-
         // Constructor-function instanceof (JS `new Func()` pattern).
         // An object is `instanceof Func` when any link in its prototype
         // chain === Func.prototype.
@@ -1280,26 +1260,18 @@ public partial class Interpreter
         if (right is not SharpTSClass targetClass)
             return InstanceOfByPrototype(left, (ISharpTSCallable)right);
 
+        // Array storage and the nominal class remain intact when a guest changes
+        // the instance or class prototype. Membership follows those live links,
+        // including for ordinary objects inheriting an Array subclass prototype.
+        if (left is SharpTSArray || targetClass is SharpTSArrayClass)
+            return InstanceOfByPrototype(left, targetClass);
+
         // Standard path: SharpTSInstance — walk the class chain
         if (left is SharpTSInstance instance)
         {
             if (instance.UsesDynamicPrototypeChain)
                 return InstanceOfByPrototype(left, targetClass);
             SharpTSClass? current = instance.GetClass();
-            while (current != null)
-            {
-                if (ReferenceEquals(current, targetClass)) return true;
-                current = current.Superclass;
-            }
-            return false;
-        }
-
-        // Array subclass instances (#233): real SharpTSArrays carrying a guest
-        // class — walk its chain (`m instanceof Array` is handled by the
-        // SharpTSArrayGlobal arm above via `left is SharpTSArray`).
-        if (left is SharpTSArraySubclassInstance subclassArray)
-        {
-            SharpTSClass? current = subclassArray.Klass;
             while (current != null)
             {
                 if (ReferenceEquals(current, targetClass)) return true;

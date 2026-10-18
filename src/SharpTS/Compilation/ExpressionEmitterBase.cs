@@ -302,6 +302,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case Expr.Super s:
                 EmitSuper(s);
                 break;
+            case Expr.SetSuper s:
+                EmitSetSuper(s);
+                break;
             case Expr.CompoundAssign ca:
                 EmitCompoundAssign(ca);
                 break;

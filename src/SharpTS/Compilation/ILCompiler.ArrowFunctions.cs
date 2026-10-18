@@ -1041,6 +1041,9 @@ public partial class ILCompiler
                 CollectArrowsFromExpr(s.Object);
                 CollectArrowsFromExpr(s.Value);
                 break;
+            case Expr.SetSuper s:
+                CollectArrowsFromExpr(s.Value);
+                break;
             case Expr.GetIndex gi:
                 CollectArrowsFromExpr(gi.Object);
                 CollectArrowsFromExpr(gi.Index);

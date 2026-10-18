@@ -45,6 +45,7 @@ public partial class TypeChecker
         Expr.GetIndex e => VisitGetIndex(e),
         Expr.SetIndex e => VisitSetIndex(e),
         Expr.Super e => VisitSuper(e),
+        Expr.SetSuper e => VisitSetSuper(e),
         Expr.CompoundAssign e => VisitCompoundAssign(e),
         Expr.CompoundSet e => VisitCompoundSet(e),
         Expr.CompoundSetPrivate e => VisitCompoundSetPrivate(e),

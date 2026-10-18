@@ -191,6 +191,9 @@ public partial class TypeChecker
                 assigned = AnalyzeInitializationExpression(value, assigned);
                 assigned.Add(name.Lexeme);
                 break;
+            case Expr.SetSuper setSuper:
+                assigned = AnalyzeInitializationExpression(setSuper.Value, assigned);
+                break;
             case Expr.CompoundSet { Object: Expr.This, Name: var compoundName, Value: var compoundValue }:
                 assigned = AnalyzeInitializationExpression(compoundValue, assigned);
                 assigned.Add(compoundName.Lexeme);

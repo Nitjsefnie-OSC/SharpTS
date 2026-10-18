@@ -3190,6 +3190,7 @@ public partial class TypeChecker
         Expr.NewTarget nt => nt.Keyword.Line,
         Expr.ImportMeta im => im.Keyword.Line,
         Expr.Set s => s.Name.Line,
+        Expr.SetSuper s => s.Target.Method?.Line ?? s.Target.Keyword.Line,
         Expr.Get g => g.Name.Line,
         Expr.PrivateIn presence => presence.Name.Line,
         Expr.Assign a => a.Name.Line,

@@ -1037,6 +1037,13 @@ public sealed class RuntimeFeatureDetector
                 VisitExpr(g.Object);
                 break;
 
+            case Expr.SetSuper superSet:
+                // Super writes reuse receiver-aware OrdinarySet, even when the
+                // program does not mention Reflect or Proxy explicitly.
+                _set.UsesReflect = true;
+                VisitExpr(superSet.Value);
+                break;
+
             case Expr.Set s:
                 MarkMutationTarget(s.Object);
                 MarkGlobalPropertyMutation(s.Object, s.Name.Lexeme);

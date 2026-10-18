@@ -186,6 +186,7 @@ public abstract record Expr
     public record GetIndex(Expr Object, Expr Index, bool Optional = false) : Expr;
     public record SetIndex(Expr Object, Expr Index, Expr Value) : Expr;
     public record Super(Token Keyword, Token? Method) : Expr;  // Method is null for super() constructor calls
+    public record SetSuper(Super Target, Expr Value) : Expr;
     // Compound assignment
     public record CompoundAssign(Token Name, Token Operator, Expr Value) : Expr;
     public record CompoundSet(Expr Object, Token Name, Token Operator, Expr Value) : Expr;

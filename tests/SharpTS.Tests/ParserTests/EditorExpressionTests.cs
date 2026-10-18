@@ -20,7 +20,7 @@ public sealed class EditorExpressionTests
             typeof(Expr.Get), typeof(Expr.Set), typeof(Expr.GetPrivate), typeof(Expr.PrivateIn),
             typeof(Expr.SetPrivate), typeof(Expr.CallPrivate), typeof(Expr.This), typeof(Expr.New), typeof(Expr.NewTarget),
             typeof(Expr.ArrayLiteral), typeof(Expr.ObjectLiteral), typeof(Expr.GetIndex), typeof(Expr.SetIndex),
-            typeof(Expr.Super), typeof(Expr.CompoundAssign), typeof(Expr.CompoundSet), typeof(Expr.CompoundSetPrivate), typeof(Expr.CompoundSetIndex),
+            typeof(Expr.Super), typeof(Expr.SetSuper), typeof(Expr.CompoundAssign), typeof(Expr.CompoundSet), typeof(Expr.CompoundSetPrivate), typeof(Expr.CompoundSetIndex),
             typeof(Expr.LogicalAssign), typeof(Expr.LogicalSet), typeof(Expr.LogicalSetIndex),
             typeof(Expr.PrefixIncrement), typeof(Expr.PostfixIncrement), typeof(Expr.ArrowFunction),
             typeof(Expr.TemplateLiteral), typeof(Expr.TaggedTemplateLiteral), typeof(Expr.Spread),

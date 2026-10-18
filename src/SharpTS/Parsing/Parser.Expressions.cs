@@ -119,7 +119,8 @@ public partial class Parser
                 onVariable: (name, val) => new Expr.Assign(name, val),
                 onGet: (get, val) => new Expr.Set(get.Object, get.Name, val),
                 onGetPrivate: (gp, val) => new Expr.SetPrivate(gp.Object, gp.Name, val),
-                onGetIndex: (gi, val) => new Expr.SetIndex(gi.Object, gi.Index, val));
+                onGetIndex: (gi, val) => new Expr.SetIndex(gi.Object, gi.Index, val),
+                onSuper: (reference, val) => new Expr.SetSuper(reference, val));
         }
 
         // Compound assignment operators
@@ -160,7 +161,8 @@ public partial class Parser
         Func<Token, Expr, Expr> onVariable,
         Func<Expr.Get, Expr, Expr> onGet,
         Func<Expr.GetIndex, Expr, Expr> onGetIndex,
-        Func<Expr.GetPrivate, Expr, Expr>? onGetPrivate = null)
+        Func<Expr.GetPrivate, Expr, Expr>? onGetPrivate = null,
+        Func<Expr.Super, Expr, Expr>? onSuper = null)
     {
         // Destructuring defaults are parsed as ordinary assignments first.
         // Reject an optional target before Get/GetIndex loses its Optional
@@ -171,7 +173,7 @@ public partial class Parser
             // Parens don't change whether an expression is a valid reference — `(a.b) = v`,
             // `(a.b) &&= v`, etc. are all valid; unwrap (recursively, for `((a.b))`) before dispatch.
             case Expr.Grouping grouping:
-                return DispatchAssignmentTarget(grouping.Expression, value, errorMessage, onVariable, onGet, onGetIndex, onGetPrivate);
+                return DispatchAssignmentTarget(grouping.Expression, value, errorMessage, onVariable, onGet, onGetIndex, onGetPrivate, onSuper);
             case Expr.Variable variable:
                 if (_isStrictMode && (variable.Name.Lexeme == "eval" || variable.Name.Lexeme == "arguments"))
                     throw new Exception("SyntaxError: Unexpected eval or arguments in strict mode");
@@ -201,6 +203,10 @@ public partial class Parser
                 Expr indexSet = onGetIndex(getIndex, value);
                 CopyEditorSyntax(getIndex, indexSet);
                 return indexSet;
+            case Expr.Super { Method: not null } super when onSuper != null:
+                Expr superSet = onSuper(super, value);
+                CopyEditorSyntax(super, superSet);
+                return superSet;
             default:
                 throw new Exception(errorMessage);
         }

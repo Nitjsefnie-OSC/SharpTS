@@ -52,6 +52,7 @@ public abstract class AstVisitorBase
             case Expr.GetIndex e: VisitGetIndex(e); break;
             case Expr.SetIndex e: VisitSetIndex(e); break;
             case Expr.Super e: VisitSuper(e); break;
+            case Expr.SetSuper e: VisitSetSuper(e); break;
             case Expr.CompoundAssign e: VisitCompoundAssign(e); break;
             case Expr.CompoundSet e: VisitCompoundSet(e); break;
             case Expr.CompoundSetPrivate e: VisitCompoundSetPrivate(e); break;
@@ -296,6 +297,12 @@ public abstract class AstVisitorBase
     protected virtual void VisitSuper(Expr.Super expr)
     {
         // Leaf node - no children to visit
+    }
+
+    protected virtual void VisitSetSuper(Expr.SetSuper expr)
+    {
+        Visit(expr.Target);
+        Visit(expr.Value);
     }
 
     protected virtual void VisitCompoundAssign(Expr.CompoundAssign expr)

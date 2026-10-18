@@ -89,6 +89,7 @@ internal sealed partial class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeF
             Expr.Comma comma => PassesRawCall(comma.Right, callEvidenceOnly),
             Expr.Assign assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             Expr.Set assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
+            Expr.SetSuper assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             Expr.SetIndex assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             Expr.SetPrivate assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             Expr.DestructuringAssign assignment => PassesRawCall(assignment.ResultValue, callEvidenceOnly),

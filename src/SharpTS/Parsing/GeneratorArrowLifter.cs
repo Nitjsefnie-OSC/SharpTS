@@ -627,6 +627,11 @@ internal sealed class GeneratorArrowLifter
                 var o = RewriteExpr(s.Object); var v = RewriteExpr(s.Value);
                 return ReferenceEquals(o, s.Object) && ReferenceEquals(v, s.Value) ? s : new Expr.Set(o, s.Name, v);
             }
+            case Expr.SetSuper s:
+            {
+                var value = RewriteExpr(s.Value);
+                return ReferenceEquals(value, s.Value) ? s : s with { Value = value };
+            }
             case Expr.SetIndex si:
             {
                 var o = RewriteExpr(si.Object); var idx = RewriteExpr(si.Index); var v = RewriteExpr(si.Value);

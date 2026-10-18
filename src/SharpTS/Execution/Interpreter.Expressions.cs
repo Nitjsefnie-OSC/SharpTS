@@ -81,6 +81,7 @@ public partial class Interpreter
     internal RuntimeValue VisitGetIndex(Expr.GetIndex getIndex) => EvaluateGetIndex(getIndex);
     internal RuntimeValue VisitSetIndex(Expr.SetIndex setIndex) => EvaluateSetIndex(setIndex);
     internal RuntimeValue VisitSuper(Expr.Super super) => EvaluateSuper(super);
+    internal RuntimeValue VisitSetSuper(Expr.SetSuper setSuper) => EvaluateSetSuper(setSuper);
     internal RuntimeValue VisitCompoundAssign(Expr.CompoundAssign compound) => EvaluateCompoundAssign(compound);
     internal RuntimeValue VisitCompoundSet(Expr.CompoundSet compoundSet) => EvaluateCompoundSet(compoundSet);
     internal RuntimeValue VisitCompoundSetPrivate(Expr.CompoundSetPrivate compoundSet) => EvaluateCompoundSetPrivateCore(_syncContext, compoundSet).GetAwaiter().GetResult();
@@ -164,6 +165,7 @@ public partial class Interpreter
     internal ValueTask<RuntimeValue> VisitGetIndexAsync(Expr.GetIndex getIndex) => EvaluateGetIndexCore(_asyncContext, getIndex);
     internal ValueTask<RuntimeValue> VisitSetIndexAsync(Expr.SetIndex setIndex) => EvaluateSetIndexCore(_asyncContext, setIndex);
     internal ValueTask<RuntimeValue> VisitSuperAsync(Expr.Super super) => new(EvaluateSuper(super));
+    internal ValueTask<RuntimeValue> VisitSetSuperAsync(Expr.SetSuper setSuper) => EvaluateSetSuperAsync(setSuper);
     internal ValueTask<RuntimeValue> VisitCompoundAssignAsync(Expr.CompoundAssign compound) => EvaluateCompoundAssignCore(_asyncContext, compound);
     internal ValueTask<RuntimeValue> VisitCompoundSetAsync(Expr.CompoundSet compoundSet) => EvaluateCompoundSetCore(_asyncContext, compoundSet);
     internal ValueTask<RuntimeValue> VisitCompoundSetPrivateAsync(Expr.CompoundSetPrivate compoundSet) => EvaluateCompoundSetPrivateCore(_asyncContext, compoundSet);

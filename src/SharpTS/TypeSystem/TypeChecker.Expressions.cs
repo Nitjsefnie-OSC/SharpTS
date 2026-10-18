@@ -269,6 +269,7 @@ public partial class TypeChecker
     internal TypeInfo VisitThis(Expr.This expr) => CheckThis(expr);
     internal TypeInfo VisitNew(Expr.New expr) => CheckNew(expr);
     internal TypeInfo VisitSuper(Expr.Super expr) => CheckSuper(expr);
+    internal TypeInfo VisitSetSuper(Expr.SetSuper expr) => CheckSetSuper(expr);
 
     // Index access (TypeChecker.Properties.Index.cs)
     internal TypeInfo VisitGetIndex(Expr.GetIndex expr) => CheckGetIndex(expr);

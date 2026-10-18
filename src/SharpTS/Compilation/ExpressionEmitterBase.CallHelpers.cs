@@ -1262,6 +1262,7 @@ public abstract partial class ExpressionEmitterBase
         Expr.GetPrivate gp => ExprContainsSuspension(gp.Object),
         Expr.PrivateIn presence => ExprContainsSuspension(presence.Object),
         Expr.Set s => ExprContainsSuspension(s.Object) || ExprContainsSuspension(s.Value),
+        Expr.SetSuper superSet => ExprContainsSuspension(superSet.Value),
         Expr.SetPrivate sp => ExprContainsSuspension(sp.Object) || ExprContainsSuspension(sp.Value),
         Expr.GetIndex gi => ExprContainsSuspension(gi.Object) || ExprContainsSuspension(gi.Index),
         Expr.SetIndex si => ExprContainsSuspension(si.Object) || ExprContainsSuspension(si.Index) || ExprContainsSuspension(si.Value),

@@ -171,6 +171,10 @@ public static class LoopAssignmentAnalyzer
                 CollectAssignedPathsFromExpr(set.Value, paths);
                 break;
 
+            case Expr.SetSuper setSuper:
+                CollectAssignedPathsFromExpr(setSuper.Value, paths);
+                break;
+
             case Expr.SetIndex setIndex:
                 CollectAssignedPathsFromExpr(setIndex.Object, paths);
                 CollectAssignedPathsFromExpr(setIndex.Index, paths);

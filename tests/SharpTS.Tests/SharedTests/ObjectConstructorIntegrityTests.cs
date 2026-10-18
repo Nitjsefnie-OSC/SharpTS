@@ -5,6 +5,32 @@ namespace SharpTS.Tests.SharedTests;
 
 public sealed class ObjectConstructorIntegrityTests
 {
+    // Compiled frozen string properties reject compatible definitions (#2575).
+    [Fact]
+    public void FrozenObjectsAcceptCompatibleDefinitions()
+    {
+        const string source = """
+            for (const target of [Object, {}] as any[]) {
+                let reads = 0;
+                const getter = function() { reads++; return 1; };
+                Object.defineProperty(target, 'value', { value: -0, configurable: true });
+                Object.defineProperty(target, 'accessor', { get: getter, configurable: true });
+                Object.freeze(target);
+                console.log(Object.defineProperty(target, 'value', {}) === target,
+                    Object.defineProperty(target, 'value', { value: -0 }) === target,
+                    Object.defineProperty(target, 'accessor', { get: getter }) === target, reads);
+                for (const descriptor of [{ value: 0 }, { writable: true }, { configurable: true }]) {
+                    try { Object.defineProperty(target, 'value', descriptor); }
+                    catch (error) { console.log(error instanceof TypeError); }
+                }
+                try { Object.defineProperty(target, 'newProperty', {}); }
+                catch (error) { console.log(error instanceof TypeError); }
+            }
+            """;
+        Assert.Equal(string.Concat(Enumerable.Repeat("true true true 0\ntrue\ntrue\ntrue\ntrue\n", 2)),
+            TestHarness.Run(source, ExecutionMode.Interpreted));
+    }
+
     // Compiled Object integrity leaves native descriptors mutable (#2573).
     [Fact]
     public void SealAndFreezeUpdateNativeAndCustomDescriptors()

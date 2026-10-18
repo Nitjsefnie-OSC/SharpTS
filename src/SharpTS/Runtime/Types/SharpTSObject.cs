@@ -807,11 +807,8 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             }
         }
 
-        // Check sealed/frozen/extensible state
-        if (IsFrozen)
-        {
-            return false;
-        }
+        // Frozen existing properties still accept compatible definitions. Their
+        // descriptor flags above enforce compatibility; only new keys need this guard.
         if (!IsExtensible && !hasExisting)
         {
             return false;

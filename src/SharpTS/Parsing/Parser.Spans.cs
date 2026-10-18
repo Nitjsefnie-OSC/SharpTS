@@ -56,7 +56,8 @@ public partial class Parser
         _partialGreaterEnd = checkpoint.PartialGreaterEnd;
     }
 
-    private void RecordSplitToken(Token original) => (_splitTokenEdits ??= []).Add((_current, original));
+    private void RecordSplitToken(Token original, int? index = null) =>
+        (_splitTokenEdits ??= []).Add((index ?? _current, original));
 
     /// <summary>
     /// Source positions of the nodes produced by this parser, keyed by node reference.

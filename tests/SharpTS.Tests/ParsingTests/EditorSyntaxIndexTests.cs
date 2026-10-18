@@ -228,8 +228,14 @@ public sealed class EditorSyntaxIndexTests
         var ordinary = new Parser(new Lexer(text).ScanTokens()).ParseOrThrow();
         var ordinaryAccessor = Assert.Single(Assert.IsType<Stmt.Class>(ordinary[0]).Accessors!);
 
-        Assert.Equal(text.IndexOf("\"quoted\"", StringComparison.Ordinal), accessor.Name.Start);
-        Assert.Equal(ordinaryAccessor.Name, accessor.Name);
+        Assert.Equal(-1, accessor.Name.Start);
+        Assert.Equal(SourceSpan.Hidden, accessor.Name.Span);
+        Assert.Equal(text.IndexOf("\"quoted\"", StringComparison.Ordinal), accessor.Name.SourceOrderOffset);
+        Assert.Equal(
+            (ordinaryAccessor.Name.Type, ordinaryAccessor.Name.Lexeme, ordinaryAccessor.Name.Literal,
+                ordinaryAccessor.Name.Line, ordinaryAccessor.Name.Start, ordinaryAccessor.Name.SourceOrderOffset),
+            (accessor.Name.Type, accessor.Name.Lexeme, accessor.Name.Literal,
+                accessor.Name.Line, accessor.Name.Start, accessor.Name.SourceOrderOffset));
         Assert.Equal(-1, function.Parameters[0].Name.Start);
         var quoted = Assert.Single(document.EditorSyntax!.GetRecords(accessor), record => record.Role == EditorSyntaxRole.MemberName);
         Assert.Equal(TokenType.STRING, quoted.Token!.Type);

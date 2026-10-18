@@ -270,9 +270,9 @@ public partial class ILCompiler
         }
         var members = new List<(Stmt.Function? Method, Stmt.Accessor? Accessor, Expr Key, MethodBuilder Builder, int Position)>();
         foreach (var (method, key, builder) in _classes.ComputedMembers.GetMethods(typeBuilder))
-            members.Add((method, null, key, builder, method.Name.Start));
+            members.Add((method, null, key, builder, method.Name.SourceOrderOffset));
         foreach (var (accessor, builder) in _classes.ComputedMembers.GetAccessors(typeBuilder))
-            members.Add((null, accessor, accessor.ComputedKey!, builder, accessor.Name.Start));
+            members.Add((null, accessor, accessor.ComputedKey!, builder, accessor.Name.SourceOrderOffset));
 
         var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
         foreach (var (method, accessor, key, builder, _) in members.OrderBy(member => member.Position))
@@ -350,11 +350,11 @@ public partial class ILCompiler
         }
         var deferred = new List<(Expr Key, MethodBuilder? Builder, bool IsStatic, bool? IsGetter, int Position, Stmt.Field? Field)>();
         foreach (var (method, key, builder) in _classes.ComputedMembers.GetMethods(typeBuilder))
-            deferred.Add((key, builder, method.IsStatic, null, method.Name.Start, null));
+            deferred.Add((key, builder, method.IsStatic, null, method.Name.SourceOrderOffset, null));
         foreach (var (accessor, builder) in _classes.ComputedMembers.GetAccessors(typeBuilder))
-            deferred.Add((accessor.ComputedKey!, builder, accessor.IsStatic, accessor.Kind.Type == TokenType.GET, accessor.Name.Start, null));
+            deferred.Add((accessor.ComputedKey!, builder, accessor.IsStatic, accessor.Kind.Type == TokenType.GET, accessor.Name.SourceOrderOffset, null));
         foreach (var field in fields.Where(field => field.ComputedKey != null && !field.IsDeclare))
-            deferred.Add((field.ComputedKey!, null, field.IsStatic, null, field.Name.Start, field));
+            deferred.Add((field.ComputedKey!, null, field.IsStatic, null, field.Name.SourceOrderOffset, field));
         // Generic accessor keys belong to the source definition, rather than
         // each closed CLR owner's initializer. Reuse definition-time capture.
         bool hasGenericAccessorKeys = source is Stmt.Class && typeBuilder.IsGenericTypeDefinition

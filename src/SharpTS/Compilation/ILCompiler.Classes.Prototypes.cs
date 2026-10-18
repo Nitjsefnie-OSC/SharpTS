@@ -397,7 +397,7 @@ public partial class ILCompiler
         var declaration = GetNominalClassDeclaration(typeBuilder);
         bool hasDeferredKeys = _classes.DeferredDefinitions.TryGet(typeBuilder, out _);
         var computedAccessors = _classes.ComputedMembers.GetAccessors(typeBuilder);
-        foreach (var accessor in (declaration?.Accessors ?? []).OrderBy(accessor => accessor.Name.Start))
+        foreach (var accessor in (declaration?.Accessors ?? []).OrderBy(accessor => accessor.Name.SourceOrderOffset))
         {
             if (staticOnly && !accessor.IsStatic) continue;
             string? name = accessor.ComputedKey == null ? accessor.Name.Lexeme
@@ -407,7 +407,7 @@ public partial class ILCompiler
             // A later data method replaces both halves of an earlier accessor.
             if (declaration!.Methods.Any(method => method.Body != null && !method.IsPrivate && method.ComputedKey == null
                     && method.IsStatic == accessor.IsStatic && (method.IsStatic || method.Name.Lexeme != "constructor")
-                    && method.Name.Lexeme == name && method.Name.Start > accessor.Name.Start)) continue;
+                    && method.Name.Lexeme == name && method.Name.SourceOrderOffset > accessor.Name.SourceOrderOffset)) continue;
             MethodBuilder? accessorMethod = null;
             if (accessor.ComputedKey == null)
                 _classes.AccessorBuilders.TryGetValue(accessor, out accessorMethod);

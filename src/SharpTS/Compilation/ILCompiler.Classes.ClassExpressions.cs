@@ -524,12 +524,12 @@ public partial class ILCompiler
         }
 
         var keys = _classes.ComputedMembers.GetMethods(typeBuilder)
-            .Select(entry => (entry.Key, entry.Method.Name.Start))
+            .Select(entry => (entry.Key, entry.Method.Name.SourceOrderOffset))
             .Concat(_classes.ComputedMembers.GetAccessors(typeBuilder)
-                .Select(entry => (entry.Accessor.ComputedKey!, entry.Accessor.Name.Start)))
+                .Select(entry => (entry.Accessor.ComputedKey!, entry.Accessor.Name.SourceOrderOffset)))
             .Concat(classExpr.Fields.Where(field => field.ComputedKey != null && !field.IsDeclare)
-                .Select(field => (field.ComputedKey!, field.Name.Start)))
-            .OrderBy(entry => entry.Start).Select(entry => entry.Item1).ToArray();
+                .Select(field => (field.ComputedKey!, field.Name.SourceOrderOffset)))
+            .OrderBy(entry => entry.SourceOrderOffset).Select(entry => entry.Item1).ToArray();
         _classExprs.Factories[classExpr] = _classExprs.Factories[classExpr] with { Keys = keys };
         DefinePrivateClassElements(typeBuilder, className, ClassExpressionDeclaration(classExpr),
             _classes.GenericParameters.Require(typeBuilder).ToArray(), classExpr);

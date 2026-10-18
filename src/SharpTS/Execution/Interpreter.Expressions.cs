@@ -2238,18 +2238,18 @@ public partial class Interpreter
                     object? key = computedMemberKeys[method.ComputedKey];
                     if (key is SharpTSSymbol symbolKey)
                     {
-                        memberDefinitions.Add(new(method.Name.Start, symbolKey, func, method.IsStatic, null));
+                        memberDefinitions.Add(new(method.Name.SourceOrderOffset, symbolKey, func, method.IsStatic, null));
                         continue;
                     }
                     string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
                     SharpTSClass.SetComputedMethodName(func, keyStr);
                     if (!method.IsStatic && keyStr == "constructor")
                     {
-                        (constructorProperties ??= []).Add((method.Name.Start, func, null));
+                        (constructorProperties ??= []).Add((method.Name.SourceOrderOffset, func, null));
                         continue;
                     }
                     (method.IsStatic ? staticMethods : methods)[keyStr] = func;
-                    memberDefinitions.Add(new(method.Name.Start, keyStr, func, method.IsStatic, null));
+                    memberDefinitions.Add(new(method.Name.SourceOrderOffset, keyStr, func, method.IsStatic, null));
                     continue;
                 }
 
@@ -2258,13 +2258,13 @@ public partial class Interpreter
                 else if (method.IsStatic)
                 {
                     staticMethods[method.Name.Lexeme] = func;
-                    memberDefinitions.Add(new(method.Name.Start, method.Name.Lexeme, func, true, null));
+                    memberDefinitions.Add(new(method.Name.SourceOrderOffset, method.Name.Lexeme, func, true, null));
                 }
                 else
                 {
                     methods[method.Name.Lexeme] = func;
                     if (method.Name.Lexeme != "constructor")
-                        memberDefinitions.Add(new(method.Name.Start, method.Name.Lexeme, func, false, null));
+                        memberDefinitions.Add(new(method.Name.SourceOrderOffset, method.Name.Lexeme, func, false, null));
                 }
             }
 
@@ -2296,14 +2296,14 @@ public partial class Interpreter
                         object? key = computedMemberKeys[accessor.ComputedKey];
                         if (key is SharpTSSymbol symbolKey)
                         {
-                            memberDefinitions.Add(new(accessor.Name.Start, symbolKey, func, accessor.IsStatic, isGetter));
+                            memberDefinitions.Add(new(accessor.Name.SourceOrderOffset, symbolKey, func, accessor.IsStatic, isGetter));
                             continue;
                         }
                         nameKey = PropertyKeyConverter.ToPropertyKeyString(key);
                     }
 
                     if (!accessor.IsStatic && nameKey == "constructor")
-                        (constructorProperties ??= []).Add((accessor.Name.Start, func, isGetter));
+                        (constructorProperties ??= []).Add((accessor.Name.SourceOrderOffset, func, isGetter));
 
                     if (isGetter)
                     {
@@ -2314,7 +2314,7 @@ public partial class Interpreter
                         (accessor.IsStatic ? staticSetters : setters)[nameKey] = func;
                     }
                     if (accessor.IsStatic || nameKey != "constructor")
-                        memberDefinitions.Add(new(accessor.Name.Start, nameKey, func, accessor.IsStatic, isGetter));
+                        memberDefinitions.Add(new(accessor.Name.SourceOrderOffset, nameKey, func, accessor.IsStatic, isGetter));
                 }
             }
 

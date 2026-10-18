@@ -99,6 +99,10 @@ public class Token(TokenType type, string lexeme, object? literal, int line, int
     /// </summary>
     public int Start { get; } = start;
 
+    // Normalized member names can retain declaration order without claiming
+    // that their synthesized spelling occupies a source span.
+    internal int SourceOrderOffset { get; init; } = start;
+
     /// <summary>Parse origin for comparing offsets when no source document is available.</summary>
     internal object? SourceIdentity { get; init; }
 

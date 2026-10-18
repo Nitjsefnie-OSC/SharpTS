@@ -468,12 +468,14 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         if (Check(TokenType.STRING))
         {
             var lit = Advance();
-            return AliasEditorToken(new Token(TokenType.IDENTIFIER, (string)lit.Literal!, null, lit.Line, lit.Start), lit);
+            return AliasEditorToken(new Token(TokenType.IDENTIFIER, (string)lit.Literal!, null, lit.Line)
+                { SourceOrderOffset = lit.SourceOrderOffset }, lit);
         }
         if (Check(TokenType.NUMBER))
         {
             var lit = Advance();
-            return AliasEditorToken(new Token(TokenType.IDENTIFIER, lit.Literal!.ToString()!, null, lit.Line, lit.Start), lit);
+            return AliasEditorToken(new Token(TokenType.IDENTIFIER, lit.Literal!.ToString()!, null, lit.Line)
+                { SourceOrderOffset = lit.SourceOrderOffset }, lit);
         }
         return ConsumePropertyName(message);
     }
@@ -496,11 +498,13 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
             // exactly like `get foo()`.
             if (computedKey is Expr.Literal { Value: string s })
             {
-                return (new Token(TokenType.IDENTIFIER, s, null, Previous().Line, Previous().Start), null);
+                return (new Token(TokenType.IDENTIFIER, s, null, Previous().Line)
+                    { SourceOrderOffset = Previous().Start }, null);
             }
             if (computedKey is Expr.Literal { Value: double d })
             {
-                return (new Token(TokenType.IDENTIFIER, d.ToString(System.Globalization.CultureInfo.InvariantCulture), null, Previous().Line, Previous().Start), null);
+                return (new Token(TokenType.IDENTIFIER, d.ToString(System.Globalization.CultureInfo.InvariantCulture), null, Previous().Line)
+                    { SourceOrderOffset = Previous().Start }, null);
             }
 
             return (new Token(TokenType.IDENTIFIER, "<computed>", null, Previous().Line, Previous().Start), computedKey);
@@ -522,7 +526,8 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         {
             Advance();
             // Convert keyword token to identifier token for AST consistency
-            return AliasEditorToken(new Token(TokenType.IDENTIFIER, current.Lexeme, null, current.Line, current.Start), current);
+            return AliasEditorToken(new Token(TokenType.IDENTIFIER, current.Lexeme, null, current.Line)
+                { SourceOrderOffset = current.SourceOrderOffset }, current);
         }
 
         throw new Exception(message);

@@ -1093,6 +1093,12 @@ public partial class ILCompiler
                 AnalyzeArrowExprForAwaits(s.Object, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 AnalyzeArrowExprForAwaits(s.Value, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
+            case Expr.SetSuper s:
+                AnalyzeArrowExprForAwaits(s.Value, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
+                break;
+            case Expr.AssertedAssignment assignment:
+                AnalyzeArrowExprForAwaits(assignment.LoweredAssignment, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
+                break;
             case Expr.GetIndex gi:
                 AnalyzeArrowExprForAwaits(gi.Object, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 AnalyzeArrowExprForAwaits(gi.Index, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
@@ -1147,6 +1153,10 @@ public partial class ILCompiler
             case Expr.CompoundSetPrivate privateCompound:
                 AnalyzeArrowExprForAwaits(privateCompound.Object, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 AnalyzeArrowExprForAwaits(privateCompound.Value, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
+                break;
+            case Expr.LogicalSetPrivate privateLogical:
+                AnalyzeArrowExprForAwaits(privateLogical.Object, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
+                AnalyzeArrowExprForAwaits(privateLogical.Value, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
             case Expr.CompoundSetIndex csi:
                 AnalyzeArrowExprForAwaits(csi.Object, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);

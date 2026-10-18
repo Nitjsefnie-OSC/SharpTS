@@ -37,6 +37,7 @@ public abstract class AstVisitorBase
             case Expr.Delete e: VisitDelete(e); break;
             case Expr.Variable e: VisitVariable(e); break;
             case Expr.Assign e: VisitAssign(e); break;
+            case Expr.AssertedAssignment e: VisitAssertedAssignment(e); break;
             case Expr.Call e: VisitCall(e); break;
             case Expr.Get e: VisitGet(e); break;
             case Expr.Set e: VisitSet(e); break;
@@ -52,12 +53,14 @@ public abstract class AstVisitorBase
             case Expr.GetIndex e: VisitGetIndex(e); break;
             case Expr.SetIndex e: VisitSetIndex(e); break;
             case Expr.Super e: VisitSuper(e); break;
+            case Expr.SetSuper e: VisitSetSuper(e); break;
             case Expr.CompoundAssign e: VisitCompoundAssign(e); break;
             case Expr.CompoundSet e: VisitCompoundSet(e); break;
             case Expr.CompoundSetPrivate e: VisitCompoundSetPrivate(e); break;
             case Expr.CompoundSetIndex e: VisitCompoundSetIndex(e); break;
             case Expr.LogicalAssign e: VisitLogicalAssign(e); break;
             case Expr.LogicalSet e: VisitLogicalSet(e); break;
+            case Expr.LogicalSetPrivate e: VisitLogicalSetPrivate(e); break;
             case Expr.LogicalSetIndex e: VisitLogicalSetIndex(e); break;
             case Expr.PrefixIncrement e: VisitPrefixIncrement(e); break;
             case Expr.PostfixIncrement e: VisitPostfixIncrement(e); break;
@@ -298,6 +301,14 @@ public abstract class AstVisitorBase
         // Leaf node - no children to visit
     }
 
+    protected virtual void VisitAssertedAssignment(Expr.AssertedAssignment expr) => Visit(expr.LoweredAssignment);
+
+    protected virtual void VisitSetSuper(Expr.SetSuper expr)
+    {
+        Visit(expr.Target);
+        Visit(expr.Value);
+    }
+
     protected virtual void VisitCompoundAssign(Expr.CompoundAssign expr)
     {
         Visit(expr.Value);
@@ -328,6 +339,12 @@ public abstract class AstVisitorBase
     }
 
     protected virtual void VisitLogicalSet(Expr.LogicalSet expr)
+    {
+        Visit(expr.Object);
+        Visit(expr.Value);
+    }
+
+    protected virtual void VisitLogicalSetPrivate(Expr.LogicalSetPrivate expr)
     {
         Visit(expr.Object);
         Visit(expr.Value);

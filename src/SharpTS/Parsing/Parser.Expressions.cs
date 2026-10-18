@@ -57,6 +57,9 @@ public partial class Parser
             Expr.Assign assign => assign.Name,
             Expr.CompoundAssign assign => assign.Name,
             Expr.LogicalAssign assign => assign.Name,
+            Expr.AssertedAssignment { LoweredAssignment: Expr.Assign assign } => assign.Name,
+            Expr.AssertedAssignment { LoweredAssignment: Expr.CompoundAssign assign } => assign.Name,
+            Expr.AssertedAssignment { LoweredAssignment: Expr.LogicalAssign assign } => assign.Name,
             _ => null,
         };
         if (name is not null) RecordEditorName(name, expression);
@@ -119,7 +122,8 @@ public partial class Parser
                 onVariable: (name, val) => new Expr.Assign(name, val),
                 onGet: (get, val) => new Expr.Set(get.Object, get.Name, val),
                 onGetPrivate: (gp, val) => new Expr.SetPrivate(gp.Object, gp.Name, val),
-                onGetIndex: (gi, val) => new Expr.SetIndex(gi.Object, gi.Index, val));
+                onGetIndex: (gi, val) => new Expr.SetIndex(gi.Object, gi.Index, val),
+                onSuper: (reference, val) => new Expr.SetSuper(reference, val));
         }
 
         // Compound assignment operators
@@ -145,7 +149,8 @@ public partial class Parser
             return DispatchAssignmentTarget(expr, value, "Invalid logical assignment target.",
                 onVariable: (name, val) => new Expr.LogicalAssign(name, op, val),
                 onGet: (get, val) => new Expr.LogicalSet(get.Object, get.Name, op, val),
-                onGetIndex: (gi, val) => new Expr.LogicalSetIndex(gi.Object, gi.Index, op, val));
+                onGetIndex: (gi, val) => new Expr.LogicalSetIndex(gi.Object, gi.Index, op, val),
+                onGetPrivate: (gp, val) => new Expr.LogicalSetPrivate(gp.Object, gp.Name, op, val));
         }
 
         return expr;
@@ -160,8 +165,18 @@ public partial class Parser
         Func<Token, Expr, Expr> onVariable,
         Func<Expr.Get, Expr, Expr> onGet,
         Func<Expr.GetIndex, Expr, Expr> onGetIndex,
-        Func<Expr.GetPrivate, Expr, Expr>? onGetPrivate = null)
+        Func<Expr.GetPrivate, Expr, Expr>? onGetPrivate = null,
+        Func<Expr.Super, Expr, Expr>? onSuper = null,
+        Expr? writtenTarget = null)
     {
+        if (writtenTarget is null && HasAssignmentAssertion(target)) writtenTarget = target;
+        Expr Finish(Expr assignment)
+        {
+            if (writtenTarget is null) return assignment;
+            int start = _spans.GetSpan(writtenTarget)?.Start ?? CurrentSourceStart();
+            CompleteExpression(assignment, start);
+            return new Expr.AssertedAssignment(writtenTarget, assignment);
+        }
         // Destructuring defaults are parsed as ordinary assignments first.
         // Reject an optional target before Get/GetIndex loses its Optional
         // flag when it becomes Set/SetIndex.
@@ -171,40 +186,57 @@ public partial class Parser
             // Parens don't change whether an expression is a valid reference — `(a.b) = v`,
             // `(a.b) &&= v`, etc. are all valid; unwrap (recursively, for `((a.b))`) before dispatch.
             case Expr.Grouping grouping:
-                return DispatchAssignmentTarget(grouping.Expression, value, errorMessage, onVariable, onGet, onGetIndex, onGetPrivate);
+                return DispatchAssignmentTarget(grouping.Expression, value, errorMessage, onVariable, onGet, onGetIndex, onGetPrivate, onSuper, writtenTarget);
+            case Expr.TypeAssertion assertion:
+                return DispatchAssignmentTarget(assertion.Expression, value, errorMessage, onVariable, onGet, onGetIndex, onGetPrivate, onSuper, writtenTarget);
+            case Expr.NonNullAssertion assertion:
+                return DispatchAssignmentTarget(assertion.Expression, value, errorMessage, onVariable, onGet, onGetIndex, onGetPrivate, onSuper, writtenTarget);
+            case Expr.Satisfies assertion:
+                return DispatchAssignmentTarget(assertion.Expression, value, errorMessage, onVariable, onGet, onGetIndex, onGetPrivate, onSuper, writtenTarget);
             case Expr.Variable variable:
                 if (_isStrictMode && (variable.Name.Lexeme == "eval" || variable.Name.Lexeme == "arguments"))
                     throw new Exception("SyntaxError: Unexpected eval or arguments in strict mode");
-                return onVariable(variable.Name, value);
+                return Finish(onVariable(variable.Name, value));
             // `undefined = v` must PARSE (it's an identifier-shaped target) and fail in the
             // CHECKER with TS2539 ("Cannot assign to 'undefined' because it is not a variable")
             // — tsc treats this as a semantic error, not a parse error.
             case Expr.Literal lit when lit.Value is SharpTS.Runtime.Types.SharpTSUndefined:
-                return onVariable(new Token(TokenType.IDENTIFIER, "undefined", null, Previous().Line), value);
+                return Finish(onVariable(new Token(TokenType.IDENTIFIER, "undefined", null, Previous().Line), value));
             case Expr.ImportMeta importMeta:
                 // Keep the syntactically-recoverable but illegal
                 // `import.meta = value` form in the AST; the checker reports it
                 // as an invalid/unknown assignment instead of the parser
                 // abandoning the rest of the file.
-                return onVariable(
+                return Finish(onVariable(
                     new Token(TokenType.IDENTIFIER, "import.meta", null, importMeta.Keyword.Line),
-                    value);
+                    value));
             case Expr.Get get:
                 Expr set = onGet(get, value);
                 CopyEditorSyntax(get, set);
-                return set;
+                return Finish(set);
             case Expr.GetPrivate getPrivate when onGetPrivate != null:
                 Expr privateSet = onGetPrivate(getPrivate, value);
                 CopyEditorSyntax(getPrivate, privateSet);
-                return privateSet;
+                return Finish(privateSet);
             case Expr.GetIndex getIndex:
                 Expr indexSet = onGetIndex(getIndex, value);
                 CopyEditorSyntax(getIndex, indexSet);
-                return indexSet;
+                return Finish(indexSet);
+            case Expr.Super { Method: not null } super when onSuper != null:
+                Expr superSet = onSuper(super, value);
+                CopyEditorSyntax(super, superSet);
+                return Finish(superSet);
             default:
                 throw new Exception(errorMessage);
         }
     }
+
+    private static bool HasAssignmentAssertion(Expr expression) => expression switch
+    {
+        Expr.Grouping grouping => HasAssignmentAssertion(grouping.Expression),
+        Expr.TypeAssertion or Expr.NonNullAssertion or Expr.Satisfies => true,
+        _ => false
+    };
 
     private Expr Ternary()
     {
@@ -498,6 +530,7 @@ public partial class Parser
         {
             Token op = Previous();
             Expr operand = Unary();
+            ValidateOptionalAssignmentTarget(operand);
             if (operand is not (Expr.Variable or Expr.Get or Expr.GetIndex))
             {
                 throw new Exception("Invalid operand for prefix increment/decrement.");
@@ -679,6 +712,7 @@ public partial class Parser
                 Token op = Previous();
                 if (expr is not (Expr.Variable or Expr.Get or Expr.GetIndex))
                     throw new Exception("Invalid operand for postfix increment/decrement.");
+                ValidateOptionalAssignmentTarget(expr);
                 expr = CompleteExpression(new Expr.PostfixIncrement(expr, op), start);
             }
             else if (Match(TokenType.AS))

@@ -138,6 +138,21 @@ public class RuntimeFeatureDetectorTests
     }
 
     [Theory]
+    [InlineData("class B { m(): number { return 1; } } class C extends B { write() { super.m = () => 2; } }")]
+    [InlineData("class B { static m(): number { return 1; } } class C extends B { static write() { super.m = () => 2; } }")]
+    [InlineData("class B { set value(next: number) {} } class C extends B { write() { super.value = 2; } }")]
+    [InlineData("class B { static value = 1; } class C extends B { static write() { super.value = 2; } }")]
+    public void SuperWritesRequireReflectAndDisableStableClassDispatch(string source)
+    {
+        var statements = new Parser(new Lexer(source).ScanTokens()).ParseOrThrow();
+        var typeMap = new TypeChecker().Check(statements);
+        var features = new RuntimeFeatureDetector().Detect(statements, typeMap);
+
+        Assert.True(features.UsesReflect);
+        Assert.True(features.UsesClassPrototypeMutation);
+    }
+
+    [Theory]
     [InlineData("Date.prototype.toString = Object.prototype.toString;", true)]
     [InlineData("Date.prototype['valueOf'] = function() { return 0; };", true)]
     [InlineData("Object.defineProperty(Date.prototype, 'x', { value: 1 });", true)]

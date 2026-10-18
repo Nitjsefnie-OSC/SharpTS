@@ -11,7 +11,7 @@ namespace SharpTS.TypeSystem;
 /// ValidateInterfaceImplementation, ValidateAbstractMemberImplementation,
 /// IsMethodImplemented, IsGetterImplemented, IsSetterImplemented,
 /// FindMemberInBaseChain, ValidateOverrideMembers,
-/// HasParentMethod, HasParentGetter, HasParentSetter.
+/// HasParentMethod, HasParentAccessor.
 /// </remarks>
 public partial class TypeChecker
 {
@@ -681,19 +681,25 @@ public partial class TypeChecker
     /// <summary>
     /// Validates that methods/accessors marked with 'override' actually override a member in the superclass chain.
     /// </summary>
-    private void ValidateOverrideMembers(Stmt.Class classStmt, TypeInfo.Class classType, bool staticOnly = false)
+    private void ValidateOverrideMembers(Stmt.Class classStmt, TypeInfo.Class classType)
+        => ValidateOverrideMembers(classStmt.Methods, classStmt.Accessors, classType);
+
+    private void ValidateOverrideMembers(IReadOnlyList<Stmt.Function> methods,
+        IReadOnlyList<Stmt.Accessor>? accessors, TypeInfo.Class classType)
     {
         // Check methods marked with override
-        foreach (var method in classStmt.Methods)
+        foreach (var method in methods)
         {
-            if (method.IsOverride && (!staticOnly || method.IsStatic))
+            if (method.IsOverride)
             {
-                string? methodName = method.IsStatic && method.ComputedKey != null
+                string? methodName = method.ComputedKey != null
                     ? TryGetWellKnownSymbolMemberName(method.ComputedKey) : method.Name.Lexeme;
                 if (methodName == null) continue;
-                bool hasParent = method.IsStatic
+                // Private names have a separate identity in every class. Even
+                // a public string member named "#value" cannot satisfy one.
+                bool hasParent = !method.IsPrivate && (method.IsStatic
                     ? FindStaticOverrideMember(classType.Superclass, methodName) != null
-                    : HasParentMethod(classType.Superclass, methodName);
+                    : HasParentMethod(classType.Superclass, methodName));
                 if (!hasParent)
                 {
                     throw new TypeCheckException($" Method '{methodName}' is marked as override but does not override any method in a base class.", tsCode: "TS4113");
@@ -702,39 +708,24 @@ public partial class TypeChecker
         }
 
         // Check accessors marked with override
-        if (classStmt.Accessors != null)
+        if (accessors != null)
         {
-            foreach (var accessor in classStmt.Accessors)
+            foreach (var accessor in accessors)
             {
-                // Computed accessor names can't be validated against parent members.
-                if (accessor.ComputedKey != null)
+                if (accessor.IsOverride)
                 {
-                    continue;
-                }
-
-                if (accessor.IsOverride && (!staticOnly || accessor.IsStatic))
-                {
-                    string propertyName = accessor.Name.Lexeme;
-                    bool isGetter = accessor.Kind.Type == Parsing.TokenType.GET;
-
+                    string? propertyName = accessor.ComputedKey != null
+                        ? TryGetWellKnownSymbolMemberName(accessor.ComputedKey) : accessor.Name.Lexeme;
+                    if (propertyName == null) continue;
                     if (accessor.IsStatic)
                     {
                         if (FindStaticOverrideMember(classType.Superclass, propertyName) == null)
                             throw new TypeCheckException($" Static accessor '{propertyName}' is marked as override but does not override any static member in a base class.", tsCode: "TS4113");
                     }
-                    else if (isGetter)
+                    else if (!HasParentAccessor(classType.Superclass, propertyName))
                     {
-                        if (!HasParentGetter(classType.Superclass, propertyName))
-                        {
-                            throw new TypeCheckException($" Getter '{propertyName}' is marked as override but does not override any getter in a base class.", tsCode: "TS4113");
-                        }
-                    }
-                    else
-                    {
-                        if (!HasParentSetter(classType.Superclass, propertyName))
-                        {
-                            throw new TypeCheckException($" Setter '{propertyName}' is marked as override but does not override any setter in a base class.", tsCode: "TS4113");
-                        }
+                        string kind = accessor.Kind.Type == TokenType.GET ? "Getter" : "Setter";
+                        throw new TypeCheckException($" {kind} '{propertyName}' is marked as override but does not override any accessor in a base class.", tsCode: "TS4113");
                     }
                 }
             }
@@ -752,6 +743,11 @@ public partial class TypeChecker
     }
 
     private void ValidateStaticOverrideCompatibility(Stmt.Class declaration, TypeInfo.Class classType)
+        => ValidateStaticOverrideCompatibility(declaration.Methods, declaration.Accessors,
+            declaration.Name.Lexeme, classType);
+
+    private void ValidateStaticOverrideCompatibility(IReadOnlyList<Stmt.Function> methods,
+        IReadOnlyList<Stmt.Accessor>? accessors, string className, TypeInfo.Class classType)
     {
         void Check(string name, TypeInfo actual, int line, bool method)
         {
@@ -759,22 +755,24 @@ public partial class TypeChecker
             if (expected == null) return;
             if (!IsMemberCompatible(expected, actual, method))
                 throw new TypeCheckException(
-                    $" Static override '{name}' in class '{declaration.Name.Lexeme}' is not compatible with the static member in its base class.",
+                    $" Static override '{name}' in class '{className}' is not compatible with the static member in its base class.",
                     line: line, tsCode: "TS2417");
         }
 
-        foreach (var method in declaration.Methods.Where(method => method.IsStatic && method.IsOverride))
+        foreach (var method in methods.Where(method => method.IsStatic && method.IsOverride))
         {
             string? name = method.ComputedKey == null ? method.Name.Lexeme
                 : TryGetWellKnownSymbolMemberName(method.ComputedKey);
             if (name != null && classType.StaticMethods.TryGetValue(name, out var actual))
                 Check(name, actual, method.Name.Line, method: true);
         }
-        foreach (var accessor in declaration.Accessors ?? [])
+        foreach (var accessor in accessors ?? [])
         {
-            if (accessor.IsStatic && accessor.IsOverride && accessor.ComputedKey == null
-                && classType.StaticProperties.TryGetValue(accessor.Name.Lexeme, out var actual))
-                Check(accessor.Name.Lexeme, actual, accessor.Name.Line, method: false);
+            if (!accessor.IsStatic || !accessor.IsOverride) continue;
+            string? name = accessor.ComputedKey != null
+                ? TryGetWellKnownSymbolMemberName(accessor.ComputedKey) : accessor.Name.Lexeme;
+            if (name != null && classType.StaticProperties.TryGetValue(name, out var actual))
+                Check(name, actual, accessor.Name.Line, method: false);
         }
     }
 
@@ -797,33 +795,15 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Checks if a getter exists in the superclass chain.
+    /// Checks if either accessor facet exists in the superclass chain.
     /// </summary>
-    private bool HasParentGetter(TypeInfo? superclass, string propertyName)
+    private bool HasParentAccessor(TypeInfo? superclass, string propertyName)
     {
         TypeInfo? current = superclass;
         while (current != null)
         {
-            var getters = GetGetters(current);
-            if (getters != null && getters.ContainsKey(propertyName))
-            {
-                return true;
-            }
-            current = GetSuperclass(current);
-        }
-        return false;
-    }
-
-    /// <summary>
-    /// Checks if a setter exists in the superclass chain.
-    /// </summary>
-    private bool HasParentSetter(TypeInfo? superclass, string propertyName)
-    {
-        TypeInfo? current = superclass;
-        while (current != null)
-        {
-            var setters = GetSetters(current);
-            if (setters != null && setters.ContainsKey(propertyName))
+            if (GetGetters(current)?.ContainsKey(propertyName) == true ||
+                GetSetters(current)?.ContainsKey(propertyName) == true)
             {
                 return true;
             }

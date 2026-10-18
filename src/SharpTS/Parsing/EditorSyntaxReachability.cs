@@ -35,6 +35,7 @@ internal sealed class EditorSyntaxReachability(CancellationToken cancellationTok
         switch (expr)
         {
             case Expr.Assign assign: Type(assign.RedeclarationTypeAnnotationNode); break;
+            case Expr.AssertedAssignment assignment: Visit(assignment.TargetSyntax); break;
             case Expr.Call call:
                 Types(call.TypeArgNodes); Types(call.JsxOrigin?.TypeArgumentNodes); break;
             case Expr.New construct: Types(construct.TypeArgNodes); Visit(construct.Callee); break;
@@ -129,6 +130,7 @@ internal sealed class EditorSyntaxReachability(CancellationToken cancellationTok
     {
         TypeParameters(expr.TypeParams); Types(expr.SuperclassTypeArgNodes);
         foreach (var types in expr.InterfaceTypeArgNodes ?? []) Types(types);
+        IndexSignatures(expr.IndexSignatures);
         if (expr.SuperclassExpr is not null) Visit(expr.SuperclassExpr);
         foreach (var field in expr.Fields) Visit(field);
         foreach (var method in expr.Methods) Visit(method);

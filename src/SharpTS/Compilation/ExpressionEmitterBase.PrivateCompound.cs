@@ -11,7 +11,7 @@ public abstract partial class ExpressionEmitterBase
     protected void EmitCompoundSetPrivate(Expr.CompoundSetPrivate expression)
     {
         var receiver = SpillBoxed(expression.Object);
-        var reference = ResolvePrivateFieldReference(expression, receiver);
+        var reference = ResolvePrivateFieldReference(expression.Name, receiver);
         EmitPrivateFieldReferenceRead(reference);
         var current = _helpers.SpillStoreObject();
         var right = SpillBoxed(expression.Value);
@@ -24,9 +24,9 @@ public abstract partial class ExpressionEmitterBase
         SetStackUnknown();
     }
 
-    private PrivateFieldReference ResolvePrivateFieldReference(Expr.CompoundSetPrivate expression, LocalBuilder receiver)
+    private PrivateFieldReference ResolvePrivateFieldReference(Token fieldName, LocalBuilder receiver)
     {
-        string name = expression.Name.Lexeme.TrimStart('#');
+        string name = fieldName.Lexeme.TrimStart('#');
         string owner = Ctx.CurrentClassName is { } current
             ? Ctx.ResolvePrivateFieldOwner(current, name)
             : throw new InvalidOperationException("Private compound assignment requires a lexical class owner.");

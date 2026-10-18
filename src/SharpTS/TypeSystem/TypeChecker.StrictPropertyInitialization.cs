@@ -183,6 +183,9 @@ public partial class TypeChecker
         var assigned = new HashSet<string>(incoming, StringComparer.Ordinal);
         switch (expression)
         {
+            case Expr.AssertedAssignment assignment:
+                assigned = AnalyzeInitializationExpression(assignment.LoweredAssignment, assigned);
+                break;
             case Expr.Set { Object: Expr.This, Name: var name, Value: var value }:
                 assigned = AnalyzeInitializationExpression(value, assigned);
                 assigned.Add(name.Lexeme);
@@ -190,6 +193,9 @@ public partial class TypeChecker
             case Expr.SetPrivate { Object: Expr.This, Name: var name, Value: var value }:
                 assigned = AnalyzeInitializationExpression(value, assigned);
                 assigned.Add(name.Lexeme);
+                break;
+            case Expr.SetSuper setSuper:
+                assigned = AnalyzeInitializationExpression(setSuper.Value, assigned);
                 break;
             case Expr.CompoundSet { Object: Expr.This, Name: var compoundName, Value: var compoundValue }:
                 assigned = AnalyzeInitializationExpression(compoundValue, assigned);
@@ -200,6 +206,10 @@ public partial class TypeChecker
                 // cannot establish definite initialization of its own target.
                 assigned = AnalyzeInitializationExpression(compound.Object, assigned);
                 assigned = AnalyzeInitializationExpression(compound.Value, assigned);
+                break;
+            case Expr.LogicalSetPrivate logicalPrivate:
+                // The RHS may be skipped, so only receiver assignments are definite.
+                assigned = AnalyzeInitializationExpression(logicalPrivate.Object, assigned);
                 break;
             case Expr.LogicalSet { Object: Expr.This, Name: var logicalName, Value: var logicalValue }:
                 assigned = AnalyzeInitializationExpression(logicalValue, assigned);

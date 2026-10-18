@@ -67,6 +67,7 @@ public partial class Interpreter
     internal RuntimeValue VisitDelete(Expr.Delete delete) => EvaluateDelete(delete);
     internal RuntimeValue VisitVariable(Expr.Variable variable) => LookupVariableRV(variable.Name, variable);
     internal RuntimeValue VisitAssign(Expr.Assign assign) => EvaluateAssign(assign);
+    internal RuntimeValue VisitAssertedAssignment(Expr.AssertedAssignment assignment) => EvaluateAssertedAssignmentCore(_syncContext, assignment).GetAwaiter().GetResult();
     internal RuntimeValue VisitCall(Expr.Call call) => EvaluateCall(call);
     internal RuntimeValue VisitGet(Expr.Get get) => EvaluateGet(get);
     internal RuntimeValue VisitSet(Expr.Set set) => EvaluateSet(set);
@@ -81,12 +82,14 @@ public partial class Interpreter
     internal RuntimeValue VisitGetIndex(Expr.GetIndex getIndex) => EvaluateGetIndex(getIndex);
     internal RuntimeValue VisitSetIndex(Expr.SetIndex setIndex) => EvaluateSetIndex(setIndex);
     internal RuntimeValue VisitSuper(Expr.Super super) => EvaluateSuper(super);
+    internal RuntimeValue VisitSetSuper(Expr.SetSuper setSuper) => EvaluateSetSuper(setSuper);
     internal RuntimeValue VisitCompoundAssign(Expr.CompoundAssign compound) => EvaluateCompoundAssign(compound);
     internal RuntimeValue VisitCompoundSet(Expr.CompoundSet compoundSet) => EvaluateCompoundSet(compoundSet);
     internal RuntimeValue VisitCompoundSetPrivate(Expr.CompoundSetPrivate compoundSet) => EvaluateCompoundSetPrivateCore(_syncContext, compoundSet).GetAwaiter().GetResult();
     internal RuntimeValue VisitCompoundSetIndex(Expr.CompoundSetIndex compoundSetIndex) => EvaluateCompoundSetIndex(compoundSetIndex);
     internal RuntimeValue VisitLogicalAssign(Expr.LogicalAssign logical) => EvaluateLogicalAssign(logical);
     internal RuntimeValue VisitLogicalSet(Expr.LogicalSet logicalSet) => EvaluateLogicalSet(logicalSet);
+    internal RuntimeValue VisitLogicalSetPrivate(Expr.LogicalSetPrivate logicalSet) => EvaluateLogicalSetPrivateCore(_syncContext, logicalSet).GetAwaiter().GetResult();
     internal RuntimeValue VisitLogicalSetIndex(Expr.LogicalSetIndex logicalSetIndex) => EvaluateLogicalSetIndex(logicalSetIndex);
     internal RuntimeValue VisitPrefixIncrement(Expr.PrefixIncrement prefix) => EvaluatePrefixIncrement(prefix);
     internal RuntimeValue VisitPostfixIncrement(Expr.PostfixIncrement postfix) => EvaluatePostfixIncrement(postfix);
@@ -164,12 +167,14 @@ public partial class Interpreter
     internal ValueTask<RuntimeValue> VisitGetIndexAsync(Expr.GetIndex getIndex) => EvaluateGetIndexCore(_asyncContext, getIndex);
     internal ValueTask<RuntimeValue> VisitSetIndexAsync(Expr.SetIndex setIndex) => EvaluateSetIndexCore(_asyncContext, setIndex);
     internal ValueTask<RuntimeValue> VisitSuperAsync(Expr.Super super) => new(EvaluateSuper(super));
+    internal ValueTask<RuntimeValue> VisitSetSuperAsync(Expr.SetSuper setSuper) => EvaluateSetSuperAsync(setSuper);
     internal ValueTask<RuntimeValue> VisitCompoundAssignAsync(Expr.CompoundAssign compound) => EvaluateCompoundAssignCore(_asyncContext, compound);
     internal ValueTask<RuntimeValue> VisitCompoundSetAsync(Expr.CompoundSet compoundSet) => EvaluateCompoundSetCore(_asyncContext, compoundSet);
     internal ValueTask<RuntimeValue> VisitCompoundSetPrivateAsync(Expr.CompoundSetPrivate compoundSet) => EvaluateCompoundSetPrivateCore(_asyncContext, compoundSet);
     internal ValueTask<RuntimeValue> VisitCompoundSetIndexAsync(Expr.CompoundSetIndex compoundSetIndex) => EvaluateCompoundSetIndexCore(_asyncContext, compoundSetIndex);
     internal ValueTask<RuntimeValue> VisitLogicalAssignAsync(Expr.LogicalAssign logical) => EvaluateLogicalAssignCore(_asyncContext, logical);
     internal ValueTask<RuntimeValue> VisitLogicalSetAsync(Expr.LogicalSet logicalSet) => EvaluateLogicalSetCore(_asyncContext, logicalSet);
+    internal ValueTask<RuntimeValue> VisitLogicalSetPrivateAsync(Expr.LogicalSetPrivate logicalSet) => EvaluateLogicalSetPrivateCore(_asyncContext, logicalSet);
     internal ValueTask<RuntimeValue> VisitLogicalSetIndexAsync(Expr.LogicalSetIndex logicalSetIndex) => EvaluateLogicalSetIndexCore(_asyncContext, logicalSetIndex);
     internal ValueTask<RuntimeValue> VisitPrefixIncrementAsync(Expr.PrefixIncrement prefix) => new(EvaluatePrefixIncrementAsync(prefix));
     internal ValueTask<RuntimeValue> VisitPostfixIncrementAsync(Expr.PostfixIncrement postfix) => new(EvaluatePostfixIncrementAsync(postfix));
@@ -177,6 +182,7 @@ public partial class Interpreter
     internal ValueTask<RuntimeValue> VisitTemplateLiteralAsync(Expr.TemplateLiteral template) => new(EvaluateTemplateLiteralAsync(template));
     internal ValueTask<RuntimeValue> VisitTaggedTemplateLiteralAsync(Expr.TaggedTemplateLiteral tagged) => new(EvaluateTaggedTemplateLiteralAsync(tagged));
     internal ValueTask<RuntimeValue> VisitSpreadAsync(Expr.Spread spread) => EvaluateAsync(spread.Expression);
+    internal ValueTask<RuntimeValue> VisitAssertedAssignmentAsync(Expr.AssertedAssignment assignment) => EvaluateAssertedAssignmentCore(_asyncContext, assignment);
     internal ValueTask<RuntimeValue> VisitTypeAssertionAsync(Expr.TypeAssertion ta) => EvaluateAsync(ta.Expression);
     internal ValueTask<RuntimeValue> VisitSatisfiesAsync(Expr.Satisfies sat) => EvaluateAsync(sat.Expression);
     internal ValueTask<RuntimeValue> VisitNonNullAssertionAsync(Expr.NonNullAssertion nna) => EvaluateAsync(nna.Expression);

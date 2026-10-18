@@ -234,6 +234,13 @@ for (const configuration of [
       ["private-compound-field", "class Box { /*declaration*/#old: number = 1; " +
         "run(): number { this./*compound*/#old += this./*rhs*/#old; return this./*read*/#old; } }",
         ["declaration", "compound", "rhs", "read"]],
+      ...["||=", "&&=", "??="].map((operator) => [
+        "private-logical-field-" + operator,
+        "class Box { /*declaration*/#old: number = 1; " +
+          "run(): number { this./*logical*/#old " + operator +
+          " this./*rhs*/#old; return this./*read*/#old; } }",
+        ["declaration", "logical", "rhs", "read"],
+      ]),
     ]) {
       await runCase(name, async () => {
         assert.deepEqual(await setSource(source), []);
@@ -254,7 +261,6 @@ for (const configuration of [
       ["unresolved-private-occurrence", "class Box { #old: number = 1; run(loose: any): number { loose.#old; return this./*read*/#old; } }", "#old"],
       ["recovered-domain", "class Box { #old: number = 1; run(): number { return this./*read*/#old; }", "#old"],
       ["unrelated-target-document-parse-error", "class Box { #old: number = 1; run(): number { return this./*read*/#old; } } const = 1;", "#old"],
-      ["private-logical-original-is-parser-rejected", "class Box { #old: number = 1; run(): number { this.#old ||= 1; return this./*read*/#old; } }", "#old"],
       ["private-update-original-is-parser-rejected", "class Box { #old: number = 1; run(): number { this.#old++; return this./*read*/#old; } }", "#old"],
       ["public-member-of-branded-class", "class Box { #brand: number = 1; old: number = 1; run(): number { return this./*read*/old; } }", "old"],
       ["typescript-private", "class Box { private old: number = 1; run(): number { return this./*read*/old; } }", "old"],

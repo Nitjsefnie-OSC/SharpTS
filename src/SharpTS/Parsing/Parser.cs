@@ -365,7 +365,7 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
     private static bool IsContextualKeyword(TokenType type) => type switch
     {
         // TypeScript-only keywords that are valid identifiers in JavaScript
-        TokenType.TYPE or TokenType.MODULE or TokenType.NAMESPACE or TokenType.ASYNC or
+        TokenType.TYPE or TokenType.MODULE or TokenType.NAMESPACE or TokenType.ASYNC or TokenType.AS or TokenType.USING or
         TokenType.DECLARE or TokenType.ABSTRACT or TokenType.READONLY or
         TokenType.OVERRIDE or TokenType.GLOBAL or TokenType.OF or
         TokenType.FROM or TokenType.SATISFIES or TokenType.ACCESSOR or
@@ -699,20 +699,23 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
 
     /// <summary>
     /// Checks if the current token can provide a closing '>' for generic type syntax.
-    /// Returns true for GREATER, GREATER_GREATER, or GREATER_GREATER_GREATER.
+    /// Includes relational/shift tokens whose leading '>' closes a type argument list.
     /// </summary>
     private bool CheckGreaterInTypeContext()
     {
         if (IsAtEnd()) return false;
         return Peek().Type is TokenType.GREATER
+            or TokenType.GREATER_EQUAL
             or TokenType.GREATER_GREATER
-            or TokenType.GREATER_GREATER_GREATER;
+            or TokenType.GREATER_GREATER_EQUAL
+            or TokenType.GREATER_GREATER_GREATER
+            or TokenType.GREATER_GREATER_GREATER_EQUAL;
     }
 
     /// <summary>
     /// Consumes a single '>' from the current token in a type context.
-    /// For GREATER, advances normally. For GREATER_GREATER or GREATER_GREATER_GREATER,
-    /// splits the token by replacing it with the remainder.
+    /// Splits compound operators into a consumed '>' and their remaining characters.
+    /// An adjacent arrow can span the lexer's '>=' and following '>' tokens.
     /// </summary>
     /// <returns>True if a '>' was consumed, false otherwise.</returns>
     private bool MatchGreaterInTypeContext()
@@ -720,38 +723,50 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         if (IsAtEnd()) return false;
 
         Token current = Peek();
-        switch (current.Type)
+        if (current.Type == TokenType.GREATER)
         {
-            case TokenType.GREATER:
-                Advance();
-                return true;
-
-            // Splitting consumes the leading '>', so the remainder starts one character later.
-            // Carrying that offset forward keeps the rest of the token locatable in the source.
-            case TokenType.GREATER_GREATER:
-                // Split >> into > (consumed) and > (remaining)
-                RecordSplitToken(current);
-                _partialGreaterIndex = _current;
-                _partialGreaterEnd = Shift(current, 1);
-                _tokens[_current] = new Token(TokenType.GREATER, ">", null, current.Line, Shift(current, 1));
-                return true;
-
-            case TokenType.GREATER_GREATER_GREATER:
-                // Split >>> into > (consumed) and >> (remaining)
-                RecordSplitToken(current);
-                _partialGreaterIndex = _current;
-                _partialGreaterEnd = Shift(current, 1);
-                _tokens[_current] = new Token(TokenType.GREATER_GREATER, ">>", null, current.Line, Shift(current, 1));
-                return true;
-
-            default:
-                return false;
+            Advance();
+            return true;
         }
+
+        TokenType? remainderType = current.Type switch
+        {
+            TokenType.GREATER_EQUAL => TokenType.EQUAL,
+            TokenType.GREATER_GREATER => TokenType.GREATER,
+            TokenType.GREATER_GREATER_EQUAL => TokenType.GREATER_EQUAL,
+            TokenType.GREATER_GREATER_GREATER => TokenType.GREATER_GREATER,
+            TokenType.GREATER_GREATER_GREATER_EQUAL => TokenType.GREATER_GREATER_EQUAL,
+            _ => null,
+        };
+        if (remainderType is null) return false;
+
+        RecordSplitToken(current);
+        _partialGreaterIndex = _current;
+        _partialGreaterEnd = Shift(current, 1);
+        Token next = PeekNext();
+        if (remainderType == TokenType.EQUAL && next.Type == TokenType.GREATER &&
+            current.Start >= 0 && current.End == next.Start)
+        {
+            // Keep both token slots so speculative cursor rollback can restore them
+            // without shifting indices. The type ends at '>', and the arrow owns '=>'.
+            _tokens[_current] = new Token(TokenType.GREATER, ">", null, current.Line, current.Start)
+                { SourceIdentity = current.SourceIdentity };
+            RecordSplitToken(next, _current + 1);
+            _tokens[_current + 1] = new Token(TokenType.ARROW, "=>", null, current.Line, Shift(current, 1))
+                { SourceIdentity = current.SourceIdentity };
+            Advance();
+        }
+        else
+        {
+            _tokens[_current] = new Token(remainderType.Value, current.Lexeme[1..], null,
+                current.Line, Shift(current, 1)) { SourceIdentity = current.SourceIdentity };
+        }
+        return true;
     }
 
     /// <summary>
     /// Consumes a '>' in type context or throws an exception with the given message.
-    /// Handles compound tokens (>> and >>>) by splitting them.
+    /// Handles compound relational/shift tokens by splitting them.
     /// </summary>
     private void ConsumeGreaterInTypeContext(string message)
     {

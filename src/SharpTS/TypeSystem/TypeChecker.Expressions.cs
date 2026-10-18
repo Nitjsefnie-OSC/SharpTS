@@ -253,6 +253,7 @@ public partial class TypeChecker
     internal TypeInfo VisitCompoundSetIndex(Expr.CompoundSetIndex expr) => CheckCompoundSetIndex(expr);
     internal TypeInfo VisitLogicalAssign(Expr.LogicalAssign expr) => CheckLogicalAssign(expr);
     internal TypeInfo VisitLogicalSet(Expr.LogicalSet expr) => CheckLogicalSet(expr);
+    internal TypeInfo VisitLogicalSetPrivate(Expr.LogicalSetPrivate expr) => CheckLogicalSetPrivate(expr);
     internal TypeInfo VisitLogicalSetIndex(Expr.LogicalSetIndex expr) => CheckLogicalSetIndex(expr);
     internal TypeInfo VisitPrefixIncrement(Expr.PrefixIncrement expr) => CheckPrefixIncrement(expr);
     internal TypeInfo VisitPostfixIncrement(Expr.PostfixIncrement expr) => CheckPostfixIncrement(expr);
@@ -269,6 +270,7 @@ public partial class TypeChecker
     internal TypeInfo VisitThis(Expr.This expr) => CheckThis(expr);
     internal TypeInfo VisitNew(Expr.New expr) => CheckNew(expr);
     internal TypeInfo VisitSuper(Expr.Super expr) => CheckSuper(expr);
+    internal TypeInfo VisitSetSuper(Expr.SetSuper expr) => CheckSetSuper(expr);
 
     // Index access (TypeChecker.Properties.Index.cs)
     internal TypeInfo VisitGetIndex(Expr.GetIndex expr) => CheckGetIndex(expr);
@@ -2770,6 +2772,9 @@ public partial class TypeChecker
             classExprResultType = classType;
         }
 
+        ValidateOverrideMembers(classExpr.Methods, classExpr.Accessors, classTypeForBody);
+        ValidateStaticOverrideCompatibility(classExpr.Methods, classExpr.Accessors, className, classTypeForBody);
+
         // Validate interface implementations (skip for generic - validated at instantiation)
         if (classExpr.Interfaces != null && classTypeParams == null)
         {
@@ -2957,6 +2962,9 @@ public partial class TypeChecker
                             inferredReturn = CollapseOrCreateUnion(distinct);
                         }
 
+                        if (!method.IsGenerator)
+                            inferredReturn = WidenInferredClassMemberReturn(method.Body, inferredReturn);
+
                         // A generator method's type argument is its YIELD type (#548), not the
                         // `return`-derived inferredReturn; a non-generator async method wraps in Promise.
                         // The resolved type is re-published below (anyInferredMethodReturnResolved), so
@@ -3050,6 +3058,12 @@ public partial class TypeChecker
             _compatibilityCache = null;
             _identityCompatibilityCache = null;
         }
+
+        // Validate against completed inferred signatures, not the placeholders
+        // collected before method and getter bodies were checked.
+        mutableClass.ResetFrozenCache();
+        ValidateStaticOverrideCompatibility(classExpr.Methods, classExpr.Accessors,
+            className, mutableClass.Freeze());
 
         // Return the class type (not an instance). For a generic class expression this is the
         // GenericClass so callers (e.g. `new`) can instantiate/infer its type arguments (#291).

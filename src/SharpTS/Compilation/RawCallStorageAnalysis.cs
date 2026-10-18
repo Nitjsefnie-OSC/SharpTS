@@ -219,6 +219,22 @@ internal sealed class RawCallStorageAnalysis
             if (collect) Analysis._flows.Add(new(expression.Name, expression.Value, null));
             base.VisitAssign(expression);
         }
+        protected override void VisitAssertedAssignment(Expr.AssertedAssignment expression)
+        {
+            Token? target = expression.LoweredAssignment switch
+            {
+                Expr.Assign assignment => assignment.Name,
+                Expr.CompoundAssign assignment => assignment.Name,
+                Expr.LogicalAssign assignment => assignment.Name,
+                _ => null
+            };
+            if (collect && target is not null && Analysis._map.GetValueBinding(target) is { } binding)
+            {
+                Analysis._rawBindings.Add(binding);
+                Analysis._map.MarkAssertedAssignmentStorage(binding);
+            }
+            base.VisitAssertedAssignment(expression);
+        }
         protected override void VisitLogicalAssign(Expr.LogicalAssign expression)
         {
             if (collect) Analysis._flows.Add(new(expression.Name, expression.Value, null));

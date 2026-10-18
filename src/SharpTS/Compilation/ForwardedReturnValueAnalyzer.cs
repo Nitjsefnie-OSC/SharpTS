@@ -88,13 +88,16 @@ internal sealed partial class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeF
             Expr.NullishCoalescing nullish => PassesRawCall(nullish.Left, callEvidenceOnly) | PassesRawCall(nullish.Right, callEvidenceOnly),
             Expr.Comma comma => PassesRawCall(comma.Right, callEvidenceOnly),
             Expr.Assign assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
+            Expr.AssertedAssignment assignment => !callEvidenceOnly | PassesRawCall(assignment.LoweredAssignment, callEvidenceOnly),
             Expr.Set assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
+            Expr.SetSuper assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             Expr.SetIndex assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             Expr.SetPrivate assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             Expr.DestructuringAssign assignment => PassesRawCall(assignment.ResultValue, callEvidenceOnly),
             Expr.LogicalAssign assignment => storage?.IsRawBinding(assignment.Name, callEvidenceOnly) == true
                 | PassesRawCall(assignment.Value, callEvidenceOnly),
             Expr.LogicalSet assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
+            Expr.LogicalSetPrivate assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             Expr.LogicalSetIndex assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             // Operators perform their own conversions; their operands are not returned.
             _ => false

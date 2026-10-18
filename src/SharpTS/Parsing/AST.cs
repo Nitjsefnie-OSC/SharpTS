@@ -94,6 +94,12 @@ public abstract record Expr
         string? RedeclarationTypeAnnotation = null,
         TypeNode? RedeclarationTypeAnnotationNode = null,
         bool IsLexicalInitialization = false) : Expr;
+    /// <summary>
+    /// A write through erased TypeScript assertion syntax. The checker and editor retain
+    /// <paramref name="TargetSyntax"/>; runtime visitors execute only
+    /// <paramref name="LoweredAssignment"/> so the reference is evaluated once.
+    /// </summary>
+    public record AssertedAssignment(Expr TargetSyntax, Expr LoweredAssignment) : Expr;
     // TypeArgNodes: per-element node twins of TypeArgs (type-AST migration) — same length as
     // TypeArgs when non-null; an element without node support is null without discarding siblings.
     public record Call(Expr Callee, Token Paren, List<string>? TypeArgs, List<Expr> Arguments, bool Optional = false, List<TypeNode?>? TypeArgNodes = null) : Expr
@@ -186,6 +192,7 @@ public abstract record Expr
     public record GetIndex(Expr Object, Expr Index, bool Optional = false) : Expr;
     public record SetIndex(Expr Object, Expr Index, Expr Value) : Expr;
     public record Super(Token Keyword, Token? Method) : Expr;  // Method is null for super() constructor calls
+    public record SetSuper(Super Target, Expr Value) : Expr;
     // Compound assignment
     public record CompoundAssign(Token Name, Token Operator, Expr Value) : Expr;
     public record CompoundSet(Expr Object, Token Name, Token Operator, Expr Value) : Expr;
@@ -194,6 +201,7 @@ public abstract record Expr
     // Logical assignment (&&=, ||=, ??=) - has short-circuit semantics
     public record LogicalAssign(Token Name, Token Operator, Expr Value) : Expr;
     public record LogicalSet(Expr Object, Token Name, Token Operator, Expr Value) : Expr;
+    public record LogicalSetPrivate(Expr Object, Token Name, Token Operator, Expr Value) : Expr;
     public record LogicalSetIndex(Expr Object, Expr Index, Token Operator, Expr Value) : Expr;
     // Increment/decrement
     public record PrefixIncrement(Token Operator, Expr Operand) : Expr;

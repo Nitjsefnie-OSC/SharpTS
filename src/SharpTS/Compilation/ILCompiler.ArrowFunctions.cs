@@ -1041,6 +1041,12 @@ public partial class ILCompiler
                 CollectArrowsFromExpr(s.Object);
                 CollectArrowsFromExpr(s.Value);
                 break;
+            case Expr.SetSuper s:
+                CollectArrowsFromExpr(s.Value);
+                break;
+            case Expr.AssertedAssignment assignment:
+                CollectArrowsFromExpr(assignment.LoweredAssignment);
+                break;
             case Expr.GetIndex gi:
                 CollectArrowsFromExpr(gi.Object);
                 CollectArrowsFromExpr(gi.Index);
@@ -1155,6 +1161,10 @@ public partial class ILCompiler
             case Expr.LogicalSet lsObj:
                 CollectArrowsFromExpr(lsObj.Object);
                 CollectArrowsFromExpr(lsObj.Value);
+                break;
+            case Expr.LogicalSetPrivate privateLogical:
+                CollectArrowsFromExpr(privateLogical.Object);
+                CollectArrowsFromExpr(privateLogical.Value);
                 break;
             case Expr.LogicalSetIndex lsi:
                 CollectArrowsFromExpr(lsi.Object);
@@ -1273,7 +1283,7 @@ public partial class ILCompiler
 
         protected override void BeforeVisit(Expr expression)
         {
-            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CompoundSetPrivate or Expr.CallPrivate or Expr.PrivateIn ||
+            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CompoundSetPrivate or Expr.LogicalSetPrivate or Expr.CallPrivate or Expr.PrivateIn ||
                 expression is Expr.Variable variable && referencesSelf(variable))
             {
                 UsesDefinition = true;

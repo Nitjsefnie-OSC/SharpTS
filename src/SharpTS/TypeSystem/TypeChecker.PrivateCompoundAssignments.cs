@@ -6,46 +6,14 @@ namespace SharpTS.TypeSystem;
 
 public partial class TypeChecker
 {
-    private Dictionary<Expr.CompoundSetPrivate, object?> _privateCompoundConstructors =
+    private Dictionary<Expr, object?> _privateCompoundConstructors =
         new(ReferenceEqualityComparer.Instance);
 
     private TypeInfo CheckCompoundSetPrivate(Expr.CompoundSetPrivate compound)
     {
         using var memberLookup = BeginSourceMemberLookup(compound, compound.Name, MemberOperation.Read | MemberOperation.Write);
-        if (_currentClass is null)
-            throw new TypeCheckException($"Cannot access private field '{compound.Name.Lexeme}' outside of a class body.", compound.Name.Line, tsCode: "TS18013");
-
-        TypeInfo receiver = CheckExpr(compound.Object);
+        var (receiver, owner, isStatic, fieldType) = CheckWritablePrivateField(compound, compound.Object, compound.Name);
         string name = compound.Name.Lexeme;
-        var owner = FindLexicalPrivateOwner(name);
-        if (owner is null)
-            throw new TypeCheckException($"Private field '{name}' does not exist on class '{_currentClass.Name}'.", compound.Name.Line, tsCode: "TS2339");
-
-        bool isStatic = false;
-        TypeInfo? fieldType = owner.PrivateFieldTypes.GetValueOrDefault(name);
-        if (fieldType is null)
-        {
-            fieldType = owner.StaticPrivateFieldTypes.GetValueOrDefault(name);
-            isStatic = fieldType is not null;
-        }
-        if (fieldType is null)
-        {
-            if (owner.PrivateMethodTypes.ContainsKey(name) || owner.StaticPrivateMethodTypes.ContainsKey(name))
-                throw new TypeCheckException($"Cannot assign to private method '{name}'. Private methods are not writable.", compound.Name.Line, tsCode: "TS2803");
-            throw new TypeCheckException($"Private field '{name}' does not exist on class '{_currentClass.Name}'.", compound.Name.Line, tsCode: "TS2339");
-        }
-
-        ValidatePrivateReceiver(receiver, owner, isStatic, compound.Name);
-
-        // Readonly initialization is a syntax/context permission: an alias of
-        // this, or an arrow nested in a constructor, does not receive it.
-        bool isReadonly = isStatic
-            ? owner.Core.StaticReadonlyFields?.Contains(name) == true
-            : owner.ReadonlyFields.Contains(name);
-        if (isReadonly && (isStatic || !CanInitializeReadonlyPrivateCompound(compound, owner)))
-            throw new TypeCheckException($"Cannot assign to '{name}' because it is a read-only property.", compound.Name.Line, tsCode: "TS2540");
-
-        fieldType = InstantiatePrivateCompoundFieldType(fieldType, receiver, owner);
         TypeInfo right = CheckExpr(compound.Value);
         int line = compound.Operator.Line;
         TypeInfo result = compound.Operator.Type switch
@@ -65,30 +33,77 @@ public partial class TypeChecker
         return result;
     }
 
+    private (TypeInfo Receiver, TypeInfo.Class Owner, bool IsStatic, TypeInfo FieldType) CheckWritablePrivateField(
+        Expr assignment, Expr receiverExpression, Token member, bool allowDynamicReceiver = false)
+    {
+        if (_currentClass is null)
+            throw new TypeCheckException($"Cannot access private field '{member.Lexeme}' outside of a class body.", member.Line, tsCode: "TS18013");
+
+        TypeInfo receiver = CheckExpr(receiverExpression);
+        string name = member.Lexeme;
+        var owner = FindLexicalPrivateOwner(name);
+        if (owner is null)
+            throw new TypeCheckException($"Private field '{name}' does not exist on class '{_currentClass.Name}'.", member.Line, tsCode: "TS2339");
+
+        bool isStatic = false;
+        TypeInfo? fieldType = owner.PrivateFieldTypes.GetValueOrDefault(name);
+        if (fieldType is null)
+        {
+            fieldType = owner.StaticPrivateFieldTypes.GetValueOrDefault(name);
+            isStatic = fieldType is not null;
+        }
+        if (fieldType is null)
+        {
+            if (owner.PrivateMethodTypes.ContainsKey(name) || owner.StaticPrivateMethodTypes.ContainsKey(name))
+                throw new TypeCheckException($"Cannot assign to private method '{name}'. Private methods are not writable.", member.Line, tsCode: "TS2803");
+            throw new TypeCheckException($"Private field '{name}' does not exist on class '{_currentClass.Name}'.", member.Line, tsCode: "TS2339");
+        }
+
+        ValidatePrivateReceiver(receiver, owner, isStatic, member);
+        if (allowDynamicReceiver && receiver is TypeInfo.Any)
+            return (receiver, owner, isStatic, TypeInfo.Any.Shared);
+
+        // Readonly initialization is a syntax/context permission: an alias of
+        // this, or an arrow nested in a constructor, does not receive it.
+        bool isReadonly = isStatic
+            ? owner.Core.StaticReadonlyFields?.Contains(name) == true
+            : owner.ReadonlyFields.Contains(name);
+        if (isReadonly && (isStatic || !CanInitializeReadonlyPrivateAssignment(assignment, receiverExpression, owner)))
+            throw new TypeCheckException($"Cannot assign to '{name}' because it is a read-only property.", member.Line, tsCode: "TS2540");
+
+        fieldType = InstantiatePrivateCompoundFieldType(fieldType, receiver, owner);
+        return (receiver, owner, isStatic, fieldType);
+    }
+
     private TypeInfo InstantiatePrivateCompoundFieldType(TypeInfo fieldType, TypeInfo receiver, TypeInfo.Class owner)
     {
         TypeInfo? current = receiver is TypeInfo.Instance instance ? instance.ResolvedClassType : receiver;
         Dictionary<string, TypeInfo> substitutions = [];
         while (current is not null)
         {
-            substitutions = ComposeInheritedClassSubs(current, substitutions);
+            if (current is TypeInfo.InstantiatedGeneric
+                { GenericDefinition: TypeInfo.GenericClass generic } instantiated)
+            {
+                var arguments = instantiated.TypeArguments
+                    .Select(argument => SubstituteConstructorMember(argument, substitutions)).ToList();
+                substitutions = GenericClassSubs(generic, arguments);
+            }
             if (SelectedSourceClassId(current) == owner.Core.DeclarationId)
-                return substitutions.Count == 0 ? fieldType : Substitute(fieldType, substitutions);
+                return substitutions.Count == 0 ? fieldType : SubstituteConstructorMember(fieldType, substitutions);
             current = GetSuperclass(current);
         }
         return fieldType;
     }
 
-    private bool CanInitializeReadonlyPrivateCompound(Expr.CompoundSetPrivate compound, TypeInfo.Class owner)
+    private bool CanInitializeReadonlyPrivateAssignment(Expr assignment, Expr receiver, TypeInfo.Class owner)
     {
-        Expr receiver = compound.Object;
         while (receiver is Expr.Grouping grouping) receiver = grouping.Expression;
         if (receiver is not Expr.This) return false;
-        if (!_privateCompoundConstructors.TryGetValue(compound, out var classOwner) && _currentModule is not null)
+        if (!_privateCompoundConstructors.TryGetValue(assignment, out var classOwner) && _currentModule is not null)
         {
             foreach (var entry in PrivateCompoundConstructorIndex.Collect(_currentModule.Statements))
                 _privateCompoundConstructors[entry.Key] = entry.Value;
-            _privateCompoundConstructors.TryGetValue(compound, out classOwner);
+            _privateCompoundConstructors.TryGetValue(assignment, out classOwner);
         }
         if (classOwner is null) return false;
         TypeInfo? constructorClass = classOwner switch
@@ -105,10 +120,10 @@ public partial class TypeChecker
     private sealed class PrivateCompoundConstructorIndex : AstVisitorBase
     {
         private readonly Dictionary<Stmt.Function, object> _constructors = new(ReferenceEqualityComparer.Instance);
-        private readonly Dictionary<Expr.CompoundSetPrivate, object?> _contexts = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<Expr, object?> _contexts = new(ReferenceEqualityComparer.Instance);
         private object? _constructor;
 
-        internal static Dictionary<Expr.CompoundSetPrivate, object?> Collect(IEnumerable<Stmt> statements)
+        internal static Dictionary<Expr, object?> Collect(IEnumerable<Stmt> statements)
         {
             var visitor = new PrivateCompoundConstructorIndex();
             foreach (var statement in statements) visitor.Visit(statement);
@@ -127,6 +142,12 @@ public partial class TypeChecker
         {
             _contexts[expr] = _constructor;
             base.VisitCompoundSetPrivate(expr);
+        }
+
+        protected override void VisitLogicalSetPrivate(Expr.LogicalSetPrivate expr)
+        {
+            _contexts[expr] = _constructor;
+            base.VisitLogicalSetPrivate(expr);
         }
 
         protected override void VisitFunction(Stmt.Function stmt)

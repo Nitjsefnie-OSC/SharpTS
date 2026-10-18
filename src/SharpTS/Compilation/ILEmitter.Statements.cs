@@ -796,6 +796,8 @@ public partial class ILEmitter
     /// </summary>
     private bool CanUseUnboxedLocal(Stmt.Var v)
     {
+        if (_ctx.TypeMap?.IsAssertedAssignmentStorage(v.Name) == true)
+            return false;
         if (_ctx.TypeMap?.IsRawCallStorage(v.Name) == true)
             return false;
 

@@ -1070,6 +1070,12 @@ internal sealed class NestedFunctionLifter
                 var value = ProcessExpr(e.Value);
                 return ReferenceEquals(value, e.Value) ? e : e with { Value = value };
             }
+            case Expr.AssertedAssignment assignment:
+            {
+                var lowered = ProcessExpr(assignment.LoweredAssignment);
+                return ReferenceEquals(lowered, assignment.LoweredAssignment)
+                    ? assignment : assignment with { LoweredAssignment = lowered };
+            }
             case Expr.Call e:
             {
                 var callee = ProcessExpr(e.Callee);
@@ -1086,6 +1092,11 @@ internal sealed class NestedFunctionLifter
             {
                 var obj = ProcessExpr(e.Object); var value = ProcessExpr(e.Value);
                 return ReferenceEquals(obj, e.Object) && ReferenceEquals(value, e.Value) ? e : e with { Object = obj, Value = value };
+            }
+            case Expr.SetSuper e:
+            {
+                var value = ProcessExpr(e.Value);
+                return ReferenceEquals(value, e.Value) ? e : e with { Value = value };
             }
             case Expr.PrivateIn e:
             {
@@ -1178,6 +1189,11 @@ internal sealed class NestedFunctionLifter
                 return ReferenceEquals(value, e.Value) ? e : e with { Value = value };
             }
             case Expr.LogicalSet e:
+            {
+                var obj = ProcessExpr(e.Object); var value = ProcessExpr(e.Value);
+                return ReferenceEquals(obj, e.Object) && ReferenceEquals(value, e.Value) ? e : e with { Object = obj, Value = value };
+            }
+            case Expr.LogicalSetPrivate e:
             {
                 var obj = ProcessExpr(e.Object); var value = ProcessExpr(e.Value);
                 return ReferenceEquals(obj, e.Object) && ReferenceEquals(value, e.Value) ? e : e with { Object = obj, Value = value };

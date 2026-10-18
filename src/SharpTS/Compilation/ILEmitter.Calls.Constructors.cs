@@ -588,6 +588,19 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Br, builtInDone);
         IL.MarkLabel(notBooleanType);
 
+        // Array constructor values carry an IList<object> Type token. Its
+        // CLR interface has no constructor; use the guest length/element rules.
+        var notArrayType = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, typeLocal);
+        IL.Emit(OpCodes.Ldtoken, _ctx.Types.IListOfObject);
+        IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Bne_Un, notArrayType);
+        IL.Emit(OpCodes.Ldloc, typeLocal);
+        EmitArgsArrayWithSpread(n.Arguments);
+        IL.Emit(OpCodes.Call, _ctx.Runtime.DynamicConstruction.Value);
+        IL.Emit(OpCodes.Br, builtInDone);
+        IL.MarkLabel(notArrayType);
+
         if (_ctx.Runtime.Promise is not null)
         {
             // Aliases and member-held Promise constructors reach this Type

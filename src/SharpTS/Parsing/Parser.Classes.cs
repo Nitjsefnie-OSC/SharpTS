@@ -700,7 +700,15 @@ public partial class Parser
         string valueType = ParseTypeAnnotation();
         TypeNode? valueTypeNode = TakeTypeNode();
         ConsumeSemicolon("Expect ';' after index signature.");
-        return new Stmt.IndexSignature(keyName, keyType, valueType, valueTypeNode, isStatic);
+        var signature = new Stmt.IndexSignature(keyName, keyType, valueType, valueTypeNode, isStatic);
+        if (EditorSyntaxEnabled)
+        {
+            var span = new SourceSpan(_tokens[saved].Start, ConsumedSourceEnd);
+            _spans.Record(signature, span);
+            RecordEditorRange(signature, span, EditorSyntaxKind.Type);
+            RecordEditorName(keyName, signature, EditorSyntaxRole.DeclarationName);
+        }
+        return signature;
     }
 
     /// <summary>

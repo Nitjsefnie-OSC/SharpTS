@@ -129,6 +129,7 @@ internal sealed class EditorSyntaxReachability(CancellationToken cancellationTok
     {
         TypeParameters(expr.TypeParams); Types(expr.SuperclassTypeArgNodes);
         foreach (var types in expr.InterfaceTypeArgNodes ?? []) Types(types);
+        IndexSignatures(expr.IndexSignatures);
         if (expr.SuperclassExpr is not null) Visit(expr.SuperclassExpr);
         foreach (var field in expr.Fields) Visit(field);
         foreach (var method in expr.Methods) Visit(method);

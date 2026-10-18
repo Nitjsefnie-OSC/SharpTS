@@ -259,6 +259,12 @@ public partial class ILCompiler
         forwardedReads.IntersectWith(capturedLocals);
         result.UnionWith(forwardedReads);
 
+        // Retained nested generators read their owner's live storage across yields,
+        // even when only the owner writes that binding.
+        var generatorReads = GetGeneratorExpressionAncestorCaptures(funcStmt);
+        generatorReads.IntersectWith(capturedLocals);
+        result.UnionWith(generatorReads);
+
         if (result.Count == 0)
             return [];
 
@@ -267,7 +273,9 @@ public partial class ILCompiler
             result.ExceptWith(perIteration);
         // #838: a write-captured nested-block shadow gets its own renamed DC field so it does not collide
         // with the outer same-named binding on a single name-keyed cell.
-        ApplyWriteCaptureRenames(result, GeneratorBlockScopeRenamer.Compute(funcStmt, preserveDebugBindings: EmitDebugSymbols));
+        var renames = GeneratorBlockScopeRenamer.Compute(funcStmt, preserveDebugBindings: EmitDebugSymbols);
+        ApplyWriteCaptureRenames(result, renames);
+        ApplyReadCaptureRenames(result, renames);
         return result;
     }
 

@@ -124,6 +124,43 @@ public sealed class NestedGeneratorLiveCaptureTests
                 console.log(iterator.next().value, value, original !== values);
             }
             """, "true 1\n2 2 true\n"];
+        yield return ["read-only-async-generator-owners", """
+            async function* outer(seed: number) {
+                let value = seed;
+                const values = async function* () { yield value; yield value; };
+                const iterator = values();
+                value++;
+                yield (await iterator.next()).value;
+                value += 10;
+                yield (await iterator.next()).value;
+            }
+            async function run() {
+                const first = outer(0), second = outer(10);
+                console.log((await first.next()).value, (await second.next()).value);
+                console.log((await second.next()).value, (await first.next()).value);
+            }
+            run();
+            """, "1 11\n21 11\n"];
+        yield return ["read-only-async-generator-shadows", """
+            async function* outer(seed: number) {
+                let value = seed;
+                const outerRead = async function* () { yield value; };
+                {
+                    let value = seed + 100;
+                    const innerRead = async function* () { yield value; };
+                    value++;
+                    yield (await innerRead().next()).value;
+                }
+                value++;
+                yield (await outerRead().next()).value;
+            }
+            async function run() {
+                const first = outer(0), second = outer(10);
+                console.log((await first.next()).value, (await second.next()).value);
+                console.log((await second.next()).value, (await first.next()).value);
+            }
+            run();
+            """, "101 111\n11 1\n"];
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>

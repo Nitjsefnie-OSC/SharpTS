@@ -1246,25 +1246,11 @@ public partial class Interpreter
     /// </summary>
     internal List<object?> ReadArrayLikeElements(object? value)
     {
-        long len = ToLength(GetArrayLikeProperty(value, "length"));
+        long len = ArrayBuiltIns.ToLength(GetPropertyValue(value, "length"), this);
         var result = new List<object?>(len > int.MaxValue ? int.MaxValue : (int)len);
         for (long i = 0; i < len; i++)
-            result.Add(GetArrayLikeProperty(value, i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            result.Add(GetPropertyValue(value, i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         return result;
-    }
-
-    private static object? GetArrayLikeProperty(object? value, string key) => value switch
-    {
-        SharpTSObject obj => obj.GetProperty(key),
-        SharpTSInstance inst => inst.GetProperty(key),
-        _ => SharpTSUndefined.Instance,
-    };
-
-    private static long ToLength(object? value)
-    {
-        double n = Compilation.RuntimeTypes.ToNumber(value);
-        if (double.IsNaN(n) || n <= 0) return 0;
-        return (long)Math.Min(Math.Floor(n), 9007199254740991.0); // 2^53 - 1
     }
 
     /// <summary>

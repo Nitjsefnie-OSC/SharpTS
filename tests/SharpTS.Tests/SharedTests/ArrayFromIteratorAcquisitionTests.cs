@@ -88,6 +88,41 @@ public sealed class ArrayFromIteratorAcquisitionTests
 
     public static IEnumerable<object[]> Cases()
     {
+        yield return ["array-like-length-getter", """
+            const state = { reads: 0 }, input: any = {
+                0: 'a', 1: 'b', get length() { state.reads++; return 2; }
+            };
+            console.log(Array.from(input).join(','), state.reads);
+            """, "a,b 1\n"];
+        yield return ["array-like-inherited-accessors", """
+            const state = { events: '', valid: true };
+            const proto: any = {
+                get length() {
+                    state.events += 'l'; state.valid = state.valid && this === input;
+                    return { valueOf() { state.events += 'v'; return 3.9; } };
+                },
+                get 0() { state.events += '0'; state.valid = state.valid && this === input; return 'a'; }
+            };
+            const input: any = Object.create(proto);
+            Object.defineProperty(input, '1', {
+                get() { state.events += '1'; state.valid = state.valid && this === input; return 'b'; }
+            });
+            const result = Array.from(input);
+            console.log(result.length, result.join(','), typeof result[2], state.events, state.valid);
+            """, "3 a,b, undefined lv01 true\n"];
+        yield return ["array-like-accessor-errors", """
+            const marker = {}, state = { events: '' };
+            const lengthThrows: any = { get length() { state.events += 'l'; throw marker; } };
+            try { Array.from(lengthThrows); }
+            catch (error) { console.log(error === marker, state.events); }
+            const indexThrows: any = {
+                get length() { state.events += 'l'; return 2; },
+                get 0() { state.events += '0'; throw marker; },
+                get 1() { state.events += '1'; return 1; }
+            };
+            try { Array.from(indexThrows); }
+            catch (error) { console.log(error === marker, state.events); }
+            """, "true l\ntrue ll0\n"];
         yield return ["nullish-data-iterator", """
             for (const method of [null, undefined]) {
                 const input: any = { 0: 7, length: 1, [Symbol.iterator]: method };

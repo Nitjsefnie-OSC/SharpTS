@@ -688,6 +688,11 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         bool hasExisting = _fields.ContainsKey(name)
             || (_getters?.ContainsKey(name) ?? false)
             || (_setters?.ContainsKey(name) ?? false);
+        bool existingIsAccessor = (_getters?.ContainsKey(name) ?? false)
+            || (_setters?.ContainsKey(name) ?? false);
+        bool descriptorIsAccessor = descriptor.HasGet || descriptor.HasSet;
+        bool descriptorIsData = descriptor.HasValue || descriptor.HasWritable;
+        bool isAccessor = descriptorIsAccessor || (existingIsAccessor && !descriptorIsData);
         PropertyDescriptorFlags existingFlags = default;
 
         if (hasExisting && _descriptors?.TryGetValue(name, out existingFlags) != true)
@@ -698,20 +703,25 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         // Check if we can modify the property
         if (hasExisting && existingFlags.HasExplicitDescriptor && !existingFlags.Configurable)
         {
-            if (descriptor.Writable != existingFlags.Writable ||
-                descriptor.Enumerable != existingFlags.Enumerable ||
-                descriptor.Configurable != existingFlags.Configurable)
+            if ((descriptor.HasConfigurable && descriptor.Configurable) ||
+                (descriptor.HasEnumerable && descriptor.Enumerable != existingFlags.Enumerable))
             {
                 return false;
             }
-            if (!existingFlags.Writable && descriptor.Value != null)
+            if (existingIsAccessor)
             {
-                var currentValue = _fields.TryGetValue(name, out var v) ? v : null;
-                if (!ReferenceEquals(currentValue, descriptor.Value) &&
-                    (currentValue == null || !currentValue.Equals(descriptor.Value)))
-                {
+                if (descriptorIsData
+                    || descriptor.HasGet && !PropertySemantics.SameValue(descriptor.Get, _getters?.GetValueOrDefault(name))
+                    || descriptor.HasSet && !PropertySemantics.SameValue(descriptor.Set, _setters?.GetValueOrDefault(name)))
                     return false;
-                }
+            }
+            else
+            {
+                if (descriptorIsAccessor) return false;
+                if (!existingFlags.Writable
+                    && (descriptor.HasWritable && descriptor.Writable
+                        || descriptor.HasValue && !PropertySemantics.SameValue(descriptor.Value, _fields[name])))
+                    return false;
             }
         }
 
@@ -728,29 +738,30 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         // Store the descriptor flags
         _descriptors ??= new Dictionary<string, PropertyDescriptorFlags>();
         _descriptors[name] = PropertyDescriptorFlags.ForDefineProperty(
-            descriptor.Writable,
-            descriptor.Enumerable,
-            descriptor.Configurable
+            !isAccessor && (descriptor.HasWritable ? descriptor.Writable
+                : hasExisting && !existingIsAccessor && existingFlags.Writable),
+            descriptor.HasEnumerable ? descriptor.Enumerable : hasExisting && existingFlags.Enumerable,
+            descriptor.HasConfigurable ? descriptor.Configurable : hasExisting && existingFlags.Configurable
         );
 
-        if (descriptor.HasGet || descriptor.HasSet)
+        if (isAccessor)
         {
             _fields.Remove(name);
-            if (descriptor.Get is not null)
+            if (descriptor.HasGet && descriptor.Get is not null)
             {
                 _getters ??= [];
                 _getters[name] = descriptor.Get;
             }
-            else
+            else if (descriptor.HasGet)
             {
                 _getters?.Remove(name);
             }
-            if (descriptor.Set is not null)
+            if (descriptor.HasSet && descriptor.Set is not null)
             {
                 _setters ??= [];
                 _setters[name] = descriptor.Set;
             }
-            else
+            else if (descriptor.HasSet)
             {
                 _setters?.Remove(name);
             }
@@ -759,13 +770,16 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         {
             _getters?.Remove(name);
             _setters?.Remove(name);
-            _fields[name] = descriptor.Value;
+            if (descriptor.HasValue)
+                _fields[name] = descriptor.Value;
+            else if (!hasExisting || existingIsAccessor)
+                _fields[name] = SharpTSUndefined.Instance;
         }
 
         // Update lookup cache
         _lookupCache[name] = new PropertyResolution
         {
-            Type = descriptor.HasGet || descriptor.HasSet
+            Type = isAccessor
                 ? ResolutionType.OwnAccessor
                 : ResolutionType.Field
         };
@@ -805,7 +819,9 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
                 HasGet = true,
                 HasSet = true,
                 Enumerable = flags.Enumerable,
-                Configurable = flags.Configurable
+                HasEnumerable = true,
+                Configurable = flags.Configurable,
+                HasConfigurable = true,
             };
         }
 

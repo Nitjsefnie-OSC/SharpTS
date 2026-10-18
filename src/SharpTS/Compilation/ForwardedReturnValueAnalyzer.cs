@@ -9,7 +9,7 @@ namespace SharpTS.Compilation;
 /// Callee summaries use AST identities, so forward declarations and declaration order
 /// cannot change the result. Missing binding proofs and recursive cycles stay boxed.
 /// </summary>
-internal sealed class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeFeatureSet? features)
+internal sealed partial class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeFeatureSet? features)
 {
     private readonly Dictionary<Expr.Call, Stmt.Function> _targets = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Stmt.Function, bool> _rawReturns = new(ReferenceEqualityComparer.Instance);
@@ -46,6 +46,7 @@ internal sealed class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeFeatureSe
         stable.RemoveWhere(function => hazards.ImportedNames.Contains(function.Name.Lexeme));
         foreach (var (function, calls) in NumericRestCallBindingAnalyzer.Analyze(statements, stable.ToList(), stable))
             foreach (var call in calls) _targets[call] = function;
+        ResolveIntrinsicCalls(statements);
     }
 
     private bool PassesRawCall(Expr expression)
@@ -90,6 +91,7 @@ internal sealed class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeFeatureSe
     private bool CallReturnsNative(Expr.Call call)
     {
         if (call.Optional || !IsPrimitive(map.Get(call))) return false;
+        if (_nativeIntrinsics.TryGetValue(call, out var kind)) return kind == PrimitiveKind(map.Get(call));
         if (_targets.TryGetValue(call, out var function)) return !FunctionReturnsRaw(function) &&
             _returnKinds[function] == PrimitiveKind(map.Get(call));
         if (call.Callee is not Expr.Get { Optional: false } method || !map.IsStableExactPrimitiveMethodCall(method) ||

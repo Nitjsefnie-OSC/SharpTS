@@ -197,7 +197,7 @@ public class GlobalFunctionHandler : ICallHandler
                 return true;
             }
 
-            if (IsStaticallyString(ctx.TypeMap?.Get(call.Arguments[0])))
+            if (NumberStaticEmitter.IsDecimalStringParseInt(ctx.TypeMap, call.Arguments))
             {
                 emitter.EmitExpression(call.Arguments[0]);
                 il.Emit(System.Reflection.Emit.OpCodes.Castclass, ctx.Types.String);

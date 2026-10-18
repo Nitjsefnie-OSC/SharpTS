@@ -124,7 +124,7 @@ public class NumericIndirectCallTests
         var target = FindFunction(assembly, "last").Invoke(null, null)!;
         var field = assembly.GetType("$TSFunction")!.GetField("_numericRest4", BindingFlags.Instance | BindingFlags.NonPublic)!;
         Assert.Null(field.GetValue(target));
-        Assert.Equal(9d, FindFunction(assembly, "run").CreateDelegate<Func<object, double>>()(target));
+        Assert.Equal(9d, FindFunction(assembly, "run").CreateDelegate<Func<object, object>>()(target));
     }
 
     [Theory, ModeData]

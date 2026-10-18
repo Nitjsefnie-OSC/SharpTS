@@ -13,6 +13,12 @@ namespace SharpTS.TypeSystem;
 /// </remarks>
 public class TypeMap
 {
+    private IReadOnlyDictionary<Token, BindingSymbol> _valueBindings = new Dictionary<Token, BindingSymbol>();
+    internal void SetValueBindings(IReadOnlyDictionary<Token, BindingSymbol> bindings) => _valueBindings = bindings;
+    internal BindingSymbol? GetValueBinding(Token token) => _valueBindings.GetValueOrDefault(token);
+    internal IEnumerable<KeyValuePair<Stmt.Class, TypeInfo.Class>> ClassDeclarations => _classDeclarations;
+    internal IEnumerable<KeyValuePair<Expr.ClassExpr, TypeInfo.Class>> ClassExpressions => _classExprTypes;
+
     private readonly Dictionary<Expr, TypeInfo> _types = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Token, TypeInfo.Class> _privateInOwners = new(ReferenceEqualityComparer.Instance);
 
@@ -81,14 +87,17 @@ public class TypeMap
     public void SetClassType(string className, TypeInfo.Class classType) => _classTypes[className] = classType;
 
     private readonly Dictionary<Stmt.Class, TypeInfo.Class> _classDeclarations = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Token, TypeInfo.Class> _classDeclarationNames = new(ReferenceEqualityComparer.Instance);
 
     public void SetClassType(Stmt.Class declaration, TypeInfo.Class classType)
     {
         _classDeclarations[declaration] = classType;
+        _classDeclarationNames[declaration.Name] = classType;
         SetClassType(declaration.Name.Lexeme, classType);
     }
 
-    public TypeInfo.Class? GetClassType(Stmt.Class declaration) => _classDeclarations.GetValueOrDefault(declaration);
+    public TypeInfo.Class? GetClassType(Stmt.Class declaration) =>
+        _classDeclarations.GetValueOrDefault(declaration) ?? _classDeclarationNames.GetValueOrDefault(declaration.Name);
 
     /// <summary>
     /// Gets the class type by name, or null if not found.

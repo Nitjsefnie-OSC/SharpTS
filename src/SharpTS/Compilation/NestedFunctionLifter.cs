@@ -75,6 +75,7 @@ internal sealed class NestedFunctionLifter
 
     // Source positions of the AST being rewritten, when the caller is tracking them.
     private SharpTS.Parsing.SpanTable? _spans;
+    private TypeSystem.TypeMap? _typeMap;
 
     private NestedFunctionLifter(
         ClosureAnalyzer analyzer,
@@ -98,7 +99,7 @@ internal sealed class NestedFunctionLifter
     /// statements they replace, and the <c>var</c> aliases left behind are marked
     /// compiler-generated.
     /// </param>
-    public static List<Stmt> Lift(List<Stmt> module, SharpTS.Parsing.SpanTable? spans = null)
+    public static List<Stmt> Lift(List<Stmt> module, SharpTS.Parsing.SpanTable? spans = null, TypeSystem.TypeMap? typeMap = null)
     {
         // Cheap structural pre-scan: collect declarations whose SHAPE qualifies (case A/B, or a
         // declaration inside a module-level block/loop), without running closure analysis. The
@@ -181,7 +182,7 @@ internal sealed class NestedFunctionLifter
         }
         if (safe.Count == 0 && lambdaForwards.Count == 0) return module;
 
-        var lifter = new NestedFunctionLifter(analyzer, safe, lambdaForwards, hoistedForwards) { _spans = spans };
+        var lifter = new NestedFunctionLifter(analyzer, safe, lambdaForwards, hoistedForwards) { _spans = spans, _typeMap = typeMap };
         var rewritten = lifter.ProcessTopLevel(module);
         if (lifter._lifted.Count == 0) return rewritten;
 
@@ -885,6 +886,25 @@ internal sealed class NestedFunctionLifter
     /// reaches class expressions in every ordinary expression position without replacing unrelated AST
     /// identities used by closure and type maps.</summary>
     private Expr ProcessExpr(Expr expr)
+    {
+        var rewritten = ProcessExprCore(expr);
+        if (!ReferenceEquals(expr, rewritten) && _typeMap != null)
+        {
+            // Construction needs its checked class/generic arguments after rewriting.
+            // Do not restore unrelated primitive types without their return-slot facts.
+            if (expr is Expr.New && _typeMap.Get(expr) is TypeSystem.TypeInfo.Instance instance)
+                _typeMap.Set(rewritten, instance);
+            if (expr is Expr.ClassExpr source && rewritten is Expr.ClassExpr target
+                && _typeMap.GetClassExprType(source) is { } owner)
+            {
+                _typeMap.SetClassExprType(target, owner);
+                if (_typeMap.Get(source) is { } type) _typeMap.Set(target, type);
+            }
+        }
+        return rewritten;
+    }
+
+    private Expr ProcessExprCore(Expr expr)
     {
         switch (expr)
         {

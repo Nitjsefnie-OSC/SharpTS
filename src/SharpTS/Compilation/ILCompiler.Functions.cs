@@ -1685,9 +1685,12 @@ public partial class ILCompiler
     /// </summary>
     private Type ResolveConstraintType(string constraint)
     {
+        string qualified = GetDefinitionContext().ResolveClassName(constraint);
+        if (_classes.Builders.TryGetValue(qualified, out var owned))
+            return _typeMapper.IsDynamicClassInstance(_typeMap.GetClassType(qualified)) ? _types.Object : owned;
         // Check class builders first
         if (_classes.Builders.TryGetValue(constraint, out var tb))
-            return tb;
+            return _typeMapper.IsDynamicClassInstance(_typeMap.GetClassType(constraint)) ? _types.Object : tb;
 
         // Delegate primitive resolution to centralized mappings
         return PrimitiveTypeMappings.StringToClrType.GetValueOrDefault(constraint, typeof(object));

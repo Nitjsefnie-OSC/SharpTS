@@ -28,10 +28,97 @@ public abstract partial class ExpressionEmitterBase
         EmitArgsArrayWithSpread(expression.Arguments);
         var arguments = IL.DeclareLocal(Types.ObjectArray);
         IL.Emit(OpCodes.Stloc, arguments);
+        EmitCloseEvaluatedGenericConstructor(constructor, expression);
         IL.Emit(OpCodes.Ldloc, constructor);
         IL.Emit(OpCodes.Ldloc, arguments);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.DynamicConstruction.Value);
         SetStackUnknown();
+    }
+
+    // Close the evaluated Type, never the structurally checked annotation's class.
+    // Run after argument evaluation, matching the existing reflection construction path.
+    protected void EmitCloseEvaluatedGenericConstructor(LocalBuilder constructor, Expr.New expression)
+    {
+        var checkedArguments = (Ctx.TypeMap?.Get(expression) as SharpTS.TypeSystem.TypeInfo.Instance)?.ClassType
+            as SharpTS.TypeSystem.TypeInfo.InstantiatedGeneric;
+        Type[] arguments;
+        if (checkedArguments != null)
+            arguments = checkedArguments.TypeArguments.Select(argument => argument switch
+            {
+                SharpTS.TypeSystem.TypeInfo.TypeParameter parameter when Ctx.GenericTypeParameters.TryGetValue(parameter.Name, out var owned) => owned,
+                SharpTS.TypeSystem.TypeInfo.StringLiteral => Types.String,
+                SharpTS.TypeSystem.TypeInfo.NumberLiteral => Types.Double,
+                SharpTS.TypeSystem.TypeInfo.BooleanLiteral => Types.Boolean,
+                _ => Ctx.TypeMapper.MapTypeInfo(argument)
+            }).ToArray();
+        else arguments = expression.TypeArgs?.Select(ResolveTypeArg).ToArray() ?? [];
+
+        var done = IL.DefineLabel();
+        var type = IL.DeclareLocal(Types.Type);
+        IL.Emit(OpCodes.Ldloc, constructor);
+        IL.Emit(OpCodes.Isinst, Types.Type);
+        IL.Emit(OpCodes.Stloc, type);
+        IL.Emit(OpCodes.Ldloc, type);
+        IL.Emit(OpCodes.Brfalse, done);
+        IL.Emit(OpCodes.Ldloc, type);
+        IL.Emit(OpCodes.Callvirt, Types.GetMethod(Types.Type, "get_IsGenericTypeDefinition"));
+        IL.Emit(OpCodes.Brfalse, done);
+        LocalBuilder? supplied = null;
+        if (arguments.Length > 0)
+        {
+            supplied = IL.DeclareLocal(Types.MakeArrayType(Types.Type));
+            IL.Emit(OpCodes.Ldc_I4, arguments.Length);
+            IL.Emit(OpCodes.Newarr, Types.Type);
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldc_I4, i);
+                IL.Emit(OpCodes.Ldtoken, Types.IsVoid(arguments[i]) ? Types.Object : arguments[i]);
+                IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+                IL.Emit(OpCodes.Stelem_Ref);
+            }
+            IL.Emit(OpCodes.Stloc, supplied);
+        }
+        var guest = IL.DefineLabel();
+        var closed = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, type);
+        IL.Emit(OpCodes.Ldtoken, Ctx.Runtime!.DynamicConstruction.FactoryAttributeType);
+        IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Ldc_I4_0);
+        IL.Emit(OpCodes.Callvirt, typeof(MemberInfo).GetMethod(nameof(MemberInfo.IsDefined), [typeof(Type), typeof(bool)])!);
+        IL.Emit(OpCodes.Brtrue, guest);
+        // Native CLR constructor values retain their exact explicit argument/arity contract.
+        if (supplied != null)
+        {
+            IL.Emit(OpCodes.Ldloc, type);
+            IL.Emit(OpCodes.Ldloc, supplied);
+            IL.Emit(OpCodes.Callvirt, Types.GetMethod(Types.Type, "MakeGenericType", Types.MakeArrayType(Types.Type)));
+            IL.Emit(OpCodes.Stloc, type);
+        }
+        IL.Emit(OpCodes.Br, closed);
+        IL.MarkLabel(guest);
+
+        // Structural constructor compatibility does not identify generic parameter positions.
+        // Only the same declaration can consume the annotation's supplied CLR arguments.
+        var checkedDefinition = checkedArguments?.GenericDefinition
+            ?? Ctx.TypeMap?.Get(ExpressionUnwrapper.Unwrap(expression.Callee));
+        Type checkedOwner = checkedDefinition == null ? Types.Object : Ctx.TypeMapper.MapTypeInfoStrict(checkedDefinition);
+        if (supplied != null && checkedOwner != Types.Object)
+        {
+            var canonical = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, type);
+            IL.Emit(OpCodes.Ldtoken, checkedOwner);
+            IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+            IL.Emit(OpCodes.Bne_Un, canonical);
+            GenericTypeClosingEmitter.Emit(IL, Types, type, supplied);
+            IL.Emit(OpCodes.Br, closed);
+            IL.MarkLabel(canonical);
+        }
+        GenericTypeClosingEmitter.Emit(IL, Types, type);
+        IL.MarkLabel(closed);
+        IL.Emit(OpCodes.Ldloc, type);
+        IL.Emit(OpCodes.Stloc, constructor);
+        IL.MarkLabel(done);
     }
 
     protected void PublishRuntimeClassBinding(Stmt.Class declaration, string name, LocalBuilder definition)

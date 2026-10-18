@@ -22,6 +22,7 @@ public class TypeMapper
     private readonly TypeProvider _types;
     private readonly Dictionary<int, string> _checkedClassNames = [];
     private readonly HashSet<int> _dynamicClassInstances = [];
+    internal HeldClassConstructionInfo? HeldClassConstructions { get; set; }
 
     internal void RegisterDynamicClassInstance(int declarationId)
     {

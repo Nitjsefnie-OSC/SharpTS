@@ -382,33 +382,6 @@ public partial class ILEmitter
     }
 
     /// <summary>
-    /// Resolves a type argument string to a .NET Type for generic instantiation.
-    /// </summary>
-    protected override Type ResolveTypeArg(string typeArg)
-    {
-        return typeArg switch
-        {
-            "number" => _ctx.Types.Double,
-            "string" => _ctx.Types.String,
-            "boolean" => _ctx.Types.Boolean,
-            _ when _ctx.TypeMapper.ExternalTypes.TryGetValue(typeArg, out var external) => external,
-            _ when _ctx.TypeMapper.ExternalTypes.TryGetValue(
-                _ctx.ResolveClassName(typeArg), out var qualifiedExternal) => qualifiedExternal,
-            _ when _ctx.GenericTypeParameters.TryGetValue(typeArg, out var gp) => gp,
-            _ when _ctx.Classes.TryGetValue(_ctx.ResolveClassName(typeArg), out var tb) => tb,
-            // Ambient scan of every loaded assembly — must stay below the program's own
-            // generic parameters and classes. Compiled classes are public types in the
-            // global namespace under their bare TypeScript name, so a bare-name scan run
-            // any earlier binds `Foo<Bar>` to an unrelated loaded assembly's `Bar`, and
-            // the emitted AssemblyRef is unresolvable at runtime. Names reachable here
-            // are neither primitives, `@DotNetType`/`dotnet:` imports (both registered in
-            // ExternalTypes), nor user classes — in practice fully-qualified CLR names.
-            _ when DotNetTypeRegistry.ResolveFriendly(typeArg) is { } resolved => resolved,
-            _ => _ctx.Types.Object
-        };
-    }
-
-    /// <summary>
     /// Detects <c>Object.prototype.toString.call(receiver)</c> and emits
     /// IL that returns the proper ECMA-262 brand string ("[object Math]",
     /// "[object Array]", "[object String]", "[object Null]", "[object Undefined]",

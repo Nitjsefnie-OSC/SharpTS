@@ -1715,6 +1715,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitNew(Expr.New n)
     {
+        if (Ctx.TypeMapper.HeldClassConstructions?.RequiresValueConstruction(n) == true)
+        {
+            EmitDynamicConstruction(n);
+            return;
+        }
         if (IsRuntimeClassDeclarationReference(n.Callee))
         {
             EmitDynamicConstruction(n);
@@ -1760,6 +1765,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         var ctorBuilder = Ctx.ClassRegistry?.GetConstructorByQualifiedName(resolvedClassName);
         if (Ctx.Classes.TryGetValue(resolvedClassName, out var typeBuilder) && ctorBuilder != null)
         {
+            if (Ctx.TypeMapper.HeldClassConstructions is { } bindings && !bindings.HasCanonicalReference(n.Callee))
+            {
+                EmitDynamicConstruction(n);
+                return;
+            }
             Type targetType = typeBuilder;
             ConstructorInfo targetCtor = ctorBuilder;
 
@@ -1833,9 +1843,21 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     }
 
     /// <summary>
-    /// Resolves a TypeScript type argument name to a CLR type (stub — all map to object).
+    /// Resolves a type argument consistently in ordinary and suspended expression emitters.
     /// </summary>
-    protected virtual Type ResolveTypeArg(string typeArg) => typeof(object);
+    protected virtual Type ResolveTypeArg(string typeArg)
+    {
+        if (typeArg == "number") return Types.Double;
+        if (typeArg == "string") return Types.String;
+        if (typeArg == "boolean") return Types.Boolean;
+        string qualified = Ctx.ResolveClassName(typeArg);
+        if (Ctx.TypeMapper.ExternalTypes.TryGetValue(typeArg, out var external)
+            || Ctx.TypeMapper.ExternalTypes.TryGetValue(qualified, out external)) return external;
+        if (Ctx.GenericTypeParameters.TryGetValue(typeArg, out var owned)) return owned;
+        if (Ctx.Classes.TryGetValue(qualified, out var builder))
+            return Ctx.TypeMapper.IsDynamicClassInstance(Ctx.TypeMap?.GetClassType(qualified)) ? Types.Object : builder;
+        return SharpTS.Runtime.DotNet.DotNetTypeRegistry.ResolveFriendly(typeArg) ?? Types.Object;
+    }
 
     /// <summary>
     /// Resolves class name considering namespace imports and imported class aliases.

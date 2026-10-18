@@ -1443,6 +1443,7 @@ public partial class TypeChecker
         }
 
         CaptureEditorGlobals(_environment);
+        _typeMap.SetValueBindings(Bindings.CopyValueBindings());
         return _typeMap;
     }
 
@@ -1543,6 +1544,7 @@ public partial class TypeChecker
                 if (_diagnostics.HitErrorLimit)
                 {
                     CaptureEditorGlobals(_environment);
+                    _typeMap.SetValueBindings(Bindings.CopyValueBindings());
                     return new TypeCheckDiagnosticResult(_typeMap, _diagnostics.Diagnostics, HitErrorLimit: true);
                 }
 
@@ -1560,6 +1562,7 @@ public partial class TypeChecker
             ThrowIfCancellationRequested();
 
             CaptureEditorGlobals(_environment);
+            _typeMap.SetValueBindings(Bindings.CopyValueBindings());
             return new TypeCheckDiagnosticResult(_typeMap, _diagnostics.Diagnostics);
         }
         finally
@@ -2146,6 +2149,7 @@ public partial class TypeChecker
         _currentStatementLine = null;
         ThrowIfCancellationRequested();
         CaptureEditorGlobals(scriptEnv);
+        _typeMap.SetValueBindings(Bindings.CopyValueBindings());
         return _typeMap;
     }
 

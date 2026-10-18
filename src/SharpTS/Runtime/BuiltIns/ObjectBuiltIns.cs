@@ -2127,6 +2127,7 @@ public static partial class ObjectBuiltIns
         SharpTSClass klass when ReferenceEquals(klass.Superclass, SharpTSArrayClass.ArrayBase)
             => interp?.GetArrayGlobal(),
         SharpTSClass klass => (object?)klass.Superclass ?? interp?.GetFunctionPrototype(),
+        SharpTSArrayGlobal { HasExplicitPrototype: true } arrayGlobal => arrayGlobal.ExplicitPrototype,
         ISharpTSCallable function when FunctionObjectProperties.TryGetExplicitPrototype(function, interp, out var prototype)
             => prototype,
         ISharpTSGeneratorFunctionValue generator when interp is not null
@@ -2202,6 +2203,13 @@ public static partial class ObjectBuiltIns
                 classPrototype.SetExplicitPrototype(proto);
                 return true;
 
+            case SharpTSArrayGlobal arrayGlobal:
+                if (ReferenceEquals(PrototypeOf(interpreter, arrayGlobal), proto)) return true;
+                if (!PropertyDescriptorStore.IsExtensible(arrayGlobal)) return false;
+                if (WouldCreatePrototypeCycle(interpreter, arrayGlobal, proto)) return false;
+                arrayGlobal.SetExplicitPrototype(proto);
+                return true;
+
             case ISharpTSCallable function when FunctionObjectProperties.TryGetStorage(function, interpreter, out var storage):
                 if (ReferenceEquals(PrototypeOf(interpreter, function), proto)) return true;
                 if (!storage.IsExtensible || !PropertyDescriptorStore.IsExtensible(function)) return false;
@@ -2239,7 +2247,7 @@ public static partial class ObjectBuiltIns
             // this preflight rather than having their traps invoked here.
             candidate = candidate switch
             {
-                SharpTSObject or SharpTSArray or SharpTSClassPrototype or SharpTSInstance
+                SharpTSObject or SharpTSArray or SharpTSClassPrototype or SharpTSInstance or SharpTSArrayGlobal or SharpTSClass
                     or Dictionary<string, object?>
                     => PrototypeOf(interpreter, candidate),
                 ISharpTSCallable function when FunctionObjectProperties.TryGetStorage(function, interpreter, out _)

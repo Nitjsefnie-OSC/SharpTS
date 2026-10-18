@@ -26,6 +26,14 @@ public sealed class SharpTSArrayGlobal : ISharpTSCallable, ISharpTSMutableBuiltI
     internal SharpTSArrayGlobal() { }
 
     internal SharpTSArrayPrototype? RealmPrototype { get; set; }
+    internal bool HasExplicitPrototype { get; private set; }
+    internal object? ExplicitPrototype { get; private set; }
+
+    internal void SetExplicitPrototype(object? prototype)
+    {
+        ExplicitPrototype = prototype;
+        HasExplicitPrototype = true;
+    }
 
     public bool HasExtra(string name) => _extras.HasProperty(name) || _extras.HasSetter(name);
     public object? TryGetExtra(string name) => _extras.GetProperty(name);

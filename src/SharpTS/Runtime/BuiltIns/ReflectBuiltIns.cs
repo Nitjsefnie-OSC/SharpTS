@@ -319,7 +319,8 @@ public static class ReflectBuiltIns
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.getPrototypeOf requires a target object.");
                 if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var functionStorage))
                     return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
-                if (target is ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator or SharpTSClassPrototype)
+                if (target is ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator
+                    or SharpTSClassPrototype or SharpTSArrayGlobal)
                     return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
                 return RuntimeValue.FromBoxed(target switch
                 {

@@ -840,6 +840,11 @@ public partial class Interpreter
                 return GetInstanceSymbolValue(instance, symbol);
             if (current is SharpTSRegExp)
                 return PerformIndexGet(null!, current, symbol).ToObject();
+            if (current is SharpTSArrayGlobal arrayGlobal)
+            {
+                current = ObjectBuiltIns.PrototypeOf(this, arrayGlobal);
+                continue;
+            }
             if (current is ISharpTSCallable)
             {
                 current = GetFunctionPrototype();
@@ -894,6 +899,18 @@ public partial class Interpreter
             {
                 if (arrayPrototype.HasOwnProperty(name)) return true;
                 obj = ObjectBuiltIns.PrototypeOf(this, arrayPrototype);
+                continue;
+            }
+            if (obj is SharpTSArrayGlobal arrayGlobal)
+            {
+                if (arrayGlobal.HasOwnProperty(name)) return true;
+                obj = ObjectBuiltIns.PrototypeOf(this, arrayGlobal);
+                continue;
+            }
+            if (obj is SharpTSFunctionPrototype functionPrototype)
+            {
+                if (functionPrototype.HasOwnProperty(name)) return true;
+                obj = ObjectBuiltIns.PrototypeOf(this, functionPrototype);
                 continue;
             }
             if (obj is SharpTSObjectPrototype objectPrototype)
@@ -1037,6 +1054,11 @@ public partial class Interpreter
                 if (array.HasSymbolProperty(symbol)
                     || array.TryGetSymbolAccessor(symbol, out _, out _)) return true;
                 current = ObjectBuiltIns.PrototypeOf(this, array);
+                continue;
+            }
+            if (current is SharpTSArrayGlobal arrayGlobal)
+            {
+                current = ObjectBuiltIns.PrototypeOf(this, arrayGlobal);
                 continue;
             }
             if (current is ISharpTSSymbolPropertyBag symbolBag

@@ -69,6 +69,7 @@ public class VariableResolver : AstVisitorBase
         _handlerVarTargets.Add(_scopes.Peek(), target);
         try
         {
+            PredeclareLexicalBindings(statements);
             foreach (var statement in statements)
                 Visit(statement);
         }
@@ -99,6 +100,13 @@ public class VariableResolver : AstVisitorBase
         _scopes.Peek()[name] = true;
     }
 
+    private void PredeclareLexicalBindings(IEnumerable<Stmt> statements)
+    {
+        if (!_scopes.TryPeek(out var scope)) return;
+        foreach (var name in LexicalDeclarationBindings.Collect(statements))
+            scope.TryAdd(name.Lexeme, false);
+    }
+
     /// <summary>
     /// Calculates the scope distance and registers it with the interpreter.
     /// </summary>
@@ -126,6 +134,7 @@ public class VariableResolver : AstVisitorBase
     protected override void VisitBlock(Stmt.Block stmt)
     {
         BeginScope();
+        PredeclareLexicalBindings(stmt.Statements);
         foreach (var s in stmt.Statements)
             Visit(s);
         EndScope();
@@ -182,6 +191,7 @@ public class VariableResolver : AstVisitorBase
             if (param.DefaultValue != null)
                 Visit(param.DefaultValue);
         }
+        PredeclareLexicalBindings(body);
         foreach (var statement in body)
             Visit(statement);
         EndScope();
@@ -319,6 +329,7 @@ public class VariableResolver : AstVisitorBase
                 Declare(stmt.CatchParam.Lexeme);
                 Define(stmt.CatchParam.Lexeme);
             }
+            PredeclareLexicalBindings(stmt.CatchBlock);
             foreach (var s in stmt.CatchBlock)
                 Visit(s);
             EndScope();
@@ -489,6 +500,7 @@ public class VariableResolver : AstVisitorBase
             Visit(expr.ExpressionBody);
         if (expr.BlockBody != null)
         {
+            PredeclareLexicalBindings(expr.BlockBody);
             foreach (var s in expr.BlockBody)
                 Visit(s);
         }

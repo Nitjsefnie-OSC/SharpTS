@@ -114,7 +114,6 @@ public sealed class BlockGeneratorExpressionTests
             Object.getOwnPropertyDescriptor(second, "prototype")!.writable);
         """;
 
-    // Ordinary block closures also miss this interpreter TDZ shadow check (#2345).
     public const string InitializationAndShadowSource = """
         let generator: any;
         let value = 100;
@@ -303,7 +302,6 @@ public sealed class BlockGeneratorExpressionTests
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases()
-        .Where(row => (string)row[0] is not "initialization-shadow")
         .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted })
         .Concat(Cases().Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Compiled }));
 

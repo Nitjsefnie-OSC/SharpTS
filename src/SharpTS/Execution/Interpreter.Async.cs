@@ -86,6 +86,7 @@ public partial class Interpreter
     {
         using (PushScope(environment))
         {
+            ReserveLexicalDeclarations(statements);
             // JS hoists function declarations to the top of their enclosing function/block scope.
             // The sync ExecuteBlock does the same; without it an async body never sees a function
             // declared after a reference to it — e.g. the `async function* __genArrow_N` the
@@ -622,7 +623,7 @@ public partial class Interpreter
 
     internal async ValueTask<ExecutionResult> ExecuteVarAsyncVT(Stmt.Var varStmt)
     {
-        object? value = null;
+        object? value = SharpTSUndefined.Instance;
         if (varStmt.Initializer != null)
         {
             value = (await EvaluateAsync(varStmt.Initializer)).ToObject();

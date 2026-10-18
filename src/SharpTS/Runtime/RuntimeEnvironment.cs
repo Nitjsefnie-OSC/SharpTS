@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using SharpTS.Parsing;
+using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Runtime;
@@ -18,6 +19,7 @@ namespace SharpTS.Runtime;
 public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
 {
     private Dictionary<string, SharpTSNamespace>? _namespaces;
+    private HashSet<string>? _uninitializedLexicalNames;
     private string? _directBindingName;
     private RuntimeValue _directBindingValue;
     private bool _hasDirectBinding;
@@ -116,7 +118,23 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     public override void Define(string name, RuntimeValue value)
         => DefineValue(name, value);
 
+    /// <summary>Reserves a missing local lexical binding until its declaration executes.</summary>
+    internal void ReserveLexical(string name)
+    {
+        if (HasLocalBinding(name)) return;
+        Values[name] = RuntimeValue.Undefined;
+        (_uninitializedLexicalNames ??= new(StringComparer.Ordinal)).Add(name);
+    }
+
     private void DefineValue(string name, RuntimeValue value)
+    {
+        SetLocalValue(name, value);
+        if (_uninitializedLexicalNames?.Remove(name) == true
+            && _uninitializedLexicalNames.Count == 0)
+            _uninitializedLexicalNames = null;
+    }
+
+    private void SetLocalValue(string name, RuntimeValue value)
     {
         if (_hasDirectBinding && name == _directBindingName)
         {
@@ -134,10 +152,10 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     }
 
     public override bool IsDefined(string name) =>
-        TryGetLocal(name, out _) || (Enclosing?.IsDefined(name) ?? false);
+        HasLocalBinding(name) || (Enclosing?.IsDefined(name) ?? false);
 
     public override bool IsDefinedLocally(string name) =>
-        TryGetLocal(name, out _);
+        HasLocalBinding(name);
 
     public RuntimeValue Get(Token name)
     {
@@ -174,6 +192,7 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
 
     public void Assign(Token name, RuntimeValue value)
     {
+        EnsureInitialized(name.Lexeme);
         if (_hasDirectBinding && name.Lexeme == _directBindingName)
         {
             _directBindingValue = value;
@@ -219,7 +238,9 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     /// </summary>
     public void AssignAt(int distance, Token name, RuntimeValue value)
     {
-        Ancestor(distance).DefineRV(name.Lexeme, value);
+        RuntimeEnvironment environment = Ancestor(distance);
+        environment.EnsureInitialized(name.Lexeme);
+        environment.SetLocalValue(name.Lexeme, value);
     }
 
     /// <summary>
@@ -227,7 +248,7 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     /// </summary>
     public void AssignAt(int distance, Token name, object? value)
     {
-        Ancestor(distance).DefineRV(name.Lexeme, RuntimeValue.FromBoxed(value));
+        AssignAt(distance, name, RuntimeValue.FromBoxed(value));
     }
 
     /// <summary>
@@ -301,8 +322,20 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     public void Define(string name, object? value) =>
         DefineValue(name, RuntimeValue.FromBoxed(value));
 
+    private bool HasLocalBinding(string name) =>
+        (_hasDirectBinding && name == _directBindingName)
+        || _values?.ContainsKey(name) == true;
+
+    private void EnsureInitialized(string name)
+    {
+        if (_uninitializedLexicalNames?.Contains(name) == true)
+            throw new ThrowException(new SharpTSReferenceError(
+                $"Cannot access '{name}' before initialization"));
+    }
+
     private bool TryGetLocal(string name, out RuntimeValue value)
     {
+        EnsureInitialized(name);
         if (_hasDirectBinding && name == _directBindingName)
         {
             value = _directBindingValue;

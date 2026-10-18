@@ -183,6 +183,7 @@ public partial class Interpreter
         {
             using (PushScope(environment))
             {
+                ReserveLexicalDeclarations(statements);
                 // JS hoists function declarations to the top of their
                 // enclosing function/module scope. This lets lodash-style
                 // IIFEs use mutually-recursive helpers declared in any order.
@@ -248,6 +249,12 @@ public partial class Interpreter
         }
 
         return blockResult;
+    }
+
+    private void ReserveLexicalDeclarations(IEnumerable<Stmt> statements)
+    {
+        foreach (var name in LexicalDeclarationBindings.Collect(statements))
+            _environment.ReserveLexical(name.Lexeme);
     }
 
     /// <summary>
@@ -482,6 +489,7 @@ public partial class Interpreter
 
             using (PushScope(catchEnv))
             {
+                ReserveLexicalDeclarations(tryCatch.CatchBlock);
                 try
                 {
                     foreach (var catchStmt in tryCatch.CatchBlock)
@@ -516,6 +524,7 @@ public partial class Interpreter
     private async ValueTask<ExecutionResult> ExecuteHandlerBlockCore(IEvaluationContext ctx, List<Stmt> statements)
     {
         using var scope = PushScope(CreateHandlerEnvironment());
+        ReserveLexicalDeclarations(statements);
         foreach (var stmt in statements)
         {
             var result = await ctx.ExecuteStmtAsync(stmt);
@@ -611,6 +620,7 @@ public partial class Interpreter
 
             using (PushScope(catchEnv))
             {
+                ReserveLexicalDeclarations(tryCatch.CatchBlock);
                 try
                 {
                     foreach (var catchStmt in tryCatch.CatchBlock)
@@ -679,6 +689,7 @@ public partial class Interpreter
     private ExecutionResult ExecuteHandlerBlock(List<Stmt> statements)
     {
         using var scope = PushScope(CreateHandlerEnvironment());
+        ReserveLexicalDeclarations(statements);
         foreach (var stmt in statements)
         {
             var result = Execute(stmt);

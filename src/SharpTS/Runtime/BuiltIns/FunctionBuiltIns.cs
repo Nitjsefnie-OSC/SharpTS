@@ -16,7 +16,7 @@ public static class FunctionBuiltIns
                 interpreter.OrdinaryHasInstance(
                     args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance,
                     receiver.ToObject())))
-            .WithSpecLength(1).AsNonConstructor();
+            .WithSpecLength(1).AsNonConstructor().MarkRealmOwned();
 
     /// <summary>
     /// Creates an unbound Function.prototype method for one realm. The owning
@@ -35,10 +35,8 @@ public static class FunctionBuiltIns
     /// <summary>Creates a fresh intrinsic; interpreter reads use their realm's cached copy.</summary>
     public static BuiltInMethod? GetPrototypeMethod(string name) => CreatePrototypeMethod(name);
 
-    private sealed class PrototypeMethod : BuiltInMethod, ISharpTSFunctionObject
+    private sealed class PrototypeMethod : BuiltInMethod
     {
-        private readonly SharpTSObject _properties;
-
         internal PrototypeMethod(string name, int maxArity,
             Func<Interpreter, RuntimeValue, ReadOnlySpan<RuntimeValue>, RuntimeValue> implementation,
             int specLength)
@@ -46,10 +44,8 @@ public static class FunctionBuiltIns
         {
             WithSpecLength(specLength);
             AsNonConstructor();
-            _properties = FunctionObjectProperties.Create(name, specLength);
+            MarkRealmOwned();
         }
-
-        SharpTSObject ISharpTSFunctionObject.OwnProperties => _properties;
     }
 
     /// <summary>
@@ -57,19 +53,21 @@ public static class FunctionBuiltIns
     /// </summary>
     public static object? GetMember(ISharpTSCallable receiver, string name, Interpreter? interpreter = null)
     {
-        if (receiver is ISharpTSFunctionObject functionObject && name is "name" or "length")
+        if (receiver is ISharpTSFunctionObject functionObject)
         {
-            var descriptor = functionObject.OwnProperties.GetOwnPropertyDescriptor(name);
-            return descriptor is { HasValue: true } ? descriptor.Value : null;
-        }
-
-        // Own function-object properties win over the prototype surface —
-        // Node models process.hrtime.bigint / process.memoryUsage.rss as
-        // properties on the function itself (see BuiltInMethod.OwnProperties).
-        if (receiver is BuiltInMethod { OwnProperties: { } own }
-            && own.TryGetValue(name, out var ownValue))
-        {
-            return ownValue;
+            var properties = interpreter is null ? functionObject.OwnProperties
+                : FunctionObjectProperties.GetProperties(functionObject, interpreter);
+            var descriptor = properties.GetOwnPropertyDescriptor(name);
+            if (descriptor is not null)
+            {
+                if (descriptor.HasGet || descriptor.HasSet)
+                    return descriptor.Get is null || interpreter is null
+                        ? SharpTSUndefined.Instance
+                        : CallWithThis(interpreter, descriptor.Get, receiver, []);
+                return descriptor.Value;
+            }
+            // Absence in the canonical bag must not resurrect native metadata.
+            if (name is "name" or "length") return null;
         }
 
         // A deleted `name`/`length` (ECMA-262 §17 makes both configurable) must read

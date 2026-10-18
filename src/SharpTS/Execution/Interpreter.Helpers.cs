@@ -1,6 +1,7 @@
 using SharpTS.Modules;
 using SharpTS.Parsing;
 using SharpTS.Runtime;
+using SharpTS.Runtime.BuiltIns;
 using SharpTS.Runtime.DotNet;
 using SharpTS.Runtime.Types;
 
@@ -27,6 +28,9 @@ public partial class Interpreter
                 return true;
             case ISharpTSOwnPropertyObject ownPropertyObject:
                 value = GetPropertyValue(ownPropertyObject, name.Lexeme);
+                return true;
+            case BuiltInMethod nativeMethod:
+                value = GetPropertyValue(nativeMethod, name.Lexeme);
                 return true;
             case SharpTSClass klass:
                 value = EvaluateGetOnClass(klass, name.Lexeme);
@@ -62,6 +66,9 @@ public partial class Interpreter
                 return true;
             case ISharpTSOwnPropertyObject ownPropertyObject:
                 value = RuntimeValue.FromBoxed(GetPropertyValue(ownPropertyObject, name.Lexeme));
+                return true;
+            case BuiltInMethod nativeMethod:
+                value = RuntimeValue.FromBoxed(GetPropertyValue(nativeMethod, name.Lexeme));
                 return true;
             case SharpTSClass klass:
                 value = RuntimeValue.FromBoxed(EvaluateGetOnClass(klass, name.Lexeme));
@@ -100,6 +107,9 @@ public partial class Interpreter
             case ISharpTSOwnPropertyObject ownPropertyObject:
                 SetOwnPropertyObjectValue(ownPropertyObject, name.Lexeme, value, _environment.IsStrictMode);
                 return true;
+            case BuiltInMethod nativeMethod:
+                SetOwnPropertyObjectValue(nativeMethod, name.Lexeme, value, _environment.IsStrictMode);
+                return true;
             case SharpTSClass klass:
                 if (!TryAssignThroughDescriptor(klass.FindStaticPropertyDescriptor(name.Lexeme),
                         klass, name.Lexeme, value, _environment.IsStrictMode))
@@ -132,7 +142,7 @@ public partial class Interpreter
     /// <returns><c>true</c> if the element was found; otherwise <c>false</c>.</returns>
     private bool TryGetIndex(object? obj, object? index, out object? value)
     {
-        if (obj is ISharpTSOwnPropertyObject)
+        if (obj is ISharpTSOwnPropertyObject or BuiltInMethod)
         {
             value = GetOwnPropertyObjectValue(obj, index!);
             return true;
@@ -160,7 +170,7 @@ public partial class Interpreter
     /// <returns><c>true</c> if the element was set; otherwise <c>false</c>.</returns>
     private bool TrySetIndex(object? obj, object? index, object? value)
     {
-        if (obj is ISharpTSOwnPropertyObject)
+        if (obj is ISharpTSOwnPropertyObject or BuiltInMethod)
         {
             SetOwnPropertyObjectValue(obj, index!, value, _environment.IsStrictMode);
             return true;
@@ -354,7 +364,7 @@ public partial class Interpreter
     /// </summary>
     private RuntimeValue IncrementIndex(object? obj, object? index, double delta, bool returnOld)
     {
-        if (obj is ISharpTSOwnPropertyObject)
+        if (obj is ISharpTSOwnPropertyObject or BuiltInMethod)
             index = ToPropertyKey(index);
 
         if (TryGetIndex(obj, index, out object? currentObj))

@@ -150,7 +150,7 @@ public partial class Interpreter
             ThrowCannotReadProperty(obj, index?.ToString() ?? "");
         }
 
-        if (obj is ISharpTSOwnPropertyObject)
+        if (obj is ISharpTSOwnPropertyObject or BuiltInMethod)
         {
             object key = ToPropertyKey(index);
             RuntimeValue current = RuntimeValue.FromBoxed(GetOwnPropertyObjectValue(obj, key));
@@ -303,7 +303,7 @@ public partial class Interpreter
             ThrowCannotReadProperty(obj, index?.ToString() ?? "");
         }
 
-        if (obj is ISharpTSOwnPropertyObject)
+        if (obj is ISharpTSOwnPropertyObject or BuiltInMethod)
         {
             object key = ToPropertyKey(index);
             RuntimeValue currentRV = RuntimeValue.FromBoxed(GetOwnPropertyObjectValue(obj, key));

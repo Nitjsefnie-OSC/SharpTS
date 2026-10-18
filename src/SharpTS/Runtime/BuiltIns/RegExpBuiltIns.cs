@@ -302,7 +302,7 @@ public static class RegExpBuiltIns
         // `length` can be deleted). Keep those mutations realm-local along
         // with the prototype object itself instead of sharing the static
         // registration instances across persistent Test262 worker realms.
-        static BuiltInMethod RealmLocal(BuiltInMethod method) => method.Bind(null);
+        static BuiltInMethod RealmLocal(BuiltInMethod method) => method.CloneForRealm();
 
         var proto = new SharpTSObject(new Dictionary<string, object?>());
         void DefineSymbolMethod(SharpTSSymbol symbol, BuiltInMethod method) =>

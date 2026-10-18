@@ -1112,8 +1112,12 @@ public partial class Interpreter
     /// receiver expression, needed only to synthesize a Get for the dot-notation
     /// fallback path.
     /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private RuntimeValue PerformIndexGet(Expr objectExpr, object? obj, object? index)
+        => LocalizeBuiltInValue(PerformIndexGetCore(objectExpr, obj, index));
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private RuntimeValue PerformIndexGetCore(Expr objectExpr, object? obj, object? index)
     {
         // ECMA-262 §13.3.3 RequireObjectCoercible: a bracket read on a nullish base
         // throws a guest TypeError. The optional `?.[]` case is short-circuited by

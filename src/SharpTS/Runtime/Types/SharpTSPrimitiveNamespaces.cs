@@ -156,7 +156,7 @@ public class SharpTSStringNamespace : ISharpTSCallable, ISharpTSPrimitiveConstru
     {
         if (_realmBuiltIns.TryGetValue(name, out var cached)) return cached;
         var member = StringBuiltIns.GetStaticMember(name);
-        if (member is BuiltInMethod method) member = method.Bind(null);
+        if (member is BuiltInMethod method) member = method.CloneForRealm();
         if (member != null) _realmBuiltIns[name] = member;
         return member;
     }
@@ -747,7 +747,7 @@ public class SharpTSNumberNamespace : ISharpTSCallable, ISharpTSPrimitiveConstru
         if (member is BuiltInMethod { IsConstant: true } constant) return constant.ConstantValue;
         // Built-in function metadata is configurable. Keep each realm's copy isolated so a
         // delete/redefinition of `name` or `length` cannot leak into another interpreter.
-        if (member is BuiltInMethod method) member = method.Bind(null);
+        if (member is BuiltInMethod method) member = method.CloneForRealm();
         if (member != null) _realmBuiltIns[name] = member;
         return member;
     }

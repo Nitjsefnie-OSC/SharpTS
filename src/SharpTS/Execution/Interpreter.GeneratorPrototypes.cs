@@ -23,13 +23,13 @@ public partial class Interpreter
         var iteratorSymbol = isAsync ? SharpTSSymbol.AsyncIterator : SharpTSSymbol.Iterator;
         iteratorPrototype.DefineProperty(iteratorSymbol, SharpTSPropertyDescriptor.ForMethod(
             BuiltInMethod.CreateV2(isAsync ? "[Symbol.asyncIterator]" : "[Symbol.iterator]", 0,
-                static (_, receiver, _) => receiver).AsNonConstructor()));
+                static (_, receiver, _) => receiver).AsNonConstructor().MarkRealmOwned()));
         if (!isAsync)
         {
             foreach (var name in new[] { "map", "filter", "take", "drop", "flatMap", "reduce",
                 "toArray", "forEach", "some", "every", "find" })
                 iteratorPrototype.DefineProperty(name, SharpTSPropertyDescriptor.ForMethod(
-                    (ISharpTSCallable)GeneratorBuiltIns.GetMember(null!, name)!));
+                    ((BuiltInMethod)GeneratorBuiltIns.GetMember(null!, name)!).MarkRealmOwned()));
         }
 
         var generatorPrototype = new SharpTSObject([])
@@ -40,7 +40,7 @@ public partial class Interpreter
                 ? AsyncGeneratorBuiltIns.GetMember(null!, name)
                 : GeneratorBuiltIns.GetMember(null!, name);
             if (method is BuiltInMethod synchronous)
-                synchronous.WithSpecLength(1).AsNonConstructor();
+                synchronous.WithSpecLength(1).AsNonConstructor().MarkRealmOwned();
             if (method is BuiltInAsyncMethod asynchronous)
                 asynchronous.WithSpecLength(1);
             generatorPrototype.DefineProperty(name, SharpTSPropertyDescriptor.ForMethod((ISharpTSCallable)method!));
@@ -67,7 +67,8 @@ public partial class Interpreter
                 return RuntimeValue.FromObject(CreateEmptyGeneratorFunction(isAsync));
             })
             .WithSpecLength(1)
-            .WithOwnProperties(new() { ["prototype"] = functionPrototype });
+            .WithOwnProperties(new() { ["prototype"] = functionPrototype })
+            .CloneForRealm();
         functionPrototype.DefineProperty("constructor",
             new SharpTSPropertyDescriptor(value: constructor, configurable: true));
         return (functionPrototype, generatorPrototype);

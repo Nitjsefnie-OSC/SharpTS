@@ -1636,6 +1636,12 @@ public class SharpTSProxy : ISharpTSCallable
     private List<object?> ForwardOwnPropertyKeys(Interpreter? interpreter)
     {
         var keys = new List<object?>();
+        if (FunctionObjectProperties.TryGetStorage(_target, interpreter, out var properties))
+        {
+            keys.AddRange(properties.OwnVisibleStringKeys());
+            keys.AddRange(properties.GetSymbolPropertyNames());
+            return keys;
+        }
         switch (_target)
         {
             case SharpTSProxy proxy:
@@ -1792,6 +1798,9 @@ public class SharpTSProxy : ISharpTSCallable
     {
         if (_target is SharpTSProxy proxy)
             return proxy.TrapGet(prop, interp);
+        if (FunctionObjectProperties.TryGetStorage(_target, interp, out var properties)
+            && properties.GetOwnPropertyDescriptor(prop) is not null)
+            return properties.GetProperty(prop);
         if (_target is SharpTSObject obj)
             return obj.GetProperty(prop);
         if (_target is SharpTSInstance inst)
@@ -1916,6 +1925,8 @@ public class SharpTSProxy : ISharpTSCallable
     {
         if (_target is SharpTSProxy proxy)
             return proxy.TrapHas(prop, interp);
+        if (FunctionObjectProperties.TryGetStorage(_target, interp, out var properties))
+            return interp is null ? properties.HasProperty(prop) : interp.HasProperty(_target, prop);
         if (_target is SharpTSObject obj)
             return obj.HasProperty(prop);
         if (_target is SharpTSInstance inst)
@@ -1938,6 +1949,8 @@ public class SharpTSProxy : ISharpTSCallable
     {
         if (_target is SharpTSProxy proxy)
             return proxy.TrapDeleteProperty(prop, interp);
+        if (FunctionObjectProperties.TryGetStorage(_target, interp, out var properties))
+            return properties.GetOwnPropertyDescriptor(prop) is null || properties.DeletePropertyStrict(prop, false);
         if (_target is ISharpTSOwnPropertyObject ownPropertyObject)
             return ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(prop) is null
                 || ownPropertyObject.OwnProperties.DeletePropertyStrict(prop, false);

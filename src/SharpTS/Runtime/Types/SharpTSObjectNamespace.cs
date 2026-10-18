@@ -40,7 +40,7 @@ public class SharpTSObjectNamespace : ISharpTSCallable
         var member = ObjectBuiltIns.GetStaticMethod(name);
         // Function metadata is mutable. Give every realm its own callable so
         // deleting/redefining `name` or `length` cannot leak across scripts.
-        if (member is BuiltInMethod method) member = method.Bind(null);
+        if (member is BuiltInMethod method) member = method.CloneForRealm();
         if (member != null) _realmBuiltIns[name] = member;
         return member;
     }

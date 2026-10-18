@@ -324,7 +324,7 @@ public partial class Interpreter
             {
                 return member is BuiltInMethod bm && bm.IsConstant
                     ? RuntimeValue.FromBoxed(bm.CallBoxed(this, []))
-                    : RuntimeValue.FromObject(member);
+                    : RuntimeValue.FromBoxed(LocalizeStaticBuiltInValue(nsVar.Name.Lexeme, member));
             }
         }
 
@@ -361,7 +361,7 @@ public partial class Interpreter
                 {
                     return RuntimeValue.FromBoxed(bm.CallBoxed(this, []));
                 }
-                return RuntimeValue.FromObject(member);
+                return RuntimeValue.FromBoxed(LocalizeStaticBuiltInValue(nsVar.Name.Lexeme, member));
             }
         }
 
@@ -386,6 +386,29 @@ public partial class Interpreter
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Expr.Get> _syntheticGets =
         new(StringComparer.Ordinal);
 
+    private readonly ConditionalWeakTable<BuiltInMethod, BuiltInMethod> _realmBuiltInMethods = new();
+    private static readonly ConditionalWeakTable<BuiltInMethod, BuiltInMethod> _ownerBuiltInMethods = new();
+
+    private object? LocalizeStaticBuiltInValue(string namespaceName, object member)
+    {
+        // Match value-position namespace reads before selecting the canonical
+        // guest function (notably process.hrtime and its native child methods).
+        if (member is BuiltInMethod && _globalConstants.TryGetValue(namespaceName, out var owner))
+            member = BindBuiltInMember(member, owner);
+        return LocalizeBuiltInValue(member);
+    }
+
+    internal object? LocalizeBuiltInValue(object? value)
+        => value is BuiltInMethod { IsConstant: false, IsRealmOwned: false } method
+            ? (method.HasRealmOwnedReceiver ? _ownerBuiltInMethods : _realmBuiltInMethods)
+                .GetValue(method, static template => template.CloneForRealm())
+            : value;
+
+    private RuntimeValue LocalizeBuiltInValue(RuntimeValue value)
+        => value.IsObject && value.ToObject() is BuiltInMethod method
+            ? RuntimeValue.FromBoxed(LocalizeBuiltInValue((object)method))
+            : value;
+
     internal object? GetProperty(object? obj, string name)
     {
         var syntheticGet = _syntheticGets.GetOrAdd(name, static n =>
@@ -407,6 +430,10 @@ public partial class Interpreter
         => GetPropertyValueFromChain(obj, name, receiver);
 
     private object? GetPropertyValueFromChain(
+        object? current, string name, object? receiver)
+        => LocalizeBuiltInValue(GetPropertyValueFromChainCore(current, name, receiver));
+
+    private object? GetPropertyValueFromChainCore(
         object? current, string name, object? receiver)
     {
         for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
@@ -679,6 +706,9 @@ public partial class Interpreter
         => GetSymbolPropertyValue(obj, symbol, obj);
 
     internal object? GetSymbolPropertyValue(object obj, SharpTSSymbol symbol, object receiver)
+        => LocalizeBuiltInValue(GetSymbolPropertyValueCore(obj, symbol, receiver));
+
+    private object? GetSymbolPropertyValueCore(object obj, SharpTSSymbol symbol, object receiver)
     {
         if (obj is string or bool or double or SharpTSBigInt or SharpTSSymbol)
             return SharpTSUndefined.Instance;
@@ -1128,8 +1158,12 @@ public partial class Interpreter
     /// Core property access logic, shared between sync and async evaluation.
     /// Uses TypeCategoryResolver for unified type dispatch.
     /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private RuntimeValue EvaluateGetOnObject(Expr.Get get, object? obj)
+        => LocalizeBuiltInValue(EvaluateGetOnObjectCore(get, obj));
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private RuntimeValue EvaluateGetOnObjectCore(Expr.Get get, object? obj)
     {
         // Handle optional chaining - return undefined if object is null or undefined
         if (get.Optional && (obj == null || obj is Runtime.Types.SharpTSUndefined))

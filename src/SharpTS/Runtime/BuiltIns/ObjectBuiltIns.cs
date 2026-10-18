@@ -1178,7 +1178,7 @@ public static partial class ObjectBuiltIns
             return dateMember is null
                 ? null
                 : DataDescriptor(
-                    dateMember,
+                    interpreter.LocalizeBuiltInValue(dateMember),
                     writable: true,
                     enumerable: false,
                     configurable: true);
@@ -1216,6 +1216,8 @@ public static partial class ObjectBuiltIns
         };
         if (value is BuiltInMethod { IsConstant: true } constant)
             value = constant.CallBoxed(interpreter, []);
+        else
+            value = interpreter.LocalizeBuiltInValue(value);
         if (value is null or SharpTSUndefined)
             return null;
 

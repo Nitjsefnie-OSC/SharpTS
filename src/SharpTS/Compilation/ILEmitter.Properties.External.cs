@@ -175,35 +175,7 @@ public partial class ILEmitter
         // Try static getter first (for auto-accessors and explicit static accessors)
         if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(className, propertyName, classBuilder, out var staticGetter))
         {
-            IL.Emit(OpCodes.Call, staticGetter!);
-
-            // Track the stack type for proper boxing behavior
-            string pascalPropName = NamingConventions.ToPascalCase(propertyName);
-            if (_ctx.PropertyTypes != null &&
-                _ctx.PropertyTypes.TryGetValue(className, out var propTypes) &&
-                propTypes.TryGetValue(pascalPropName, out var propType))
-            {
-                if (propType == _ctx.Types.Double)
-                {
-                    SetStackType(StackType.Double);
-                }
-                else if (propType == _ctx.Types.Boolean)
-                {
-                    SetStackType(StackType.Boolean);
-                }
-                else if (propType == _ctx.Types.String)
-                {
-                    SetStackType(StackType.String);
-                }
-                else
-                {
-                    SetStackUnknown();
-                }
-            }
-            else
-            {
-                SetStackUnknown();
-            }
+            EmitStaticGetterCall(staticGetter!);
             return true;
         }
 
@@ -224,6 +196,29 @@ public partial class ILEmitter
         }
 
         return false;
+    }
+
+    private void EmitStaticGetterCall(System.Reflection.MethodInfo getter)
+    {
+        IL.Emit(OpCodes.Call, getter);
+
+        // The resolved signature determines boxing even when the emission context
+        // has no PropertyTypes map, or the getter belongs to an inherited class.
+        Type returnType = getter.ReturnType;
+        if (returnType == _ctx.Types.Double)
+            SetStackType(StackType.Double);
+        else if (returnType == _ctx.Types.Boolean)
+            SetStackType(StackType.Boolean);
+        else if (returnType == _ctx.Types.String)
+            SetStackType(StackType.String);
+        else if (returnType.IsValueType || returnType.IsGenericParameter)
+        {
+            // StackType cannot represent other CLR value types or generic slots.
+            IL.Emit(OpCodes.Box, returnType);
+            SetStackUnknown();
+        }
+        else
+            SetStackUnknown();
     }
 
     private void EmitSourceStaticGetterRead(Expr receiver, string propertyName)

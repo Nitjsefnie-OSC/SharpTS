@@ -259,39 +259,7 @@ public partial class ILEmitter
                 // Try static getter first (for auto-accessors and explicit static accessors)
                 if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(resolvedClassName, g.Name.Lexeme, classBuilder, out var staticGetter))
                 {
-                    IL.Emit(OpCodes.Call, staticGetter!);
-
-                    // The getter returns the typed value (e.g., double for number).
-                    // Track the stack type so EmitBoxIfNeeded can box only when necessary.
-                    // This avoids unnecessary boxing in numeric contexts like `Counter.count + 1`.
-                    string pascalPropName = NamingConventions.ToPascalCase(g.Name.Lexeme);
-                    if (_ctx.PropertyTypes != null &&
-                        _ctx.PropertyTypes.TryGetValue(resolvedClassName, out var propTypes) &&
-                        propTypes.TryGetValue(pascalPropName, out var propType))
-                    {
-                        if (propType == _ctx.Types.Double)
-                        {
-                            SetStackType(StackType.Double);
-                        }
-                        else if (propType == _ctx.Types.Boolean)
-                        {
-                            SetStackType(StackType.Boolean);
-                        }
-                        else if (propType == _ctx.Types.String)
-                        {
-                            SetStackType(StackType.String);
-                        }
-                        else
-                        {
-                            // Other reference types
-                            SetStackUnknown();
-                        }
-                    }
-                    else
-                    {
-                        // Fallback: assume object return (legacy behavior)
-                        SetStackUnknown();
-                    }
+                    EmitStaticGetterCall(staticGetter!);
                     return;
                 }
 
@@ -322,8 +290,7 @@ public partial class ILEmitter
             // Try static getter first
             if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(importedQualifiedClassName, g.Name.Lexeme, importedClassBuilder, out var importedStaticGetter))
             {
-                IL.Emit(OpCodes.Call, importedStaticGetter!);
-                SetStackUnknown();
+                EmitStaticGetterCall(importedStaticGetter!);
                 return;
             }
 

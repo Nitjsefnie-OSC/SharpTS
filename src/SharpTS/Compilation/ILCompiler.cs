@@ -138,6 +138,7 @@ public partial class ILCompiler
 
     // Type information from static analysis
     private TypeMap _typeMap = null!;
+    private RawCallStorageAnalysis? _rawCallStorage;
 
     // Dead code analysis results
     private DeadCodeInfo? _deadCodeInfo;
@@ -651,7 +652,8 @@ public partial class ILCompiler
         _deadCodeInfo = deadCodeInfo;
         _isStrictMode = Parsing.DirectivePrologue.HasUseStrict(statements);
         _typeMapper.HeldClassConstructions = HeldClassConstructionInfo.Analyze(statements, typeMap, _typeMapper);
-        statements = NestedFunctionLifter.Lift(statements, _entryPointDebugScope?.Spans, typeMap);
+        _rawCallStorage = RawCallStorageAnalysis.Capture(statements, typeMap);
+        statements = NestedFunctionLifter.Lift(statements, _entryPointDebugScope?.Spans, typeMap, _rawCallStorage.RecordRewrite);
         _lexicalBindingNames = LexicalBindingNameCollector.Collect(statements);
         _features ??= new RuntimeFeatureDetector().Detect(statements, _typeMap);
         // The stable iterator result shape must be known before Phase 1 emits its
@@ -665,6 +667,9 @@ public partial class ILCompiler
         PrepareRepeatingClassDeclarations(statements);
         Phase2_AnalyzeClosures(statements, modules);
         _closures.ConstArrowBindings = ConstArrowBindingAnalyzer.Collect(statements);
+        StableExactClassMethodCallAnalyzer.Analyze(statements, _typeMap, _features, _typeMapper);
+        if (_rawCallStorage is not null) _rawCallStorage.Analyze(statements, _features);
+        else ForwardedReturnValueAnalyzer.Analyze(statements, _typeMap, _features, modules);
         StableMapIterationAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
         StableCustomIteratorAnalyzer.Analyze(
             statements, _typeMap, _closures.Analyzer, _features);
@@ -676,8 +681,6 @@ public partial class ILCompiler
             statements, _typeMap, _closures.Analyzer, hasObservablePromiseMutation);
         StablePrimitivePromiseAllAnalyzer.Analyze(
             statements, _typeMap, _closures.Analyzer, _features, hasObservablePromiseMutation);
-        StableExactClassMethodCallAnalyzer.Analyze(statements, _typeMap, _features, _typeMapper);
-        ForwardedReturnValueAnalyzer.Analyze(statements, _typeMap, _features, modules);
         NonEscapingArrowLocalAnalyzer.Analyze(
             statements, _closures.DirectCallArrowBindings, _closures.Analyzer);
         StableNumericLoopCaptureAnalyzer.Analyze(
@@ -1272,6 +1275,9 @@ public partial class ILCompiler
         RegisterModuleDocuments(modules);
         _typeMapper.HeldClassConstructions = HeldClassConstructionInfo.Analyze(
             modules.SelectMany(module => module.Statements), typeMap, _typeMapper);
+        _rawCallStorage = RawCallStorageAnalysis.Capture(
+            modules.SelectMany(module => module.Statements), typeMap,
+            modules.Where(module => !module.IsCommonJs).Select(module => (IEnumerable<Stmt>)module.Statements));
 
         // Relocate non-capturing nested generator/async/state-machine-nested function declarations
         // to each module's top level (#470, #501). Compile-path only. The Statements property is
@@ -1279,7 +1285,7 @@ public partial class ILCompiler
         // in place.
         foreach (var m in modules)
         {
-            var lifted = NestedFunctionLifter.Lift(m.Statements, m.Document?.Spans, typeMap);
+            var lifted = NestedFunctionLifter.Lift(m.Statements, m.Document?.Spans, typeMap, _rawCallStorage.RecordRewrite);
             if (!ReferenceEquals(lifted, m.Statements))
             {
                 m.Statements.Clear();

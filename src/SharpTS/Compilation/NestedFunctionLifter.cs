@@ -76,6 +76,7 @@ internal sealed class NestedFunctionLifter
     // Source positions of the AST being rewritten, when the caller is tracking them.
     private SharpTS.Parsing.SpanTable? _spans;
     private TypeSystem.TypeMap? _typeMap;
+    private Action<object, object>? _recordRewrite;
 
     private NestedFunctionLifter(
         ClosureAnalyzer analyzer,
@@ -100,6 +101,10 @@ internal sealed class NestedFunctionLifter
     /// compiler-generated.
     /// </param>
     public static List<Stmt> Lift(List<Stmt> module, SharpTS.Parsing.SpanTable? spans = null, TypeSystem.TypeMap? typeMap = null)
+        => Lift(module, spans, typeMap, recordRewrite: null);
+
+    internal static List<Stmt> Lift(List<Stmt> module, SharpTS.Parsing.SpanTable? spans,
+        TypeSystem.TypeMap? typeMap, Action<object, object>? recordRewrite)
     {
         // Cheap structural pre-scan: collect declarations whose SHAPE qualifies (case A/B, or a
         // declaration inside a module-level block/loop), without running closure analysis. The
@@ -183,7 +188,8 @@ internal sealed class NestedFunctionLifter
         }
         if (safe.Count == 0 && lambdaForwards.Count == 0) return module;
 
-        var lifter = new NestedFunctionLifter(analyzer, safe, lambdaForwards, hoistedForwards) { _spans = spans, _typeMap = typeMap };
+        var lifter = new NestedFunctionLifter(analyzer, safe, lambdaForwards, hoistedForwards)
+        { _spans = spans, _typeMap = typeMap, _recordRewrite = recordRewrite };
         var rewritten = lifter.ProcessTopLevel(module);
         if (lifter._lifted.Count == 0) return rewritten;
 
@@ -824,7 +830,9 @@ internal sealed class NestedFunctionLifter
             liftedBody = withSelfAlias;
         }
 
-        _lifted.Add(f with { Name = freshToken, Body = liftedBody });
+        var lifted = f with { Name = freshToken, Body = liftedBody };
+        _recordRewrite?.Invoke(f, lifted);
+        _lifted.Add(lifted);
         return MakeAlias(f.Name, freshToken);
     }
 
@@ -861,6 +869,7 @@ internal sealed class NestedFunctionLifter
             RuntimeName = function.IsGenerator ? function.RuntimeName ?? function.Name.Lexeme : null,
         };
         _spans?.CopySpan(function, closure);
+        _recordRewrite?.Invoke(function, closure);
         var binding = new Stmt.Var(function.Name, TypeAnnotation: null, Initializer: closure, IsVar: hoisted);
         _spans?.MarkHidden(binding);
         return binding;
@@ -897,8 +906,14 @@ internal sealed class NestedFunctionLifter
         foreach (var name in forwarded)
             liftedParams.Add(new Stmt.Parameter(new Token(TokenType.IDENTIFIER, name, null, f.Name.Line), Type: null));
         foreach (var p in f.Parameters)
-            liftedParams.Add(p with { });
-        _lifted.Add(f with { Name = freshToken, Parameters = liftedParams, Body = liftedBody });
+        {
+            var parameter = p with { };
+            _recordRewrite?.Invoke(p, parameter);
+            liftedParams.Add(parameter);
+        }
+        var lifted = f with { Name = freshToken, Parameters = liftedParams, Body = liftedBody };
+        _recordRewrite?.Invoke(f, lifted);
+        _lifted.Add(lifted);
 
         // Forwarding arrow: original parameters in, captured bindings + those parameters forwarded
         // to the relocated declaration. Not a generator/async itself — it returns whatever the
@@ -932,6 +947,9 @@ internal sealed class NestedFunctionLifter
             // Module-block/loop (#622) forwarders remain unmarked because they stay in place.
             IsLiftedForwarder = hoisted,
         };
+        _recordRewrite?.Invoke(f, arrow);
+        for (int index = 0; index < f.Parameters.Count; index++)
+            _recordRewrite?.Invoke(f.Parameters[index], arrow.Parameters[index]);
 
         // Function-scope capture (#534): a `var` the caller hoists to the body top, matching
         // function-declaration hoisting. Module-block/loop capture (#622): a block-scoped `let` left
@@ -958,6 +976,7 @@ internal sealed class NestedFunctionLifter
                 if (_typeMap.Get(source) is { } type) _typeMap.Set(target, type);
             }
         }
+        _recordRewrite?.Invoke(expr, rewritten);
         return rewritten;
     }
 
@@ -1223,7 +1242,9 @@ internal sealed class NestedFunctionLifter
     {
         if (parameter.DefaultValue == null) return parameter;
         var value = ProcessExpr(parameter.DefaultValue);
-        return ReferenceEquals(value, parameter.DefaultValue) ? parameter : parameter with { DefaultValue = value };
+        var rewritten = ReferenceEquals(value, parameter.DefaultValue) ? parameter : parameter with { DefaultValue = value };
+        _recordRewrite?.Invoke(parameter, rewritten);
+        return rewritten;
     }
 
     private static List<T> RewriteListIfChanged<T>(List<T> source, Func<T, T> rewrite)
@@ -1253,6 +1274,7 @@ internal sealed class NestedFunctionLifter
     {
         Stmt rewritten = ProcessStmtCore(stmt, enclosingIsStateMachine, enclosingIsAsyncFunction, enclosingIsGeneratorClassMethod);
         _spans?.CopySpan(stmt, rewritten);
+        _recordRewrite?.Invoke(stmt, rewritten);
         return rewritten;
     }
 

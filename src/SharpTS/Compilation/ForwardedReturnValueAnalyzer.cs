@@ -9,7 +9,8 @@ namespace SharpTS.Compilation;
 /// Callee summaries use AST identities, so forward declarations and declaration order
 /// cannot change the result. Missing binding proofs and recursive cycles stay boxed.
 /// </summary>
-internal sealed partial class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeFeatureSet? features)
+internal sealed partial class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeFeatureSet? features,
+    RawCallStorageAnalysis? storage = null)
 {
     private readonly Dictionary<Expr.Call, Stmt.Function> _targets = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Stmt.Function, bool> _rawReturns = new(ReferenceEqualityComparer.Instance);
@@ -20,20 +21,40 @@ internal sealed partial class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeF
     private readonly Dictionary<int, Stmt.Class> _classes = [];
 
     internal static void Analyze(List<Stmt> statements, TypeMap? map, RuntimeFeatureSet? features,
-        IReadOnlyList<Modules.ParsedModule>? modules)
+        IReadOnlyList<Modules.ParsedModule>? modules, RawCallStorageAnalysis? storage = null)
     {
         if (map is null) return;
-        var analysis = new ForwardedReturnValueAnalyzer(map, features);
-        if (modules is null) analysis.ResolveBindings(statements);
+        var analysis = new ForwardedReturnValueAnalyzer(map, features, storage);
+        if (storage is not null)
+            foreach (var module in storage.Modules) analysis.ResolveBindings(module);
+        else if (modules is null) analysis.ResolveBindings(statements);
         else foreach (var module in modules)
             if (!module.IsCommonJs) analysis.ResolveBindings(module.Statements);
 
         var inventory = new Inventory(map, analysis._classes);
-        foreach (var statement in statements) inventory.Visit(statement);
+        foreach (var statement in storage?.Statements ?? statements) inventory.Visit(statement);
+        foreach (var expression in (IEnumerable<Expr>?)storage?.Returns ?? inventory.Returns)
+            if (ReturnSlotAnalysis.ExpressionReturnMayBeUndefined(expression, map))
+                analysis._rawExpressions.Add(expression);
         // Compute every decision before publishing flags: a summary must not depend
         // on which caller happened to be visited first.
-        foreach (var expression in inventory.Returns) _ = analysis.PassesRawCall(expression);
-        foreach (var expression in analysis._rawExpressions) map.MarkUndefinedReachableReturn(expression);
+        bool changed;
+        do
+        {
+            // A newly raw local can change a callee's result and then its callers' storage.
+            // Cached clean summaries from an earlier storage epoch are not authoritative.
+            analysis._rawReturns.Clear(); analysis._returnKinds.Clear();
+            analysis._visiting.Clear(); analysis._nativeVisiting.Clear();
+            int expressions = analysis._rawExpressions.Count;
+            changed = storage?.Propagate(analysis.PassesRawCall) == true;
+            foreach (var expression in (IEnumerable<Expr>?)storage?.Returns ?? inventory.Returns)
+                _ = analysis.PassesRawCall(expression);
+            changed |= expressions != analysis._rawExpressions.Count;
+        } while (changed);
+        if (storage is not null)
+            storage.Publish(analysis._rawExpressions, analysis.FunctionReturnsRaw, statements);
+        else
+            foreach (var expression in analysis._rawExpressions) map.MarkUndefinedReachableReturn(expression);
     }
 
     private void ResolveBindings(IReadOnlyList<Stmt> statements)
@@ -49,24 +70,38 @@ internal sealed partial class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeF
         ResolveIntrinsicCalls(statements);
     }
 
-    private bool PassesRawCall(Expr expression)
+    private bool PassesRawCall(Expr expression) => PassesRawCall(expression, false);
+
+    private bool PassesRawCall(Expr expression, bool callEvidenceOnly)
     {
         bool raw = expression switch
         {
             Expr.Call call => IsPrimitive(map.Get(call)) && !CallReturnsNative(call),
-            Expr.Grouping group => PassesRawCall(group.Expression),
-            Expr.TypeAssertion assertion => PassesRawCall(assertion.Expression),
-            Expr.NonNullAssertion assertion => PassesRawCall(assertion.Expression),
-            Expr.Satisfies satisfies => PassesRawCall(satisfies.Expression),
+            Expr.Variable variable => storage?.IsRawBinding(variable.Name, callEvidenceOnly) == true,
+            Expr.Grouping group => PassesRawCall(group.Expression, callEvidenceOnly),
+            Expr.TypeAssertion assertion => PassesRawCall(assertion.Expression, callEvidenceOnly),
+            Expr.NonNullAssertion assertion => PassesRawCall(assertion.Expression, callEvidenceOnly),
+            Expr.Satisfies satisfies => PassesRawCall(satisfies.Expression, callEvidenceOnly),
             // Visit both sides: nested conditional merges also need their own hint.
-            Expr.Ternary conditional => PassesRawCall(conditional.ThenBranch) | PassesRawCall(conditional.ElseBranch),
-            Expr.Logical logical => PassesRawCall(logical.Left) | PassesRawCall(logical.Right),
-            Expr.NullishCoalescing nullish => PassesRawCall(nullish.Left) | PassesRawCall(nullish.Right),
-            Expr.Comma comma => PassesRawCall(comma.Right),
-            Expr.Assign assignment => PassesRawCall(assignment.Value),
+            Expr.Ternary conditional => PassesRawCall(conditional.ThenBranch, callEvidenceOnly) | PassesRawCall(conditional.ElseBranch, callEvidenceOnly),
+            Expr.Logical logical => PassesRawCall(logical.Left, callEvidenceOnly) | PassesRawCall(logical.Right, callEvidenceOnly),
+            Expr.NullishCoalescing nullish => PassesRawCall(nullish.Left, callEvidenceOnly) | PassesRawCall(nullish.Right, callEvidenceOnly),
+            Expr.Comma comma => PassesRawCall(comma.Right, callEvidenceOnly),
+            Expr.Assign assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
+            Expr.Set assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
+            Expr.SetIndex assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
+            Expr.SetPrivate assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
+            Expr.DestructuringAssign assignment => PassesRawCall(assignment.ResultValue, callEvidenceOnly),
+            Expr.LogicalAssign assignment => storage?.IsRawBinding(assignment.Name, callEvidenceOnly) == true
+                | PassesRawCall(assignment.Value, callEvidenceOnly),
+            Expr.LogicalSet assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
+            Expr.LogicalSetIndex assignment => PassesRawCall(assignment.Value, callEvidenceOnly),
             // Operators perform their own conversions; their operands are not returned.
             _ => false
         };
+        // Existing checker representation facts survive cloning independently of whether
+        // their cause was a call. They must not become raw-CALL optimizer veto evidence.
+        raw |= !callEvidenceOnly && map.IsUndefinedReachableReturn(expression);
         if (raw) _rawExpressions.Add(expression);
         return raw;
     }
@@ -94,15 +129,18 @@ internal sealed partial class ForwardedReturnValueAnalyzer(TypeMap map, RuntimeF
         if (_nativeIntrinsics.TryGetValue(call, out var kind)) return kind == PrimitiveKind(map.Get(call));
         if (_targets.TryGetValue(call, out var function)) return !FunctionReturnsRaw(function) &&
             _returnKinds[function] == PrimitiveKind(map.Get(call));
-        if (call.Callee is not Expr.Get { Optional: false } method || !map.IsStableExactPrimitiveMethodCall(method) ||
+        if (call.Callee is not Expr.Get { Optional: false } method || !EquivalentMethods(method).Any(map.IsStableExactPrimitiveMethodCall) ||
             map.Get(method.Object) is not TypeInfo.Instance instance) return false;
         var core = Core(instance.ResolvedClassType);
         if (!TryFindMethod(core, method.Name.Lexeme, out var owner, out var target)) return false;
         var expectedKind = PrimitiveKind(map.Get(call));
-        return map.IsNativePrimitiveFieldMethodCall(method) &&
+        return EquivalentMethods(method).Any(map.IsNativePrimitiveFieldMethodCall) &&
                 PrimitiveKind(map.GetClassMethodImplementation(target!)?.ReturnType) == expectedKind ||
             MethodReturnsNative(owner!, target!, expectedKind);
     }
+
+    private IEnumerable<Expr.Get> EquivalentMethods(Expr.Get method) =>
+        storage is null ? [method] : storage.EquivalentExpressions(method).OfType<Expr.Get>();
 
     private bool TryFindMethod(ClassMetadataCore? core, string name, out Stmt.Class? owner, out Stmt.Function? method)
     {

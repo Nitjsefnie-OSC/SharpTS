@@ -41,10 +41,23 @@ public class TypeMap
     public TypeInfo.Function? GetClassMethodImplementation(Stmt.Function method) => _classMethodImplementations.GetValueOrDefault(method);
     public TypeInfo.Function? GetClassMethodImplementation(List<Stmt.Parameter> parameters) => _classMethodParameterImplementations.GetValueOrDefault(parameters);
     public TypeInfo.Function? GetClassMethodImplementation(TypeInfo callable) => _classMethodCallableImplementations.GetValueOrDefault(callable);
+
+    // Virtual methods sharing a slot must agree on the physical parameter type.
+    // Use the registered body identity rather than a public overload or a name lookup.
+    internal bool IsClassMethodParameterUndefinedReachable(TypeInfo.Function implementation, int index) =>
+        _classMethodImplementations.Any(entry => ReferenceEquals(entry.Value, implementation)
+            && index < entry.Key.Parameters.Count
+            && IsUndefinedReachableNumericParam(entry.Key.Parameters[index]));
     private readonly Dictionary<Expr.ClassExpr, TypeInfo.Class> _classExprTypes = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr> _undefinedReachableReturns = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<object> _undefinedReachableNumericLocals = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Stmt.Parameter> _undefinedReachableNumericParams = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Token> _rawCallStorage = new(ReferenceEqualityComparer.Instance);
+
+    // Stronger than conservative checker taint: an actual raw call flows into this exact
+    // source slot. Optimizer exceptions must not erase this representation evidence.
+    internal void MarkRawCallStorage(Token token) => _rawCallStorage.Add(token);
+    internal bool IsRawCallStorage(Token token) => _rawCallStorage.Contains(token);
     private readonly Dictionary<Token, TokenType> _promotableArrayLocals = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _promotableNumericMapLocals = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _promotableStringAccumulators = new(ReferenceEqualityComparer.Instance);

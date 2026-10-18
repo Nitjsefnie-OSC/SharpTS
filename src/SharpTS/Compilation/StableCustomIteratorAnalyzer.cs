@@ -104,6 +104,7 @@ internal static class StableCustomIteratorAnalyzer
             };
             if (declarationName is not null)
             {
+                if (typeMap.IsRawCallStorage(declarationName)) return;
                 typeMap.MarkStableCustomIteratorNumericAccumulator(declarationName);
                 return;
             }

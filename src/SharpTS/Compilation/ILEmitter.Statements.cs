@@ -796,6 +796,9 @@ public partial class ILEmitter
     /// </summary>
     private bool CanUseUnboxedLocal(Stmt.Var v)
     {
+        if (_ctx.TypeMap?.IsRawCallStorage(v.Name) == true)
+            return false;
+
         // Stable custom iteration proves its value binding is numeric. For the
         // exact `acc = acc + value` loop shape, that proof also removes the
         // checker's conservative any/undefined flow from the accumulator.

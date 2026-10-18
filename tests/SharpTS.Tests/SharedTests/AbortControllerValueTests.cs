@@ -30,6 +30,29 @@ public sealed class AbortControllerValueTests
             console.log(ctor === AbortController, globalThis.AbortController === ctor);
             console.log(new ctor().signal.aborted);
             """, "true true\nfalse\n"];
+        yield return ["global-constructor-surface", """
+            const pairs: any[] = [[AbortController, "AbortController"], [Map, "Map"],
+                [Date, "Date"]];
+            const get: any = Reflect.get;
+            for (const pair of pairs) {
+                const ctor: any = pair[0], name: any = pair[1];
+                console.log(globalThis[name] === ctor, get(globalThis, name) === ctor);
+            }
+            const original: any = AbortController;
+            globalThis.AbortController = 17 as any;
+            console.log(get(globalThis, "AbortController") === 17);
+            console.log(delete globalThis.AbortController, globalThis.AbortController === undefined);
+            globalThis.AbortController = original;
+            console.log(globalThis.AbortController === original, new original().signal.aborted);
+            """, "true true\ntrue true\ntrue true\ntrue\ntrue true\ntrue false\n"];
+        yield return ["global-constructor-descriptors", """
+            const original: any = AbortController;
+            console.log(Object.getOwnPropertyDescriptor(globalThis, "AbortController").value === original);
+            const ctor: any = Reflect.get(globalThis, "ArrayBuffer");
+            console.log(ctor === ArrayBuffer, globalThis.ArrayBuffer === ctor,
+                Object.getOwnPropertyDescriptor(globalThis, "ArrayBuffer").value === ctor);
+            console.log(new ctor(8).byteLength);
+            """, "true\ntrue true true\n8\n"];
         yield return ["aliased-construction", """
             const ctor: any = AbortController;
             const controller: any = new ctor();
@@ -86,9 +109,10 @@ public sealed class AbortControllerValueTests
 
     public static IEnumerable<object[]> ParityCases()
         => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            // Generic interpreted constructor names/global object identities are tracked in #2363/#2364.
-            .Where(mode => mode == ExecutionMode.Compiled || (string)row[0] is not
-                ("constructor-metadata" or "global-object-identity"))
+            // Generic interpreted constructor metadata is tracked in #2363.
+            .Where(mode => mode == ExecutionMode.Compiled || (string)row[0] != "constructor-metadata")
+            // Compiled ArrayBuffer global exposure (#2597) and AbortController descriptor (#2598).
+            .Where(mode => mode == ExecutionMode.Interpreted || (string)row[0] != "global-constructor-descriptors")
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ParityCases))]

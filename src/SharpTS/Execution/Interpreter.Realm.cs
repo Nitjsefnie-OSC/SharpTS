@@ -638,9 +638,9 @@ public partial class Interpreter
         new Runtime.Types.SharpTSGlobalThis(name =>
             TryGetRealmIntrinsic(name, out var intrinsic)
                 ? intrinsic
-                : (name is BuiltInNames.Eval or BuiltInNames.Undefined or
-                    BuiltInNames.NaN or BuiltInNames.Infinity)
-                    && _globalConstants.TryGetValue(name, out var global)
+                : _globalConstants.TryGetValue(name, out var global)
+                    && (global is SharpTSBuiltInConstructor or IBuiltInTypeConstructor || name is
+                        BuiltInNames.Eval or BuiltInNames.Undefined or BuiltInNames.NaN or BuiltInNames.Infinity)
                         ? global
                         : null);
 

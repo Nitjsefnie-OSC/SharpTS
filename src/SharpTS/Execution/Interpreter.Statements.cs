@@ -718,7 +718,7 @@ public partial class Interpreter
         IEnumerable<object?>? customIterator = TryGetSymbolIterator(iterable);
         if (customIterator != null)
         {
-            return IterateWithBreakContinue(customIterator, forOf.Variable.Lexeme, forOf.Body, labels);
+            return IterateWithBreakContinue(customIterator, forOf.Variable, forOf.IsDeclaration, forOf.Body, labels);
         }
 
         // Get elements based on iterable type.
@@ -742,7 +742,7 @@ public partial class Interpreter
                 "for...of requires an iterable (array, Map, Set, or iterator)."))
         };
 
-        return IterateWithBreakContinue(elements, forOf.Variable.Lexeme, forOf.Body, labels);
+        return IterateWithBreakContinue(elements, forOf.Variable, forOf.IsDeclaration, forOf.Body, labels);
     }
 
     /// <summary>
@@ -797,7 +797,7 @@ public partial class Interpreter
             _ => throw new InterpreterException("for...in requires an object.")
         };
 
-        return IterateWithBreakContinue(keys.Cast<object?>(), forIn.Variable.Lexeme, forIn.Body, labels);
+        return IterateWithBreakContinue(keys.Cast<object?>(), forIn.Variable, forIn.IsDeclaration, forIn.Body, labels);
     }
 
     /// <summary>
@@ -1296,9 +1296,23 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// Keeps the iteration scope aligned with the resolver while assignment
+    /// heads update their existing binding instead of declaring a new one.
+    /// </summary>
+    private RuntimeEnvironment CreateIterationEnvironment(Token variable, bool isDeclaration, object? value)
+    {
+        RuntimeEnvironment loopEnv = new(_environment);
+        if (isDeclaration)
+            loopEnv.Define(variable.Lexeme, value);
+        else
+            _environment.Assign(variable, value);
+        return loopEnv;
+    }
+
+    /// <summary>
     /// Iterates over elements with proper break/continue handling.
     /// </summary>
-    private ExecutionResult IterateWithBreakContinue(IEnumerable<object?> elements, string variableName, Stmt body, IReadOnlyList<string>? labels = null)
+    private ExecutionResult IterateWithBreakContinue(IEnumerable<object?> elements, Token variable, bool isDeclaration, Stmt body, IReadOnlyList<string>? labels = null)
     {
         var iterator = elements.GetEnumerator();
         bool preserveThrow = false;
@@ -1306,8 +1320,7 @@ public partial class Interpreter
         {
             while (iterator.MoveNext())
             {
-                RuntimeEnvironment loopEnv = new(_environment);
-                loopEnv.Define(variableName, iterator.Current);
+                var loopEnv = CreateIterationEnvironment(variable, isDeclaration, iterator.Current);
 
                 using (PushScope(loopEnv))
                 {

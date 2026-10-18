@@ -298,8 +298,11 @@ public class VariableResolver : AstVisitorBase
         Visit(stmt.Iterable);
 
         BeginScope();
-        Declare(stmt.Variable.Lexeme);
-        Define(stmt.Variable.Lexeme);
+        if (stmt.IsDeclaration)
+        {
+            Declare(stmt.Variable.Lexeme);
+            Define(stmt.Variable.Lexeme);
+        }
         Visit(stmt.Body);
         EndScope();
     }
@@ -311,8 +314,11 @@ public class VariableResolver : AstVisitorBase
         Visit(stmt.Object);
 
         BeginScope();
-        Declare(stmt.Variable.Lexeme);
-        Define(stmt.Variable.Lexeme);
+        if (stmt.IsDeclaration)
+        {
+            Declare(stmt.Variable.Lexeme);
+            Define(stmt.Variable.Lexeme);
+        }
         Visit(stmt.Body);
         EndScope();
     }

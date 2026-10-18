@@ -162,7 +162,7 @@ public partial class Interpreter
                     disposeIterator = true;
                 }
 
-                var result = await ExecuteLoopBodyAsync(forOf.Variable.Lexeme, value, forOf.Body);
+                var result = await ExecuteLoopBodyAsync(forOf.Variable, forOf.IsDeclaration, value, forOf.Body);
                 preserveThrow = result.Type == ExecutionResult.ResultType.Throw;
                 var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
                 if (shouldBreak) return ExecutionResult.Success();
@@ -220,10 +220,9 @@ public partial class Interpreter
         return completion.Task;
     }
 
-    private async Task<ExecutionResult> ExecuteLoopBodyAsync(string varName, object? value, Stmt body)
+    private async Task<ExecutionResult> ExecuteLoopBodyAsync(Token variable, bool isDeclaration, object? value, Stmt body)
     {
-        RuntimeEnvironment loopEnv = new(_environment);
-        loopEnv.Define(varName, value);
+        var loopEnv = CreateIterationEnvironment(variable, isDeclaration, value);
 
         RuntimeEnvironment prev = _environment;
         _environment = loopEnv;
@@ -339,7 +338,18 @@ public partial class Interpreter
 
             if (done) break;
 
-            var result = await ExecuteLoopBodyAsync(forOf.Variable.Lexeme, value, forOf.Body);
+            ExecutionResult result;
+            try
+            {
+                result = await ExecuteLoopBodyAsync(forOf.Variable, forOf.IsDeclaration, value, forOf.Body);
+            }
+            catch
+            {
+                // Binding initialization/assignment is part of the loop body
+                // completion and must close a real async iterator on failure.
+                await CloseAsyncIteratorOnEarlyExit(asyncIterator);
+                throw;
+            }
             var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             // An early exit (break, or a return/throw out of the loop body) closes the iterator before
             // leaving: ECMA-262 AsyncIteratorClose calls return() and awaits it, so a suspended async
@@ -474,7 +484,7 @@ public partial class Interpreter
 
         foreach (var key in keys)
         {
-            var result = await ExecuteLoopBodyAsync(forIn.Variable.Lexeme, key, forIn.Body);
+            var result = await ExecuteLoopBodyAsync(forIn.Variable, forIn.IsDeclaration, key, forIn.Body);
             var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
             if (shouldContinue) continue;

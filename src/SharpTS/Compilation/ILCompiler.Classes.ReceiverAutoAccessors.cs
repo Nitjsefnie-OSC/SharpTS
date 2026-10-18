@@ -162,7 +162,7 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldloc, context.ClassConstructorReceiver!); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Bne_Un, done);
         var backing = _typedInterop.PropertyBackingFields[className][NamingConventions.ToPascalCase(source.Name.Lexeme)];
         il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, value); EmitBoxedFieldConversion(il, backing.FieldType);
-        il.Emit(OpCodes.Stfld, backing);
+        il.Emit(OpCodes.Stfld, EmitterTypeHelpers.SelfFieldReference(backing));
         il.MarkLabel(done);
     }
 

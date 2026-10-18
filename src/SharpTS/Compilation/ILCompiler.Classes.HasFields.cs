@@ -637,12 +637,12 @@ public partial class ILCompiler
                     il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(guestField.GuestSetter));
                 else
                 {
-                // Unbox value types
-                if (backingField.FieldType.IsValueType)
-                    il.Emit(OpCodes.Unbox_Any, backingField.FieldType);
-                else if (backingField.FieldType != _types.Object)
-                    il.Emit(OpCodes.Castclass, backingField.FieldType);
-                il.Emit(OpCodes.Stfld, backingField);
+                    // Unconstrained T can represent either a value or a reference type.
+                    if (backingField.FieldType.IsValueType || backingField.FieldType.IsGenericParameter)
+                        il.Emit(OpCodes.Unbox_Any, backingField.FieldType);
+                    else if (backingField.FieldType != _types.Object)
+                        il.Emit(OpCodes.Castclass, backingField.FieldType);
+                    il.Emit(OpCodes.Stfld, EmitterTypeHelpers.SelfFieldReference(backingField));
                 }
                 il.Emit(OpCodes.Ret);
 
@@ -675,7 +675,7 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Ldarg_2);
                 var setterParams = setterMethod.GetParameters();
                 var paramType = setterParams.Length > 0 ? setterParams[0].ParameterType : _types.Object;
-                if (paramType.IsValueType)
+                if (paramType.IsValueType || paramType.IsGenericParameter)
                     il.Emit(OpCodes.Unbox_Any, paramType);
                 else if (paramType != _types.Object)
                     il.Emit(OpCodes.Castclass, paramType);

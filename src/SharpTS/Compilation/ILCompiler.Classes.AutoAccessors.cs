@@ -59,6 +59,7 @@ public partial class ILCompiler
 
         // Track backing field
         _typedInterop.PropertyBackingFields[className][pascalName] = backingField;
+        var backingFieldRef = EmitterTypeHelpers.SelfFieldReference(backingField);
 
         // Apply decorators as .NET attributes
         if (_decoratorMode != DecoratorMode.None && autoAccessor.Decorators != null)
@@ -105,12 +106,12 @@ public partial class ILCompiler
         var getterIL = getter.GetILGenerator();
         if (autoAccessor.IsStatic)
         {
-            getterIL.Emit(OpCodes.Ldsfld, backingField);
+            getterIL.Emit(OpCodes.Ldsfld, backingFieldRef);
         }
         else
         {
             getterIL.Emit(OpCodes.Ldarg_0);
-            getterIL.Emit(OpCodes.Ldfld, backingField);
+            getterIL.Emit(OpCodes.Ldfld, backingFieldRef);
         }
         getterIL.Emit(OpCodes.Ret);
 
@@ -169,13 +170,13 @@ public partial class ILCompiler
             if (autoAccessor.IsStatic)
             {
                 setterIL.Emit(OpCodes.Ldarg_0); // value
-                setterIL.Emit(OpCodes.Stsfld, backingField);
+                setterIL.Emit(OpCodes.Stsfld, backingFieldRef);
             }
             else
             {
                 setterIL.Emit(OpCodes.Ldarg_0); // this
                 setterIL.Emit(OpCodes.Ldarg_1); // value
-                setterIL.Emit(OpCodes.Stfld, backingField);
+                setterIL.Emit(OpCodes.Stfld, backingFieldRef);
             }
             setterIL.Emit(OpCodes.Ret);
 
@@ -277,14 +278,14 @@ public partial class ILCompiler
         {
             emitter.EmitExpression(autoAccessor.Initializer);
             EmitTypeConversion(il, emitter, autoAccessor.Initializer, targetType);
-            il.Emit(OpCodes.Stsfld, backingField);
+            il.Emit(OpCodes.Stsfld, EmitterTypeHelpers.SelfFieldReference(backingField));
         }
         else
         {
             il.Emit(OpCodes.Ldarg_0); // this
             emitter.EmitExpression(autoAccessor.Initializer);
             EmitTypeConversion(il, emitter, autoAccessor.Initializer, targetType);
-            il.Emit(OpCodes.Stfld, backingField);
+            il.Emit(OpCodes.Stfld, EmitterTypeHelpers.SelfFieldReference(backingField));
         }
     }
 }

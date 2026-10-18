@@ -199,7 +199,7 @@ public partial class ILCompiler
             // But may need conversion from object
             emitter.EnsureString();
         }
-        else if (targetType.IsValueType)
+        else if (targetType.IsValueType || targetType.IsGenericParameter)
         {
             // For other value types, try to unbox
             emitter.EmitBoxIfNeeded(source);

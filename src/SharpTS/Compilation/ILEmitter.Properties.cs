@@ -2737,7 +2737,7 @@ public partial class ILEmitter
         var setterReturnsVoid = _ctx.Types.IsVoid(setterBuilder.ReturnType);
 
         // Save a copy for expression result (need to box if value type for consistent handling)
-        if (setterParamType.IsValueType)
+        if (setterParamType.IsValueType || setterParamType.IsGenericParameter)
         {
             // For value types: box first, then dup, then unbox for setter
             EmitBoxIfNeeded(value);

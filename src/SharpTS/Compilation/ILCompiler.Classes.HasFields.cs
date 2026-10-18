@@ -466,8 +466,7 @@ public partial class ILCompiler
         il.MarkLabel(tryMethodsLabel);
         EmitInheritedGuestFieldBranches(il, (TypeBuilder)method.DeclaringType!, write: false);
         EmitClassPrototypeFieldFallback(il);
-        if ((_classes.Builders[className].Attributes & TypeAttributes.Abstract) == 0
-            && classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
+        if (classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
             EmitDeclaredComputedMethodRead(il, _classes.Builders[className]);
 
         // 2c. Check instance getters (accessors with `get` keyword). JS semantics: reading
@@ -583,10 +582,6 @@ public partial class ILCompiler
 
         if (classStmt.Accessors?.Any(accessor => accessor.ComputedKey != null && !accessor.IsStatic) == true)
             EmitComputedInstanceGetterFallback(il);
-
-        if ((_classes.Builders[className].Attributes & TypeAttributes.Abstract) != 0
-            && classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
-            EmitDeclaredComputedMethodRead(il, _classes.Builders[className]);
 
         // Evaluated computed members may supply the other accessor half or a
         // later data method. Only claim a missing getter after those own reads.
@@ -1093,19 +1088,6 @@ public partial class ILCompiler
         il.Emit(OpCodes.Stloc, method);
         il.Emit(OpCodes.Ldloc, method); il.Emit(OpCodes.Brfalse, absent);
         EmitComputedMethodOwnerCheck(il, method, owner, absent);
-
-        if ((owner.Attributes & TypeAttributes.Abstract) != 0)
-        {
-            // Abstract owners have no nominal guest prototype yet. Preserve the
-            // prior ordinary dispatch until that independent prototype gap is
-            // addressed, without publishing their method onto Object.prototype.
-            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, method);
-            il.Emit(OpCodes.Castclass, _types.MethodInfo);
-            il.Emit(OpCodes.Newobj, _runtime.FunctionConstruction.Constructor);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(absent);
-            return;
-        }
 
         var prototype = il.DeclareLocal(_types.Object);
         var havePrototype = il.DefineLabel();

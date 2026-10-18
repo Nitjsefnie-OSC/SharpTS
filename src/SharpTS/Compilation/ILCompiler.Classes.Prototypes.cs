@@ -139,14 +139,6 @@ public partial class ILCompiler
         TypeBuilder typeBuilder,
         int constructorLength)
     {
-        // CLR cannot instantiate an abstract Type. Concrete subclasses still use
-        // the abstract base's compiler-only constructor to initialize its fields.
-        if ((typeBuilder.Attributes & TypeAttributes.Abstract) != 0)
-        {
-            EmitKnownDeclaredAccessorDescriptors(il, typeBuilder, staticOnly: true);
-            return;
-        }
-
         DefineClassPrototypeConstructor(typeBuilder);
 
         Type selfType = typeBuilder;
@@ -165,8 +157,18 @@ public partial class ILCompiler
 
         il.Emit(OpCodes.Ldtoken, selfType);
         il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Newobj, constructor);
+        if ((typeBuilder.Attributes & TypeAttributes.Abstract) != 0)
+        {
+            // The guest prototype exists independently of its abstract CLR
+            // owner. Concrete descendants still chain the bookkeeping constructor.
+            il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+            il.Emit(OpCodes.Newobj, _runtime.ObjectStorage.Constructor);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Newobj, constructor);
+        }
 
         Type? basePrototypeType = null;
         if (baseType != null && (baseType == _runtime.ArrayStorage.Type

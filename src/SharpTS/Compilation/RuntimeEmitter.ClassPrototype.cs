@@ -7,9 +7,9 @@ public partial class RuntimeEmitter
 {
     /// <summary>
     /// Emits the cache for user-class prototype objects. Prototype allocation is
-    /// performed by compiler-generated constructors on the user types themselves;
-    /// this runtime helper only registers stable identities and wires prototype
-    /// inheritance.
+    /// performed by class initialization, using bookkeeping constructors for
+    /// concrete owners and ordinary objects for abstract owners. This helper
+    /// registers stable identities and wires prototype inheritance.
     /// </summary>
     private void EmitClassPrototypeSupport(
         TypeBuilder typeBuilder,
@@ -209,22 +209,65 @@ public partial class RuntimeEmitter
             return;
         }
 
+        // Most carriers have their owner's CLR type. Abstract owners use an
+        // ordinary object instead; recover their owner only by registered value
+        // identity, without running class initialization or guest code here.
+        var findOwner = typeBuilder.DefineMethod(
+            "FindRegisteredClassPrototypeOwner", MethodAttributes.Private | MethodAttributes.Static,
+            _types.Type, [_types.Object]);
+        {
+            var il = findOwner.GetILGenerator();
+            var type = il.DeclareLocal(_types.Type);
+            var cached = il.DeclareLocal(_types.Object);
+            var search = il.DefineLabel();
+            var missing = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Brfalse, missing);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+            il.Emit(OpCodes.Stloc, type);
+            il.Emit(OpCodes.Ldsfld, cacheField); il.Emit(OpCodes.Ldloc, type); il.Emit(OpCodes.Ldloca, cached);
+            il.Emit(OpCodes.Callvirt, tryGetValue); il.Emit(OpCodes.Brfalse, search);
+            il.Emit(OpCodes.Ldloc, cached); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Bne_Un, search);
+            il.Emit(OpCodes.Ldloc, type); il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(search);
+            var enumeratorType = _types.MakeGenericType(typeof(Dictionary<,>.Enumerator), _types.Type, _types.Object);
+            var entryType = _types.MakeGenericType(_types.KeyValuePairOpen, _types.Type, _types.Object);
+            var enumerator = il.DeclareLocal(enumeratorType);
+            var entry = il.DeclareLocal(entryType);
+            var check = il.DefineLabel();
+            var next = il.DefineLabel();
+            il.Emit(OpCodes.Ldsfld, cacheField);
+            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(cacheType, "GetEnumerator"));
+            il.Emit(OpCodes.Stloc, enumerator); il.Emit(OpCodes.Br, check);
+            il.MarkLabel(next);
+            il.Emit(OpCodes.Ldloca, enumerator);
+            il.Emit(OpCodes.Call, _types.GetProperty(enumeratorType, "Current")!.GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, entry);
+            il.Emit(OpCodes.Ldloca, entry);
+            il.Emit(OpCodes.Call, _types.GetProperty(entryType, "Value")!.GetGetMethod()!);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Bne_Un, check);
+            il.Emit(OpCodes.Ldloca, entry);
+            il.Emit(OpCodes.Call, _types.GetProperty(entryType, "Key")!.GetGetMethod()!);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(check);
+            il.Emit(OpCodes.Ldloca, enumerator);
+            il.Emit(OpCodes.Call, _types.GetMethodNoParams(enumeratorType, "MoveNext"));
+            il.Emit(OpCodes.Brtrue, next);
+            il.MarkLabel(missing); il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Ret);
+        }
+
         // Generic prototype carriers retain their CLR storage identities, but
         // cycle checks must recognize the one source-level prototype home.
         {
             var il = normalizePrototype.GetILGenerator();
             var type = il.DeclareLocal(_types.Type);
-            var cached = il.DeclareLocal(_types.Object);
             var unchanged = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Brfalse, unchanged);
-            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, findOwner);
             il.Emit(OpCodes.Stloc, type);
+            il.Emit(OpCodes.Ldloc, type); il.Emit(OpCodes.Brfalse, unchanged);
             il.Emit(OpCodes.Ldloc, type);
             il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsGenericType")!.GetGetMethod()!);
             il.Emit(OpCodes.Brfalse, unchanged);
-            il.Emit(OpCodes.Ldsfld, cacheField); il.Emit(OpCodes.Ldloc, type); il.Emit(OpCodes.Ldloca, cached);
-            il.Emit(OpCodes.Callvirt, tryGetValue); il.Emit(OpCodes.Brfalse, unchanged);
-            il.Emit(OpCodes.Ldloc, cached); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Bne_Un, unchanged);
             il.Emit(OpCodes.Ldloc, type);
             il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
             il.Emit(OpCodes.Call, getMethod); il.Emit(OpCodes.Ret);
@@ -237,20 +280,16 @@ public partial class RuntimeEmitter
             var il = updateParent.GetILGenerator();
             var type = il.DeclareLocal(_types.Type);
             var definition = il.DeclareLocal(_types.Type);
-            var cached = il.DeclareLocal(_types.Object);
             var parentType = il.DeclareLocal(_types.Type);
             var parent = il.DeclareLocal(_types.Object);
             var restoreNominal = il.DeclareLocal(_types.Boolean);
             var done = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Brfalse, done);
-            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, findOwner);
             il.Emit(OpCodes.Stloc, type);
+            il.Emit(OpCodes.Ldloc, type); il.Emit(OpCodes.Brfalse, done);
             il.Emit(OpCodes.Ldloc, type);
             il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsGenericType")!.GetGetMethod()!);
             il.Emit(OpCodes.Brfalse, done);
-            il.Emit(OpCodes.Ldsfld, cacheField); il.Emit(OpCodes.Ldloc, type); il.Emit(OpCodes.Ldloca, cached);
-            il.Emit(OpCodes.Callvirt, tryGetValue); il.Emit(OpCodes.Brfalse, done);
-            il.Emit(OpCodes.Ldloc, cached); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Bne_Un, done);
             il.Emit(OpCodes.Ldloc, type);
             il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
             il.Emit(OpCodes.Stloc, definition);
@@ -325,6 +364,8 @@ public partial class RuntimeEmitter
         {
             var il = hasModifiedChain.GetILGenerator();
             var prototype = il.DeclareLocal(_types.Object);
+            var cached = il.DeclareLocal(_types.Object);
+            var owner = il.DeclareLocal(_types.Type);
             var parentType = il.DeclareLocal(_types.Type);
             var expectedParent = il.DeclareLocal(_types.Object);
             var loop = il.DefineLabel();
@@ -333,14 +374,18 @@ public partial class RuntimeEmitter
             il.MarkLabel(loop);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Brfalse, unchanged);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Stloc, owner);
+            var lookupOwner = EmitStaticMemberLookupOwner(il, owner, userClassInterface);
+            il.Emit(OpCodes.Ldloc, lookupOwner); il.Emit(OpCodes.Starg_S, (byte)0);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Call, getMethod);
             il.Emit(OpCodes.Stloc, prototype);
-            // Native implementation types return Object.prototype from Get;
-            // they do not own a registered user-class link to compare.
-            il.Emit(OpCodes.Ldloc, prototype);
-            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-            il.Emit(OpCodes.Ldarg_0);
+            // Detached abstract carriers and nominal concrete carriers both
+            // belong to the exact registered owner. Implementation fallbacks
+            // have no cache entry and therefore no class link to compare.
+            il.Emit(OpCodes.Ldsfld, cacheField); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloca, cached);
+            il.Emit(OpCodes.Callvirt, tryGetValue); il.Emit(OpCodes.Brfalse, unchanged);
+            il.Emit(OpCodes.Ldloc, cached); il.Emit(OpCodes.Ldloc, prototype);
             il.Emit(OpCodes.Bne_Un, unchanged);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "BaseType")!.GetGetMethod()!);

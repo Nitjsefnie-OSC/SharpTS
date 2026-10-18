@@ -1026,23 +1026,13 @@ public partial class RuntimeEmitter
         // Closed CLR generic instantiations have distinct storage prototypes,
         // but each is the prototype of the same erased source constructor.
         var nextAllocationPrototype = il.DefineLabel();
-        var candidateType = il.DeclareLocal(_types.Type);
         il.Emit(OpCodes.Ldloc, classTypeLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsGenericTypeDefinition")!.GetGetMethod()!);
         il.Emit(OpCodes.Brfalse, nextAllocationPrototype);
         il.Emit(OpCodes.Ldloc, allocationCandidate);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Stloc, candidateType);
-        il.Emit(OpCodes.Ldloc, candidateType);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "IsGenericType")!.GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, nextAllocationPrototype);
-        il.Emit(OpCodes.Ldloc, candidateType);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
-        il.Emit(OpCodes.Ldloc, classTypeLocal);
-        il.Emit(OpCodes.Bne_Un, nextAllocationPrototype);
-        il.Emit(OpCodes.Ldloc, candidateType);
-        il.Emit(OpCodes.Call, inputs.ClassPrototypes.Get);
-        il.Emit(OpCodes.Ldloc, allocationCandidate);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.NormalizePrototype);
+        il.Emit(OpCodes.Ldloc, allocationPrototype);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.NormalizePrototype);
         il.Emit(OpCodes.Beq, trueLabel);
         il.MarkLabel(nextAllocationPrototype);
         il.Emit(OpCodes.Br, allocationWalk);

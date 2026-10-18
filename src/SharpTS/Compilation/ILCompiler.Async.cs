@@ -870,7 +870,9 @@ public partial class ILCompiler
         // an async arrow does not lift read-only captures into a name-keyed function display class (only
         // promoted WRITTEN captures, #682/#625), so the inner arrow's read flows through the per-arrow
         // snapshot path the pivot redirects — no DC exclusion is needed here, unlike async functions (#837).
-        var renameResult = GeneratorBlockScopeRenamer.Compute(arrow, arrowReadCapturesShareStorage: false, preserveDebugBindings: EmitDebugSymbols);
+        var renameResult = GeneratorBlockScopeRenamer.Compute(arrow, arrowReadCapturesShareStorage: false,
+            preserveDebugBindings: EmitDebugSymbols,
+            outerCaptureNames: _closures.Analyzer.GetLoopBodyCellCaptures(arrow)?.Keys);
         _arrowBlockScopeRenames = renameResult.Renames;
         _arrowBlockScopeCaptureRenames = renameResult.CaptureRenames;
 
@@ -1886,7 +1888,8 @@ public partial class ILCompiler
                 arrow.Parameters,
                 arrowAnalysis.HoistedLocals,
                 GetStandaloneLiveCaptureFields(arrow, captures),
-                GetDebugStaticCaptureNames(arrow, captures));
+                GetDebugStaticCaptureNames(arrow, captures),
+                _closures.Analyzer.GetLoopBodyCellCaptures(arrow));
 
             // Define the stub method
             DefineAsyncArrowStub(arrowBuilder);

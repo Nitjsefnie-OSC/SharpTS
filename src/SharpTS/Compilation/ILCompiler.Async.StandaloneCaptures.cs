@@ -36,6 +36,9 @@ public partial class ILCompiler
         foreach (var name in captures)
         {
             if (name == "this") continue;
+            // Per-activation lexical cells must carry their own raw reference,
+            // even when the function also has a same-spelled display-class slot.
+            if (_closures.Analyzer.TryGetLoopBodyCellCapture(arrow, name, out _)) continue;
             var source = _closures.Analyzer.GetCaptureSource(arrow, name);
             if (source is null) continue;
             if (_closures.ArrowScopeDisplayClassFields.TryGetValue(source, out var scopeFields)

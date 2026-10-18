@@ -128,6 +128,15 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
     {
         // Note: _il is initialized in constructor via GetILGenerator()
         _ctx = ctx;
+        if (_builder.IsStandalone && _builder.StandaloneCellCaptureDeclarations.Count > 0)
+        {
+            // Expose only actual incoming cell fields, after the builder has
+            // excluded its own parameters and locals. Ordinary snapshots keep
+            // their existing lower-priority standalone resolution path.
+            ctx.LoopBodyCellCaptures = _builder.StandaloneCellCaptureDeclarations;
+            ctx.CapturedFields = _builder.StandaloneCellCaptureDeclarations.Keys.ToDictionary(
+                name => name, name => _builder.StandaloneCaptureFields[name], StringComparer.Ordinal);
+        }
         _builder.AttachDebugSymbols(ctx);
         _builder.EmitDebugCaptureReferences(_il);
         // Wire the runtime into the helper now that the context is bound, so MoveNext uses the

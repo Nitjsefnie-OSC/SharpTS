@@ -31,7 +31,9 @@ public partial class ILCompiler
                 GeneratorBlockScopeRenamer.Compute(function, preserveDebugBindings: true).Renames),
             Expr.ArrowFunction arrow when arrow.IsAsync => GetDebugHoistedBindings(
                 arrow.Parameters, arrow.BlockBody,
-                GeneratorBlockScopeRenamer.Compute(arrow, preserveDebugBindings: true).Renames,
+                GeneratorBlockScopeRenamer.Compute(arrow, preserveDebugBindings: true,
+                    outerCaptureNames: arrow.IsGenerator ? null :
+                        _closures.Analyzer.GetLoopBodyCellCaptures(arrow)?.Keys).Renames,
                 GetDebugHoistedBindings(_arrowEnclosingCallable.GetValueOrDefault(arrow))),
             _ => null,
         };

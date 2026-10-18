@@ -367,7 +367,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         _loopBodyDepth = 0;
         bool directSuspension = HasDirectSuspension(body, expressionBody);
         _owners.Add(new(node, synchronous && _classDepth == 0 && !directSuspension,
-            node is Expr.ArrowFunction && synchronous && _classDepth == 0,
+            node is Expr.ArrowFunction { IsGenerator: false } && _classDepth == 0,
             canOwnGeneratorCells, canRelayClassSelf));
         EnterScope([], allowCandidates: false);
         try

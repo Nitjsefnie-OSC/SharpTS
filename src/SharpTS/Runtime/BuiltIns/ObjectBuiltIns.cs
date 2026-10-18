@@ -653,8 +653,8 @@ public static partial class ObjectBuiltIns
                     }
                     return target;
                 case SharpTSInstance symInst:
-                    if (descriptorHasValue)
-                        symInst.SetBySymbol(symKey, descriptor.Value);
+                    if (!symInst.DefineProperty(symKey, descriptor))
+                        throw new ThrowException(new SharpTSTypeError("Cannot redefine symbol property"));
                     return target;
                 case var function when FunctionObjectProperties.TryGetStorage(function, interpreter, out var properties):
                     if (!properties.DefineProperty(symKey, descriptor))
@@ -1200,8 +1200,8 @@ public static partial class ObjectBuiltIns
                 return descriptor.ToObject();
             case ISharpTSPrimitiveConstructor primitiveConstructor when primitiveConstructor.GetOwnPropertyDescriptor(key) is { } descriptor:
                 return descriptor.ToObject();
-            case SharpTSInstance inst when inst.HasSymbolProperty(key):
-                return DescriptorObjectFor(inst.GetBySymbol(key));
+            case SharpTSInstance inst when inst.GetOwnPropertyDescriptor(key) is { } descriptor:
+                return descriptor.ToObject();
             case SharpTSArray array when array.GetOwnPropertyDescriptor(key) is { } descriptor:
                 return descriptor.ToObject();
             case SharpTSMath math when math.GetOwnPropertyDescriptor(key) is { } descriptor:
@@ -1221,13 +1221,6 @@ public static partial class ObjectBuiltIns
                 return SharpTSUndefined.Instance;
         }
 
-        static object? DescriptorObjectFor(object? value) => new SharpTSPropertyDescriptor
-        {
-            Value = value,
-            Writable = true,
-            Enumerable = false,
-            Configurable = true,
-        }.ToObject();
     }
 
     /// <summary>

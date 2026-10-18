@@ -1445,7 +1445,8 @@ public partial class Interpreter
     /// </summary>
     private object? GetInstanceSymbolValue(SharpTSInstance instance, SharpTSSymbol symbol)
     {
-        if (instance.HasSymbolProperty(symbol)) return instance.GetBySymbol(symbol);
+        if (TryReadDescriptor(instance.GetOwnPropertyDescriptor(symbol), instance, out var ownValue))
+            return ownValue;
         if (instance.UsesDynamicPrototypeChain)
             return instance.Prototype is { } prototype
                 ? GetSymbolPropertyValue(prototype, symbol, instance)
@@ -1904,6 +1905,8 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.InstanceSymbol t:
+                if (TryAssignThroughDescriptor(t.Target.GetOwnPropertyDescriptor(t.Key),
+                        t.Target, t.Key.ToString(), value, strictMode)) break;
                 if (t.Target.HasExplicitPrototype)
                 {
                     if (!t.Target.HasSymbolProperty(t.Key)

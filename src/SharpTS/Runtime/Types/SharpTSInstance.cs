@@ -31,7 +31,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     private readonly Dictionary<string, object?> _fields = [];
     private Dictionary<string, ISharpTSCallable>? _getters;
     private Dictionary<string, ISharpTSCallable>? _setters;
-    private readonly Dictionary<SharpTSSymbol, object?> _symbolFields = new();
+    private SharpTSObject? _symbolProperties;
     private Dictionary<string, PropertyDescriptorFlags>? _descriptors;
     private Interpreter? _interpreter;
 
@@ -76,6 +76,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public void Freeze()
     {
         SetOwnPropertyIntegrityLevel(frozen: true);
+        _symbolProperties?.Freeze();
         IsFrozen = true;
         IsSealed = true; // Frozen implies sealed
         IsExtensible = false; // Frozen implies non-extensible
@@ -87,6 +88,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public void Seal()
     {
         SetOwnPropertyIntegrityLevel(frozen: false);
+        _symbolProperties?.Seal();
         IsSealed = true;
         IsExtensible = false;
     }
@@ -114,6 +116,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     public void PreventExtensions()
     {
         IsExtensible = false;
+        _symbolProperties?.PreventExtensions();
     }
 
     /// <summary>
@@ -121,7 +124,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     /// </summary>
     public IEnumerable<SharpTSSymbol> GetSymbolPropertyNames()
     {
-        return _symbolFields.Keys;
+        return _symbolProperties?.GetSymbolPropertyNames() ?? [];
     }
 
     private enum ResolutionType
@@ -616,64 +619,43 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     /// </summary>
     public object? GetBySymbol(SharpTSSymbol symbol)
     {
-        return _symbolFields.TryGetValue(symbol, out var value) ? value : null;
+        return _symbolProperties?.GetBySymbol(symbol);
     }
+
+    private SharpTSObject SymbolProperties
+    {
+        get
+        {
+            if (_symbolProperties is not null) return _symbolProperties;
+            var properties = _symbolProperties = new SharpTSObject([]);
+            if (IsFrozen) properties.Freeze();
+            else if (IsSealed) properties.Seal();
+            else if (!IsExtensible) properties.PreventExtensions();
+            return properties;
+        }
+    }
+
+    internal bool DefineProperty(SharpTSSymbol symbol, SharpTSPropertyDescriptor descriptor)
+        => SymbolProperties.DefineProperty(symbol, descriptor);
+
+    internal SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(SharpTSSymbol symbol)
+        => _symbolProperties?.GetOwnPropertyDescriptor(symbol);
 
     /// <summary>
     /// Sets a value by symbol key. Respects frozen/extensible state.
     /// </summary>
     public void SetBySymbol(SharpTSSymbol symbol, object? value)
-    {
-        if (IsFrozen)
-        {
-            return;
-        }
-
-        bool exists = _symbolFields.ContainsKey(symbol);
-        if (!IsExtensible && !exists)
-        {
-            return;
-        }
-
-        _symbolFields[symbol] = value;
-    }
+        => SymbolProperties.SetBySymbol(symbol, value);
 
     internal bool DefineDataField(SharpTSSymbol symbol, object? value)
-    {
-        bool exists = _symbolFields.ContainsKey(symbol);
-        // A class field requests configurable:true, including when replacing an
-        // existing slot on a sealed receiver.
-        if (IsFrozen || IsSealed && exists || !IsExtensible && !exists) return false;
-        _symbolFields[symbol] = value;
-        return true;
-    }
+        => DefineProperty(symbol, new SharpTSPropertyDescriptor(value,
+            writable: true, enumerable: true, configurable: true) { HasValue = true });
 
     /// <summary>
     /// Sets a value by symbol key with strict mode behavior.
     /// </summary>
     public void SetBySymbolStrict(SharpTSSymbol symbol, object? value, bool strictMode)
-    {
-        if (IsFrozen)
-        {
-            if (strictMode)
-            {
-                throw StrictModeErrors.TypeError("Cannot assign to read only symbol property of object");
-            }
-            return;
-        }
-
-        bool exists = _symbolFields.ContainsKey(symbol);
-        if (!IsExtensible && !exists)
-        {
-            if (strictMode)
-            {
-                throw StrictModeErrors.TypeError("Cannot add symbol property to a non-extensible object");
-            }
-            return;
-        }
-
-        _symbolFields[symbol] = value;
-    }
+        => SymbolProperties.SetBySymbolStrict(symbol, value, strictMode);
 
     /// <summary>
     /// Removes a property by symbol key. Respects frozen/sealed state.
@@ -685,26 +667,14 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     /// Removes a property by symbol key with strict mode behavior.
     /// </summary>
     public bool DeleteBySymbolStrict(SharpTSSymbol symbol, bool strictMode)
-    {
-        if (!_symbolFields.ContainsKey(symbol)) return true;
-        if (IsFrozen || IsSealed)
-        {
-            if (strictMode)
-            {
-                throw StrictModeErrors.TypeError("Cannot delete symbol property of a frozen or sealed object");
-            }
-            return false;
-        }
-        _symbolFields.Remove(symbol);
-        return true;
-    }
+        => _symbolProperties?.DeleteBySymbolStrict(symbol, strictMode) ?? true;
 
     /// <summary>
     /// Checks if the instance has a property with the given symbol key.
     /// </summary>
     public bool HasSymbolProperty(SharpTSSymbol symbol)
     {
-        return _symbolFields.ContainsKey(symbol);
+        return _symbolProperties?.HasSymbolProperty(symbol) == true;
     }
 
     /// <summary>

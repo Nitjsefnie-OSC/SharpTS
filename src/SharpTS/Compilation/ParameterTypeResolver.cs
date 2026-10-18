@@ -32,6 +32,13 @@ public static class ParameterTypeResolver
         {
             // Fallback: try to resolve from parameter type annotations
             var fallback = parameters.Select(p => WidenIfUndefinedReachableParam(ResolveParameterType(p, typeMapper), p, typeMap)).ToArray();
+            // Match the full-type path: optional slots must carry the undefined
+            // sentinel without converting it to a string or a numeric value.
+            for (int i = 0; i < parameters.Count; i++)
+            {
+                if (parameters[i] is { IsOptional: true, DefaultValue: null, IsRest: false })
+                    fallback[i] = typeof(object);
+            }
             WidenDefaultedParamsToObject(fallback, parameters, typeof(object));
             ForceRestParamsToListMarker(fallback, parameters);
             return fallback;

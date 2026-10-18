@@ -86,7 +86,7 @@ public sealed class BuiltInMethodOwnPropertyTests
     }
 
     [Fact]
-    public void NativeMethodUpdateCoercesItsObjectKeyOnce()
+    public void NativeMethodUpdateCoercesItsObjectKeyForReadAndWrite()
     {
         // #2595: compiled GetIndex rejects an object key producing a Symbol.
         const string source = """
@@ -97,7 +97,7 @@ public sealed class BuiltInMethodOwnPropertyTests
             } };
             console.log(method[propertyKey]++, method[key], state.calls);
             """;
-        Assert.Equal("string\n5 6 1\n", TestHarness.Run(source, ExecutionMode.Interpreted));
+        Assert.Equal("string\nstring\n5 6 2\n", TestHarness.Run(source, ExecutionMode.Interpreted));
     }
 
     [Fact]

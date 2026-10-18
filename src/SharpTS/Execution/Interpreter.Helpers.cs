@@ -134,17 +134,18 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Attempts to get an element from an array-like runtime value by index.
+    /// Attempts to read an indexed property from a canonical property target,
+    /// array-like value or CLR indexer.
     /// </summary>
-    /// <param name="obj">The array-like object.</param>
-    /// <param name="index">The index value (expected to be a double).</param>
+    /// <param name="obj">The indexed target.</param>
+    /// <param name="index">The raw property key or numeric array index.</param>
     /// <param name="value">The retrieved value if successful.</param>
     /// <returns><c>true</c> if the element was found; otherwise <c>false</c>.</returns>
     private bool TryGetIndex(object? obj, object? index, out object? value)
     {
-        if (obj is ISharpTSOwnPropertyObject or BuiltInMethod)
+        if (HasCanonicalIndexProperties(obj))
         {
-            value = GetOwnPropertyObjectValue(obj, index!);
+            value = GetOwnPropertyObjectValue(obj!, ToPropertyKey(index));
             return true;
         }
         if (obj is SharpTSArray array && index is double idx)
@@ -162,17 +163,18 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Attempts to set an element on an array-like runtime value by index.
+    /// Attempts to write an indexed property on a canonical property target,
+    /// array-like value or CLR indexer.
     /// </summary>
-    /// <param name="obj">The array-like object.</param>
-    /// <param name="index">The index value (expected to be a double).</param>
+    /// <param name="obj">The indexed target.</param>
+    /// <param name="index">The raw property key or numeric array index.</param>
     /// <param name="value">The value to set.</param>
     /// <returns><c>true</c> if the element was set; otherwise <c>false</c>.</returns>
     private bool TrySetIndex(object? obj, object? index, object? value)
     {
-        if (obj is ISharpTSOwnPropertyObject or BuiltInMethod)
+        if (HasCanonicalIndexProperties(obj))
         {
-            SetOwnPropertyObjectValue(obj, index!, value, _environment.IsStrictMode);
+            SetOwnPropertyObjectValue(obj!, ToPropertyKey(index), value, _environment.IsStrictMode);
             return true;
         }
         if (obj is SharpTSArray array && index is double idx)
@@ -188,8 +190,11 @@ public partial class Interpreter
         return false;
     }
 
-    // Read-modify-write callers retain one canonical property key for both
-    // operations, so object-key coercion runs once before getters and the RHS.
+    private bool HasCanonicalIndexProperties(object? target)
+        => target is ISharpTSOwnPropertyObject
+            || FunctionObjectProperties.TryGetStorage(target, this, out _);
+
+    // Callers supply an already normalized string or Symbol property key.
     private object? GetOwnPropertyObjectValue(object target, object key)
         => key is SharpTSSymbol symbol
             ? GetSymbolPropertyValue(target, symbol)
@@ -364,9 +369,8 @@ public partial class Interpreter
     /// </summary>
     private RuntimeValue IncrementIndex(object? obj, object? index, double delta, bool returnOld)
     {
-        if (obj is ISharpTSOwnPropertyObject or BuiltInMethod)
-            index = ToPropertyKey(index);
-
+        // Retain the evaluated key expression. GetValue and PutValue each
+        // convert an object key, so the write may select a different property.
         if (TryGetIndex(obj, index, out object? currentObj))
         {
             RuntimeValue oldValue = RuntimeValue.FromBoxed(currentObj);

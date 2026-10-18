@@ -102,8 +102,6 @@ public sealed class GenericAccessorKeyEvaluationTests
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            // Interpreter object-key coercion for class accessors is tracked in #2472.
-            .Where(mode => mode == ExecutionMode.Compiled || (string)row[0] != "property-key-coercion-is-not-replayed")
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]

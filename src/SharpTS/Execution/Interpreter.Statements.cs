@@ -2144,7 +2144,7 @@ public partial class Interpreter
         foreach (var key in Compilation.ClassDefinitionExpressions.MemberKeys(classStmt.Fields, classStmt.Methods, classStmt.Accessors))
         {
             object? value = (await ctx.EvaluateExprAsync(key)).ToObject();
-            computedMemberKeys[key] = value is SharpTSSymbol ? value : PropertyKeyConverter.ToPropertyKeyString(value);
+            computedMemberKeys[key] = ToPropertyKey(value);
         }
 
         foreach (Stmt.Field field in classStmt.Fields)

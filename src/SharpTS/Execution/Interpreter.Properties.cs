@@ -2993,19 +2993,24 @@ public partial class Interpreter
                 return value;
 
             case TypeCategory.Promise when obj is SharpTSPromiseSubclassInstance promiseSub:
+                if (TryAssignThroughDescriptor(promiseSub.GetOwnPropertyDescriptor(memberName),
+                        promiseSub, memberName, value, strictMode)) return value;
                 // Promise subclass instances (#242): class setters win, then
                 // own properties (declared fields and expando assignments).
-                var promiseSetter = promiseSub.Klass.FindSetter(memberName);
+                var promiseSetter = promiseSub.HasOwnProperty(memberName)
+                    ? null : promiseSub.Klass.FindSetter(memberName);
                 if (promiseSetter != null)
                 {
                     promiseSetter.BindThis(promiseSub).CallBoxed(this, [value]);
                     return value;
                 }
-                promiseSub.SetOwnProperty(memberName, value);
+                promiseSub.SetOwnPropertyStrict(memberName, value, strictMode);
                 return value;
 
             case TypeCategory.Promise when obj is SharpTSPromise promise:
-                promise.SetOwnProperty(memberName, value);
+                if (!TryAssignThroughDescriptor(promise.GetOwnPropertyDescriptor(memberName),
+                        promise, memberName, value, strictMode))
+                    promise.SetOwnPropertyStrict(memberName, value, strictMode);
                 return value;
 
             case TypeCategory.Array when obj is SharpTSArray array:

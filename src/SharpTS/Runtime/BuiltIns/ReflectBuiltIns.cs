@@ -166,6 +166,8 @@ public static class ReflectBuiltIns
                             return RuntimeValue.False;
                         inst.DeleteField(propertyKey);
                         return RuntimeValue.True;
+                    case SharpTSPromise promise:
+                        return RuntimeValue.FromBoolean(promise.DeletePropertyStrict(propertyKey, false));
                     case SharpTSClass klass:
                         return RuntimeValue.FromBoolean(klass.DeleteStaticProperty(propertyKey));
                     case ISharpTSPrimitiveConstructor primitiveConstructor:
@@ -462,6 +464,8 @@ public static class ReflectBuiltIns
                             return RuntimeValue.FromBoolean(obj.DefineProperty(propertyKey, descriptor));
                         case SharpTSInstance inst:
                             return RuntimeValue.FromBoolean(inst.DefineProperty(propertyKey, descriptor));
+                        case SharpTSPromise promise:
+                            return RuntimeValue.FromBoolean(promise.DefineProperty(propertyKey, descriptor));
                         case SharpTSArray arr:
                             return RuntimeValue.FromBoolean(arr.DefineProperty(propertyKey, descriptor));
                         case SharpTSClass klass:

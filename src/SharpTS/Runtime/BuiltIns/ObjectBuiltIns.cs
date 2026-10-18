@@ -787,22 +787,9 @@ public static partial class ObjectBuiltIns
                 success = error.DefineProperty(propertyKey, descriptor);
                 break;
             case SharpTSPromise promise:
-                // Promise instances are objects; user code may install own
-                // accessor or data properties — notably a poisoned `constructor`
-                // getter that must fire when then/catch/finally resolve
-                // SpeciesConstructor (test262 then/ctor-poisoned, #350). Storage
-                // lives on the base SharpTSPromise so plain and subclass promises
-                // both accept defineProperty. Attribute-only descriptors preserve
-                // the existing value per ECMA-262 §10.1.6.3.
-                if (descriptor.Get != null || descriptor.Set != null)
-                {
-                    promise.DefineAccessor(propertyKey, descriptor.Get, descriptor.Set);
-                }
-                else if (descriptor.HasValue)
-                {
-                    promise.SetOwnProperty(propertyKey, descriptor.Value);
-                }
-                success = true;
+                success = promise.DefineProperty(propertyKey, descriptor);
+                if (!success)
+                    throw new ThrowException(new SharpTSTypeError($"Cannot redefine property '{propertyKey}'"));
                 break;
             case SharpTSProxy proxy:
                 success = proxy.TrapDefineProperty(
@@ -919,6 +906,7 @@ public static partial class ObjectBuiltIns
                 => arrayGlobal.GetOwnPropertyDescriptor(propertyKey)
                     ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
             SharpTSInstance inst => inst.GetOwnPropertyDescriptor(propertyKey),
+            SharpTSPromise promise => promise.GetOwnPropertyDescriptor(propertyKey),
             SharpTSArray arr => arr.GetOwnPropertyDescriptor(propertyKey),
             SharpTSArrayPrototype arrayPrototype => arrayPrototype.GetOwnPropertyDescriptor(propertyKey)
                 ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),

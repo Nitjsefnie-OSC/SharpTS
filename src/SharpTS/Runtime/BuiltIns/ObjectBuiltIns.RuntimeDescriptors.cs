@@ -84,6 +84,7 @@ public static partial class ObjectBuiltIns
             SharpTSObject obj => obj.GetOwnPropertyDescriptor(propKey),
             ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.GetOwnPropertyDescriptor(propKey),
             SharpTSInstance inst => inst.GetOwnPropertyDescriptor(propKey),
+            SharpTSPromise promise => promise.GetOwnPropertyDescriptor(propKey),
             SharpTSArray arr => arr.GetOwnPropertyDescriptor(propKey),
             System.Collections.IDictionary idict => GetDescriptorFromIDictionary(idict, propKey),
             System.Collections.IList list => GetDescriptorFromList(list, propKey),

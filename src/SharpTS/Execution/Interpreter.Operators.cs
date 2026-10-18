@@ -1062,6 +1062,7 @@ public partial class Interpreter
                 .DeletePropertyStrict(name, strictMode),
             BoundFunction bound => bound.DeleteProperty(name, strictMode),
             SharpTSInstance tsInst => tsInst.DeleteFieldStrict(name, strictMode),
+            SharpTSPromise promise => promise.DeletePropertyStrict(name, strictMode),
             SharpTSMath math => math.DeleteExtra(name),
             SharpTSJSON json => json.DeleteExtra(name),
             SharpTSDate date => date.DeleteExtra(name),

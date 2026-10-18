@@ -676,6 +676,7 @@ public partial class ILCompiler
         StablePrimitivePromiseAllAnalyzer.Analyze(
             statements, _typeMap, _closures.Analyzer, _features, hasObservablePromiseMutation);
         StableExactClassMethodCallAnalyzer.Analyze(statements, _typeMap, _features);
+        ForwardedReturnValueAnalyzer.Analyze(statements, _typeMap, _features, modules);
         NonEscapingArrowLocalAnalyzer.Analyze(
             statements, _closures.DirectCallArrowBindings, _closures.Analyzer);
         StableNumericLoopCaptureAnalyzer.Analyze(

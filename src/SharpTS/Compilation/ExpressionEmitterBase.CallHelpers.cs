@@ -2567,7 +2567,13 @@ public abstract partial class ExpressionEmitterBase
             else if (arguments is [Expr.ArrowFunction handler])
             {
                 IL.Emit(OpCodes.Ldloc, promiseLocal);
-                if (TryEmitArrowAsDelegate(handler, typeof(Func<double, double>)))
+                // Return-slot analysis can widen an annotated numeric callback
+                // after the Promise eligibility proof. Bind only its actual ABI.
+                if (Ctx.ArrowMethods?.TryGetValue(handler, out var handlerMethod) == true
+                    && handlerMethod.ReturnType == Types.Double
+                    && handlerMethod.GetParameters() is [var handlerParameter]
+                    && handlerParameter.ParameterType == Types.Double
+                    && TryEmitArrowAsDelegate(handler, typeof(Func<double, double>)))
                 {
                     IL.Emit(OpCodes.Call, Ctx.Runtime!.RequirePromise().ThenPrimitive);
                 }

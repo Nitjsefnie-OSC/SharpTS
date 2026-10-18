@@ -924,7 +924,8 @@ public partial class ILEmitter
         var builder = _ctx.ILBuilder;
         var elseLabel = builder.DefineLabel("ternary_else");
         var endLabel = builder.DefineLabel("ternary_end");
-        bool hasNumericBranches = IsNumericTernaryBranch(_ctx.TypeMap?.Get(t.ThenBranch))
+        bool hasNumericBranches = _ctx.TypeMap?.IsUndefinedReachableReturn(t) != true
+            && IsNumericTernaryBranch(_ctx.TypeMap?.Get(t.ThenBranch))
             && IsNumericTernaryBranch(_ctx.TypeMap?.Get(t.ElseBranch));
 
         EmitExpression(t.Condition);

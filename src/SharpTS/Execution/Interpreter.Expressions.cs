@@ -1566,6 +1566,12 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(value);
         }
 
+        if (UsesMutableFunctionPrototype(obj))
+        {
+            SetOwnPropertyObjectValue(obj!, ToPropertyKey(index), value, strictMode);
+            return RuntimeValue.FromBoxed(value);
+        }
+
         // OrdinarySet enters an inherited Proxy's [[Set]] with the original
         // function as Receiver. A descriptor-only walk cannot replace that
         // protocol without either skipping the trap or exposing other traps.

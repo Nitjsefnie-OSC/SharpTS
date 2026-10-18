@@ -58,6 +58,15 @@ public sealed class SharpTSFunctionGlobal : ISharpTSCallable
 public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSSymbolPropertyBag,
     ISharpTSNonConstructorCallable
 {
+    internal bool HasExplicitPrototype { get; private set; }
+    internal object? ExplicitPrototype { get; private set; }
+
+    internal void SetExplicitPrototype(object? prototype)
+    {
+        ExplicitPrototype = prototype;
+        HasExplicitPrototype = true;
+    }
+
     public int Arity() => 0;
 
     public object? Call(Execution.Interpreter interpreter, List<object?> arguments)

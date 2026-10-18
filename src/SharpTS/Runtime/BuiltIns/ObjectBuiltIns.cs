@@ -2123,7 +2123,9 @@ public static partial class ObjectBuiltIns
         // ECMA-262 §20.2.3: every function object — built-in constructors included —
         // has Function.prototype as its [[Prototype]], so
         // `Function.prototype.isPrototypeOf(Array)` holds. Function.prototype itself
-        // bottoms out at Object.prototype.
+        // initially inherits Object.prototype, but has an ordinary mutable link.
+        SharpTSFunctionPrototype { HasExplicitPrototype: true } functionPrototype
+            => functionPrototype.ExplicitPrototype,
         SharpTSFunctionPrototype => interp?.GetObjectPrototype(),
         SharpTSArrayPrototype => interp?.GetObjectPrototype(),
         SharpTSPromisePrototype => interp?.GetObjectPrototype(),
@@ -2247,6 +2249,13 @@ public static partial class ObjectBuiltIns
                 classPrototype.SetExplicitPrototype(proto);
                 return true;
 
+            case SharpTSFunctionPrototype functionPrototype:
+                if (ReferenceEquals(PrototypeOf(interpreter, functionPrototype), proto)) return true;
+                if (!PropertyDescriptorStore.IsExtensible(functionPrototype)) return false;
+                if (WouldCreatePrototypeCycle(interpreter, functionPrototype, proto)) return false;
+                functionPrototype.SetExplicitPrototype(proto);
+                return true;
+
             case SharpTSArrayGlobal arrayGlobal:
                 if (ReferenceEquals(PrototypeOf(interpreter, arrayGlobal), proto)) return true;
                 if (!PropertyDescriptorStore.IsExtensible(arrayGlobal)) return false;
@@ -2299,9 +2308,10 @@ public static partial class ObjectBuiltIns
             candidate = candidate switch
             {
                 SharpTSObject or SharpTSArray or SharpTSClassPrototype or SharpTSInstance or SharpTSArrayGlobal or SharpTSClass
+                    or SharpTSFunctionPrototype
                     or Dictionary<string, object?>
                     => PrototypeOf(interpreter, candidate),
-                ISharpTSCallable function when FunctionObjectProperties.TryGetStorage(function, interpreter, out _)
+                ISharpTSCallable function when function is not SharpTSProxy
                     => PrototypeOf(interpreter, function),
                 _ => null
             };

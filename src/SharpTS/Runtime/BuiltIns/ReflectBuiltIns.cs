@@ -261,12 +261,11 @@ public static class ReflectBuiltIns
                     return RuntimeValue.FromBoolean(SharpTSProxy.OrdinarySet(
                         interpreter, target, propertyKey, args[2].ToObject(), ownReceiver));
                 }
-                if (target is SharpTSFunctionPrototype functionPrototype && propertyKey is SharpTSSymbol prototypeSymbol)
+                if (target is SharpTSFunctionPrototype)
                 {
                     object? prototypeReceiver = args.Length > 3 ? args[3].ToObject() : target;
-                    return RuntimeValue.FromBoolean(SetSymbolProperty(interpreter,
-                        functionPrototype.GetOwnPropertyDescriptor(prototypeSymbol),
-                        prototypeSymbol, args[2].ToObject(), prototypeReceiver));
+                    return RuntimeValue.FromBoolean(SharpTSProxy.OrdinarySet(interpreter,
+                        target, propertyKey, args[2].ToObject(), prototypeReceiver));
                 }
                 if (target is ISharpTSFunctionObject function)
                 {
@@ -325,8 +324,8 @@ public static class ReflectBuiltIns
                 var target = args[0].ToObject() ?? throw new Exception("Runtime Error: Reflect.getPrototypeOf requires a target object.");
                 if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var functionStorage))
                     return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
-                if (target is ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator
-                    or SharpTSClassPrototype or SharpTSArrayGlobal or SharpTSClass)
+                if (target is SharpTSProxy or ISharpTSGeneratorFunctionValue or SharpTSGenerator or SharpTSAsyncGenerator
+                    or SharpTSClassPrototype or SharpTSArrayGlobal or SharpTSClass or SharpTSFunctionPrototype)
                     return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
                 return RuntimeValue.FromBoxed(target switch
                 {

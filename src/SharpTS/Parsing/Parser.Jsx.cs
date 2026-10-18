@@ -98,7 +98,7 @@ public partial class Parser
     private void SpliceRelexedTokens(int offset)
     {
         var relexed = Lexer.Relex(_source!, offset, LineAtOffset(offset), _templateInterpolationDepth,
-            _cancellationToken);
+            _cancellationToken, _tokens.FirstOrDefault()?.SourceIdentity);
 
         int spliceEnd = _tokens.Count;   // exclusive end of the replaced range
         int insertCount = relexed.Count; // fresh tokens to insert (default: all, incl. EOF)
@@ -734,9 +734,11 @@ public partial class Parser
 
         int firstLine = first.Start >= 0 ? LineAtOffset(first.Start) : first.Line;
         Expr tagExpression = first.Lexeme == "this"
-            ? new Expr.This(new Token(TokenType.THIS, "this", null, firstLine, first.Start))
+            ? new Expr.This(new Token(TokenType.THIS, "this", null, firstLine, first.Start)
+                { SourceIdentity = first.SourceIdentity })
             : new Expr.Variable(new Token(
-                TokenType.IDENTIFIER, first.Lexeme, null, firstLine, first.Start));
+                TokenType.IDENTIFIER, first.Lexeme, null, firstLine, first.Start)
+                { SourceIdentity = first.SourceIdentity });
         RecordJsxTag(tagExpression, first.Start, first.End, first);
         bool hasMemberAccess = false;
         while (Match(TokenType.DOT))
@@ -929,7 +931,7 @@ public partial class Parser
                     token.Lexeme,
                     null,
                     token.Start >= 0 ? LineAtOffset(token.Start) : token.Line,
-                    token.Start);
+                    token.Start) { SourceIdentity = token.SourceIdentity };
         }
         throw new ParseError(message, "TS1003");
     }

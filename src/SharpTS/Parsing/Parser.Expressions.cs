@@ -74,7 +74,8 @@ public partial class Parser
             Token raw = Advance(); // consume identifier/contextual keyword
             Token paramName = raw.Type == TokenType.IDENTIFIER
                 ? raw
-                : new Token(TokenType.IDENTIFIER, raw.Lexeme, null, raw.Line, raw.Start);
+                : new Token(TokenType.IDENTIFIER, raw.Lexeme, null, raw.Line, raw.Start)
+                    { SourceIdentity = raw.SourceIdentity };
             Advance(); // consume '=>'
             int headerEnd = ConsumedSourceEnd;
             int bodyStart = CurrentSourceStart();
@@ -940,7 +941,8 @@ public partial class Parser
                      or TokenType.LEFT_PAREN))
         {
             var token = Advance();
-            return new Expr.Variable(new Token(TokenType.IDENTIFIER, token.Lexeme, null, token.Line, token.Start));
+            return new Expr.Variable(new Token(TokenType.IDENTIFIER, token.Lexeme, null, token.Line, token.Start)
+                { SourceIdentity = token.SourceIdentity });
         }
 
         if (Match(TokenType.LEFT_BRACKET))
@@ -1554,7 +1556,8 @@ public partial class Parser
                     Token paramTok = Advance();
                     Token paramName = paramTok.Type == TokenType.IDENTIFIER
                         ? paramTok
-                        : new Token(TokenType.IDENTIFIER, paramTok.Lexeme, null, paramTok.Line, paramTok.Start);
+                        : new Token(TokenType.IDENTIFIER, paramTok.Lexeme, null, paramTok.Line, paramTok.Start)
+                            { SourceIdentity = paramTok.SourceIdentity };
                     // The shared tail consumes '?'/type/default: (x?: T = v) => ...  (if this
                     // isn't an arrow, the outer speculative parse backtracks, so consuming here
                     // is safe).

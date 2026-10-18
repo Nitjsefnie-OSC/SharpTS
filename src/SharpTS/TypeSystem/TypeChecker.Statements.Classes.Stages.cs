@@ -42,26 +42,50 @@ public partial class TypeChecker
         // `class C1 extends C2 {} class C2 {}` — a class value referenced in its own or an earlier
         // class's extends clause, before that class is textually declared, is TS2449 (class values
         // aren't hoisted for this position). Recorded (not thrown) so the body is still checked.
-        if (classStmt.SuperclassExpr is Expr.Variable baseVar
-            && _classDeclarationLines.TryGetValue(baseVar.Name.Lexeme, out int baseLine)
-            && baseLine > classStmt.Name.Line)
+        if (GetClassHeritageReference(classStmt.SuperclassExpr) is { } baseName
+            && _environment.GetValueBinding(baseName.Lexeme) is { } baseBinding
+            && _classDeclarationLines.TryGetValue(baseBinding, out int baseLine))
         {
-            RecordTypeError(new TypeCheckException(
-                $"Class '{baseVar.Name.Lexeme}' used before its declaration.",
-                line: classStmt.Name.Line, tsCode: "TS2449"));
+            bool precedesDeclaration = _forwardClassDeclarations.TryGetValue(baseBinding, out var forward)
+                && baseName.Start >= 0 && forward.Declaration.Name.Start >= 0
+                    ? IsClassValueReadBeforeDeclaration(baseName, forward)
+                    : baseLine > classStmt.Name.Line;
+            if (precedesDeclaration)
+                RecordTypeError(new TypeCheckException(
+                    $"Class '{baseName.Lexeme}' used before its declaration.",
+                    line: classStmt.Name.Line, tsCode: "TS2449"));
         }
+    }
+
+    private static Token? GetClassHeritageReference(Expr? expression)
+    {
+        while (expression is Expr.Grouping grouping) expression = grouping.Expression;
+        return expression is Expr.Variable variable ? variable.Name : null;
     }
 
     // Called within the declaration-owned class type environment; updates only index metadata.
     private void CollectClassIndexSignatures(Stmt.Class classStmt, TypeInfo.MutableClass mutableClass)
+        => CollectClassIndexSignatures(classStmt.IndexSignatures, mutableClass);
+
+    private void CollectClassIndexSignatures(IEnumerable<Stmt.IndexSignature>? indexSignatures, TypeInfo.MutableClass mutableClass)
     {
         // Index signatures: [key: string|number|symbol]: ValueType. Resolved inside the class
         // type-environment scope so value types can reference the class's own type parameters.
-        if (classStmt.IndexSignatures != null)
+        if (indexSignatures != null)
         {
-            foreach (var indexSig in classStmt.IndexSignatures)
+            foreach (var indexSig in indexSignatures)
             {
                 TypeInfo valueType = ResolveAnnotation(indexSig.ValueType, indexSig.ValueTypeNode)!;
+                if (indexSig.IsStatic)
+                {
+                    switch (indexSig.KeyType)
+                    {
+                        case TokenType.TYPE_STRING: mutableClass.StaticStringIndexType = valueType; break;
+                        case TokenType.TYPE_NUMBER: mutableClass.StaticNumberIndexType = valueType; break;
+                        case TokenType.TYPE_SYMBOL: mutableClass.StaticSymbolIndexType = valueType; break;
+                    }
+                    continue;
+                }
                 switch (indexSig.KeyType)
                 {
                     case TokenType.TYPE_STRING: mutableClass.StringIndexType = valueType; break;
@@ -382,7 +406,7 @@ public partial class TypeChecker
                 if (autoAccessor.Initializer != null)
                 {
                     TypeInfo initType = CheckExpr(autoAccessor.Initializer);
-                    TypeInfo declaredType = classTypeForBody.Getters[autoAccessor.Name.Lexeme];
+                    TypeInfo declaredType = (autoAccessor.IsStatic ? classTypeForBody.StaticProperties : classTypeForBody.Getters)[autoAccessor.Name.Lexeme];
                     if (!IsCompatible(declaredType, initType))
                     {
                         throw new TypeCheckException($" Cannot assign type '{initType}' to auto-accessor '{autoAccessor.Name.Lexeme}' of type '{declaredType}'.", tsCode: "TS2322");

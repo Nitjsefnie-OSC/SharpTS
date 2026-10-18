@@ -1,5 +1,8 @@
+using SharpTS.Execution;
 using SharpTS.Parsing;
 using SharpTS.Repl;
+using SharpTS.Tests.Infrastructure;
+using SharpTS.TypeSystem;
 using Xunit;
 
 namespace SharpTS.Tests.ReplTests;
@@ -231,6 +234,36 @@ public class ReplCompletionProviderTests
 
         Assert.Contains("create", names);
         Assert.DoesNotContain("instanceMethod", names);
+    }
+
+    [Fact]
+    public void Members_OfClassesFromSeparateSubmissions_RetainInheritedMembers()
+    {
+        using var engine = Session(
+            new string(' ', 200) + "class Base { baseMethod() {} }",
+            "class Derived extends Base { static create() {} ownMethod() {} }");
+
+        Assert.Contains("create", Names(engine, "Derived."));
+        var instanceNames = Names(engine, "new Derived().");
+        Assert.Contains("baseMethod", instanceNames);
+        Assert.Contains("ownMethod", instanceNames);
+    }
+
+    [Theory]
+    [InlineData("C", "class C")]
+    [InlineData("new C()", "C")]
+    public void TypeCommand_ResolvesClassFromAnEarlierSubmission(string expression, string expected)
+    {
+        using var interpreter = new Interpreter();
+        var resolver = new VariableResolver(interpreter);
+        var checker = new TypeChecker();
+        var declarations = new Parser(new Lexer("class C {}").ScanTokens()).ParseOrThrow();
+        var commands = new DotCommands(interpreter, resolver, checker, DecoratorMode.Stage3, [], declarations);
+        using var capture = AsyncLocalConsoleRedirector.Capture();
+
+        Assert.True(commands.Execute($".type {expression}"));
+
+        Assert.Equal(expected + Environment.NewLine, capture.GetOutput());
     }
 
     [Fact]

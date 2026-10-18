@@ -18,6 +18,7 @@ namespace SharpTS.Parsing;
 public class Lexer(string source)
 {
     private readonly string _source = source;
+    private readonly object _sourceIdentity = new();
     private readonly List<Token> _tokens = [];
     private int _start = 0;
     private int _current = 0;
@@ -191,13 +192,15 @@ public class Lexer(string source)
         }
 
         _cancellationToken.ThrowIfCancellationRequested();
-        _tokens.Add(new Token(TokenType.EOF, "", null, _line));
+        _tokens.Add(new Token(TokenType.EOF, "", null, _line) { SourceIdentity = _sourceIdentity });
         return _tokens;
     }
 
     /// <summary>Suffix lexer for JSX token-stream repair. See <see cref="Relex"/>.</summary>
-    private Lexer(string source, int startOffset, int startLine, int templateInterpolationDepth) : this(source)
+    private Lexer(string source, int startOffset, int startLine, int templateInterpolationDepth,
+        object? sourceIdentity) : this(source)
     {
+        if (sourceIdentity is not null) _sourceIdentity = sourceIdentity;
         _start = startOffset;
         _current = startOffset;
         _line = startLine;
@@ -226,10 +229,10 @@ public class Lexer(string source)
     /// </summary>
     internal static List<(Token Token, bool NeutralAfter)> Relex(
         string source, int fromOffset, int startLine, int templateInterpolationDepth = 0,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, object? sourceIdentity = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var lexer = new Lexer(source, fromOffset, startLine, templateInterpolationDepth) { JsxTolerant = true }
+        var lexer = new Lexer(source, fromOffset, startLine, templateInterpolationDepth, sourceIdentity) { JsxTolerant = true }
             .WithCancellation(cancellationToken);
         var result = new List<(Token, bool)>();
         while (!lexer.IsAtEnd())
@@ -243,7 +246,8 @@ public class Lexer(string source)
                 result.Add((lexer._tokens[i], neutral));
         }
         cancellationToken.ThrowIfCancellationRequested();
-        result.Add((new Token(TokenType.EOF, "", null, lexer._line, source.Length), true));
+        result.Add((new Token(TokenType.EOF, "", null, lexer._line, source.Length)
+            { SourceIdentity = lexer._sourceIdentity }, true));
         return result;
     }
 
@@ -1505,7 +1509,7 @@ public class Lexer(string source)
     private void AddToken(TokenType type, object? literal)
     {
         string text = _source[_start.._current];
-        _tokens.Add(new Token(type, text, literal, _tokenStartLine, _start));
+        _tokens.Add(new Token(type, text, literal, _tokenStartLine, _start) { SourceIdentity = _sourceIdentity });
         // Update expression state for regex literal disambiguation
         _expectExpr = !IsExpressionEnd(type);
         // Mark that we've emitted a code token (triple-slash directives no longer valid)

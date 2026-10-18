@@ -173,9 +173,9 @@ public sealed class StrictConstructorExpandoTests
 
     public static IEnumerable<object[]> ParityCases()
         => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            // #2245/#2246 track interpreter constructor guards; #2097 tracks its prototype metadata.
+            // #2246 tracks the interpreter prototype tail; #2097 tracks its prototype metadata.
             .Where(mode => mode == ExecutionMode.Compiled
-                || (string)row[0] is not ("strict-guards" or "prototype-tail" or "prototype-metadata" or "proxy-tail"))
+                || (string)row[0] is not ("prototype-tail" or "prototype-metadata" or "proxy-tail"))
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ParityCases))]

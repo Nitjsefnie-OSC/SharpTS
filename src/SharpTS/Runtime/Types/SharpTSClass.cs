@@ -399,7 +399,8 @@ public partial class SharpTSClass(
 
     public void SetStaticProperty(string name, object? value, bool strictMode = false)
     {
-        if (FindStaticPropertyDescriptor(name) is { HasWritable: true, Writable: false })
+        if (FindStaticPropertyDescriptor(name) is { HasWritable: true, Writable: false }
+            || !Compilation.PropertyDescriptorStore.IsWritable(this, name))
         {
             if (strictMode)
                 throw StrictModeErrors.TypeError($"Cannot assign to read only property '{name}'");

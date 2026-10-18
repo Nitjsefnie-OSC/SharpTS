@@ -229,7 +229,7 @@ public partial class TypeChecker
     {
         const string message = "An arithmetic operand must be of type 'any', 'number', 'bigint' or an enum type.";
         bool leftInvalid = !IsNumber(left) && !IsBigInt(left);
-        bool rightInvalid = !IsNumber(right) && !IsBigInt(right);
+        bool rightInvalid = right is not TypeInfo.Never && !IsNumber(right) && !IsBigInt(right);
         if (leftInvalid && rightInvalid)
             RecordTypeError(new TypeCheckException(message, line: line > 0 ? line : null, tsCode: "TS2363"));
         if (leftInvalid)
@@ -676,14 +676,14 @@ public partial class TypeChecker
             }
 
             if (IsString(varType)) return varType;
-            if (!IsNumber(varType) || !IsNumber(valueType))
+            if (!IsNumber(varType) || (valueType is not TypeInfo.Never && !IsNumber(valueType)))
                 throw new TypeCheckException("Compound assignment requires numeric operands.", tsCode: "TS2365");
             return varType;
         }
 
         // All other compound operators require numbers — same per-side TS2362/TS2363 split as the
         // binary arithmetic/bitwise operators.
-        if (!IsNumber(varType) || !IsNumber(valueType))
+        if (!IsNumber(varType) || (valueType is not TypeInfo.Never && !IsNumber(valueType)))
         {
             RecordInvalidArithmeticOperand(varType, valueType, line);
         }
@@ -787,7 +787,7 @@ public partial class TypeChecker
 
         if (objType is TypeInfo.Array arrayType)
         {
-            if (!IsNumber(arrayType.ElementType) || !IsNumber(valueType))
+            if (!IsNumber(arrayType.ElementType) || (valueType is not TypeInfo.Never && !IsNumber(valueType)))
                 throw new TypeCheckException("Compound assignment requires numeric operands.", tsCode: "TS2365");
             return arrayType.ElementType;
         }

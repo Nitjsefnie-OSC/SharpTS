@@ -782,9 +782,8 @@ public partial class TypeChecker
             RecordEditorConstructedType(instantiated);
 
             // Build substitution map for constructor parameter types
-            Dictionary<string, TypeInfo> subs = [];
-            for (int i = 0; i < genericClass.TypeParams.Count; i++)
-                subs[genericClass.TypeParams[i].Name] = typeArgs[i];
+            var subs = GenericClassSubs(genericClass,
+                ((TypeInfo.InstantiatedGeneric)instantiated).TypeArguments);
 
             // Check constructor with substituted parameter types (walk inheritance chain). When the
             // constructor is inherited from a generic-class instantiation, compose the substitutions.

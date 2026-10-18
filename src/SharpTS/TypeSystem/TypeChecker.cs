@@ -2411,6 +2411,8 @@ public partial class TypeChecker
             // here to avoid reporting each error twice, once in this pass and once in the second
             // (#468). The per-statement catch still lets collection continue past a faulty statement.
             _suppressDiagnostics++;
+            bool previousRecoveryMode = _recoveryMode;
+            _recoveryMode = previousRecoveryMode || module.IsDeclarationFile || module.IsAmbientModule;
             try
             {
                 foreach (var stmt in module.Statements)
@@ -2509,6 +2511,7 @@ public partial class TypeChecker
             }
             finally
             {
+                _recoveryMode = previousRecoveryMode;
                 _suppressDiagnostics--;
             }
 

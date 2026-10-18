@@ -20,12 +20,24 @@ public partial class TypeChecker
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<TypeInfo.Interface, TypeInfo.Interface> _completedInterfaceBindings =
         new(ReferenceEqualityComparer.Instance);
+    private sealed class AmbientClassMergeState(TypeEnvironment environment, Stmt.Class declaration,
+        TypeInfo.MutableClass owner, ClassMetadataCore ownMembers, List<TypeInfo.TypeParameter> parameters)
+    {
+        internal TypeEnvironment Environment { get; } = environment;
+        internal Stmt.Class Declaration { get; } = declaration;
+        internal TypeInfo.MutableClass Owner { get; } = owner;
+        internal ClassMetadataCore OwnMembers { get; } = ownMembers;
+        internal List<TypeInfo.TypeParameter> Parameters { get; set; } = parameters;
+        internal TypeInfo? Interface { get; set; }
+    }
+    private readonly Dictionary<(TypeEnvironment Environment, string Name), AmbientClassMergeState> _ambientClassMerges = [];
 
     private void ResetInterfaceDeclarationTracking()
     {
         _preRegisteredInterfaces.Clear();
         _completedInterfaces.Clear();
         _completedInterfaceBindings.Clear();
+        _ambientClassMerges.Clear();
     }
 
     private TypeInfo RefreshCompletedInterfaceBinding(TypeInfo type)
@@ -36,8 +48,10 @@ public partial class TypeChecker
         return type;
     }
 
-    private void DefineInterfaceBinding(string name, TypeInfo type)
+    private void DefineInterfaceBinding(string name, TypeInfo type, bool replacesPreRegistration = false)
     {
+        if (TryCompleteAmbientClassInterface(name, type, replacesPreRegistration))
+            return;
         if (_environment.GetLocalTypeBinding(name) is TypeInfo.Interface previous &&
             type is TypeInfo.Interface completed && !ReferenceEquals(previous, completed))
             _completedInterfaceBindings[previous] = completed;
@@ -73,15 +87,188 @@ public partial class TypeChecker
     private void DefineCompletedInterface(Stmt.Interface declaration, TypeInfo type)
     {
         var completed = InterfaceDeclarationsFor(_completedInterfaces, _environment);
-        if (!completed.Add(declaration))
+        if (completed.Contains(declaration))
             return;
 
         bool replacesPreRegistration =
             InterfaceDeclarationsFor(_preRegisteredInterfaces, _environment).Contains(declaration);
         if (replacesPreRegistration)
-            DefineInterfaceBinding(declaration.Name.Lexeme, type);
+            DefineInterfaceBinding(declaration.Name.Lexeme, type, replacesPreRegistration: true);
         else
             DefineOrMergeInterface(declaration.Name.Lexeme, type);
+        completed.Add(declaration);
+    }
+
+    private List<TypeInfo.TypeParameter> ReconcileAmbientClassTypeParameters(Token name,
+        List<TypeInfo.TypeParameter> parameters, TypeInfo? interfaceType)
+    {
+        var interfaceParameters = interfaceType is TypeInfo.GenericInterface generic ? generic.TypeParams : [];
+        var substitutions = parameters.Concat(interfaceParameters).DistinctBy(parameter => parameter.Name)
+            .ToDictionary(parameter => parameter.Name, parameter => (TypeInfo)new TypeInfo.TypeParameter(parameter.Name));
+        bool Identical(TypeInfo left, TypeInfo right) => TypeInfoEqualityComparer.Instance.Equals(
+            NormalizeVarDeclarationType(SubstitutePreservingSignatures(left, substitutions)),
+            NormalizeVarDeclarationType(SubstitutePreservingSignatures(right, substitutions)));
+        var merged = new List<TypeInfo.TypeParameter>();
+        for (int index = 0; index < Math.Max(parameters.Count, interfaceParameters.Count); index++)
+        {
+            TypeInfo.TypeParameter? own = index < parameters.Count ? parameters[index] : null;
+            TypeInfo.TypeParameter? incoming = index < interfaceParameters.Count ? interfaceParameters[index] : null;
+            if ((own is null || incoming is null) && (own ?? incoming)!.Default is null && interfaceType is not null ||
+                own is not null && incoming is not null && (own.Name != incoming.Name ||
+                    own.Constraint is not null && incoming.Constraint is not null &&
+                    !Identical(own.Constraint, incoming.Constraint) ||
+                    own.Default is not null && incoming.Default is not null &&
+                    !Identical(own.Default, incoming.Default)))
+                throw new TypeCheckException($"All declarations of '{name.Lexeme}' must have identical type parameters.",
+                    name.Line, tsCode: "TS2428");
+            merged.Add(own is null ? incoming! : incoming is null ? own : own with
+            {
+                Constraint = own.Constraint ?? incoming.Constraint,
+                Default = own.Default ?? incoming.Default,
+            });
+        }
+        return merged;
+    }
+
+    private bool TryCompleteAmbientClassInterface(string name, TypeInfo type, bool replacesPreRegistration)
+    {
+        if (type is not (TypeInfo.Interface or TypeInfo.GenericInterface) ||
+            !_ambientClassMerges.TryGetValue((_environment, name), out var merge))
+            return false;
+        int? currentOwner = _environment.GetLocalTypeBinding(name) switch
+        {
+            TypeInfo.Class cls => cls.Core.DeclarationId,
+            TypeInfo.GenericClass cls => cls.Core.DeclarationId,
+            _ => null,
+        };
+        if (currentOwner != merge.Owner.DeclarationId)
+            return false;
+
+        TypeInfo combined = replacesPreRegistration ? type : MergeAmbientInterfaceFacets(merge.Declaration.Name, merge.Interface, type);
+        var parameters = ReconcileAmbientClassTypeParameters(merge.Declaration.Name, merge.Parameters, combined);
+        ApplyAmbientClassInterface(merge, combined, parameters);
+        return true;
+    }
+
+    private TypeInfo MergeAmbientInterfaceFacets(Token name, TypeInfo? prior, TypeInfo incoming)
+    {
+        if (prior is null) return incoming;
+        if (prior is TypeInfo.Interface left && incoming is TypeInfo.Interface right)
+            return MergeInterfaces(left, right);
+        TypeInfo.GenericInterface GenericView(TypeInfo type) => type switch
+        {
+            TypeInfo.GenericInterface generic => generic,
+            TypeInfo.Interface direct => new(direct.Name, [], direct.Members, direct.OptionalMembers,
+                direct.StringIndexType, direct.NumberIndexType, direct.SymbolIndexType, direct.Extends,
+                direct.CallSignatures, direct.ConstructorSignatures, direct.ReadonlyMembers, direct.MethodMembers,
+                direct.ReadonlyNumberIndex),
+            _ => throw new InvalidOperationException("Only interface facets can augment an ambient class."),
+        };
+        var previous = GenericView(prior);
+        var next = GenericView(incoming);
+        var parameters = ReconcileAmbientClassTypeParameters(name, previous.TypeParams, next);
+        return MergeGenericInterfaces(previous with { TypeParams = parameters }, next with { TypeParams = parameters });
+    }
+
+    // Validate the complete overlay before changing the declaration-owned mutable class. Keeping
+    // its original surface separate prevents an earlier interface pass from becoming a class
+    // declaration or accumulating duplicate method signatures on completion/retry.
+    private void ApplyAmbientClassInterface(AmbientClassMergeState merge, TypeInfo? interfaceType,
+        List<TypeInfo.TypeParameter> parameters)
+    {
+        TypeInfo.Interface? shape = interfaceType switch
+        {
+            TypeInfo.Interface direct => direct,
+            TypeInfo.GenericInterface generic => FlattenInstantiatedInterface(new TypeInfo.InstantiatedGeneric(
+                generic, parameters.Cast<TypeInfo>().ToList())),
+            _ => null,
+        };
+        ClassMetadataCore own = merge.OwnMembers;
+        var members = new Dictionary<string, TypeInfo>(StringComparer.Ordinal);
+        foreach (var member in shape?.GetAllMembers() ?? [])
+            members.TryAdd(member.Key, member.Value);
+        var substitutions = interfaceType is TypeInfo.GenericInterface definition
+            ? definition.TypeParams.Zip(parameters).ToDictionary(pair => pair.First.Name, pair => (TypeInfo)pair.Second)
+            : new Dictionary<string, TypeInfo>();
+        TypeInfo? ProjectIndex(Func<TypeInfo.Interface, TypeInfo?> select)
+        {
+            var visited = new HashSet<TypeInfo.Interface>(ReferenceEqualityComparer.Instance);
+            TypeInfo? Visit(TypeInfo.Interface current)
+            {
+                if (!visited.Add(current)) return null;
+                if (select(current) is { } index) return SubstitutePreservingSignatures(index, substitutions);
+                foreach (var parent in current.Extends ?? [])
+                    if (Visit(parent) is { } inherited) return inherited;
+                return null;
+            }
+            return shape is null ? null : Visit(shape);
+        }
+        TypeInfo? stringIndex = ProjectIndex(candidate => candidate.StringIndexType);
+        TypeInfo? numberIndex = ProjectIndex(candidate => candidate.NumberIndexType);
+        TypeInfo? symbolIndex = ProjectIndex(candidate => candidate.SymbolIndexType);
+        var parameterIdentities = parameters.ToDictionary(parameter => parameter.Name,
+            parameter => (TypeInfo)new TypeInfo.TypeParameter(parameter.Name));
+        bool Identical(TypeInfo left, TypeInfo right) => TypeInfoEqualityComparer.Instance.Equals(
+            NormalizeVarDeclarationType(SubstitutePreservingSignatures(left, parameterIdentities)),
+            NormalizeVarDeclarationType(SubstitutePreservingSignatures(right, parameterIdentities)));
+        foreach (var (declared, inherited) in new[] { (own.StringIndexType, stringIndex),
+                     (own.NumberIndexType, numberIndex), (own.SymbolIndexType, symbolIndex) })
+            if (declared is not null && inherited is not null &&
+                !Identical(declared, inherited))
+                throw new TypeCheckException("Subsequent index signature declarations must have the same type.",
+                    merge.Declaration.Name.Line, tsCode: "TS2717");
+        foreach (var (name, member) in members)
+        {
+            TypeInfo? declared = own.FieldTypes.GetValueOrDefault(name) ?? own.Methods.GetValueOrDefault(name)
+                ?? own.Getters.GetValueOrDefault(name);
+            bool same = declared is null || (own.Methods.ContainsKey(name)
+                ? IsCompatible(declared, member) && IsCompatible(member, declared)
+                : Identical(declared, member));
+            if (!same)
+                throw new TypeCheckException($"Subsequent property declarations of '{name}' must have the same type.",
+                    merge.Declaration.Name.Line, tsCode: "TS2717");
+        }
+
+        var owner = merge.Owner;
+        owner.FieldTypes.Clear(); foreach (var member in own.FieldTypes) owner.FieldTypes.Add(member.Key, member.Value);
+        owner.Methods.Clear(); foreach (var member in own.Methods) owner.Methods.Add(member.Key, member.Value);
+        owner.FieldAccess.Clear(); foreach (var member in own.FieldAccess) owner.FieldAccess.Add(member.Key, member.Value);
+        owner.MethodAccess.Clear(); foreach (var member in own.MethodAccess) owner.MethodAccess.Add(member.Key, member.Value);
+        owner.ReadonlyFields.Clear(); owner.ReadonlyFields.UnionWith(own.ReadonlyFields);
+        owner.OrdinaryOptionalMembers.Clear(); owner.OrdinaryOptionalMembers.UnionWith(own.OrdinaryOptionalMembers ?? []);
+        owner.StringIndexType = own.StringIndexType;
+        owner.NumberIndexType = own.NumberIndexType;
+        owner.SymbolIndexType = own.SymbolIndexType;
+        var optional = shape?.GetAllOptionalMembers().ToHashSet(StringComparer.Ordinal) ?? [];
+        var readOnly = shape?.GetAllReadonlyMembers().ToHashSet(StringComparer.Ordinal) ?? [];
+        foreach (var (name, member) in members)
+        {
+            if (own.FieldTypes.ContainsKey(name) || own.Methods.ContainsKey(name) || own.Getters.ContainsKey(name))
+                continue;
+            if (shape!.IsMethodMember(name))
+            {
+                owner.Methods[name] = member;
+                owner.MethodAccess[name] = AccessModifier.Public;
+            }
+            else
+            {
+                owner.FieldTypes[name] = member;
+                owner.FieldAccess[name] = AccessModifier.Public;
+            }
+            if (optional.Contains(name)) owner.OrdinaryOptionalMembers.Add((false, name));
+            if (readOnly.Contains(name)) owner.ReadonlyFields.Add(name);
+        }
+        owner.StringIndexType ??= stringIndex;
+        owner.NumberIndexType ??= numberIndex;
+        owner.SymbolIndexType ??= symbolIndex;
+        owner.ResetFrozenCache();
+        TypeInfo.Class classType = owner.Freeze();
+        TypeInfo published = parameters.Count > 0 ? owner.FreezeGeneric(parameters) : classType;
+        merge.Environment.Define(merge.Declaration.Name.Lexeme, published);
+        merge.Environment.DefineType(merge.Declaration.Name.Lexeme, published);
+        _typeMap.SetClassType(merge.Declaration, classType);
+        merge.Parameters = parameters;
+        merge.Interface = interfaceType;
     }
 
     private static void AddCallableSignature(List<TypeInfo> signatures, TypeInfo candidate)

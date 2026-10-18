@@ -304,6 +304,69 @@ public class TypeScriptConformanceRunnerTests
             string.Join(", ", (result.ActualDiagnostics ?? []).Select(d => $"{d.TsCode}@L{d.Line}")));
     }
 
+    public const string ValidAmbientReactProps = """
+        /// <reference path="/.lib/react16.d.ts" />
+        import * as React from 'react';
+        class C extends React.Component<{ count: number }, {}> {
+            render() { const value: number = this.props.count; return null; }
+        }
+        const element = <C count={1} />;
+        """;
+
+    public const string InvalidInheritedAmbientReactProps = """
+        /// <reference path="/.lib/react16.d.ts" />
+        import * as React from 'react';
+        class C extends React.Component<{ count: number }, {}> {
+            render() { const value: string = this.props.count; return null; }
+        }
+        """;
+
+    public const string InvalidJsxAmbientReactProps = """
+        /// <reference path="/.lib/react16.d.ts" />
+        import * as React from 'react';
+        class C extends React.Component<{ count: number }, {}> { render() { return null; } }
+        const element = <C count="bad" />;
+        """;
+
+    [Theory]
+    [InlineData(ValidAmbientReactProps, null)]
+    [InlineData(InvalidInheritedAmbientReactProps, "TS2322")]
+    [InlineData(InvalidJsxAmbientReactProps, "TS2769")]
+    public void RunOne_Issue2501RealReactPropsRetainPreciseDiagnostics(string source, string? expectedCode)
+    {
+        string? root = TypeScriptConformancePaths.TryFindRoot();
+        Assert.NotNull(root);
+        Assert.True(File.Exists(Path.Combine(root, "tests", "lib", "react16.d.ts")),
+            "The pinned real React16 declaration fixture is required for this regression.");
+        string path = Path.Combine(Path.GetTempPath(), $"sharpts_ambient_react_props_{Guid.NewGuid():N}.tsx");
+        try
+        {
+            // Metadata selects JSX mode and is stripped before source diagnostic coordinates.
+            File.WriteAllText(path, "// @jsx: react\n" + source);
+            var result = new TypeScriptConformanceRunner(root).RunOne(path);
+            Assert.NotEqual(TypeScriptConformanceOutcome.HarnessError, result.Outcome);
+            Assert.NotEqual(TypeScriptConformanceOutcome.ParseError, result.Outcome);
+            Assert.NotEqual(TypeScriptConformanceOutcome.TypeCheckError, result.Outcome);
+            Assert.NotEqual(TypeScriptConformanceOutcome.Skipped, result.Outcome);
+            Assert.NotNull(result.ActualDiagnostics);
+            if (expectedCode is null)
+            {
+                Assert.Empty(result.ActualDiagnostics);
+                Assert.Equal(TypeScriptConformanceOutcome.Pass, result.Outcome);
+            }
+            else
+            {
+                var diagnostic = Assert.Single(result.ActualDiagnostics);
+                Assert.Equal(expectedCode, diagnostic.TsCode);
+                Assert.Equal(4, diagnostic.Line);
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [Theory]
     [InlineData("jsx/checkJsxChildrenProperty15.tsx")]
     [InlineData("jsx/tsxGenericAttributesType2.tsx")]

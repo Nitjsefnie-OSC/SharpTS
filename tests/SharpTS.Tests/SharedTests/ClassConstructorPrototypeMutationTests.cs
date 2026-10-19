@@ -220,10 +220,6 @@ public sealed class ClassConstructorPrototypeMutationTests
             if ((string)row[0] == "derived-descendant-live-constructor-chain")
                 continue;
 
-            // #2650: strict writes still consult readonly descriptors on the replaced parent.
-            if ((string)row[0] == "writes-follow-selected-descriptors")
-                continue;
-
             yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
     }

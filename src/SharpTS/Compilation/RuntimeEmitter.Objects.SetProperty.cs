@@ -785,6 +785,11 @@ public partial class RuntimeEmitter
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Void,
             [_types.Object, _types.String, _types.Object]);
+        objectWrite.PropertyStrict = typeBuilder.DefineMethod(
+            "SetPropertyStrict",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.Object, _types.String, _types.Object, _types.Boolean]);
     }
 
     private void EmitSetProperty(EmittedObjectWriteRuntime objectWrite, SetPropertyInputs inputs)
@@ -1264,6 +1269,24 @@ public partial class RuntimeEmitter
         // resolution, so writes become visible as reads.
         il.MarkLabel(typeSetLabel);
         {
+            // Source constructor writes share one descriptor lookup in both
+            // language modes. The strictness argument only controls whether a
+            // rejected write throws; native constructor handling stays below.
+            var nativeConstructor = il.DefineLabel();
+            il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.Type);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+            il.Emit(OpCodes.Brfalse, nativeConstructor);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Call, objectWrite.PropertyStrict);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(nativeConstructor);
+
             // Per ECMA-262 §17, constructor static "prototype"/"name"/"length"
             // are non-writable; non-strict writes silently no-op. Same for
             // Number constants (MAX_VALUE etc.) which are W:F,E:F,C:F.
@@ -2210,16 +2233,28 @@ public partial class RuntimeEmitter
         }
 
         il.MarkLabel(next);
+        var selectedPrototype = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldloc, walk);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, selectedPrototype);
+        il.Emit(OpCodes.Ldloc, selectedPrototype);
+        il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Stloc, walk);
+        var ordinaryPrototype = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, walk);
+        il.Emit(OpCodes.Brfalse, ordinaryPrototype);
+        il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ldloc, walk);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
         il.Emit(OpCodes.Brtrue, loop);
 
-        // CLR inheritance ends before the guest prototype chain.
-        il.Emit(OpCodes.Call, inputs.FunctionPrototypes.Populate);
+        // Only constructors on the live guest chain participate. Retain the
+        // source-identity probes above at user-class hops, and let the ordinary
+        // descriptor walk handle selected objects and native prototypes.
+        il.MarkLabel(ordinaryPrototype);
         EmitConstructorPrototypeSetGuard(il, inputs,
-            () => il.Emit(OpCodes.Ldsfld, inputs.FunctionPrototypes.Prototype), create, reject);
+            () => il.Emit(OpCodes.Ldloc, selectedPrototype), create, reject);
 
         il.MarkLabel(create);
         il.Emit(OpCodes.Ldarg_0);
@@ -2457,13 +2492,7 @@ public partial class RuntimeEmitter
         SetPropertyStrictInputs inputs
     )
     {
-        var method = typeBuilder.DefineMethod(
-            "SetPropertyStrict",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Void,
-            [_types.Object, _types.String, _types.Object, _types.Boolean]
-        );
-        objectWrite.PropertyStrict = method;
+        var method = (MethodBuilder)objectWrite.PropertyStrict;
 
         var il = method.GetILGenerator();
         var nullLabel = il.DefineLabel();
@@ -2652,10 +2681,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, nullLabel);
         EmitThrowTypeErrorWithName(il, inputs.Errors, "Cannot assign to read only property '", "' of class");
         il.MarkLabel(storeGenericField);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
+        // Store the resolved own field here. Reentering the sloppy property
+        // dispatcher would route this source constructor back to this helper.
+        il.Emit(OpCodes.Ldloc, genericField);
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, objectWrite.Property);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(FieldInfo), "SetValue", _types.Object, _types.Object));
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notGenericStaticField);
 

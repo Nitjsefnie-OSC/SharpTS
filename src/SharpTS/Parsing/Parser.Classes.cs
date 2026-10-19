@@ -570,16 +570,7 @@ public partial class Parser
                                     throw new Exception($"Parse Error: Parameter property '{param.Name.Lexeme}' conflicts with existing field declaration.");
                                 }
 
-                                // Synthesize field declaration (no initializer - set in constructor)
-                                fields.Add(new Stmt.Field(
-                                    param.Name,
-                                    param.Type,
-                                    null,  // No initializer
-                                    false, // Not static
-                                    param.Access ?? AccessModifier.Public,
-                                    param.IsReadonly,
-                                    false  // Not optional
-                                ));
+                                fields.Add(CreateParameterPropertyField(param));
                             }
                         }
                     }
@@ -1151,15 +1142,7 @@ public partial class Parser
                             {
                                 throw new Exception($"Parse Error: Parameter property '{param.Name.Lexeme}' conflicts with existing field declaration.");
                             }
-                            fields.Add(new Stmt.Field(
-                                param.Name,
-                                param.Type,
-                                null,
-                                false,
-                                param.Access ?? AccessModifier.Public,
-                                param.IsReadonly,
-                                false
-                            ));
+                            fields.Add(CreateParameterPropertyField(param));
                         }
                     }
                 }
@@ -1198,6 +1181,21 @@ public partial class Parser
         );
         RecordClassSyntax(expression, name, headerStart, bodyOpen.Start, ConsumedSourceEnd);
         return expression;
+    }
+
+    private static Stmt.Field CreateParameterPropertyField(Stmt.Parameter parameter)
+    {
+        string? type = parameter.Type;
+        if (parameter.IsOptional)
+        {
+            // Parameter properties receive the parameter's value type, including undefined,
+            // even with exactOptionalPropertyTypes enabled. Defaults alone do not widen it.
+            if (type is not null) type = $"({type}) | undefined";
+        }
+        return new Stmt.Field(parameter.Name, type, null,
+            Access: parameter.Access ?? AccessModifier.Public,
+            IsReadonly: parameter.IsReadonly,
+            IsOptional: parameter.IsOptional);
     }
 
     private void RecordAccessorSyntax(Stmt.Accessor accessor, Token kind, Token open, Token close, SourceSpan? body)

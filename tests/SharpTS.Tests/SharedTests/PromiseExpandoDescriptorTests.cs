@@ -117,4 +117,43 @@ public sealed class PromiseExpandoDescriptorTests
         }
         Assert.Equal("2 true false true\n3 true false false false\n3 false false false false\n", output);
     }
+
+    [Theory, ModeData]
+    public void AbsentStringDeletionSucceedsAfterIntegrityOperations(ExecutionMode mode)
+    {
+        const string source = """
+            function strictRemove(target: any, key: string): boolean {
+                "use strict";
+                return delete target[key];
+            }
+            for (const kind of ["seal", "freeze"]) {
+                const promise: any = Promise.resolve(0);
+                promise.extra = 1;
+                Object.defineProperty(promise, "locked", {
+                    value: 3, writable: false, enumerable: false, configurable: false
+                });
+                if (kind === "seal") Object.seal(promise);
+                else Object.freeze(promise);
+                console.log(kind, Reflect.deleteProperty(promise, "missing"), delete promise.missing,
+                    strictRemove(promise, "missing"));
+                console.log(Reflect.deleteProperty(promise, "then"), delete promise.then,
+                    strictRemove(promise, "then"), typeof promise.then, Object.hasOwn(promise, "then"));
+                console.log(Reflect.deleteProperty(promise, "locked"), delete promise.locked,
+                    Object.hasOwn(promise, "locked"), promise.locked);
+                try { strictRemove(promise, "locked"); }
+                catch (error) { console.log(error instanceof TypeError); }
+            }
+            """;
+        const string expected = "seal true true true\ntrue true true function false\nfalse false true 3\ntrue\nfreeze true true true\ntrue true true function false\nfalse false true 3\ntrue\n";
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            Assert.Equal(expected, output);
+        }
+        else
+        {
+            Assert.Equal(expected, TestHarness.Run(source, mode));
+        }
+    }
 }

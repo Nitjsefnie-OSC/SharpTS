@@ -70,7 +70,7 @@ public class SharpTSPromise : ITypeCategorized
     internal bool HasOwnProperty(string name) => GetOwnPropertyDescriptor(name) is not null;
 
     internal bool DeletePropertyStrict(string name, bool strictMode)
-        => _ownProperties is null || OwnProperties.DeletePropertyStrict(name, strictMode);
+        => GetOwnPropertyDescriptor(name) is null || OwnProperties.DeletePropertyStrict(name, strictMode);
 
     internal void SetOwnPropertyStrict(string name, object? value, bool strictMode)
         => OwnProperties.SetPropertyStrict(name, value, strictMode);

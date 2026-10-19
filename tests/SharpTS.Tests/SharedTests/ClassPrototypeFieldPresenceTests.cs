@@ -86,9 +86,8 @@ public sealed class ClassPrototypeFieldPresenceTests
     {
         foreach (var row in Cases())
         {
-            // Interpreter Reflect.deleteProperty does not delete class prototype properties (#2561).
-            // Interpreter class prototype writes bypass inherited descriptors.
-            if ((string)row[0] is not ("reflect-deletion" or "inherited-write-descriptors"))
+            // #2565: interpreter class prototype writes bypass inherited descriptors.
+            if ((string)row[0] is not "inherited-write-descriptors")
                 yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }

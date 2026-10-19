@@ -1116,7 +1116,7 @@ public partial class Interpreter
             SharpTSBigIntPrototype bigIntPrototype => bigIntPrototype.DeleteProperty(name),
             SharpTSSymbolPrototype symbolPrototype => symbolPrototype.DeleteProperty(name),
             SharpTSObjectPrototype objectPrototype => objectPrototype.DeleteProperty(name),
-            SharpTSClassPrototype classPrototype => classPrototype.DeleteProperty(name),
+            SharpTSClassPrototype classPrototype => DeleteClassPrototypeProperty(classPrototype, name, strictMode),
             SharpTSPromisePrototype promisePrototype => promisePrototype.DeleteProperty(name),
             SharpTSClass when name == "prototype" =>
                 DeleteNonConfigurableClassPrototype(name, strictMode),
@@ -1204,6 +1204,15 @@ public partial class Interpreter
             SharpTSFunctionPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
             _ => true
         };
+    }
+
+    private static bool DeleteClassPrototypeProperty(
+        SharpTSClassPrototype prototype, string name, bool strictMode)
+    {
+        bool deleted = prototype.DeleteProperty(name);
+        if (!deleted && strictMode)
+            throw StrictModeErrors.TypeError($"Cannot delete property '{name}' of class prototype");
+        return deleted;
     }
 
     private static bool DeleteNonConfigurableClassPrototype(

@@ -179,6 +179,8 @@ public static class ReflectBuiltIns
                         return RuntimeValue.True;
                     case SharpTSPromise promise:
                         return RuntimeValue.FromBoolean(promise.DeletePropertyStrict(propertyKey, false));
+                    case SharpTSClassPrototype prototype:
+                        return RuntimeValue.FromBoolean(prototype.DeleteProperty(propertyKey));
                     case SharpTSClass klass:
                         return RuntimeValue.FromBoolean(klass.DeleteStaticProperty(propertyKey));
                     case ISharpTSPrimitiveConstructor primitiveConstructor:

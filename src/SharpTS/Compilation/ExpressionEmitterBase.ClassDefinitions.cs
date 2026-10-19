@@ -668,14 +668,7 @@ public abstract partial class ExpressionEmitterBase
             EmitExpression(key);
             EnsureBoxed();
             if (coerceKeys)
-            {
-                var isSymbol = IL.DefineLabel();
-                IL.Emit(OpCodes.Dup);
-                IL.Emit(OpCodes.Isinst, Ctx.Runtime!.Symbols.Type);
-                IL.Emit(OpCodes.Brtrue, isSymbol);
-                IL.Emit(OpCodes.Call, Ctx.Runtime.StringCoercion.ToJsString);
-                IL.MarkLabel(isSymbol);
-            }
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.Reflect.ToPropertyKey);
             values.Add(_helpers.SpillStoreObject());
         }
         IL.Emit(OpCodes.Ldc_I4, values.Count);

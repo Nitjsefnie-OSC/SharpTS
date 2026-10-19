@@ -507,22 +507,9 @@ public partial class ILCompiler
 
     private void EmitComputedPropertyKey(ILEmitter emitter, ILGenerator il, Expr key)
     {
-        var keyLocal = il.DeclareLocal(_types.Object);
-        var isSymbol = il.DefineLabel();
-
         emitter.EmitExpression(key);
         emitter.EmitBoxIfNeeded(key);
-        il.Emit(OpCodes.Stloc, keyLocal);
-
-        il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Isinst, _runtime.Symbols.Type);
-        il.Emit(OpCodes.Brtrue, isSymbol);
-        il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Call, _runtime.StringCoercion.ToJsString);
-        il.Emit(OpCodes.Stloc, keyLocal);
-
-        il.MarkLabel(isSymbol);
-        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Call, _runtime.Reflect.ToPropertyKey);
     }
 
     private void EmitMethodInfoLiteral(ILGenerator il, MethodBuilder method, TypeBuilder declaringType)

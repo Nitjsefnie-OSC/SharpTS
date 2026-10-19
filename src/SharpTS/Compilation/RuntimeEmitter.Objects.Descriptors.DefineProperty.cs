@@ -28,6 +28,12 @@ public partial class RuntimeEmitter
         EmittedDescriptorStorageRuntime DescriptorStorage
     );
 
+    private readonly record struct DefinePropertyArrayIndexLengthValidationInputs(
+        EmittedArrayStorageRuntime ArrayStorage,
+        EmittedDescriptorStorageRuntime DescriptorStorage,
+        EmittedErrorRuntime Errors
+    );
+
     private readonly record struct DefinePropertyExistingConstructorInputs(
         EmittedDescriptorStorageRuntime DescriptorStorage,
         MethodBuilder GetOwnPropertyDescriptor,
@@ -625,6 +631,51 @@ public partial class RuntimeEmitter
         MergeIfMissing("configurable", descriptorStorage.DescriptorConfigurable);
 
         il.MarkLabel(skipMergeLabel);
+    }
+
+    // Requires and preserves an empty IL stack on fallthrough. Owns scratch locals and internal labels.
+    // Runs after descriptor conversion and before storing attributes or growing array storage.
+    private void EmitDefinePropertyArrayIndexLengthValidation(
+        ILGenerator il,
+        DefinePropertyArrayIndexLengthValidationInputs inputs,
+        LocalBuilder propNameLocal
+    )
+    {
+        // Accessor-only definitions also need the independent length invariant.
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.ArrayStorage.Type);
+        il.Emit(OpCodes.Brfalse, done);
+
+        var index = il.DeclareLocal(_types.UInt32);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldloca, index);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.UInt32, "TryParse", _types.String, _types.UInt32.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, index);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Conv_U4);
+        il.Emit(OpCodes.Beq, done); // 2^32-1 is an ordinary property name.
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldloca, index);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.UInt32, "ToString"));
+        il.Emit(OpCodes.Call, _types.GetMethod(
+            _types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, done);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, inputs.ArrayStorage.Type);
+        il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.LongLengthGetter);
+        il.Emit(OpCodes.Ldloc, index);
+        il.Emit(OpCodes.Conv_U8);
+        il.Emit(OpCodes.Bgt_Un, done);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.IsWritable);
+        il.Emit(OpCodes.Brtrue, done);
+        GuestErrorEmitter.ThrowError(il, inputs.Errors.CreateException, inputs.Errors.TypeErrorConstructor,
+            "Cannot define array index beyond non-writable length");
+        il.MarkLabel(done);
     }
 
     // Requires and preserves an empty IL stack on fallthrough. Owns scratch locals and internal labels.

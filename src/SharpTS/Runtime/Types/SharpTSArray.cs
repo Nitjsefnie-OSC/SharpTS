@@ -1524,6 +1524,10 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         if (PropertySemantics.TryGetArrayIndex(name, out uint uindex))
         {
             long index = uindex;
+            // Array [[DefineOwnProperty]] cannot create an index that would
+            // grow a non-writable length, including an accessor-only index.
+            if (index >= _length && !_lengthWritable)
+                return false;
             bool hasExisting = HasIndex(index);
             bool existingIsAccessor = TryGetIndexAccessor(index, out var existingGetter, out var existingSetter);
             bool descriptorIsAccessor = descriptor.HasGet || descriptor.HasSet;

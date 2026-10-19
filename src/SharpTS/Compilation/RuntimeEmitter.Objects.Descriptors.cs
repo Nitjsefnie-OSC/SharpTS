@@ -738,6 +738,13 @@ public partial class RuntimeEmitter
             newIsDataOuter
         );
 
+        EmitDefinePropertyArrayIndexLengthValidation(
+            il,
+            new DefinePropertyArrayIndexLengthValidationInputs(
+                inputs.ArrayStorage, inputs.DescriptorStorage, inputs.Errors),
+            propNameLocal
+        );
+
         // Call $PropertyDescriptorStore.DefineProperty(obj, propName, descriptor)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, propNameLocal);

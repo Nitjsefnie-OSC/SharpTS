@@ -873,6 +873,18 @@ public partial class Interpreter
                 (symbolFields ??= [])[symbol] = GetSymbolPropertyValue(spreadObj, symbol);
             }
         }
+        else if (spreadValue is SharpTSClassPrototype prototype)
+        {
+            foreach (var key in ObjectBuiltIns.GetClassPrototypeOwnKeys(prototype))
+            {
+                if (ObjectBuiltIns.GetClassPrototypeOwnDescriptor(prototype, key)?.Enumerable != true)
+                    continue;
+                if (key is SharpTSSymbol symbol)
+                    (symbolFields ??= [])[symbol] = GetSymbolPropertyValue(prototype, symbol);
+                else
+                    stringFields[(string)key] = GetPropertyValue(prototype, (string)key);
+            }
+        }
         else if (spreadValue is SharpTSInstance inst)
         {
             var stringKeys = inst.GetFieldNames().ToList();

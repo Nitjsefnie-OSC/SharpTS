@@ -60,7 +60,10 @@ public sealed class EmittedObjectDescriptorRuntimeTests
         var owners = new List<EmittedObjectDescriptorRuntime>();
         foreach (bool optional in new[] { false, true, false, true })
         {
-            var builder = NewAssembly(); var runtime = emitter.EmitAll(builder.DefineDynamicModule("main"), Detect(optional));
+            var builder = NewAssembly(); var features = Detect(optional);
+            // This probe invokes the canonical descriptor APIs directly.
+            features.UsesObjectDefinitionRuntime = true;
+            var runtime = emitter.EmitAll(builder.DefineDynamicModule("main"), features);
             var owner = runtime.ObjectDescriptors; Assert.DoesNotContain(owner, owners); owners.Add(owner); AssertFrozen(owner);
             foreach (var property in Handles)
                 Assert.Same(builder, Assert.IsAssignableFrom<MemberInfo>(property.GetValue(owner)).Module.Assembly);

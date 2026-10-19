@@ -7,6 +7,14 @@ namespace SharpTS.Compilation;
 
 public partial class RuntimeEmitter
 {
+    // Evaluate internal dependencies at emission time: CommonJS can be enabled
+    // after feature detection, and hosted consumers can supply callable values.
+    private bool NeedsObjectDefinitionBodies => _emitHosted
+        || _features.UsesObjectDefinitionRuntime
+        || _features.UsesUserClasses || _features.UsesJSON || _features.UsesReflect
+        || _features.UsesProxy || _features.UsesCjsRequire || _features.UsesDynamicImport
+        || _features.UsesVm || _features.UsesSourceExecution;
+
     private readonly record struct StoredPropertyDescriptorResultInputs(
         EmittedDescriptorStorageRuntime DescriptorStorage,
         FieldInfo UndefinedInstance
@@ -551,6 +559,14 @@ public partial class RuntimeEmitter
         descriptors.DefineProperty = method;
 
         var il = method.GetILGenerator();
+        if (!NeedsObjectDefinitionBodies)
+        {
+            // No source or internal caller can select this entrypoint. Preserve
+            // its required metadata handle without the unused descriptor body.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ret);
+            return;
+        }
 
         // Emit standalone property descriptor creation and registration
         // This avoids any runtime dependency on SharpTS.dll
@@ -1896,6 +1912,12 @@ public partial class RuntimeEmitter
         descriptors.DefineProperties = method;
 
         var il = method.GetILGenerator();
+        if (!NeedsObjectDefinitionBodies)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ret);
+            return;
+        }
 
         // ECMA-262 §20.1.2.3 step 1: If Type(O) is not Object, throw TypeError.
         // Covers null/undefined/primitives. 15.2.3.7-1-*.js verify.

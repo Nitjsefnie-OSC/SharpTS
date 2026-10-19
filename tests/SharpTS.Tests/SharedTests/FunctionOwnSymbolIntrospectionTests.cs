@@ -7,6 +7,23 @@ public sealed class FunctionOwnSymbolIntrospectionTests
 {
     public static IEnumerable<object[]> Cases()
     {
+        yield return ["readonly-nonconfigurable-data-2289", """
+            function F() {}
+            function write(target: any, key: symbol) { 'use strict'; target[key] = 3; }
+            function remove(target: any, key: symbol) { 'use strict'; return delete target[key]; }
+            const functions: any[] = [F, function() {}, () => {}];
+            for (const target of functions) {
+                const key = Symbol('slot');
+                Object.defineProperty(target, key, {
+                    value: 1, writable: false, enumerable: true, configurable: false
+                });
+                console.log(target[key], Object.hasOwn(target, key), Object.getOwnPropertyDescriptor(target, key) === undefined);
+                target[key] = 2;
+                console.log(target[key], delete target[key], target[key]);
+                try { write(target, key); } catch (error) { console.log(error instanceof TypeError); }
+                try { remove(target, key); } catch (error) { console.log(error instanceof TypeError); }
+            }
+            """, string.Concat(Enumerable.Repeat("1 true false\n1 false 1\ntrue\ntrue\n", 3))];
         yield return ["original", """
             function F() {}
             const functions: any[] = [F, function Expression() {}, () => {}];

@@ -109,7 +109,7 @@ public partial class Parser
 
     // ============== DESTRUCTURING DECLARATIONS ==============
 
-    private Stmt DestructureArrayDeclaration()
+    private Stmt DestructureArrayDeclaration(bool isVar)
     {
         Consume(TokenType.LEFT_BRACKET, "Expect '[' for array destructuring.");
         ArrayPattern pattern = ParseArrayPattern();
@@ -122,10 +122,10 @@ public partial class Parser
         Expr initializer = Expression();
         ConsumeSemicolon("Expect ';' after variable declaration.");
 
-        return DesugarArrayPattern(pattern, initializer);
+        return DesugarArrayPattern(pattern, initializer, isVar: isVar);
     }
 
-    private Stmt DestructureObjectDeclaration()
+    private Stmt DestructureObjectDeclaration(bool isVar)
     {
         Consume(TokenType.LEFT_BRACE, "Expect '{' for object destructuring.");
         ObjectPattern pattern = ParseObjectPattern();
@@ -138,7 +138,7 @@ public partial class Parser
         Expr initializer = Expression();
         ConsumeSemicolon("Expect ';' after variable declaration.");
 
-        return DesugarObjectPattern(pattern, initializer);
+        return DesugarObjectPattern(pattern, initializer, isVar: isVar);
     }
 
     // ============== DESUGARING METHODS ==============
@@ -147,7 +147,8 @@ public partial class Parser
     // property reads must tolerate a missing property (typed as `undefined`) rather than report
     // TS2339. Array index reads are already OOB-tolerant in the checker, so the flag only needs
     // to ride through to nested object patterns. #796
-    private Stmt DesugarArrayPattern(ArrayPattern pattern, Expr initializer, bool underDefault = false)
+    // isVar follows source bindings through nested/rest patterns; implementation temps stay lexical.
+    private Stmt DesugarArrayPattern(ArrayPattern pattern, Expr initializer, bool underDefault = false, bool isVar = false)
     {
         List<Stmt> statements = [];
 
@@ -190,7 +191,7 @@ public partial class Parser
                     null,
                     [new Expr.Literal((double)index)]
                 );
-                statements.Add(new Stmt.Var(rest.Name, null, sliceCall));
+                statements.Add(new Stmt.Var(rest.Name, null, sliceCall, IsVar: isVar));
                 break; // Rest must be last
             }
 
@@ -207,15 +208,15 @@ public partial class Parser
                 {
                     accessExpr = DefaultIfUndefined(accessExpr, id.DefaultValue, statements, pattern.Line);
                 }
-                statements.Add(new Stmt.Var(id.Name, null, accessExpr));
+                statements.Add(new Stmt.Var(id.Name, null, accessExpr, IsVar: isVar));
             }
             else if (element.Pattern is ArrayPattern nestedArray)
             {
-                statements.Add(DesugarArrayPattern(nestedArray, accessExpr, underDefault));
+                statements.Add(DesugarArrayPattern(nestedArray, accessExpr, underDefault, isVar));
             }
             else if (element.Pattern is ObjectPattern nestedObj)
             {
-                statements.Add(DesugarObjectPattern(nestedObj, accessExpr, underDefault));
+                statements.Add(DesugarObjectPattern(nestedObj, accessExpr, underDefault, isVar));
             }
 
             index++;
@@ -226,7 +227,7 @@ public partial class Parser
 
     // underDefault: see DesugarArrayPattern. A property whose own value carries a default also
     // makes its read (and any nested pattern beneath it) tolerant. #796
-    private Stmt DesugarObjectPattern(ObjectPattern pattern, Expr initializer, bool underDefault = false)
+    private Stmt DesugarObjectPattern(ObjectPattern pattern, Expr initializer, bool underDefault = false, bool isVar = false)
     {
         List<Stmt> statements = [];
         List<string> usedKeys = [];
@@ -251,7 +252,7 @@ public partial class Parser
                     null,
                     [new Expr.Variable(temp), excludeKeysExpr]
                 );
-                statements.Add(new Stmt.Var(rest.Name, null, restCall));
+                statements.Add(new Stmt.Var(rest.Name, null, restCall, IsVar: isVar));
                 break; // Rest must be last
             }
 
@@ -272,15 +273,15 @@ public partial class Parser
                 {
                     accessExpr = DefaultIfUndefined(accessExpr, defaultVal, statements, pattern.Line);
                 }
-                statements.Add(new Stmt.Var(id.Name, null, accessExpr));
+                statements.Add(new Stmt.Var(id.Name, null, accessExpr, IsVar: isVar));
             }
             else if (prop.Value is ArrayPattern nestedArray)
             {
-                statements.Add(DesugarArrayPattern(nestedArray, accessExpr, propDefaulted));
+                statements.Add(DesugarArrayPattern(nestedArray, accessExpr, propDefaulted, isVar));
             }
             else if (prop.Value is ObjectPattern nestedObj)
             {
-                statements.Add(DesugarObjectPattern(nestedObj, accessExpr, propDefaulted));
+                statements.Add(DesugarObjectPattern(nestedObj, accessExpr, propDefaulted, isVar));
             }
         }
 

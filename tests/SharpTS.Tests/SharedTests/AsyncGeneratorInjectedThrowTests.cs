@@ -46,16 +46,13 @@ public sealed class AsyncGeneratorInjectedThrowTests
             const error:any={tag:8};async function* values(){console.log("body");yield 1;}
             async function run(){const g=values();try{await g.throw(error);}catch(e){console.log(e===error);}const last=await g.next();console.log(last.value,last.done);try{await g.throw(error);}catch(e){console.log(e===error);}}run();
             """, "true\nundefined true\ntrue\n" };
-    }
-
-    public static IEnumerable<object[]> CompiledCases()
-    {
-        foreach (var row in Cases()) yield return row;
         yield return new object[] { "next-return-controls", """
             async function* values(){try{const sent:any=yield 1;yield sent;}finally{console.log("closed");}return 0;}
             async function run(){const g=values();console.log((await g.next()).value);const sent=await g.next(7);console.log(sent.value,sent.done);const last=await g.return(9);console.log(last.value,last.done);console.log((await g.next()).done);}run();
             """, "1\n7 false\nclosed\n9 true\ntrue\n" };
     }
+
+    public static IEnumerable<object[]> CompiledCases() => Cases();
 
     public static IEnumerable<object[]> IndependentCases()
     {
@@ -67,7 +64,7 @@ public sealed class AsyncGeneratorInjectedThrowTests
 
     public static IEnumerable<object[]> ParityCases() => Cases().Select(row => row[1..]);
 
-    public static IEnumerable<object[]> CompiledParityCases() => CompiledCases().Select(row => row[1..]);
+    public static IEnumerable<object[]> CompiledParityCases() => Cases().Select(row => row[1..]);
 
     [Theory, MemberData(nameof(ParityCases))]
     public void ThrowResumesCatchFinallyAndSettlesWithStepOrOriginalError(string source, string expected)

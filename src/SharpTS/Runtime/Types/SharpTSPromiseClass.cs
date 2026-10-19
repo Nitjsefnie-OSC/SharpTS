@@ -128,12 +128,8 @@ public class SharpTSPromiseClass : SharpTSClass
     public override object? Call(Interpreter interpreter, List<object?> arguments)
         => Construct(interpreter, arguments, this);
 
-    internal override object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
-    {
-        var capability = new TaskCompletionSource<object?>();
-        var instance = new SharpTSPromiseSubclassInstance(this, capability);
-        return ExecuteConstructorLevel(interpreter, instance, arguments, newTarget);
-    }
+    internal override object AllocateInstance(Interpreter interpreter)
+        => new SharpTSPromiseSubclassInstance(this, new TaskCompletionSource<object?>());
 
     protected override bool TryExecuteNativeConstructor(
         Interpreter interpreter, object allocation, List<object?> arguments)

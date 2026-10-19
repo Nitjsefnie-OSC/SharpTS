@@ -17,7 +17,7 @@ namespace SharpTS.Runtime.Types;
 /// Stores class metadata: name, superclass reference, instance methods, static methods,
 /// static properties, and getter/setter accessors. Implements <see cref="ISharpTSCallable"/>
 /// so that calling a class (e.g., <c>new MyClass()</c>) constructs a new <see cref="SharpTSInstance"/>.
-/// Method and property lookups walk the inheritance chain via <see cref="Superclass"/>.
+/// Instance heritage is retained separately from the constructor's mutable prototype.
 /// </remarks>
 /// <seealso cref="SharpTSInstance"/>
 /// <seealso cref="SharpTSFunction"/>
@@ -45,10 +45,33 @@ public partial class SharpTSClass(
 
     public string Name { get; } = name;
     public SharpTSClass? Superclass { get; } = superclass;
+    internal bool HasExplicitPrototype { get; private set; }
+    internal object? ExplicitPrototype { get; private set; }
+
+    internal void SetExplicitPrototype(object? prototype)
+    {
+        ExplicitPrototype = prototype;
+        HasExplicitPrototype = true;
+    }
+
+    internal bool CanReuseSuperAllocation(object? parent)
+        => ReferenceEquals(parent, Superclass)
+            || parent is SharpTSArrayGlobal && ReferenceEquals(Superclass, SharpTSArrayClass.ArrayBase)
+            || parent is SharpTSBuiltInConstructor { Name: BuiltInNames.Promise }
+                && ReferenceEquals(Superclass, SharpTSPromiseClass.PromiseBase);
+
     public bool IsAbstract { get; } = isAbstract;
     internal RuntimeEnvironment? InitializerEnvironment { get; set; }
     internal virtual bool RequiresNew => true;
     internal IReadOnlyList<Stmt.Field>? OrderedInstanceFields { get; set; }
+    // Host-created classes have no source-order seed. Capture their own member
+    // names before the lookup dictionaries are frozen; guest definitions replace
+    // this fallback with their interleaved method/accessor order.
+    internal IReadOnlyList<string> OwnInstancePropertyNames { get; } = methods.Keys
+        .Concat(getters?.Keys.AsEnumerable() ?? [])
+        .Concat(setters?.Keys.AsEnumerable() ?? [])
+        .Concat(instanceAutoAccessors?.Select(accessor => accessor.Name.Lexeme) ?? [])
+        .Distinct(StringComparer.Ordinal).ToArray();
     private readonly FrozenDictionary<string, ISharpTSCallable> _methods = methods.ToFrozenDictionary();
     private readonly FrozenDictionary<string, ISharpTSCallable> _staticMethods = staticMethods.ToFrozenDictionary();
     private readonly Dictionary<string, object?> _staticProperties = staticProperties;
@@ -79,8 +102,8 @@ public partial class SharpTSClass(
     public SharpTSClassPrototype Prototype => _prototype ??= new SharpTSClassPrototype(this);
 
     // Cached instance lookups remain valid until a prototype's parent changes.
-    // Constructor inheritance is fixed, so it can conservatively detect any
-    // modified home along the original instance chain without altering statics.
+    // The original instance heritage remains fixed when constructor prototypes
+    // change, so this only tracks mutations to the instance prototype chain.
     internal bool HasModifiedInstancePrototypeChain
         => _prototype?.HasExplicitPrototype == true
             || Superclass?.HasModifiedInstancePrototypeChain == true;
@@ -124,19 +147,25 @@ public partial class SharpTSClass(
         => Construct(interpreter, arguments, this);
 
     internal virtual object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
+        => ExecuteConstructorLevel(interpreter, AllocateInstance(interpreter), arguments, newTarget);
+
+    internal virtual object AllocateInstance(Interpreter interpreter)
     {
         SharpTSInstance instance = new(this);
         instance.SetInterpreter(interpreter);
-        return ExecuteConstructorLevel(interpreter, instance, arguments, newTarget);
+        return instance;
     }
 
     internal object? ExecuteConstructorLevel(
-        Interpreter interpreter, object allocation, List<object?> arguments, object? newTarget,
-        bool retryingFailedSuper = false)
+        Interpreter interpreter, object allocation, List<object?> arguments, object? newTarget)
     {
+        if (ReferenceEquals(this, SharpTSArrayClass.ArrayBase)
+            && allocation is SharpTSArraySubclassInstance array
+            && !ReferenceEquals(newTarget, array.Klass))
+            array.SetExplicitPrototype(interpreter.GetConstructorPrototype(newTarget));
         if (TryExecuteNativeConstructor(interpreter, allocation, arguments)) return allocation;
 
-        var frame = new ClassConstructionFrame(this, allocation, newTarget, retryingFailedSuper);
+        var frame = new ClassConstructionFrame(this, allocation, newTarget);
         var constructor = FindOwnMethod("constructor");
         if (Superclass is null)
         {
@@ -158,13 +187,30 @@ public partial class SharpTSClass(
             // An implicit derived constructor is still a class level: forward
             // first, then install only this owner's elements, preserving the
             // ancestor completion selected by existing constructor-return rules.
-            var parentResult = Superclass.ExecuteConstructorLevel(
-                interpreter, allocation, arguments, newTarget, retryingFailedSuper);
+            object? parent = HasExplicitPrototype ? ObjectBuiltIns.PrototypeOf(interpreter, this) : Superclass;
+            var parentResult = ExecuteSuperConstructor(
+                interpreter, parent, allocation, arguments, newTarget, CanReuseSuperAllocation(parent));
             return frame.CompleteSuper(interpreter, parentResult);
         }
 
         return ResolveOwnConstructorReturn(
             InvokeConstructorBody(interpreter, constructor, allocation, arguments, newTarget, frame), frame);
+    }
+
+    internal static object? ExecuteSuperConstructor(
+        Interpreter interpreter, object? parent, object allocation, List<object?> arguments, object? newTarget,
+        bool reuseAllocation)
+    {
+        // A changed parent can select a different native backing (or an ordinary
+        // object), so its own [[Construct]] must choose the allocation.
+        if (parent is SharpTSArrayGlobal)
+            parent = SharpTSArrayClass.ArrayBase;
+        if (reuseAllocation && parent is SharpTSBuiltInConstructor { Name: BuiltInNames.Promise })
+            parent = SharpTSPromiseClass.PromiseBase;
+        if (!reuseAllocation) return interpreter.Construct(parent, arguments, newTarget);
+        return parent is SharpTSClass klass
+            ? klass.ExecuteConstructorLevel(interpreter, allocation, arguments, newTarget)
+            : interpreter.Construct(parent, arguments, newTarget);
     }
 
     // Built-in-backed bridge roots initialize the existing native allocation;
@@ -291,15 +337,11 @@ public partial class SharpTSClass(
         }
     }
 
-    internal void InitializeOwnInstanceElements(
-        Interpreter interpreter, object receiver, bool retryingFailedSuper = false)
+    internal void InitializeOwnInstanceElements(Interpreter interpreter, object receiver)
     {
         Dictionary<string, object?>? privateFields = null;
         if (_privateMethods.Count != 0 || _instancePrivateFields.Count != 0)
         {
-            // Retry erasure is allowed only for the original allocation by the
-            // invocation frame. An external selected object's existing brand stays.
-            if (retryingFailedSuper) _privateFieldStorage.Remove(receiver);
             if (!_privateFieldStorage.TryGetValue(receiver, out privateFields))
             {
                 privateFields = [];
@@ -326,7 +368,7 @@ public partial class SharpTSClass(
                 ObjectBuiltIns.CreateDataPropertyOrThrow(interpreter, receiver, key, value);
             }
         }
-        InitializeOwnAutoAccessors(interpreter, receiver, retryingFailedSuper);
+        InitializeOwnAutoAccessors(interpreter, receiver);
     }
 
     internal ISharpTSCallable? FindOwnMethod(string name)
@@ -399,7 +441,8 @@ public partial class SharpTSClass(
 
     public void SetStaticProperty(string name, object? value, bool strictMode = false)
     {
-        if (FindStaticPropertyDescriptor(name) is { HasWritable: true, Writable: false })
+        if (GetOwnStaticPropertyDescriptor(name) is { HasWritable: true, Writable: false }
+            || !Compilation.PropertyDescriptorStore.IsWritable(this, name))
         {
             if (strictMode)
                 throw StrictModeErrors.TypeError($"Cannot assign to read only property '{name}'");
@@ -418,30 +461,38 @@ public partial class SharpTSClass(
             _staticPropertyObject.SetPropertyStrict(name, value, strictMode);
         else
             _staticProperties[name] = value;
+        if (HasOwnStaticMember(name)) RecordOwnStaticKey(name);
     }
 
     internal void InitializeStaticProperty(string name, object? value)
     {
-        // Ordered field initialization is a definition: rejected own creation
-        // throws even though the shared storage path retains its existing policy.
-        if (!HasOwnStaticMember(name) && !Compilation.PropertyDescriptorStore.IsExtensible(this))
-            throw StrictModeErrors.TypeError($"Cannot define property '{name}' on a non-extensible object");
-        SetStaticProperty(name, value);
+        // Field definitions replace configurable intrinsic metadata instead of
+        // assigning through its read-only data descriptor.
+        if (!DefineStaticProperty(name, new SharpTSPropertyDescriptor(value,
+                writable: true, enumerable: true, configurable: true) { HasValue = true }))
+            throw StrictModeErrors.TypeError($"Cannot define property '{name}' on class constructor");
     }
 
     internal SharpTSPropertyDescriptor? GetOwnStaticPropertyDescriptor(string name)
     {
         MaterializeStaticAccessors();
-        return name == "prototype"
-            ? new SharpTSPropertyDescriptor(Prototype, writable: false, enumerable: false, configurable: false)
-                { HasValue = true }
-            : _staticPropertyObject?.GetOwnPropertyDescriptor(name)
-            ?? (_staticProperties.TryGetValue(name, out var value)
-                ? new SharpTSPropertyDescriptor(value, writable: true, enumerable: true, configurable: true)
-                    { HasValue = true }
-                : !_deletedStaticMethods.Contains(name) && _staticMethods.TryGetValue(name, out var method)
-                    ? SharpTSPropertyDescriptor.ForMethod(method)
-                    : null);
+        if (name == "prototype")
+            return new SharpTSPropertyDescriptor(Prototype, writable: false, enumerable: false, configurable: false)
+                { HasValue = true };
+        if (_staticPropertyObject?.GetOwnPropertyDescriptor(name) is { } descriptor)
+            return descriptor;
+        if (_staticProperties.TryGetValue(name, out var value))
+            return new SharpTSPropertyDescriptor(value, writable: true, enumerable: true, configurable: true)
+                { HasValue = true };
+        if (_deletedStaticMethods.Contains(name)) return null;
+        if (_staticMethods.TryGetValue(name, out var method))
+            return SharpTSPropertyDescriptor.ForMethod(method);
+        // Keep intrinsic metadata virtual until a definition or integrity
+        // operation needs ordinary storage. Tombstones prevent resurrection.
+        return name is "name" or "length" && !_staticAutoAccessorStorage.ContainsKey(name)
+            ? new SharpTSPropertyDescriptor(name == "name" ? Name : (object)(double)Arity(),
+                writable: false, enumerable: false, configurable: true) { HasValue = true }
+            : null;
     }
 
     internal SharpTSPropertyDescriptor? FindStaticPropertyDescriptor(string name)
@@ -453,6 +504,7 @@ public partial class SharpTSClass(
 
     internal bool HasOwnStaticMember(string name)
         => name == "prototype"
+            || name is "name" or "length" && !_deletedStaticMethods.Contains(name)
             || _staticProperties.ContainsKey(name)
             || _staticPropertyObject?.GetOwnPropertyDescriptor(name) is not null
             || !_deletedStaticMethods.Contains(name) && _staticMethods.ContainsKey(name)
@@ -462,13 +514,14 @@ public partial class SharpTSClass(
     internal bool DeleteStaticProperty(string name)
     {
         if (name == "prototype") return false;
-        MaterializeStaticAccessors();
+        if (GetOwnStaticPropertyDescriptor(name) is null) return true;
         if (_staticPropertyObject is not null && !_staticPropertyObject.DeleteProperty(name))
             return false;
         _staticProperties.Remove(name);
-        if (_staticMethods.ContainsKey(name))
+        if (_staticMethods.ContainsKey(name) || name is "name" or "length")
             _deletedStaticMethods.Add(name);
         _staticMethodCache.TryRemove(name, out _);
+        _ownStaticPropertyOrder.Remove(name);
         return true;
     }
 
@@ -483,12 +536,14 @@ public partial class SharpTSClass(
                 && !(descriptor.HasConfigurable && descriptor.Configurable)
                 && (!descriptor.HasValue || PropertySemantics.SameValue(descriptor.Value, Prototype));
         MaterializeStaticAccessors();
-        _staticPropertyObject ??= new SharpTSObject(_staticProperties);
-        if (!_staticPropertyObject.DefineProperty(name, descriptor))
+        if (!HasOwnStaticMember(name) && !Compilation.PropertyDescriptorStore.IsExtensible(this))
+            return false;
+        if (!MaterializeOwnStaticProperty(name).DefineProperty(name, descriptor))
             return false;
         if (_staticMethods.ContainsKey(name))
             _deletedStaticMethods.Add(name);
         _staticMethodCache.TryRemove(name, out _);
+        RecordOwnStaticKey(name);
         return true;
     }
 
@@ -511,15 +566,16 @@ public partial class SharpTSClass(
         }
         // Assignment changes a method's value without changing its attributes.
         if (_staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol) is null
-            && _staticSymbolMethods?.TryGetValue(symbol, out var method) == true)
-            (_staticSymbolAccessorObject ??= new SharpTSObject([])).DefineProperty(
-                symbol, SharpTSPropertyDescriptor.ForMethod(method));
+            && _staticSymbolMethods?.ContainsKey(symbol) == true)
+            MaterializeOwnStaticProperty(symbol);
         if (_staticSymbolAccessorObject?.GetOwnPropertyDescriptor(symbol) is not null)
         {
             _staticSymbolAccessorObject.SetBySymbol(symbol, value);
+            RecordOwnStaticKey(symbol);
             return;
         }
         (_staticSymbolProperties ??= [])[symbol] = value;
+        RecordOwnStaticKey(symbol);
     }
 
     /// <summary>
@@ -567,7 +623,10 @@ public partial class SharpTSClass(
         }
         var descriptor = OwnSymbolAccessorDescriptor(symbol, isStatic);
         if (isStatic)
+        {
             (_staticSymbolAccessorObject ??= new SharpTSObject([])).DefineProperty(symbol, descriptor!);
+            RecordOwnStaticKey(symbol);
+        }
         else
             _prototype?.DefineDeclaredSymbolAccessor(symbol, descriptor!);
     }
@@ -600,7 +659,11 @@ public partial class SharpTSClass(
         string name = symbol.Description is { } description ? $"[{description}]" : "";
         SetComputedMethodName(func, name);
         BindPrivateMemberOwner(func);
-        if (isStatic) (_staticSymbolMethods ??= [])[symbol] = func;
+        if (isStatic)
+        {
+            (_staticSymbolMethods ??= [])[symbol] = func;
+            RecordOwnStaticKey(symbol);
+        }
         else
         {
             (_symbolMethods ??= [])[symbol] = func;
@@ -616,7 +679,7 @@ public partial class SharpTSClass(
                 function.DefineProperty("name", new SharpTSPropertyDescriptor(value: name, configurable: true));
                 break;
             case SharpTSAsyncFunction function:
-                function.SetProperty("name", name);
+                function.DefineProperty("name", new SharpTSPropertyDescriptor(value: name, configurable: true));
                 break;
             case SharpTSGeneratorFunction function:
                 function.ComputedName = name;
@@ -861,14 +924,12 @@ public partial class SharpTSClass(
         InitializeOwnAutoAccessors(interpreter, instance);
     }
 
-    private void InitializeOwnAutoAccessors(
-        Interpreter interpreter, object instance, bool retryingFailedSuper = false)
+    private void InitializeOwnAutoAccessors(Interpreter interpreter, object instance)
     {
         // Then initialize this class's auto-accessors
         if (_instanceAutoAccessors.Count == 0)
             return;
 
-        if (retryingFailedSuper) _autoAccessorStorage.Remove(instance);
         var storage = _autoAccessorStorage.GetValue(instance, static _ => []);
         foreach (var autoAccessor in _instanceAutoAccessors)
         {
@@ -963,6 +1024,8 @@ public partial class SharpTSClass(
         return _staticAutoAccessorStorage.ContainsKey(name) ||
                (Superclass?.HasStaticAutoAccessor(name) ?? false);
     }
+
+    internal bool HasOwnStaticAutoAccessor(string name) => _staticAutoAccessorStorage.ContainsKey(name);
 
     #endregion
 

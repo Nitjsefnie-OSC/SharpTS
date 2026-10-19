@@ -336,17 +336,18 @@ public static class NumberBuiltIns
 
         if (radix < 2 || radix > 36) return double.NaN;
 
-        try
+        BigInteger magnitude = BigInteger.Zero;
+        int index = startIndex;
+        for (; index < str.Length; index++)
         {
-            var numPart = str.Substring(startIndex);
-            var validDigits = GetValidDigits(numPart, radix);
-            if (string.IsNullOrEmpty(validDigits)) return double.NaN;
-            return sign * (double)Convert.ToUInt64(validDigits, radix);
+            int digit = GetDigitValue(str[index]);
+            if (digit < 0 || digit >= radix) break;
+            magnitude = magnitude * radix + digit;
         }
-        catch
-        {
-            return double.NaN;
-        }
+        if (index == startIndex) return double.NaN;
+        // Round once after scanning, without a UInt64 limit or intermediate
+        // floating-point rounding. Applying the sign last preserves -0.
+        return sign * BigIntToNumber(magnitude);
     }
 
     /// <summary>
@@ -468,20 +469,6 @@ public static class NumberBuiltIns
         if (double.TryParse(validPart, NumberStyles.Float, CultureInfo.InvariantCulture, out double result))
             return result;
         return double.NaN;
-    }
-
-    private static string GetValidDigits(string str, int radix)
-    {
-        var valid = new StringBuilder();
-        foreach (char c in str)
-        {
-            int digit = GetDigitValue(c);
-            if (digit >= 0 && digit < radix)
-                valid.Append(c);
-            else
-                break;
-        }
-        return valid.ToString();
     }
 
     private static int GetDigitValue(char c)

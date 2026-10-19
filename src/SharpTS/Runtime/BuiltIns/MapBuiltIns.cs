@@ -1,5 +1,6 @@
 using SharpTS.Execution;
 using SharpTS.Runtime;
+using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Runtime.BuiltIns;
@@ -79,28 +80,48 @@ public static class MapBuiltIns
 
     private static object? GroupBy(Interpreter interp, List<object?> args)
     {
-        var iterable = args[0] as SharpTSArray
-            ?? throw new Exception("TypeError: Map.groupBy requires an iterable as first argument");
+        var iterable = args[0];
+        if (iterable is null or SharpTSUndefined)
+            throw new ThrowException(new SharpTSTypeError("Map.groupBy requires an iterable as first argument"));
         var callback = args[1] as ISharpTSCallable
-            ?? throw new Exception("TypeError: Map.groupBy requires a function as second argument");
+            ?? throw new ThrowException(new SharpTSTypeError("Map.groupBy requires a function as second argument"));
 
         var result = new SharpTSMap();
         var callbackArgs = new List<object?> { null, null };
 
-        for (int i = 0; i < iterable.Length; i++)
+        var iterator = interp.GetIterableElements(iterable).GetEnumerator();
+        bool preserveThrow = false;
+        try
         {
-            var element = iterable[i];
-            callbackArgs[0] = element;
-            callbackArgs[1] = (double)i;
-            var key = callback.Call(interp, callbackArgs);
-
-            var existing = result.Get(key);
-            if (existing == null)
+            long index = 0;
+            while (iterator.MoveNext())
             {
-                existing = new SharpTSArray([]);
-                result.Set(key, existing);
+                var element = iterator.Current;
+                callbackArgs[0] = element;
+                callbackArgs[1] = (double)index++;
+                var key = FunctionBuiltIns.CallWithThis(interp, callback, SharpTSUndefined.Instance, callbackArgs);
+
+                var existing = result.Get(key);
+                if (existing == null)
+                {
+                    existing = new SharpTSArray([]);
+                    result.Set(key, existing);
+                }
+                ((SharpTSArray)existing).Add(element);
             }
-            ((SharpTSArray)existing).Add(element);
+        }
+        catch
+        {
+            preserveThrow = true;
+            throw;
+        }
+        finally
+        {
+            try { iterator.Dispose(); }
+            catch when (preserveThrow)
+            {
+                // IteratorClose must preserve the grouping callback's throw.
+            }
         }
 
         return result;

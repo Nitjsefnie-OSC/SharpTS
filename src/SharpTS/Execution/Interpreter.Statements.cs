@@ -183,6 +183,7 @@ public partial class Interpreter
         {
             using (PushScope(environment))
             {
+                ReserveLexicalDeclarations(statements);
                 // JS hoists function declarations to the top of their
                 // enclosing function/module scope. This lets lodash-style
                 // IIFEs use mutually-recursive helpers declared in any order.
@@ -248,6 +249,12 @@ public partial class Interpreter
         }
 
         return blockResult;
+    }
+
+    private void ReserveLexicalDeclarations(IEnumerable<Stmt> statements)
+    {
+        foreach (var name in LexicalDeclarationBindings.Collect(statements))
+            _environment.ReserveLexical(name.Lexeme);
     }
 
     /// <summary>
@@ -426,6 +433,11 @@ public partial class Interpreter
                     ctx, tryCatch, pendingResult.Value, fromHostException: false);
             }
         }
+        catch (GeneratorReturnException grex)
+        {
+            // An injected generator return bypasses catch, but still runs finally.
+            pendingResult = ExecutionResult.Return(RuntimeValue.FromBoxed(grex.Value));
+        }
         catch (Runtime.Exceptions.WorkerTerminatedException)
         {
             // worker.terminate() abort — not catchable by guest code; re-throw ahead of the
@@ -482,6 +494,7 @@ public partial class Interpreter
 
             using (PushScope(catchEnv))
             {
+                ReserveLexicalDeclarations(tryCatch.CatchBlock);
                 try
                 {
                     foreach (var catchStmt in tryCatch.CatchBlock)
@@ -493,6 +506,11 @@ public partial class Interpreter
                         }
                     }
                     return (true, ExecutionResult.Success());
+                }
+                catch (GeneratorReturnException grex)
+                {
+                    // A return injected at a yield in catch must also run finally.
+                    return (true, ExecutionResult.Return(RuntimeValue.FromBoxed(grex.Value)));
                 }
                 catch (Runtime.Exceptions.WorkerTerminatedException)
                 {
@@ -516,6 +534,7 @@ public partial class Interpreter
     private async ValueTask<ExecutionResult> ExecuteHandlerBlockCore(IEvaluationContext ctx, List<Stmt> statements)
     {
         using var scope = PushScope(CreateHandlerEnvironment());
+        ReserveLexicalDeclarations(statements);
         foreach (var stmt in statements)
         {
             var result = await ctx.ExecuteStmtAsync(stmt);
@@ -611,6 +630,7 @@ public partial class Interpreter
 
             using (PushScope(catchEnv))
             {
+                ReserveLexicalDeclarations(tryCatch.CatchBlock);
                 try
                 {
                     foreach (var catchStmt in tryCatch.CatchBlock)
@@ -679,6 +699,7 @@ public partial class Interpreter
     private ExecutionResult ExecuteHandlerBlock(List<Stmt> statements)
     {
         using var scope = PushScope(CreateHandlerEnvironment());
+        ReserveLexicalDeclarations(statements);
         foreach (var stmt in statements)
         {
             var result = Execute(stmt);
@@ -707,7 +728,7 @@ public partial class Interpreter
         IEnumerable<object?>? customIterator = TryGetSymbolIterator(iterable);
         if (customIterator != null)
         {
-            return IterateWithBreakContinue(customIterator, forOf.Variable.Lexeme, forOf.Body, labels);
+            return IterateWithBreakContinue(customIterator, forOf.Variable, forOf.IsDeclaration, forOf.Body, labels);
         }
 
         // Get elements based on iterable type.
@@ -731,7 +752,7 @@ public partial class Interpreter
                 "for...of requires an iterable (array, Map, Set, or iterator)."))
         };
 
-        return IterateWithBreakContinue(elements, forOf.Variable.Lexeme, forOf.Body, labels);
+        return IterateWithBreakContinue(elements, forOf.Variable, forOf.IsDeclaration, forOf.Body, labels);
     }
 
     /// <summary>
@@ -751,6 +772,7 @@ public partial class Interpreter
         IEnumerable<string> keys = obj switch
         {
             SharpTSProxy proxy => proxy.TrapOwnEnumerableKeys(this),
+            ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.OwnEnumerableKeys(),
             // Own enumerable keys only, hiding boxed-primitive internal slots and
             // honoring enumerability — consistent with Object.keys (#475).
             SharpTSObject o => o.OwnEnumerableKeys(),
@@ -785,7 +807,7 @@ public partial class Interpreter
             _ => throw new InterpreterException("for...in requires an object.")
         };
 
-        return IterateWithBreakContinue(keys.Cast<object?>(), forIn.Variable.Lexeme, forIn.Body, labels);
+        return IterateWithBreakContinue(keys.Cast<object?>(), forIn.Variable, forIn.IsDeclaration, forIn.Body, labels);
     }
 
     /// <summary>
@@ -922,7 +944,9 @@ public partial class Interpreter
             {
                 iteratorFn = obj.GetBySymbol(SharpTSSymbol.Iterator);
             }
-            if (iteratorFn != null || obj.HasSymbolProperty(SharpTSSymbol.Iterator))
+            // GetMethod treats both null and undefined as an absent method.
+            // Array.from may then use indexed reads; required consumers reject absence.
+            if (iteratorFn is not null and not SharpTSUndefined)
             {
                 if (iteratorFn is not ISharpTSCallable)
                     throw new ThrowException(new SharpTSTypeError(
@@ -1040,9 +1064,7 @@ public partial class Interpreter
             ? EvaluateGetOnRecord(nextObject, "next")
             : EvaluateGetOnInstanceRV((SharpTSInstance)iterator,
                 new Token(TokenType.IDENTIFIER, "next", null, 0)).ToObject();
-        nextMethod = TryBindReceiverForMethodAccess(nextMethod, iterator) ?? nextMethod;
-        if (nextMethod is SharpTSFunction nextFunction && iterator is SharpTSInstance nextInstance)
-            nextMethod = nextFunction.Bind(nextInstance);
+        nextMethod = BindMemberCallReceiver(nextMethod, iterator);
 
         // Only abandonment after a successful IteratorStepValue closes. A
         // failure in next/done/value itself marks the iterator completed.
@@ -1244,25 +1266,28 @@ public partial class Interpreter
     /// </summary>
     internal List<object?> ReadArrayLikeElements(object? value)
     {
-        long len = ToLength(GetArrayLikeProperty(value, "length"));
+        long len = ArrayBuiltIns.ToLength(GetPropertyValue(value, "length"), this);
         var result = new List<object?>(len > int.MaxValue ? int.MaxValue : (int)len);
         for (long i = 0; i < len; i++)
-            result.Add(GetArrayLikeProperty(value, i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            result.Add(GetPropertyValue(value, i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         return result;
     }
 
-    private static object? GetArrayLikeProperty(object? value, string key) => value switch
+    /// <summary>
+    /// Captures an array-like's length now, then reads each element when the
+    /// consumer advances so a mapper can change an unvisited property.
+    /// </summary>
+    internal IEnumerable<object?> EnumerateArrayLikeElements(object? value)
     {
-        SharpTSObject obj => obj.GetProperty(key),
-        SharpTSInstance inst => inst.GetProperty(key),
-        _ => SharpTSUndefined.Instance,
-    };
+        long length = ArrayBuiltIns.ToLength(GetPropertyValue(value, "length"), this);
+        return Enumerate();
 
-    private static long ToLength(object? value)
-    {
-        double n = Compilation.RuntimeTypes.ToNumber(value);
-        if (double.IsNaN(n) || n <= 0) return 0;
-        return (long)Math.Min(Math.Floor(n), 9007199254740991.0); // 2^53 - 1
+        IEnumerable<object?> Enumerate()
+        {
+            for (long index = 0; index < length; index++)
+                yield return GetPropertyValue(value,
+                    index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
     }
 
     /// <summary>
@@ -1298,9 +1323,23 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// Keeps the iteration scope aligned with the resolver while assignment
+    /// heads update their existing binding instead of declaring a new one.
+    /// </summary>
+    private RuntimeEnvironment CreateIterationEnvironment(Token variable, bool isDeclaration, object? value)
+    {
+        RuntimeEnvironment loopEnv = new(_environment);
+        if (isDeclaration)
+            loopEnv.Define(variable.Lexeme, value);
+        else
+            _environment.Assign(variable, value);
+        return loopEnv;
+    }
+
+    /// <summary>
     /// Iterates over elements with proper break/continue handling.
     /// </summary>
-    private ExecutionResult IterateWithBreakContinue(IEnumerable<object?> elements, string variableName, Stmt body, IReadOnlyList<string>? labels = null)
+    private ExecutionResult IterateWithBreakContinue(IEnumerable<object?> elements, Token variable, bool isDeclaration, Stmt body, IReadOnlyList<string>? labels = null)
     {
         var iterator = elements.GetEnumerator();
         bool preserveThrow = false;
@@ -1308,8 +1347,7 @@ public partial class Interpreter
         {
             while (iterator.MoveNext())
             {
-                RuntimeEnvironment loopEnv = new(_environment);
-                loopEnv.Define(variableName, iterator.Current);
+                var loopEnv = CreateIterationEnvironment(variable, isDeclaration, iterator.Current);
 
                 using (PushScope(loopEnv))
                 {
@@ -1993,8 +2031,12 @@ public partial class Interpreter
             value = Evaluate(varStmt.Initializer);
         }
         var target = varStmt.IsVar ? _environment.VarDeclarationTarget ?? _environment : _environment;
+        if (varStmt.IsVar && varStmt.Initializer is null && target.IsDefinedLocally(varStmt.Name.Lexeme))
+            return ExecutionResult.Success();
         target.Define(varStmt.Name.Lexeme, value);
-        if (varStmt.IsVar && target.Enclosing is null)
+        // The REPL retains its legacy initial publication; classic Interpret
+        // bindings were registered at instantiation and already wrote through.
+        if (varStmt.IsVar && target.Enclosing is null && !target.HasObjectBinding(varStmt.Name.Lexeme))
             GlobalThis.SetProperty(varStmt.Name.Lexeme, value);
         return ExecutionResult.Success();
     }
@@ -2104,21 +2146,22 @@ public partial class Interpreter
         Dictionary<string, ISharpTSCallable> staticPrivateMethods = [];
 
         // Process fields: collect instance fields, defer static field initialization if using StaticInitializers
-        // Note: Declare fields are processed normally - they can't have initializers (enforced by parser),
-        // so they'll be added with null/undefined values and can be set externally later.
+        // Declare fields are type-only and never enter runtime field storage.
         bool hasStaticInitializers = classStmt.StaticInitializers != null && classStmt.StaticInitializers.Count > 0;
 
         // Evaluate every computed key exactly once, in source order, before
         // applying static values or symbol-keyed methods and accessors.
         var computedMemberKeys = new Dictionary<Expr, object?>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
-        foreach (var key in Compilation.ClassDefinitionExpressions.MemberKeys(classStmt.Fields, classStmt.Methods, classStmt.Accessors))
+        foreach (var key in Compilation.ClassDefinitionExpressions.MemberKeys(
+            classStmt.Fields.Where(field => !field.IsDeclare), classStmt.Methods, classStmt.Accessors))
         {
             object? value = (await ctx.EvaluateExprAsync(key)).ToObject();
-            computedMemberKeys[key] = value is SharpTSSymbol ? value : PropertyKeyConverter.ToPropertyKeyString(value);
+            computedMemberKeys[key] = ToPropertyKey(value);
         }
 
         foreach (Stmt.Field field in classStmt.Fields)
         {
+            if (field.IsDeclare) continue;
             if (field.IsPrivate)
             {
                 // ES2022 private fields
@@ -2129,7 +2172,7 @@ public partial class Interpreter
                         // Old behavior: evaluate immediately
                         object? fieldValue = field.Initializer != null
                             ? EvaluateEarlyStaticInitializer(field.Initializer)
-                            : null;
+                            : SharpTSUndefined.Instance;
                         staticPrivateFields[field.Name.Lexeme] = fieldValue;
                     }
                     else staticPrivateFields[field.Name.Lexeme] = SharpTSUndefined.Instance;
@@ -2147,7 +2190,7 @@ public partial class Interpreter
                     // Old behavior: evaluate immediately
                     object? fieldValue = field.Initializer != null
                         ? EvaluateEarlyStaticInitializer(field.Initializer)
-                        : null;
+                        : SharpTSUndefined.Instance;
                     staticProperties[field.Name.Lexeme] = fieldValue;
                 }
                 // else: will be evaluated via StaticInitializers with proper 'this' binding
@@ -2396,11 +2439,13 @@ public partial class Interpreter
 
         klass.BindPrivateMemberOwners();
         klass.InitializerEnvironment = _environment;
-        klass.OrderedInstanceFields = classStmt.Fields.Where(field => !field.IsStatic)
+        klass.OrderedInstanceFields = classStmt.Fields.Where(field => !field.IsStatic && !field.IsDeclare)
             .SelectMany(field => (field.IsPrivate ? instancePrivateFields : instanceFields)
                 .Where(captured => captured.Name == field.Name)).ToList();
+        InitializeClassInstanceKeyOrder(klass, memberDefinitions, classStmt.AutoAccessors);
         InstallInstanceConstructorProperties(klass, constructorProperties);
 
+        InitializeClassStaticKeyOrder(klass, memberDefinitions, classStmt.AutoAccessors);
         InstallClassSymbolMembers(klass, memberProperties);
 
         // Execute static initializers in declaration order (if present)
@@ -2424,10 +2469,10 @@ public partial class Interpreter
                 {
                     switch (initializer)
                     {
-                        case Stmt.Field field when field.IsStatic:
+                        case Stmt.Field field when field.IsStatic && !field.IsDeclare:
                             object? fieldValue = field.Initializer != null
                                 ? Evaluate(field.Initializer)
-                                : field.ComputedKey != null ? SharpTSUndefined.Instance : null;
+                                : SharpTSUndefined.Instance;
                             if (field.IsPrivate)
                                 klass.InstallStaticPrivateField(field.Name.Lexeme, fieldValue);
                             else if (field.ComputedKey != null && computedMemberKeys[field.ComputedKey] is SharpTSSymbol symbol)

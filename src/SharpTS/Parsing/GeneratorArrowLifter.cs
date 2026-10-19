@@ -281,7 +281,7 @@ internal sealed class GeneratorArrowLifter
     private Stmt RewriteSequence(Stmt.Sequence sq)
     {
         var rewritten = RewriteListIfChanged(sq.Statements, RewriteStmt);
-        return ReferenceEquals(rewritten, sq.Statements) ? sq : new Stmt.Sequence(rewritten);
+        return ReferenceEquals(rewritten, sq.Statements) ? sq : sq with { Statements = rewritten };
     }
 
     private Stmt RewriteIf(Stmt.If i)

@@ -736,6 +736,12 @@ public class SharpTSProxy : ISharpTSCallable
                 ? proxy.TrapGetOwnPropertyDescriptor(symbol, interpreter)
                 : proxy.TrapGetOwnPropertyDescriptor((string)prop, interpreter);
         }
+        else if (target is ISharpTSOwnPropertyObject ownPropertyObject)
+        {
+            return prop is SharpTSSymbol symbol
+                ? ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(symbol)
+                : ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor((string)prop);
+        }
         else if (prop is string name)
         {
             return ObjectBuiltIns.OwnPropertyDescriptorOf(interpreter, target, name);
@@ -846,10 +852,18 @@ public class SharpTSProxy : ISharpTSCallable
     }
 
     public bool TrapDeleteProperty(string prop, Interpreter? interp)
+        => TrapDeletePropertyCore(prop, interp);
+
+    internal bool TrapDeleteProperty(SharpTSSymbol prop, Interpreter interp)
+        => TrapDeletePropertyCore(prop, interp);
+
+    private bool TrapDeletePropertyCore(object prop, Interpreter? interp)
     {
         var trap = GetTrapCallable("deleteProperty", interp);
         if (trap == null)
-            return ForwardDeleteProperty(prop, interp);
+            return prop is SharpTSSymbol symbol
+                ? interp!.DeleteSymbolProperty(_target, symbol, strictMode: false)
+                : ForwardDeleteProperty((string)prop, interp);
 
         bool result = ToBoolean(InvokeTrap(trap, interp, [_target, prop]));
         if (!result) return false;
@@ -1150,8 +1164,14 @@ public class SharpTSProxy : ISharpTSCallable
     internal bool TrapDefineField(object prop, object descriptor, Interpreter interpreter)
         => TrapDefinePropertyCore(prop, descriptor, interpreter, classField: true);
 
+    internal bool TrapDefineConvertedProperty(
+        object prop, SharpTSPropertyDescriptor descriptor, Interpreter interpreter)
+        => TrapDefinePropertyCore(prop, ObjectBuiltIns.ToPartialDescriptorObject(descriptor),
+            interpreter, classField: false, convertedDescriptor: descriptor);
+
     private bool TrapDefinePropertyCore(
-        object prop, object descriptor, Interpreter interpreter, bool classField)
+        object prop, object descriptor, Interpreter interpreter, bool classField,
+        SharpTSPropertyDescriptor? convertedDescriptor = null)
     {
         var trap = GetTrapCallable("defineProperty", interpreter);
         if (trap == null)
@@ -1162,6 +1182,8 @@ public class SharpTSProxy : ISharpTSCallable
                     SharpTSPropertyDescriptor.FromAnyObject(descriptor).Value);
                 return true;
             }
+            if (convertedDescriptor is not null && _target is SharpTSProxy convertedProxy)
+                return convertedProxy.TrapDefineConvertedProperty(prop, convertedDescriptor, interpreter);
             if (prop is SharpTSSymbol symbol && _target is SharpTSProxy symbolProxy)
                 return symbolProxy.TrapDefineProperty(symbol, descriptor, interpreter);
             try
@@ -1186,13 +1208,17 @@ public class SharpTSProxy : ISharpTSCallable
             }
         }
 
+        // Internal converted records stay isolated from Object.prototype during
+        // forwarding. Only a user trap receives the ordinary public object.
+        object trapDescriptor = convertedDescriptor is null ? descriptor
+            : ObjectBuiltIns.ToPartialDescriptorObject(convertedDescriptor, nullPrototype: false);
         bool trapResult = ToBoolean(InvokeTrap(
-            trap, interpreter, [_target, prop, descriptor]));
+            trap, interpreter, [_target, prop, trapDescriptor]));
         if (!trapResult) return false;
 
         object? targetDescriptor = GetTargetOwnPropertyDescriptor(prop, interpreter);
         bool targetHasProperty = targetDescriptor is not (null or SharpTSUndefined);
-        var requested = SharpTSPropertyDescriptor.FromAnyObject(descriptor);
+        var requested = convertedDescriptor ?? SharpTSPropertyDescriptor.FromAnyObject(descriptor);
         if (!targetHasProperty)
         {
             if (!TargetIsExtensible(_target))
@@ -1410,6 +1436,7 @@ public class SharpTSProxy : ISharpTSCallable
 
     private static bool TargetIsExtensible(object target) => target switch
     {
+        ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.IsExtensible,
         ISharpTSFunctionObject function => function.OwnProperties.IsExtensible,
         SharpTSProxy proxy => TargetIsExtensible(proxy.Target),
         SharpTSObject obj => obj.IsExtensible,
@@ -1593,6 +1620,8 @@ public class SharpTSProxy : ISharpTSCallable
             {
                 string name when _target is SharpTSProxy proxy
                     => proxy.TrapGetOwnPropertyDescriptor(name, interpreter),
+                string name when _target is SharpTSClass klass && interpreter != null
+                    => ObjectBuiltIns.OwnPropertyDescriptorOf(interpreter, klass, name)?.ToObject(),
                 string name
                     => ObjectBuiltIns.RuntimeGetOwnPropertyDescriptor(_target, name),
                 SharpTSSymbol symbol when _target is SharpTSProxy proxy
@@ -1621,10 +1650,28 @@ public class SharpTSProxy : ISharpTSCallable
     private List<object?> ForwardOwnPropertyKeys(Interpreter? interpreter)
     {
         var keys = new List<object?>();
+        if (FunctionObjectProperties.TryGetStorage(_target, interpreter, out var properties))
+        {
+            keys.AddRange(properties.OwnVisibleStringKeys());
+            keys.AddRange(properties.GetSymbolPropertyNames());
+            return keys;
+        }
         switch (_target)
         {
             case SharpTSProxy proxy:
                 keys.AddRange(proxy.TrapOwnPropertyKeys(interpreter));
+                break;
+            case ISharpTSOwnPropertyObject ownPropertyObject:
+                keys.AddRange(ownPropertyObject.OwnProperties.OwnVisibleStringKeys());
+                keys.AddRange(ownPropertyObject.OwnProperties.GetSymbolPropertyNames());
+                break;
+            case SharpTSClass klass:
+                keys.AddRange(klass.OwnStaticStringKeys());
+                keys.AddRange(klass.OwnStaticSymbolKeys());
+                break;
+            case SharpTSClassPrototype prototype:
+                keys.AddRange(prototype.OwnStringKeys());
+                keys.AddRange(prototype.GetSymbolPropertyNames());
                 break;
             case SharpTSObject obj:
                 keys.AddRange(obj.OwnVisibleStringKeys());
@@ -1773,6 +1820,9 @@ public class SharpTSProxy : ISharpTSCallable
     {
         if (_target is SharpTSProxy proxy)
             return proxy.TrapGet(prop, interp);
+        if (FunctionObjectProperties.TryGetStorage(_target, interp, out var properties)
+            && properties.GetOwnPropertyDescriptor(prop) is not null)
+            return properties.GetProperty(prop);
         if (_target is SharpTSObject obj)
             return obj.GetProperty(prop);
         if (_target is SharpTSInstance inst)
@@ -1897,6 +1947,8 @@ public class SharpTSProxy : ISharpTSCallable
     {
         if (_target is SharpTSProxy proxy)
             return proxy.TrapHas(prop, interp);
+        if (FunctionObjectProperties.TryGetStorage(_target, interp, out var properties))
+            return interp is null ? properties.HasProperty(prop) : interp.HasProperty(_target, prop);
         if (_target is SharpTSObject obj)
             return obj.HasProperty(prop);
         if (_target is SharpTSInstance inst)
@@ -1919,6 +1971,11 @@ public class SharpTSProxy : ISharpTSCallable
     {
         if (_target is SharpTSProxy proxy)
             return proxy.TrapDeleteProperty(prop, interp);
+        if (FunctionObjectProperties.TryGetStorage(_target, interp, out var properties))
+            return properties.GetOwnPropertyDescriptor(prop) is null || properties.DeletePropertyStrict(prop, false);
+        if (_target is ISharpTSOwnPropertyObject ownPropertyObject)
+            return ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(prop) is null
+                || ownPropertyObject.OwnProperties.DeletePropertyStrict(prop, false);
         if (_target is SharpTSObject obj)
             return obj.DeletePropertyStrict(prop, false);
         if (_target is SharpTSInstance inst)

@@ -391,9 +391,6 @@ public partial class Interpreter
     {
         object? tag = EvaluateMemberCallReference(_syncContext, tagged.Tag).GetAwaiter().GetResult();
 
-        if (tag is not ISharpTSCallable callable)
-            throw new InterpreterException("Tagged template tag must be a function.");
-
         // Create template strings array with raw property
         // Cooked values: null becomes undefined (or just null in our runtime)
         var cookedList = tagged.CookedStrings.Cast<object?>().ToList();
@@ -403,6 +400,9 @@ public partial class Interpreter
         List<object?> args = [stringsArray];
         foreach (var expr in tagged.Expressions)
             args.Add(Evaluate(expr));
+
+        if (tag is not ISharpTSCallable callable)
+            throw new ThrowException(new SharpTSTypeError($"{GetTypeofString(tag)} is not a function"));
 
         return RuntimeValue.FromBoxed(callable.Call(this, args));
     }
@@ -429,7 +429,9 @@ public partial class Interpreter
             // callbacks must not replace this pending constructor boundary.
             var frame = _environment.ConstructionFrame
                 ?? throw new ThrowException(new SharpTSReferenceError("super() is not available outside a constructor"));
-            return RuntimeValue.FromObject(new SuperConstructorCallable(superclass, frame));
+            object? parent = frame.Owner.HasExplicitPrototype
+                ? ObjectBuiltIns.PrototypeOf(this, frame.Owner) : superclass;
+            return RuntimeValue.FromObject(new SuperConstructorCallable(parent, frame, frame.Owner.CanReuseSuperAllocation(parent)));
         }
         // `this` is usually a SharpTSInstance, but built-in-backed instances
         // (Array subclass instances) are SharpTSArrays — bind generically.
@@ -439,8 +441,12 @@ public partial class Interpreter
         if (expr.Method is { } property)
         {
             if (_environment.StaticSuper)
-                return RuntimeValue.FromBoxed(EvaluateGetOnClass(
-                    superclass, property.Lexeme, thisReceiver));
+            {
+                object? parent = _environment.PrivateClass is { } staticOwner
+                    ? ObjectBuiltIns.PrototypeOf(this, staticOwner) : superclass;
+                if (parent is null) ThrowCannotReadProperty(parent, property.Lexeme);
+                return RuntimeValue.FromBoxed(GetPropertyValueFromChain(parent, property.Lexeme, thisReceiver));
+            }
 
             // The lexical method owner remains fixed when a method is inherited
             // or borrowed, while the home prototype's parent is read live.
@@ -457,17 +463,14 @@ public partial class Interpreter
     }
 
     private sealed class SuperConstructorCallable(
-        SharpTSClass superclass, ClassConstructionFrame frame) : ISharpTSNonConstructorCallable
+        object? superclass, ClassConstructionFrame frame, bool reuseAllocation) : ISharpTSNonConstructorCallable
     {
-        public int Arity() => superclass.Arity();
+        public int Arity() => (superclass as ISharpTSCallable)?.Arity() ?? 0;
         public object? Call(Interpreter interpreter, List<object?> arguments)
         {
-            // Full second-allocation/effect ordering for duplicate super is a
-            // separate boundary (#2283); reject with a guest error before reusing
-            // this allocation's private brands or retrying partial elements.
-            bool retryingFailedSuper = frame.BeginSuperAttempt();
-            var parentResult = superclass.ExecuteConstructorLevel(
-                interpreter, frame.Allocation, arguments, frame.NewTarget, retryingFailedSuper);
+            var allocation = frame.BeginSuperAttempt(interpreter);
+            var parentResult = SharpTSClass.ExecuteSuperConstructor(
+                interpreter, superclass, allocation, arguments, frame.NewTarget, reuseAllocation);
             return frame.CompleteSuper(interpreter, parentResult);
         }
     }
@@ -836,7 +839,19 @@ public partial class Interpreter
             or SharpTSSymbol or SharpTSBigInt or System.Numerics.BigInteger)
             return symbolFields;
 
-        if (spreadValue is SharpTSObject spreadObj)
+        if (spreadValue is ISharpTSOwnPropertyObject ownPropertyObject)
+        {
+            var properties = ownPropertyObject.OwnProperties;
+            var stringKeys = properties.OwnVisibleStringKeys().ToList();
+            var symbolKeys = properties.GetSymbolPropertyNames().ToList();
+            foreach (var key in stringKeys)
+                if (properties.GetOwnPropertyDescriptor(key) is { Enumerable: true })
+                    stringFields[key] = GetPropertyValue(spreadValue, key);
+            foreach (var symbol in symbolKeys)
+                if (properties.GetOwnPropertyDescriptor(symbol) is { Enumerable: true })
+                    (symbolFields ??= [])[symbol] = GetSymbolPropertyValue(spreadValue, symbol);
+        }
+        else if (spreadValue is SharpTSObject spreadObj)
         {
             if (spreadObj.TryCopyPlainSpreadFields(stringFields))
                 return symbolFields;
@@ -1109,8 +1124,12 @@ public partial class Interpreter
     /// receiver expression, needed only to synthesize a Get for the dot-notation
     /// fallback path.
     /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private RuntimeValue PerformIndexGet(Expr objectExpr, object? obj, object? index)
+        => LocalizeBuiltInValue(PerformIndexGetCore(objectExpr, obj, index));
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private RuntimeValue PerformIndexGetCore(Expr objectExpr, object? obj, object? index)
     {
         // ECMA-262 §13.3.3 RequireObjectCoercible: a bracket read on a nullish base
         // throws a guest TypeError. The optional `?.[]` case is short-circuited by
@@ -1165,6 +1184,14 @@ public partial class Interpreter
             }
         }
 
+        if (obj is ISharpTSOwnPropertyObject)
+        {
+            object key = ToPropertyKey(index);
+            return RuntimeValue.FromBoxed(key is SharpTSSymbol symbol
+                ? GetSymbolPropertyValue(obj, symbol)
+                : GetPropertyValue(obj, (string)key));
+        }
+
         if (obj is ISharpTSFunctionObject functionObject)
             return RuntimeValue.FromBoxed(index is SharpTSSymbol functionSymbol
                 ? GetSymbolPropertyValue(functionObject, functionSymbol)
@@ -1192,30 +1219,19 @@ public partial class Interpreter
             && index is SharpTSSymbol generatorSymbol)
             return RuntimeValue.FromBoxed(GetSymbolPropertyValue(obj, generatorSymbol));
 
-        // JS functions are objects — bracket access reads user properties.
+        // Ordinary functions use the same descriptor-aware Get for own and
+        // inherited members, with one guest property-key conversion.
+        if (obj is SharpTSFunction or SharpTSArrowFunction)
+        {
+            object key = ToPropertyKey(index);
+            return RuntimeValue.FromBoxed(key is SharpTSSymbol symbol
+                ? GetSymbolPropertyValue(obj, symbol)
+                : GetPropertyValue(obj, (string)key));
+        }
         if (FunctionObjectProperties.TryGetExplicitPrototype(obj, this, out _))
             return RuntimeValue.FromBoxed(index is SharpTSSymbol inheritedSymbol
                 ? GetSymbolPropertyValue(obj!, inheritedSymbol)
                 : GetPropertyValue(obj, ToPropertyKeyString(index)));
-        if (obj is SharpTSFunction fn)
-        {
-            if (index is SharpTSSymbol fnSym)
-                return RuntimeValue.FromBoxed(GetSymbolPropertyValue(fn, fnSym));
-            string fnKey = index?.ToString() ?? "";
-            if (fn.TryGetProperty(fnKey, out var propVal))
-                return RuntimeValue.FromBoxed(propVal);
-            return RuntimeValue.Undefined;
-        }
-        // Same for arrow functions / function expressions.
-        if (obj is SharpTSArrowFunction afn)
-        {
-            if (index is SharpTSSymbol arrSym)
-                return RuntimeValue.FromBoxed(GetSymbolPropertyValue(afn, arrSym));
-            string arrKey = index?.ToString() ?? "";
-            if (afn.TryGetProperty(arrKey, out var arrPropVal))
-                return RuntimeValue.FromBoxed(arrPropVal);
-            return RuntimeValue.Undefined;
-        }
 
         // Bound functions and native callable values inherit the same Symbol
         // protocol surface, while classes first consult their static descriptors.
@@ -1425,24 +1441,8 @@ public partial class Interpreter
         if (!array.HasIndex(index))
         {
             string key = index.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (array.HasExplicitPrototype)
-            {
-                return RuntimeValue.FromBoxed(GetPropertyValueFromChain(
-                    array.ExplicitPrototype, key, array));
-            }
-            var prototype = GetArrayPrototype();
-            if (prototype.GetExtraGetter(key) is { } inheritedGetter)
-                return BindAccessorToObject(inheritedGetter, array).CallV2(
-                    this, ReadOnlySpan<RuntimeValue>.Empty);
-            if (prototype.HasExtra(key))
-                return RuntimeValue.FromBoxed(prototype.TryGetExtra(key));
-
-            var objectPrototype = GetObjectPrototype();
-            if (objectPrototype.GetExtraGetter(key) is { } objectGetter)
-                return BindAccessorToObject(objectGetter, array).CallV2(
-                    this, ReadOnlySpan<RuntimeValue>.Empty);
-            if (objectPrototype.HasExtra(key))
-                return RuntimeValue.FromBoxed(objectPrototype.TryGetExtra(key));
+            return RuntimeValue.FromBoxed(GetPropertyValueFromChain(
+                ObjectBuiltIns.PrototypeOf(this, array), key, array));
         }
         return RuntimeValue.FromBoxed(array.Get(index));
     }
@@ -1454,7 +1454,8 @@ public partial class Interpreter
     /// </summary>
     private object? GetInstanceSymbolValue(SharpTSInstance instance, SharpTSSymbol symbol)
     {
-        if (instance.HasSymbolProperty(symbol)) return instance.GetBySymbol(symbol);
+        if (TryReadDescriptor(instance.GetOwnPropertyDescriptor(symbol), instance, out var ownValue))
+            return ownValue;
         if (instance.UsesDynamicPrototypeChain)
             return instance.Prototype is { } prototype
                 ? GetSymbolPropertyValue(prototype, symbol, instance)
@@ -1471,10 +1472,7 @@ public partial class Interpreter
     /// of declared methods and own properties shadowing inherited members.
     /// </summary>
     private object? GetClassSymbolValue(SharpTSClass klass, SharpTSSymbol symbol)
-    {
-        return TryReadDescriptor(klass.FindStaticSymbolAccessorDescriptor(symbol), klass, out var value)
-            ? value : GetSymbolPropertyValue(GetFunctionPrototype(), symbol, klass);
-    }
+        => GetSymbolPropertyValue(klass, symbol, klass);
 
     /// <summary>
     /// Evaluates an index assignment expression (bracket notation with assignment).
@@ -1565,6 +1563,27 @@ public partial class Interpreter
             if (!assigned && strictMode)
                 throw new ThrowException(new SharpTSTypeError(
                     $"Proxy set trap rejected property '{key}'"));
+            return RuntimeValue.FromBoxed(value);
+        }
+
+        if (obj is ISharpTSOwnPropertyObject)
+        {
+            SetOwnPropertyObjectValue(obj, ToPropertyKey(index), value, strictMode);
+            return RuntimeValue.FromBoxed(value);
+        }
+
+        // Promise computed string writes share dot assignment's own descriptors,
+        // subclass setters and integrity checks. Coerce the evaluated key once.
+        if (obj is SharpTSPromise && ToPropertyKey(index) is string promiseKey)
+        {
+            var name = new Token(TokenType.IDENTIFIER, promiseKey, null, 0);
+            EvaluateSetOnObject(new Expr.Set(null!, name, null!), obj, value);
+            return RuntimeValue.FromBoxed(value);
+        }
+
+        if (UsesMutableFunctionPrototype(obj))
+        {
+            SetOwnPropertyObjectValue(obj!, ToPropertyKey(index), value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
 
@@ -1674,7 +1693,7 @@ public partial class Interpreter
         }
         if (obj is SharpTSObjectNamespace objectNamespace)
         {
-            objectNamespace.SetProperty(PropertyKeyConverter.ToPropertyKeyString(index), value);
+            SetObjectNamespaceProperty(objectNamespace, PropertyKeyConverter.ToPropertyKeyString(index), value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
 
@@ -1913,6 +1932,8 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.InstanceSymbol t:
+                if (TryAssignThroughDescriptor(t.Target.GetOwnPropertyDescriptor(t.Key),
+                        t.Target, t.Key.ToString(), value, strictMode)) break;
                 if (t.Target.HasExplicitPrototype)
                 {
                     if (!t.Target.HasSymbolProperty(t.Key)
@@ -1949,21 +1970,12 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.ClassString t:
-                if (!TryAssignThroughDescriptor(t.Target.FindStaticPropertyDescriptor(t.Key),
-                        t.Target, t.Key, value, strictMode))
+                if (!TryAssignThroughClassDescriptor(t.Target, t.Key, value, strictMode))
                     t.Target.SetStaticProperty(t.Key, value, strictMode);
                 break;
 
             case IndexTarget.ClassSymbol t:
-                if (TryAssignThroughDescriptor(t.Target.FindStaticSymbolAccessorDescriptor(t.Key)
-                        ?? FindInheritedSymbolDescriptor(t.Target, t.Key),
-                        t.Target, t.Key.ToString(), value, strictMode)) break;
-                if (t.Target.FindStaticSymbolSetter(t.Key) is { } staticSymSetter)
-                {
-                    staticSymSetter.BindStatic(t.Target).Call(this, [value]);
-                    break;
-                }
-                t.Target.SetStaticBySymbol(t.Key, value, strictMode);
+                SetOwnPropertyObjectValue(t.Target, t.Key, value, strictMode);
                 break;
 
             case IndexTarget.ClassPrototypeSymbol t:
@@ -1977,7 +1989,9 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.BuiltInPrototypeString t:
-                if (t.Target is not ISharpTSPrimitiveConstructor indexedConstructor
+                if (t.Target is SharpTSClassPrototype classPrototype)
+                    SetClassPrototypeProperty(classPrototype, t.Key, value, strictMode);
+                else if (t.Target is not ISharpTSPrimitiveConstructor indexedConstructor
                     || !TryAssignThroughDescriptor(indexedConstructor.GetOwnPropertyDescriptor(t.Key),
                         indexedConstructor, t.Key, value, strictMode))
                     t.Target.SetExtra(t.Key, value);
@@ -2187,14 +2201,16 @@ public partial class Interpreter
             // Evaluate every computed key exactly once, in source order, before
             // applying static values or symbol-keyed methods and accessors.
             var computedMemberKeys = new Dictionary<Expr, object?>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
-            foreach (var key in Compilation.ClassDefinitionExpressions.MemberKeys(classExpr.Fields, classExpr.Methods, classExpr.Accessors))
+            foreach (var key in Compilation.ClassDefinitionExpressions.MemberKeys(
+                classExpr.Fields.Where(field => !field.IsDeclare), classExpr.Methods, classExpr.Accessors))
             {
                 object? value = (await ctx.EvaluateExprAsync(key)).ToObject();
-                computedMemberKeys[key] = value is SharpTSSymbol ? value : PropertyKeyConverter.ToPropertyKeyString(value);
+                computedMemberKeys[key] = ToPropertyKey(value);
             }
 
             foreach (Stmt.Field field in classExpr.Fields)
             {
+                if (field.IsDeclare) continue;
                 if (field.IsPrivate)
                 {
                     if (!field.IsStatic) instancePrivateFields.Add(field);
@@ -2208,7 +2224,7 @@ public partial class Interpreter
                         // Old behavior: evaluate immediately
                         object? fieldValue = field.Initializer != null
                             ? EvaluateEarlyStaticInitializer(field.Initializer)
-                            : null;
+                            : SharpTSUndefined.Instance;
                         staticProperties[field.Name.Lexeme] = fieldValue;
                     }
                     // else: will be evaluated via StaticInitializers with proper 'this' binding
@@ -2324,6 +2340,17 @@ public partial class Interpreter
                 }
             }
 
+            List<Stmt.AutoAccessor> instanceAutoAccessors = [];
+            Dictionary<string, object?> staticAutoAccessors = [];
+            foreach (var autoAccessor in classExpr.AutoAccessors ?? [])
+            {
+                if (autoAccessor.IsStatic)
+                    staticAutoAccessors[autoAccessor.Name.Lexeme] = autoAccessor.Initializer is { } initializer
+                        ? EvaluateEarlyStaticInitializer(initializer) : null;
+                else
+                    instanceAutoAccessors.Add(autoAccessor);
+            }
+
             var memberProperties = NormalizeClassMemberDefinitions(memberDefinitions, methods, staticMethods,
                 getters, setters, staticGetters, staticSetters);
 
@@ -2340,6 +2367,8 @@ public partial class Interpreter
                     setters,
                     classExpr.IsAbstract,
                     instanceFields,
+                    instanceAutoAccessors: instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                    staticAutoAccessors: staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
                     staticGetters: staticGetters.Count > 0 ? staticGetters : null,
                     staticSetters: staticSetters.Count > 0 ? staticSetters : null, instancePrivateFields: instancePrivateFields, privateMethods: privateMethods, staticPrivateFields: staticPrivateFields, staticPrivateMethods: staticPrivateMethods)
                 : superclass is SharpTSArrayClass arraySuper
@@ -2353,6 +2382,8 @@ public partial class Interpreter
                     setters,
                     classExpr.IsAbstract,
                     instanceFields,
+                    instanceAutoAccessors: instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                    staticAutoAccessors: staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
                     staticGetters: staticGetters.Count > 0 ? staticGetters : null,
                     staticSetters: staticSetters.Count > 0 ? staticSetters : null, instancePrivateFields: instancePrivateFields, privateMethods: privateMethods, staticPrivateFields: staticPrivateFields, staticPrivateMethods: staticPrivateMethods)
                 : superclass is SharpTSPromiseClass promiseSuper
@@ -2366,6 +2397,8 @@ public partial class Interpreter
                     setters,
                     classExpr.IsAbstract,
                     instanceFields,
+                    instanceAutoAccessors: instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                    staticAutoAccessors: staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
                     staticGetters: staticGetters.Count > 0 ? staticGetters : null,
                     staticSetters: staticSetters.Count > 0 ? staticSetters : null, instancePrivateFields: instancePrivateFields, privateMethods: privateMethods, staticPrivateFields: staticPrivateFields, staticPrivateMethods: staticPrivateMethods)
                 : new SharpTSClass(
@@ -2378,16 +2411,20 @@ public partial class Interpreter
                     setters,
                     classExpr.IsAbstract,
                     instanceFields,
+                    instanceAutoAccessors: instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                    staticAutoAccessors: staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
                     staticGetters: staticGetters.Count > 0 ? staticGetters : null,
                     staticSetters: staticSetters.Count > 0 ? staticSetters : null, instancePrivateFields: instancePrivateFields, privateMethods: privateMethods, staticPrivateFields: staticPrivateFields, staticPrivateMethods: staticPrivateMethods);
 
             klass.BindPrivateMemberOwners();
             klass.InitializerEnvironment = classEnv;
-            klass.OrderedInstanceFields = classExpr.Fields.Where(field => !field.IsStatic)
+            klass.OrderedInstanceFields = classExpr.Fields.Where(field => !field.IsStatic && !field.IsDeclare)
                 .SelectMany(field => (field.IsPrivate ? instancePrivateFields : instanceFields)
                     .Where(captured => captured.Name == field.Name)).ToList();
+            InitializeClassInstanceKeyOrder(klass, memberDefinitions, classExpr.AutoAccessors);
             InstallInstanceConstructorProperties(klass, constructorProperties);
 
+            InitializeClassStaticKeyOrder(klass, memberDefinitions, classExpr.AutoAccessors);
             InstallClassSymbolMembers(klass, memberProperties);
 
             // Initialize the captured lexical self before static initializers
@@ -2418,10 +2455,10 @@ public partial class Interpreter
                     {
                         switch (initializer)
                         {
-                            case Stmt.Field field when field.IsStatic:
+                            case Stmt.Field field when field.IsStatic && !field.IsDeclare:
                                 object? fieldValue = field.Initializer != null
                                     ? Evaluate(field.Initializer)
-                                    : field.ComputedKey != null ? SharpTSUndefined.Instance : null;
+                                    : SharpTSUndefined.Instance;
                                 if (field.IsPrivate) klass.InstallStaticPrivateField(field.Name.Lexeme, fieldValue);
                                 else if (field.ComputedKey != null && computedMemberKeys[field.ComputedKey] is SharpTSSymbol symbol)
                                     klass.DefineStaticSymbolProperty(symbol,

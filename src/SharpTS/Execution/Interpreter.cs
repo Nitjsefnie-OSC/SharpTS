@@ -1276,6 +1276,16 @@ public partial class Interpreter : IDisposable
             return RuntimeValue.FromBoxed(GlobalThis);
         }
 
+        // Global function bindings live on the global object. Keep lexical bindings
+        // above this lookup, and leave immutable constants on their existing path.
+        if (IsGlobalFunctionBinding(name.Lexeme))
+        {
+            if (GlobalThis.HasUserProperty(name.Lexeme))
+                return RuntimeValue.FromBoxed(GetPropertyValue(GlobalThis, name.Lexeme));
+            if (GlobalThis.IsDeletedProperty(name.Lexeme))
+                throw new InterpreterException($"ReferenceError: Undefined variable '{name.Lexeme}'.");
+        }
+
         // Per-realm mutable built-ins (Math, …) shadow the shared global-constants
         // table so guest mutations stay realm-local. A user `let Math`/`var Math`
         // already won via the environment check above.
@@ -1300,6 +1310,18 @@ public partial class Interpreter : IDisposable
         // (Interpreter.Statements.cs TryCreateGuestErrorFromMessage).
         throw new InterpreterException($"ReferenceError: Undefined variable '{name.Lexeme}'.");
     }
+
+    private bool IsGlobalFunctionBinding(string name)
+        => _globalConstants.TryGetValue(name, out var value) && value is SharpTSGlobalFunction;
+
+    // Inspect presence only: reading an accessor here would run it twice and
+    // could select a different function before the actual callee evaluation.
+    private bool CanUseGlobalFunctionHandler(Expr.Variable reference)
+        => !_locals.ContainsKey(reference)
+            && !_environment.IsDefined(reference.Name.Lexeme)
+            && (!IsGlobalFunctionBinding(reference.Name.Lexeme)
+                || (!GlobalThis.HasUserProperty(reference.Name.Lexeme)
+                    && !GlobalThis.IsDeletedProperty(reference.Name.Lexeme)));
 
     /// <summary>
     /// Executes a list of statements as the main entry point for interpretation.
@@ -2216,12 +2238,46 @@ public partial class Interpreter : IDisposable
     {
         foreach (var stmt in statements)
         {
-            if (stmt is Stmt.Var { IsVar: true } variable
-                && !_environment.IsDefinedLocally(variable.Name.Lexeme))
+            if (stmt is Stmt.Sequence sequence)
             {
-                _environment.Define(variable.Name.Lexeme, SharpTSUndefined.Instance);
+                HoistTopLevelVarDeclarations(sequence.Statements);
+                continue;
             }
+            if (stmt is not Stmt.Var { IsVar: true } variable) continue;
+
+            string name = variable.Name.Lexeme;
+            if (GlobalThis.GetOwnPropertyDescriptor(name) is null)
+            {
+                object? initialValue = _environment.IsDefinedLocally(name) && !_environment.HasObjectBinding(name)
+                    ? _environment.GetAt(0, name).ToObject()
+                    : SharpTSUndefined.Instance;
+                if (!GlobalThis.DefineProperty(name, new SharpTSPropertyDescriptor(
+                        initialValue, writable: true, enumerable: true, configurable: false)
+                        { HasValue = true }))
+                    throw new InterpreterException($"TypeError: Cannot declare global variable '{name}'.");
+            }
+
+            _environment.DefineObjectBinding(name,
+                () => ReadClassicGlobalVariable(name),
+                (value, strict) => WriteClassicGlobalVariable(name, value, strict));
         }
+    }
+
+    private RuntimeValue ReadClassicGlobalVariable(string name)
+    {
+        if (!GlobalThis.HasProperty(name))
+            throw new InterpreterException($"ReferenceError: Undefined variable '{name}'.");
+        return RuntimeValue.FromBoxed(GetPropertyValue(GlobalThis, name));
+    }
+
+    private void WriteClassicGlobalVariable(string name, RuntimeValue value, bool strictMode)
+    {
+        if (strictMode && !GlobalThis.HasProperty(name))
+            throw new InterpreterException($"ReferenceError: Undefined variable '{name}'.");
+        object? boxed = value.ToObject();
+        if (!TryAssignThroughDescriptor(GlobalThis.GetOwnPropertyDescriptor(name),
+                GlobalThis, name, boxed, strictMode))
+            GlobalThis.SetProperty(name, boxed);
     }
 
     /// <summary>

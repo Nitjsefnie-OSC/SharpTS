@@ -1,3 +1,4 @@
+using SharpTS.Parsing;
 using SharpTS.Runtime.Types;
 
 namespace SharpTS.Execution;
@@ -74,5 +75,25 @@ public partial class Interpreter
             if (property.Getter is { } getter) klass.AddSymbolAccessor(symbol, getter, isStatic, isGetter: true);
             if (property.Setter is { } setter) klass.AddSymbolAccessor(symbol, setter, isStatic, isGetter: false);
         }
+    }
+
+    private static void InitializeClassStaticKeyOrder(SharpTSClass klass,
+        List<ClassMemberDefinition> definitions, List<Stmt.AutoAccessor>? autoAccessors)
+    {
+        var keys = definitions.Where(member => member.IsStatic)
+            .Select(member => (member.Position, member.Key))
+            .Concat((autoAccessors ?? []).Where(member => member.IsStatic)
+                .Select(member => (member.Name.SourceOrderOffset, (object)member.Name.Lexeme)));
+        klass.InitializeOwnStaticKeyOrder(keys.OrderBy(member => member.Item1).Select(member => member.Item2));
+    }
+
+    private static void InitializeClassInstanceKeyOrder(SharpTSClass klass,
+        List<ClassMemberDefinition> definitions, List<Stmt.AutoAccessor>? autoAccessors)
+    {
+        var keys = definitions.Where(member => !member.IsStatic)
+            .Select(member => (member.Position, member.Key))
+            .Concat((autoAccessors ?? []).Where(member => !member.IsStatic)
+                .Select(member => (member.Name.SourceOrderOffset, (object)member.Name.Lexeme)));
+        klass.Prototype.InitializeOwnKeyOrder(keys.OrderBy(member => member.Item1).Select(member => member.Item2));
     }
 }

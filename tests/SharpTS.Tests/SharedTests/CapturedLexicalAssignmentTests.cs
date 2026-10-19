@@ -48,9 +48,13 @@ public sealed class CapturedLexicalAssignmentTests
     public static IEnumerable<object[]> SourceCases() => Cases().Select(row => row[1..]);
     public static IEnumerable<object[]> HostedCases() => Cases().Select(row => row[..2]);
 
-    [Theory, MemberData(nameof(SourceCases))]
-    public void CapturedLetAssignmentsCheckInitializationAfterTheRhs(string source, string expected)
+    public static IEnumerable<object[]> ModeCases() => SourceCases().SelectMany(row =>
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            .Select(mode => new object[] { row[0], row[1], mode }));
+
+    [Theory, MemberData(nameof(ModeCases))]
+    public void CapturedLetAssignmentsCheckInitializationAfterTheRhs(string source, string expected, ExecutionMode mode)
     {
-        Assert.Equal(expected, TestHarness.Run(source, ExecutionMode.Compiled));
+        Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 }

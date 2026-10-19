@@ -204,6 +204,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
         // symbol-keyed dispatch instead of being stringified.
         if (args[0] is SharpTSSymbol sym)
         {
+            if (target is ISharpTSOwnPropertyObject ownPropertyObject)
+                return ownPropertyObject.OwnProperties.HasSymbolProperty(sym);
             if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var properties))
                 return properties.HasSymbolProperty(sym);
             return target switch
@@ -212,6 +214,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                     => proxy.TrapGetOwnPropertyDescriptor(sym, interpreter)
                         is not (null or SharpTSUndefined),
                 SharpTSObject obj => obj.HasSymbolProperty(sym),
+                SharpTSArray array => array.HasSymbolProperty(sym),
                 SharpTSInstance inst => inst.HasSymbolProperty(sym),
                 SharpTSClass klass => klass.GetOwnStaticSymbolPropertyDescriptor(sym) is not null,
                 SharpTSClassPrototype prototype => prototype.GetOwnPropertyDescriptor(sym) is not null,
@@ -228,6 +231,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
         var key = args[0]?.ToString() ?? "";
         return target switch
         {
+            ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(key) is not null,
             SharpTSProxy proxy => proxy.TrapGetOwnPropertyDescriptor(key, interpreter)
                 is not (null or SharpTSUndefined),
             SharpTSObject obj => obj.HasProperty(key) || obj.HasSetter(key),
@@ -235,6 +239,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
             // `Object.hasOwn(new C(), "someMethod")` is false. HasProperty would resolve
             // it through the class chain and answer true.
             SharpTSInstance inst => inst.HasField(key) || inst.GetOwnPropertyDescriptor(key) is not null,
+            SharpTSPromise promise => promise.HasOwnProperty(key),
             SharpTSArray array => array.HasOwnProperty(key),
             SharpTSMath math => math.HasExtra(key)
                 || (!math.IsBuiltInDeleted(key) && MathBuiltIns.GetMember(key) is not null),
@@ -258,8 +263,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
             SharpTSObjectPrototype objectPrototype => objectPrototype.HasOwnProperty(key),
             SharpTSClassPrototype classPrototype => classPrototype.HasOwnProperty(key),
             SharpTSPromisePrototype promisePrototype => promisePrototype.HasOwnProperty(key),
-            SharpTSClass klass => key is "name" or "length" or "prototype"
-                || klass.HasOwnStaticMember(key),
+            SharpTSClass klass => klass.HasOwnStaticMember(key),
             // User functions materialize these intrinsic properties in their
             // descriptor store, so deletion remains observable here.
             ISharpTSFunctionObject function => function.OwnProperties.GetOwnPropertyDescriptor(key) is not null,
@@ -439,6 +443,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
         if (args.Count == 0) return false;
         if (args[0] is SharpTSSymbol symbol)
         {
+            if (target is ISharpTSOwnPropertyObject ownPropertyObject)
+                return ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(symbol) is { Enumerable: true };
             if (FunctionObjectProperties.TryGetStorage(target, interpreter, out var properties))
                 return properties.GetOwnPropertyDescriptor(symbol) is { Enumerable: true };
             return target switch
@@ -459,6 +465,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                     => stringPrototype.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
                 SharpTSFunctionPrototype functionPrototype
                     => functionPrototype.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
+                SharpTSClassPrototype classPrototype
+                    => classPrototype.GetOwnPropertyDescriptor(symbol) is { Enumerable: true },
                 _ => false,
             };
         }
@@ -474,6 +482,7 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                     is { } descriptor
                     && descriptor is not SharpTSUndefined
                     && SharpTSPropertyDescriptor.FromAnyObject(descriptor).Enumerable,
+            ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSObject obj => obj.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSMath math => math.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSNumberNamespace number => number.GetOwnPropertyDescriptor(key) is { Enumerable: true },
@@ -487,6 +496,8 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
                 => globalThis.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSFunctionPrototype functionPrototype
                 => functionPrototype.GetOwnPropertyDescriptor(key) is { Enumerable: true },
+            SharpTSClassPrototype classPrototype
+                => classPrototype.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSArrayPrototype arrayPrototype
                 => arrayPrototype.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             SharpTSStringPrototype stringPrototype

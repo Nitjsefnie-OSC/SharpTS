@@ -21,15 +21,14 @@ public sealed class GeneratorForOfAcquisitionTests
         } catch (error: any) { console.log("caught", error.message); }
         """;
 
-    // #2325 separately tracks interpreter receiver loss for an ordinary declared next function.
     public const string RetainedIteratorSource = """
         const state: any = { gets: 0, calls: 0, nextGets: 0, nextCalls: 0, valid: true };
         const iterator: any = { index: 0 };
-        const next: any = function(this: any) {
+        function next(this: any) {
             state.nextCalls++; state.valid = state.valid && this === iterator;
             this.index++;
             return this.index <= 2 ? { value: this.index, done: false } : { done: true };
-        };
+        }
         Object.defineProperty(iterator, "next", {
             get() { state.nextGets++; return next; }, configurable: true
         });

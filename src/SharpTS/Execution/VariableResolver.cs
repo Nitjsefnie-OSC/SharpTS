@@ -1,5 +1,6 @@
 using SharpTS.Parsing;
 using SharpTS.Parsing.Visitors;
+using SharpTS.Runtime;
 
 namespace SharpTS.Execution;
 
@@ -69,6 +70,7 @@ public class VariableResolver : AstVisitorBase
         _handlerVarTargets.Add(_scopes.Peek(), target);
         try
         {
+            PredeclareLexicalBindings(statements);
             foreach (var statement in statements)
                 Visit(statement);
         }
@@ -99,6 +101,13 @@ public class VariableResolver : AstVisitorBase
         _scopes.Peek()[name] = true;
     }
 
+    private void PredeclareLexicalBindings(IEnumerable<Stmt> statements)
+    {
+        if (!_scopes.TryPeek(out var scope)) return;
+        foreach (var name in LexicalDeclarationBindings.Collect(statements))
+            scope.TryAdd(name.Lexeme, false);
+    }
+
     /// <summary>
     /// Calculates the scope distance and registers it with the interpreter.
     /// </summary>
@@ -126,6 +135,7 @@ public class VariableResolver : AstVisitorBase
     protected override void VisitBlock(Stmt.Block stmt)
     {
         BeginScope();
+        PredeclareLexicalBindings(stmt.Statements);
         foreach (var s in stmt.Statements)
             Visit(s);
         EndScope();
@@ -175,18 +185,45 @@ public class VariableResolver : AstVisitorBase
         _currentFunction = type;
 
         BeginScope();
+        ResolveParameters(parameters, body);
+        var statements = ParameterBinder.BodyStatements(body);
+        bool separateBody = BeginParameterBodyScope(parameters, statements);
+        PredeclareLexicalBindings(statements);
+        foreach (var statement in statements)
+            Visit(statement);
+        if (separateBody) EndScope();
+        EndScope();
+
+        _currentFunction = enclosingFunction;
+    }
+
+    private void ResolveParameters(List<Stmt.Parameter> parameters, List<Stmt> body)
+    {
+        var initializers = ParameterBinder.ParameterInitializers(body);
         foreach (var param in parameters)
         {
             Declare(param.Name.Lexeme);
             Define(param.Name.Lexeme);
             if (param.DefaultValue != null)
                 Visit(param.DefaultValue);
+            if (initializers?.TryGetValue(param.Name.Lexeme, out var initializer) == true)
+            {
+                PredeclareLexicalBindings([initializer]);
+                Visit(initializer);
+            }
         }
-        foreach (var statement in body)
-            Visit(statement);
-        EndScope();
+    }
 
-        _currentFunction = enclosingFunction;
+    private bool BeginParameterBodyScope(List<Stmt.Parameter> parameters, List<Stmt> body)
+    {
+        if (!ParameterBinder.HasParameterExpressions(parameters)) return false;
+        BeginScope();
+        foreach (var (name, _) in ParameterBinder.BodyVarDeclarations(body))
+        {
+            Declare(name.Lexeme);
+            Define(name.Lexeme);
+        }
+        return true;
     }
 
     protected override void VisitClass(Stmt.Class stmt)
@@ -288,8 +325,11 @@ public class VariableResolver : AstVisitorBase
         Visit(stmt.Iterable);
 
         BeginScope();
-        Declare(stmt.Variable.Lexeme);
-        Define(stmt.Variable.Lexeme);
+        if (stmt.IsDeclaration)
+        {
+            Declare(stmt.Variable.Lexeme);
+            Define(stmt.Variable.Lexeme);
+        }
         Visit(stmt.Body);
         EndScope();
     }
@@ -301,8 +341,11 @@ public class VariableResolver : AstVisitorBase
         Visit(stmt.Object);
 
         BeginScope();
-        Declare(stmt.Variable.Lexeme);
-        Define(stmt.Variable.Lexeme);
+        if (stmt.IsDeclaration)
+        {
+            Declare(stmt.Variable.Lexeme);
+            Define(stmt.Variable.Lexeme);
+        }
         Visit(stmt.Body);
         EndScope();
     }
@@ -319,6 +362,7 @@ public class VariableResolver : AstVisitorBase
                 Declare(stmt.CatchParam.Lexeme);
                 Define(stmt.CatchParam.Lexeme);
             }
+            PredeclareLexicalBindings(stmt.CatchBlock);
             foreach (var s in stmt.CatchBlock)
                 Visit(s);
             EndScope();
@@ -477,22 +521,20 @@ public class VariableResolver : AstVisitorBase
             Define(expr.Name.Lexeme);
         }
 
-        foreach (var param in expr.Parameters)
-        {
-            Declare(param.Name.Lexeme);
-            Define(param.Name.Lexeme);
-            if (param.DefaultValue != null)
-                Visit(param.DefaultValue);
-        }
+        ResolveParameters(expr.Parameters, expr.BlockBody ?? []);
+        var statements = ParameterBinder.BodyStatements(expr.BlockBody ?? []);
+        bool separateBody = BeginParameterBodyScope(expr.Parameters, statements);
 
         if (expr.ExpressionBody != null)
             Visit(expr.ExpressionBody);
         if (expr.BlockBody != null)
         {
-            foreach (var s in expr.BlockBody)
+            PredeclareLexicalBindings(statements);
+            foreach (var s in statements)
                 Visit(s);
         }
 
+        if (separateBody) EndScope();
         EndScope();
 
         _currentFunction = enclosingFunction;

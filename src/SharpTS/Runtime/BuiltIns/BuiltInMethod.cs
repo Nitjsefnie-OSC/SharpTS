@@ -16,8 +16,37 @@ namespace SharpTS.Runtime.BuiltIns;
 /// </remarks>
 /// <seealso cref="ISharpTSCallable"/>
 /// <seealso cref="MathBuiltIns"/>
-public class BuiltInMethod : ISharpTSCallable, IBuiltInFunctionMetadata
+public class BuiltInMethod : ISharpTSFunctionObject, IBuiltInFunctionMetadata
 {
+    private sealed class OwnPropertyState
+    {
+        internal SharpTSObject? Properties;
+        internal IReadOnlyDictionary<string, object?>? NativeProperties;
+        internal IReadOnlyDictionary<string, object?>? DictionaryView;
+    }
+
+    private sealed class OwnPropertyDictionary(BuiltInMethod owner)
+        : IReadOnlyDictionary<string, object?>
+    {
+        public IEnumerable<string> Keys => owner.OwnPropertyStorage.OwnVisibleStringKeys();
+        public IEnumerable<object?> Values => Keys.Select(key => this[key]);
+        public int Count => Keys.Count();
+        public object? this[string key] => TryGetValue(key, out var value)
+            ? value : throw new KeyNotFoundException(key);
+        public bool ContainsKey(string key)
+            => owner.OwnPropertyStorage.GetOwnPropertyDescriptor(key) is not null;
+        public bool TryGetValue(string key, out object? value)
+        {
+            var descriptor = owner.OwnPropertyStorage.GetOwnPropertyDescriptor(key);
+            value = descriptor is { HasValue: true }
+                ? descriptor.Value : SharpTSUndefined.Instance;
+            return descriptor is not null;
+        }
+        public IEnumerator<KeyValuePair<string, object?>> GetEnumerator()
+            => Keys.Select(key => new KeyValuePair<string, object?>(key, this[key])).GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
     private readonly string _name;
     private readonly int _minArity;
     private readonly int _maxArity;
@@ -35,7 +64,9 @@ public class BuiltInMethod : ISharpTSCallable, IBuiltInFunctionMetadata
     // MinArity for compatibility with the many call sites that already report
     // the correct value via MinArity.
     private int _specLength = -1;
-    private HashSet<string>? _deletedMetadataProperties;
+    // Receiver views share this holder even before any property is materialized.
+    // A realm clone gets a fresh holder, so static registration templates remain isolated.
+    private OwnPropertyState _ownPropertyState = new();
 
     // Cache for bound methods - uses weak references to avoid memory leaks
     // Key: receiver object, Value: bound method instance
@@ -85,6 +116,36 @@ public class BuiltInMethod : ISharpTSCallable, IBuiltInFunctionMetadata
     /// </summary>
     public bool HasV2Implementation => _implementationV2 != null;
 
+    internal bool IsRealmOwned { get; private set; }
+
+    // These receiver objects are themselves realm-owned. Retain their method
+    // identity if the owner is passed to another interpreter.
+    internal bool HasRealmOwnedReceiver => _receiver is SharpTSMath or SharpTSJSON
+        or SharpTSDate or SharpTSArrayGlobal;
+
+    internal BuiltInMethod MarkRealmOwned()
+    {
+        IsRealmOwned = true;
+        return this;
+    }
+
+    internal SharpTSObject OwnPropertyStorage
+    {
+        get
+        {
+            if (_ownPropertyState.Properties is { } properties) return properties;
+            properties = FunctionObjectProperties.Create(_name, SpecLength);
+            if (_ownPropertyState.NativeProperties is { } nativeProperties)
+            {
+                foreach (var (key, value) in nativeProperties)
+                    DefineNativeProperty(properties, key, value);
+            }
+            return _ownPropertyState.Properties = properties;
+        }
+    }
+
+    SharpTSObject ISharpTSFunctionObject.OwnProperties => OwnPropertyStorage;
+
     internal Type? ExpectedReceiverType { get; private set; }
 
     internal BuiltInMethod WithExpectedReceiverType(Type receiverType)
@@ -98,10 +159,11 @@ public class BuiltInMethod : ISharpTSCallable, IBuiltInFunctionMetadata
     /// interpreter's function-member path before the Function.prototype surface.
     /// Node models several process APIs as functions with methods hanging off
     /// them (<c>process.hrtime.bigint</c>, <c>process.memoryUsage.rss</c>);
-    /// this dictionary is how a BuiltInMethod exposes those. Propagated to
-    /// bound copies created by <see cref="Bind"/>.
+    /// this view exposes the canonical live descriptors without reviving deleted
+    /// native properties. Accessor invocation belongs to the interpreter's Get path.
     /// </summary>
-    public IReadOnlyDictionary<string, object?>? OwnProperties { get; private set; }
+    public IReadOnlyDictionary<string, object?> OwnProperties
+        => _ownPropertyState.DictionaryView ??= new OwnPropertyDictionary(this);
 
     /// <summary>
     /// Attaches own function-object properties (see <see cref="OwnProperties"/>).
@@ -109,9 +171,19 @@ public class BuiltInMethod : ISharpTSCallable, IBuiltInFunctionMetadata
     /// </summary>
     public BuiltInMethod WithOwnProperties(Dictionary<string, object?> properties)
     {
-        OwnProperties = properties;
+        _ownPropertyState.NativeProperties = new Dictionary<string, object?>(properties);
+        if (_ownPropertyState.Properties is { } storage)
+        {
+            foreach (var (key, value) in properties)
+                DefineNativeProperty(storage, key, value);
+        }
         return this;
     }
+
+    private static void DefineNativeProperty(SharpTSObject properties, string key, object? value)
+        => properties.DefineProperty(key, key == "prototype"
+            ? new SharpTSPropertyDescriptor(value, writable: false, enumerable: false, configurable: false)
+            : new SharpTSPropertyDescriptor(value, writable: true, enumerable: true, configurable: true));
 
     // Boxed-delegate constructors. The legacy delegate type survives only as plumbing
     // (CreateConstant + the reflective standalone-DLL Call path), so these are not part of
@@ -204,7 +276,7 @@ public class BuiltInMethod : ISharpTSCallable, IBuiltInFunctionMetadata
     private protected BuiltInMethod(string name, int minArity, int maxArity,
         Func<Interpreter, object?, List<object?>, object?>? implementation,
         Func<Interpreter, RuntimeValue, ReadOnlySpan<RuntimeValue>, RuntimeValue>? implementationV2,
-        object? receiver)
+        object? receiver, bool isConstant = false)
     {
         _name = name;
         _minArity = minArity;
@@ -218,6 +290,7 @@ public class BuiltInMethod : ISharpTSCallable, IBuiltInFunctionMetadata
         _implementation = implementation;
         _implementationV2 = implementationV2;
         _receiver = receiver;
+        IsConstant = isConstant;
         // Bound instances don't have their own cache
     }
 
@@ -251,7 +324,7 @@ public class BuiltInMethod : ISharpTSCallable, IBuiltInFunctionMetadata
     /// <summary>
     /// Returns whether two built-in function objects wrap the same host
     /// implementation. Realm-local intrinsic functions are copied with
-    /// <see cref="Bind(object?)"/>, so reference identity alone cannot be used
+    /// <see cref="CloneForRealm"/>, so reference identity alone cannot be used
     /// by guarded fast paths to recognize an unchanged intrinsic.
     /// </summary>
     internal bool HasSameImplementation(BuiltInMethod other)
@@ -263,39 +336,61 @@ public class BuiltInMethod : ISharpTSCallable, IBuiltInFunctionMetadata
 
     public bool HasMetadataProperty(string name)
         => name is "name" or "length"
-            && !(_deletedMetadataProperties?.Contains(name) ?? false);
+            && OwnPropertyStorage.GetOwnPropertyDescriptor(name) is not null;
 
     public bool DeleteMetadataProperty(string name)
     {
         if (name is not ("name" or "length")) return true;
-        _deletedMetadataProperties ??= [];
-        _deletedMetadataProperties.Add(name);
-        return true;
+        return OwnPropertyStorage.DeletePropertyStrict(name, false);
+    }
+
+    /// <summary>Creates a fresh realm function rather than another receiver view.</summary>
+    internal BuiltInMethod CloneForRealm()
+        => CloneForRealm(new Dictionary<BuiltInMethod, BuiltInMethod>(System.Collections.Generic.ReferenceEqualityComparer.Instance));
+
+    private BuiltInMethod CloneForRealm(Dictionary<BuiltInMethod, BuiltInMethod> copies)
+    {
+        if (copies.TryGetValue(this, out var existing)) return existing;
+        var copy = CopyConfiguration(_receiver);
+        copy.IsRealmOwned = true;
+        copies.Add(this, copy);
+        if (_ownPropertyState.NativeProperties is { } nativeProperties)
+        {
+            var copiedProperties = new Dictionary<string, object?>(nativeProperties.Count);
+            foreach (var (key, value) in nativeProperties)
+                copiedProperties[key] = value is BuiltInMethod method
+                    ? method.CloneForRealm(copies) : value;
+            copy._ownPropertyState.NativeProperties = copiedProperties;
+        }
+        return copy;
+    }
+
+    private BuiltInMethod CopyConfiguration(object? receiver)
+        => new(_name, _minArity, _maxArity, _implementation, _implementationV2, receiver, IsConstant)
+        {
+            _specLength = _specLength,
+            IsConstructor = IsConstructor,
+            ExpectedReceiverType = ExpectedReceiverType,
+            IsRealmOwned = IsRealmOwned,
+        };
+
+    private BuiltInMethod CreateReceiverView(object? receiver)
+    {
+        var view = CopyConfiguration(receiver);
+        view._ownPropertyState = _ownPropertyState;
+        return view;
     }
 
     public BuiltInMethod Bind(object? receiver)
     {
         // Null receivers don't need caching
         if (receiver == null)
-        {
-            var unboundCopy = new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, (object?)null);
-            unboundCopy._specLength = _specLength;
-            unboundCopy.OwnProperties = OwnProperties;
-            unboundCopy.IsConstructor = IsConstructor;
-            return unboundCopy;
-        }
+            return CreateReceiverView(null);
 
         // Value types (like double for numbers) can't be cached in ConditionalWeakTable
         // because they're boxed each time, creating new object instances
         if (receiver.GetType().IsValueType)
-        {
-            var valBound = new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, receiver);
-            valBound._specLength = _specLength;
-            valBound.OwnProperties = OwnProperties;
-            valBound.IsConstructor = IsConstructor;
-            valBound.ExpectedReceiverType = ExpectedReceiverType;
-            return valBound;
-        }
+            return CreateReceiverView(receiver);
 
         // Initialize cache lazily
         _boundMethodCache ??= new ConditionalWeakTable<object, BuiltInMethod>();
@@ -307,11 +402,7 @@ public class BuiltInMethod : ISharpTSCallable, IBuiltInFunctionMetadata
         }
 
         // Create new bound method and cache it
-        var bound = new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, receiver);
-        bound._specLength = _specLength;
-        bound.OwnProperties = OwnProperties;
-        bound.IsConstructor = IsConstructor;
-        bound.ExpectedReceiverType = ExpectedReceiverType;
+        var bound = CreateReceiverView(receiver);
         _boundMethodCache.AddOrUpdate(receiver, bound);
         return bound;
     }

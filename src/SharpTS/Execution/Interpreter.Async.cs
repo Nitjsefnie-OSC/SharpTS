@@ -86,6 +86,7 @@ public partial class Interpreter
     {
         using (PushScope(environment))
         {
+            ReserveLexicalDeclarations(statements);
             // JS hoists function declarations to the top of their enclosing function/block scope.
             // The sync ExecuteBlock does the same; without it an async body never sees a function
             // declared after a reference to it — e.g. the `async function* __genArrow_N` the
@@ -161,7 +162,7 @@ public partial class Interpreter
                     disposeIterator = true;
                 }
 
-                var result = await ExecuteLoopBodyAsync(forOf.Variable.Lexeme, value, forOf.Body);
+                var result = await ExecuteLoopBodyAsync(forOf.Variable, forOf.IsDeclaration, value, forOf.Body);
                 preserveThrow = result.Type == ExecutionResult.ResultType.Throw;
                 var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
                 if (shouldBreak) return ExecutionResult.Success();
@@ -219,10 +220,9 @@ public partial class Interpreter
         return completion.Task;
     }
 
-    private async Task<ExecutionResult> ExecuteLoopBodyAsync(string varName, object? value, Stmt body)
+    private async Task<ExecutionResult> ExecuteLoopBodyAsync(Token variable, bool isDeclaration, object? value, Stmt body)
     {
-        RuntimeEnvironment loopEnv = new(_environment);
-        loopEnv.Define(varName, value);
+        var loopEnv = CreateIterationEnvironment(variable, isDeclaration, value);
 
         RuntimeEnvironment prev = _environment;
         _environment = loopEnv;
@@ -338,7 +338,18 @@ public partial class Interpreter
 
             if (done) break;
 
-            var result = await ExecuteLoopBodyAsync(forOf.Variable.Lexeme, value, forOf.Body);
+            ExecutionResult result;
+            try
+            {
+                result = await ExecuteLoopBodyAsync(forOf.Variable, forOf.IsDeclaration, value, forOf.Body);
+            }
+            catch
+            {
+                // Binding initialization/assignment is part of the loop body
+                // completion and must close a real async iterator on failure.
+                await CloseAsyncIteratorOnEarlyExit(asyncIterator);
+                throw;
+            }
             var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             // An early exit (break, or a return/throw out of the loop body) closes the iterator before
             // leaving: ECMA-262 AsyncIteratorClose calls return() and awaits it, so a suspended async
@@ -457,6 +468,7 @@ public partial class Interpreter
 
         IEnumerable<string> keys = obj switch
         {
+            ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.OwnEnumerableKeys(),
             // Own enumerable keys only, hiding boxed-primitive internal slots and
             // honoring enumerability — consistent with Object.keys (#475).
             SharpTSObject o => o.OwnEnumerableKeys(),
@@ -472,7 +484,7 @@ public partial class Interpreter
 
         foreach (var key in keys)
         {
-            var result = await ExecuteLoopBodyAsync(forIn.Variable.Lexeme, key, forIn.Body);
+            var result = await ExecuteLoopBodyAsync(forIn.Variable, forIn.IsDeclaration, key, forIn.Body);
             var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
             if (shouldContinue) continue;
@@ -621,12 +633,14 @@ public partial class Interpreter
 
     internal async ValueTask<ExecutionResult> ExecuteVarAsyncVT(Stmt.Var varStmt)
     {
-        object? value = null;
+        object? value = SharpTSUndefined.Instance;
         if (varStmt.Initializer != null)
         {
             value = (await EvaluateAsync(varStmt.Initializer)).ToObject();
         }
         var target = varStmt.IsVar ? _environment.VarDeclarationTarget ?? _environment : _environment;
+        if (varStmt.IsVar && varStmt.Initializer is null && target.IsDefinedLocally(varStmt.Name.Lexeme))
+            return ExecutionResult.Success();
         target.Define(varStmt.Name.Lexeme, value);
         return ExecutionResult.Success();
     }
@@ -774,15 +788,15 @@ public partial class Interpreter
     {
         object? tag = await EvaluateMemberCallReference(_asyncContext, tagged.Tag);
 
-        if (tag is not Runtime.Types.ISharpTSCallable callable)
-            throw new InterpreterException("Tagged template tag must be a function.");
-
         var cookedList = tagged.CookedStrings.Cast<object?>().ToList();
         var stringsArray = new Runtime.Types.SharpTSTemplateStringsArray(cookedList, tagged.RawStrings);
 
         List<object?> args = [stringsArray];
         foreach (var expr in tagged.Expressions)
             args.Add((await EvaluateAsync(expr)).ToObject());
+
+        if (tag is not Runtime.Types.ISharpTSCallable callable)
+            throw new ThrowException(new SharpTSTypeError($"{GetTypeofString(tag)} is not a function"));
 
         return RuntimeValue.FromBoxed(callable.Call(this, args));
     }

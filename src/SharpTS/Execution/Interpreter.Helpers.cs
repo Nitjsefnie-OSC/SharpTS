@@ -1,6 +1,7 @@
 using SharpTS.Modules;
 using SharpTS.Parsing;
 using SharpTS.Runtime;
+using SharpTS.Runtime.BuiltIns;
 using SharpTS.Runtime.DotNet;
 using SharpTS.Runtime.Types;
 
@@ -24,6 +25,12 @@ public partial class Interpreter
         {
             case SharpTSProxy proxy:
                 value = proxy.TrapGet(name.Lexeme, this);
+                return true;
+            case ISharpTSOwnPropertyObject ownPropertyObject:
+                value = GetPropertyValue(ownPropertyObject, name.Lexeme);
+                return true;
+            case BuiltInMethod nativeMethod:
+                value = GetPropertyValue(nativeMethod, name.Lexeme);
                 return true;
             case SharpTSClass klass:
                 value = EvaluateGetOnClass(klass, name.Lexeme);
@@ -56,6 +63,12 @@ public partial class Interpreter
         {
             case SharpTSProxy proxy:
                 value = proxy.TrapGetRV(name.Lexeme, this);
+                return true;
+            case ISharpTSOwnPropertyObject ownPropertyObject:
+                value = RuntimeValue.FromBoxed(GetPropertyValue(ownPropertyObject, name.Lexeme));
+                return true;
+            case BuiltInMethod nativeMethod:
+                value = RuntimeValue.FromBoxed(GetPropertyValue(nativeMethod, name.Lexeme));
                 return true;
             case SharpTSClass klass:
                 value = RuntimeValue.FromBoxed(EvaluateGetOnClass(klass, name.Lexeme));
@@ -91,9 +104,14 @@ public partial class Interpreter
             case SharpTSProxy proxy:
                 proxy.TrapSet(name.Lexeme, value, this);
                 return true;
+            case ISharpTSOwnPropertyObject ownPropertyObject:
+                SetOwnPropertyObjectValue(ownPropertyObject, name.Lexeme, value, _environment.IsStrictMode);
+                return true;
+            case BuiltInMethod nativeMethod:
+                SetOwnPropertyObjectValue(nativeMethod, name.Lexeme, value, _environment.IsStrictMode);
+                return true;
             case SharpTSClass klass:
-                if (!TryAssignThroughDescriptor(klass.FindStaticPropertyDescriptor(name.Lexeme),
-                        klass, name.Lexeme, value, _environment.IsStrictMode))
+                if (!TryAssignThroughClassDescriptor(klass, name.Lexeme, value, _environment.IsStrictMode))
                     klass.SetStaticProperty(name.Lexeme, value, _environment.IsStrictMode);
                 return true;
             case SharpTSInstance instance:
@@ -115,14 +133,20 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Attempts to get an element from an array-like runtime value by index.
+    /// Attempts to read an indexed property from a canonical property target,
+    /// array-like value or CLR indexer.
     /// </summary>
-    /// <param name="obj">The array-like object.</param>
-    /// <param name="index">The index value (expected to be a double).</param>
+    /// <param name="obj">The indexed target.</param>
+    /// <param name="index">The raw property key or numeric array index.</param>
     /// <param name="value">The retrieved value if successful.</param>
     /// <returns><c>true</c> if the element was found; otherwise <c>false</c>.</returns>
     private bool TryGetIndex(object? obj, object? index, out object? value)
     {
+        if (HasCanonicalIndexProperties(obj))
+        {
+            value = GetOwnPropertyObjectValue(obj!, ToPropertyKey(index));
+            return true;
+        }
         if (obj is SharpTSArray array && index is double idx)
         {
             value = array.Get((int)idx);
@@ -138,14 +162,20 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Attempts to set an element on an array-like runtime value by index.
+    /// Attempts to write an indexed property on a canonical property target,
+    /// array-like value or CLR indexer.
     /// </summary>
-    /// <param name="obj">The array-like object.</param>
-    /// <param name="index">The index value (expected to be a double).</param>
+    /// <param name="obj">The indexed target.</param>
+    /// <param name="index">The raw property key or numeric array index.</param>
     /// <param name="value">The value to set.</param>
     /// <returns><c>true</c> if the element was set; otherwise <c>false</c>.</returns>
     private bool TrySetIndex(object? obj, object? index, object? value)
     {
+        if (HasCanonicalIndexProperties(obj))
+        {
+            SetOwnPropertyObjectValue(obj!, ToPropertyKey(index), value, _environment.IsStrictMode);
+            return true;
+        }
         if (obj is SharpTSArray array && index is double idx)
         {
             array.Set((int)idx, value);
@@ -158,6 +188,16 @@ public partial class Interpreter
         }
         return false;
     }
+
+    private bool HasCanonicalIndexProperties(object? target)
+        => target is ISharpTSOwnPropertyObject
+            || FunctionObjectProperties.TryGetStorage(target, this, out _);
+
+    // Callers supply an already normalized string or Symbol property key.
+    private object? GetOwnPropertyObjectValue(object target, object key)
+        => key is SharpTSSymbol symbol
+            ? GetSymbolPropertyValue(target, symbol)
+            : GetPropertyValue(target, (string)key);
 
     #endregion
 
@@ -328,6 +368,8 @@ public partial class Interpreter
     /// </summary>
     private RuntimeValue IncrementIndex(object? obj, object? index, double delta, bool returnOld)
     {
+        // Retain the evaluated key expression. GetValue and PutValue each
+        // convert an object key, so the write may select a different property.
         if (TryGetIndex(obj, index, out object? currentObj))
         {
             RuntimeValue oldValue = RuntimeValue.FromBoxed(currentObj);

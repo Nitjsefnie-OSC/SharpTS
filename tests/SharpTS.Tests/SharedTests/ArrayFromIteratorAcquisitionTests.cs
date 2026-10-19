@@ -88,6 +88,47 @@ public sealed class ArrayFromIteratorAcquisitionTests
 
     public static IEnumerable<object[]> Cases()
     {
+        yield return ["array-like-length-getter", """
+            const state = { reads: 0 }, input: any = {
+                0: 'a', 1: 'b', get length() { state.reads++; return 2; }
+            };
+            console.log(Array.from(input).join(','), state.reads);
+            """, "a,b 1\n"];
+        yield return ["array-like-inherited-accessors", """
+            const state = { events: '', valid: true };
+            const proto: any = {
+                get length() {
+                    state.events += 'l'; state.valid = state.valid && this === input;
+                    return { valueOf() { state.events += 'v'; return 3.9; } };
+                },
+                get 0() { state.events += '0'; state.valid = state.valid && this === input; return 'a'; }
+            };
+            const input: any = Object.create(proto);
+            Object.defineProperty(input, '1', {
+                get() { state.events += '1'; state.valid = state.valid && this === input; return 'b'; }
+            });
+            const result = Array.from(input);
+            console.log(result.length, result.join(','), typeof result[2], state.events, state.valid);
+            """, "3 a,b, undefined lv01 true\n"];
+        yield return ["array-like-accessor-errors", """
+            const marker = {}, state = { events: '' };
+            const lengthThrows: any = { get length() { state.events += 'l'; throw marker; } };
+            try { Array.from(lengthThrows); }
+            catch (error) { console.log(error === marker, state.events); }
+            const indexThrows: any = {
+                get length() { state.events += 'l'; return 2; },
+                get 0() { state.events += '0'; throw marker; },
+                get 1() { state.events += '1'; return 1; }
+            };
+            try { Array.from(indexThrows); }
+            catch (error) { console.log(error === marker, state.events); }
+            """, "true l\ntrue ll0\n"];
+        yield return ["nullish-data-iterator", """
+            for (const method of [null, undefined]) {
+                const input: any = { 0: 7, length: 1, [Symbol.iterator]: method };
+                console.log(Array.from(input).join(','));
+            }
+            """, "7\n7\n"];
         yield return ["class-first-method", ClassSource, "true true true 3 3 true true\n"];
         yield return ["mapped-object", MappedObjectSource, "10,11 n0m0n1m1n2 1 1 1 true\n2 true true 2 2 2\n"];
         yield return ["validation-and-fallback", ValidationSource, "true 0 0\ntrue 1 0\ntrue 2 0\ntrue 3 1\na,b\n"];
@@ -102,6 +143,33 @@ public sealed class ArrayFromIteratorAcquisitionTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
-        Assert.Equal(expected, TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled && (name is "array-like-length-getter" or "array-like-inherited-accessors" or "array-like-accessor-errors" or "nullish-data-iterator"))
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal(expected, output);
+    }
+
+    // Compiled required iteration accepts ordinary undefined iterator slots (#2574).
+    [Fact]
+    public void RequiredConsumersRejectNullishRecordIteratorSlots()
+    {
+        const string source = """
+            for (const method of [null, undefined]) {
+                const input: any = { 0: 7, length: 1, [Symbol.iterator]: method };
+                try { for (const value of input) {} }
+                catch (error) { console.log(error instanceof TypeError); }
+                try { const values = [...input]; }
+                catch (error) { console.log(error instanceof TypeError); }
+            }
+            """;
+        Assert.Equal("true\ntrue\ntrue\ntrue\n", TestHarness.Run(source, ExecutionMode.Interpreted));
     }
 }

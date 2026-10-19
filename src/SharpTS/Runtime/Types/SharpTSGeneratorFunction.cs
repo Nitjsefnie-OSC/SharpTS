@@ -83,7 +83,7 @@ public class SharpTSGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceive
         environment.NewTarget = RuntimeValue.Undefined;
         environment.ConstructionFrame = null;
         // #775: a generator expression / object generator method binds its own dynamic `this`. The bound
-        // receiver (or globalThis for a plain call) is defined in the generator's OWN body environment —
+        // receiver (or globalThis for a plain call) is defined in the generator's invocation environment —
         // NOT a new parent scope inserted above the closure — so a captured enclosing-function local keeps
         // its lexical scope distance and still resolves. A plain call defaults `this` to undefined
         // (strict-mode function-expression semantics) rather than leaving it unbound.
@@ -103,12 +103,13 @@ public class SharpTSGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceive
         }
         // Capture at invocation, before defaults and before the lazy body can suspend.
         if (ArgumentsUsage.UsesArguments(_declaration))
-            environment.Define("arguments", new SharpTSArguments(arguments));
-        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
+            environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
+        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter, _declaration.Body);
+        var prepared = ParameterBinder.PrepareBody(_declaration.Parameters, _declaration.Body, environment);
 
         // Return a generator that will execute the body lazily
         return new SharpTSGenerator(
-            _declaration.Body ?? [], environment, interpreter,
+            prepared.Statements, prepared.Environment, interpreter,
             _declaration.Name.Lexeme, _declaration)
         { Prototype = _functionProperties.GetIteratorPrototype(interpreter) };
     }
@@ -150,6 +151,8 @@ public class SharpTSGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceive
 /// </remarks>
 public class SharpTSArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceiverBindable
 {
+    // A receiver view keeps the named expression's original callable identity.
+    private SharpTSArrowGeneratorFunction? _selfReference;
     private GeneratorFunctionProperties _functionProperties;
     GeneratorFunctionProperties ISharpTSGeneratorFunctionValue.FunctionProperties => _functionProperties;
     private readonly Expr.ArrowFunction _declaration;
@@ -196,18 +199,19 @@ public class SharpTSArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
         // Named generator function expression: bind self-reference alongside params.
         if (_declaration.Name != null)
         {
-            environment.Define(_declaration.Name.Lexeme, this);
+            environment.Define(_declaration.Name.Lexeme, _selfReference ?? this);
         }
         // #775: a `function*` expression binds its own dynamic `this`. The bound receiver (or undefined
-        // for a plain call) is defined in the generator's OWN body environment, NOT a parent scope, so a
+        // for a plain call) is defined in the invocation environment, NOT a parent scope, so a
         // captured enclosing-scope binding keeps its lexical scope distance.
         if (_thisBound)
             environment.Define("this", _boundThis);
         else if (HasOwnThis)
             environment.Define("this", interpreter.GlobalThis); // sloppy-mode `this` = globalThis (#775)
         if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
-            environment.Define("arguments", new SharpTSArguments(arguments));
-        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
+            environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
+        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter, _declaration.BlockBody);
+        var prepared = ParameterBinder.PrepareBody(_declaration.Parameters, _declaration.BlockBody, environment);
 
         // A generator function expression drives the same SharpTSGenerator as a declaration — only the
         // block body and the captured environment differ. Generator expressions always have a block
@@ -215,7 +219,7 @@ public class SharpTSArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
         // generator expressions the GeneratorArrowLifter leaves in place because they close over a
         // block-scoped binding (#678); all others are lifted to declarations.
         return new SharpTSGenerator(
-            _declaration.BlockBody ?? [], environment, interpreter,
+            prepared.Statements, prepared.Environment, interpreter,
             _declaration.Name?.Lexeme ?? "<generator>", _declaration)
         { Prototype = _functionProperties.GetIteratorPrototype(interpreter) };
     }
@@ -228,6 +232,7 @@ public class SharpTSArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
         var bound = new SharpTSArrowGeneratorFunction(
             _declaration, _closure, hasOwnThis: true, thisBound: true, boundThis: thisObject);
         bound._functionProperties = _functionProperties;
+        bound._selfReference = _selfReference ?? this;
         return bound;
     }
 

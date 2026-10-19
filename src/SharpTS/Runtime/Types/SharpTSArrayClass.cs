@@ -8,7 +8,7 @@ namespace SharpTS.Runtime.Types;
 /// A <see cref="SharpTSArray"/> created by a guest class that extends
 /// <c>Array</c>. IS an array (all array built-ins, indexing, iteration, and
 /// <c>Array.isArray</c> work unchanged) and additionally carries the guest
-/// class for method/getter lookup and <c>instanceof</c> brand checks.
+/// class for construction and its default prototype chain.
 /// </summary>
 /// <seealso cref="SharpTSArrayClass"/>
 public sealed class SharpTSArraySubclassInstance(SharpTSClass klass) : SharpTSArray
@@ -123,11 +123,8 @@ public class SharpTSArrayClass : SharpTSClass
     public override object? Call(Interpreter interpreter, List<object?> arguments)
         => Construct(interpreter, arguments, this);
 
-    internal override object? Construct(Interpreter interpreter, List<object?> arguments, object? newTarget)
-    {
-        var instance = new SharpTSArraySubclassInstance(this);
-        return ExecuteConstructorLevel(interpreter, instance, arguments, newTarget);
-    }
+    internal override object AllocateInstance(Interpreter interpreter)
+        => new SharpTSArraySubclassInstance(this);
 
     protected override bool TryExecuteNativeConstructor(
         Interpreter interpreter, object allocation, List<object?> arguments)

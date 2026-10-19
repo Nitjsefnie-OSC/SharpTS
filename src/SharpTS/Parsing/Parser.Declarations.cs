@@ -850,9 +850,9 @@ public partial class Parser
     {
         // Check for destructuring patterns
         if (Check(TokenType.LEFT_BRACKET))
-            return DestructureArrayDeclaration();
+            return DestructureArrayDeclaration(isVar);
         if (Check(TokenType.LEFT_BRACE))
-            return DestructureObjectDeclaration();
+            return DestructureObjectDeclaration(isVar);
 
         // Parse the first declarator.
         var first = ParseSingleDeclarator(isConst, isVar);

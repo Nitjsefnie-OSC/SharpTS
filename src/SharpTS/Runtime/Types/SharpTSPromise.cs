@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using SharpTS.Compilation;
 using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
@@ -35,17 +36,51 @@ public class SharpTSPromise : ITypeCategorized
     // (and, for subclass instances, declared fields). Base promises have none
     // until user code adds one — a poisoned `constructor` getter
     // (Object.defineProperty(p, "constructor", { get() { throw … } }), test262
-    // then/ctor-poisoned, #350) is the motivating case. Both dictionaries are
+    // then/ctor-poisoned, #350) is the motivating case. The descriptor store is
     // lazily allocated so plain promises stay allocation-free.
-    private Dictionary<string, object?>? _ownProperties;
-    private Dictionary<string, (ISharpTSCallable? Getter, ISharpTSCallable? Setter)>? _accessors;
+    private SharpTSObject? _ownProperties;
+
+    private SharpTSObject OwnProperties
+    {
+        get
+        {
+            var properties = _ownProperties ??= new SharpTSObject([]);
+            // Promise integrity APIs record state in the shared descriptor store.
+            // Apply it before descriptor reads or mutations, including lazy creation.
+            if (PropertyDescriptorStore.IsFrozen(this))
+            {
+                if (!properties.IsFrozen) properties.Freeze();
+            }
+            else if (PropertyDescriptorStore.IsSealed(this))
+            {
+                if (!properties.IsSealed) properties.Seal();
+            }
+            else if (!PropertyDescriptorStore.IsExtensible(this))
+                properties.PreventExtensions();
+            return properties;
+        }
+    }
+
+    internal bool DefineProperty(string name, SharpTSPropertyDescriptor descriptor)
+        => OwnProperties.DefineProperty(name, descriptor);
+
+    internal SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
+        => _ownProperties is null ? null : OwnProperties.GetOwnPropertyDescriptor(name);
+
+    internal bool HasOwnProperty(string name) => GetOwnPropertyDescriptor(name) is not null;
+
+    internal bool DeletePropertyStrict(string name, bool strictMode)
+        => GetOwnPropertyDescriptor(name) is null || OwnProperties.DeletePropertyStrict(name, strictMode);
+
+    internal void SetOwnPropertyStrict(string name, object? value, bool strictMode)
+        => OwnProperties.SetPropertyStrict(name, value, strictMode);
 
     /// <summary>
     /// Reads an own data property installed on this promise instance.
     /// </summary>
     public bool TryGetOwnProperty(string name, out object? value)
     {
-        if (_ownProperties != null && _ownProperties.TryGetValue(name, out value))
+        if (_ownProperties != null && _ownProperties.Fields.TryGetValue(name, out value))
             return true;
         value = null;
         return false;
@@ -55,13 +90,11 @@ public class SharpTSPromise : ITypeCategorized
     /// Stores an own data property on this promise instance.
     /// </summary>
     public void SetOwnProperty(string name, object? value)
-        => (_ownProperties ??= [])[name] = value;
+        => OwnProperties.SetProperty(name, value);
 
-    internal void DefineOwnDataField(string name, object? value)
-    {
-        _accessors?.Remove(name);
-        SetOwnProperty(name, value);
-    }
+    internal bool DefineOwnDataField(string name, object? value)
+        => DefineProperty(name, new SharpTSPropertyDescriptor(value,
+            writable: true, enumerable: true, configurable: true) { HasValue = true });
 
     /// <summary>
     /// Registers an own accessor pair from <c>Object.defineProperty</c>. Either
@@ -69,7 +102,12 @@ public class SharpTSPromise : ITypeCategorized
     /// replaces the previous one.
     /// </summary>
     public void DefineAccessor(string name, ISharpTSCallable? getter, ISharpTSCallable? setter)
-        => (_accessors ??= [])[name] = (getter, setter);
+        => DefineProperty(name, new SharpTSPropertyDescriptor
+        {
+            Get = getter, RawGet = getter, HasGet = true,
+            Set = setter, RawSet = setter, HasSet = true,
+            Configurable = true, HasConfigurable = true,
+        });
 
     /// <summary>
     /// Looks up an own accessor for <paramref name="name"/>. Returns true and
@@ -77,9 +115,10 @@ public class SharpTSPromise : ITypeCategorized
     /// </summary>
     public bool TryGetAccessor(string name, out ISharpTSCallable? getter, out ISharpTSCallable? setter)
     {
-        if (_accessors != null && _accessors.TryGetValue(name, out var pair))
+        if (GetOwnPropertyDescriptor(name) is { } descriptor && (descriptor.HasGet || descriptor.HasSet))
         {
-            (getter, setter) = pair;
+            getter = descriptor.Get;
+            setter = descriptor.Set;
             return true;
         }
         getter = null;

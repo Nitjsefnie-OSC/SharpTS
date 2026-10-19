@@ -36,8 +36,7 @@ public static partial class ObjectBuiltIns
                 : array.DefineProperty((string)propertyKey, descriptor);
         else if (target is SharpTSPromise promise && propertyKey is string promiseName)
         {
-            promise.DefineOwnDataField(promiseName, value);
-            success = true;
+            success = promise.DefineOwnDataField(promiseName, value);
         }
         else
         {

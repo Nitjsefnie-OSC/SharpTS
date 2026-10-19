@@ -192,9 +192,7 @@ public sealed class DeclaredStaticFieldDescriptorTests
     {
         foreach (var row in Cases())
         {
-            // #2417 owns interpreted class-constructor integrity metadata and deletion.
-            if ((string)row[0] != "sealed-and-frozen-flags")
-                yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
+            yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
     }

@@ -410,7 +410,7 @@ internal static class GlobalFunctionHandlers
         {
             var source = (await evaluateArg(arguments[0])).ToObject();
             var excludeKeys = (await evaluateArg(arguments[1])).ToObject() as SharpTSArray;
-            return RuntimeValue.FromBoxed(ObjectBuiltIns.ObjectRest(source, (IEnumerable<object?>?)excludeKeys ?? []));
+            return RuntimeValue.FromBoxed(ObjectBuiltIns.ObjectRest(interpreter, source, (IEnumerable<object?>?)excludeKeys ?? []));
         }
         throw new Exception($"{BuiltInNames.ObjectRest} requires 2 arguments");
     }

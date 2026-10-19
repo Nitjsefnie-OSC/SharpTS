@@ -20,17 +20,32 @@ public sealed class SharpTSClassPrototype : ISharpTSMutableBuiltIn
 {
     private readonly SharpTSClass _klass;
     private readonly PrototypePropertyOverlay _overlay;
+    private readonly List<object> _ownKeyOrder = ["constructor"];
+    // Newly created properties retain their live insertion position if the
+    // declaration-order seed arrives after an early prototype exposure.
+    private readonly HashSet<object> _createdPropertyKeys = [];
 
     public SharpTSClassPrototype(SharpTSClass klass)
     {
         _klass = klass;
         _overlay = new(IsBuiltIn);
+        foreach (var name in klass.OwnInstancePropertyNames)
+            RecordOwnKey(name);
         foreach (var (name, descriptor) in klass.OwnInstanceAccessorDescriptors())
+        {
             _overlay.DefineProperty(name, descriptor);
+            RecordOwnKey(name);
+        }
         foreach (var (key, method) in klass.OwnInstanceSymbolMethods())
+        {
             _overlay.DefineProperty(key, SharpTSPropertyDescriptor.ForMethod(method));
+            RecordOwnKey(key);
+        }
         foreach (var (key, descriptor) in klass.OwnInstanceSymbolAccessorDescriptors())
+        {
             _overlay.DefineProperty(key, descriptor);
+            RecordOwnKey(key);
+        }
     }
 
     public SharpTSClass Class => _klass;
@@ -46,34 +61,111 @@ public sealed class SharpTSClassPrototype : ISharpTSMutableBuiltIn
 
     public bool HasExtra(string name) => _overlay.HasExtra(name);
     public object? TryGetExtra(string name) => _overlay.GetProperty(name);
-    public void SetExtra(string name, object? value) => _overlay.SetProperty(name, value);
+    public void SetExtra(string name, object? value)
+    {
+        bool existed = HasOwnProperty(name);
+        _overlay.SetProperty(name, value);
+        if (HasOwnProperty(name)) RecordWrittenKey(name, existed);
+    }
     public bool DefineExtraProperty(string name, SharpTSPropertyDescriptor descriptor)
-        => _overlay.DefineProperty(name, descriptor);
+    {
+        bool existed = HasOwnProperty(name);
+        if (!_overlay.DefineProperty(name, descriptor)) return false;
+        RecordWrittenKey(name, existed);
+        return true;
+    }
     public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
         => _overlay.GetOwnPropertyDescriptor(name);
     public ISharpTSCallable? GetExtraGetter(string name) => _overlay.GetGetter(name);
     public ISharpTSCallable? GetExtraSetter(string name) => _overlay.GetSetter(name);
-    public bool DeleteProperty(string name) => _overlay.DeleteProperty(name);
+    public bool DeleteProperty(string name)
+    {
+        if (!_overlay.DeleteProperty(name)) return false;
+        _ownKeyOrder.Remove(name);
+        _createdPropertyKeys.Remove(name);
+        return true;
+    }
 
-    private bool IsBuiltIn(string name) => name == "constructor" || _klass.FindMethod(name) != null;
+    private bool IsBuiltIn(string name) => name == "constructor" || _klass.FindOwnMethod(name) != null;
 
     public bool HasOwnProperty(string name) => _overlay.HasOwnProperty(name);
     public IEnumerable<string> OwnEnumerableKeys() => _overlay.OwnEnumerableKeys();
 
+    internal void InitializeOwnKeyOrder(IEnumerable<object> keys)
+    {
+        var declaredKeys = keys.ToArray();
+        var existingKeys = _ownKeyOrder.ToArray();
+        _ownKeyOrder.Clear();
+        if (!_createdPropertyKeys.Contains("constructor")) RecordOwnKey("constructor");
+        foreach (var key in declaredKeys)
+            if (!_createdPropertyKeys.Contains(key)) RecordOwnKey(key);
+        foreach (var key in existingKeys) RecordOwnKey(key);
+    }
+
+    internal IEnumerable<string> OwnStringKeys()
+    {
+        List<(uint Index, string Key)> indices = [];
+        List<string> names = [];
+        foreach (var key in _ownKeyOrder.OfType<string>())
+        {
+            if (!HasOwnProperty(key)) continue;
+            if (PropertySemantics.TryGetArrayIndex(key, out uint index)) indices.Add((index, key));
+            else names.Add(key);
+        }
+        return indices.OrderBy(entry => entry.Index).Select(entry => entry.Key).Concat(names);
+    }
+
+    internal IEnumerable<SharpTSSymbol> GetSymbolPropertyNames()
+        => _ownKeyOrder.OfType<SharpTSSymbol>().Where(_overlay.HasSymbolProperty).ToArray();
+
+    private void RecordOwnKey(object key)
+    {
+        if (!_ownKeyOrder.Contains(key)) _ownKeyOrder.Add(key);
+    }
+
+    private void RecordWrittenKey(object key, bool existed)
+    {
+        if (!existed)
+        {
+            _createdPropertyKeys.Add(key);
+            _ownKeyOrder.Remove(key);
+        }
+        RecordOwnKey(key);
+    }
+
     /// <summary>Symbol-keyed own properties (<c>Error.prototype[Symbol.toStringTag]</c>).</summary>
     public bool HasSymbolProperty(SharpTSSymbol key) => _overlay.HasSymbolProperty(key);
     public object? GetBySymbol(SharpTSSymbol key) => _overlay.GetBySymbol(key);
-    public void SetBySymbol(SharpTSSymbol key, object? value) => _overlay.SetBySymbol(key, value);
+    public void SetBySymbol(SharpTSSymbol key, object? value)
+    {
+        bool existed = HasSymbolProperty(key);
+        _overlay.SetBySymbol(key, value);
+        if (HasSymbolProperty(key)) RecordWrittenKey(key, existed);
+    }
     internal void DefineDeclaredSymbolAccessor(SharpTSSymbol key, SharpTSPropertyDescriptor descriptor)
-        => _overlay.DefineProperty(key, descriptor);
+    {
+        if (_overlay.DefineProperty(key, descriptor)) RecordOwnKey(key);
+    }
     internal void DefineDeclaredSymbolMethod(SharpTSSymbol key, ISharpTSCallable method)
-        => _overlay.DefineProperty(key, SharpTSPropertyDescriptor.ForMethod(method));
+    {
+        if (_overlay.DefineProperty(key, SharpTSPropertyDescriptor.ForMethod(method))) RecordOwnKey(key);
+    }
     public bool DefineSymbolProperty(SharpTSSymbol key, SharpTSPropertyDescriptor descriptor)
-        => _overlay.DefineProperty(key, descriptor);
+    {
+        bool existed = HasSymbolProperty(key);
+        if (!_overlay.DefineProperty(key, descriptor)) return false;
+        RecordWrittenKey(key, existed);
+        return true;
+    }
     public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(SharpTSSymbol key)
         => _overlay.GetOwnPropertyDescriptor(key);
     public bool DeleteBySymbolStrict(SharpTSSymbol key, bool strictMode)
-        => _overlay.DeleteBySymbolStrict(key, strictMode);
+    {
+        if (!_overlay.DeleteBySymbolStrict(key, strictMode)) return false;
+        _ownKeyOrder.Remove(key);
+        _createdPropertyKeys.Remove(key);
+        return true;
+    }
 
     public object? GetMember(string name)
     {

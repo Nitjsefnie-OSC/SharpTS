@@ -130,7 +130,7 @@ public partial class Interpreter
     /// <param name="compound">The compound index assignment expression AST node.</param>
     /// <returns>The new value after the operation.</returns>
     /// <remarks>
-    /// Currently only supports array element compound assignment.
+    /// Retains the current element value before evaluating the right-hand side.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Addition_assignment">MDN Compound Assignment</seealso>
     private RuntimeValue EvaluateCompoundSetIndex(Expr.CompoundSetIndex compound)
@@ -150,10 +150,21 @@ public partial class Interpreter
             ThrowCannotReadProperty(obj, index?.ToString() ?? "");
         }
 
+        if (obj is ISharpTSOwnPropertyObject or BuiltInMethod)
+        {
+            object key = ToPropertyKey(index);
+            RuntimeValue current = RuntimeValue.FromBoxed(GetOwnPropertyObjectValue(obj, key));
+            RuntimeValue addValue = await ctx.EvaluateExprAsync(compound.Value);
+            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, current, addValue);
+            SetOwnPropertyObjectValue(obj, key, newValue.ToObject(), _environment.IsStrictMode);
+            return newValue;
+        }
+
         if (obj is SharpTSArray array && index is double idx)
         {
+            RuntimeValue current = array.GetRV((int)idx);
             RuntimeValue addValue = await ctx.EvaluateExprAsync(compound.Value);
-            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, array.GetRV((int)idx), addValue);
+            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, current, addValue);
             array.Set((int)idx, newValue.ToObject());
             return newValue;
         }
@@ -165,9 +176,10 @@ public partial class Interpreter
         if (obj is SharpTSTypedArray typedArray && index is double typedIdx)
         {
             int ti = (int)typedIdx;
+            RuntimeValue current = RuntimeValue.FromBoxed(typedArray[ti]);
             RuntimeValue addValue = await ctx.EvaluateExprAsync(compound.Value);
             RuntimeValue newValue = ApplyCompoundOperatorRV(
-                compound.Operator.Type, RuntimeValue.FromBoxed(typedArray[ti]), addValue);
+                compound.Operator.Type, current, addValue);
             typedArray[ti] = newValue.ToObject();
             return newValue;
         }
@@ -291,6 +303,28 @@ public partial class Interpreter
         if (obj is null or SharpTSUndefined)
         {
             ThrowCannotReadProperty(obj, index?.ToString() ?? "");
+        }
+
+        if (obj is ISharpTSOwnPropertyObject or BuiltInMethod)
+        {
+            object key = ToPropertyKey(index);
+            RuntimeValue currentRV = RuntimeValue.FromBoxed(GetOwnPropertyObjectValue(obj, key));
+            switch (logical.Operator.Type)
+            {
+                case TokenType.AND_AND_EQUAL:
+                    if (!currentRV.IsTruthy()) return currentRV;
+                    break;
+                case TokenType.OR_OR_EQUAL:
+                    if (currentRV.IsTruthy()) return currentRV;
+                    break;
+                case TokenType.QUESTION_QUESTION_EQUAL:
+                    if (!currentRV.IsNullish) return currentRV;
+                    break;
+            }
+
+            RuntimeValue newValue = await ctx.EvaluateExprAsync(logical.Value);
+            SetOwnPropertyObjectValue(obj, key, newValue.ToObject(), _environment.IsStrictMode);
+            return newValue;
         }
 
         if (obj is SharpTSArray array && index is double idx)
@@ -1056,12 +1090,16 @@ public partial class Interpreter
 
         return obj switch
         {
+            ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.GetOwnPropertyDescriptor(name) is null
+                || ownPropertyObject.OwnProperties.DeletePropertyStrict(name, strictMode),
             SharpTSArray array => array.DeletePropertyStrict(name, strictMode),
             SharpTSObject tsObj => tsObj.DeletePropertyStrict(name, strictMode),
             ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, this)
+                .GetOwnPropertyDescriptor(name) is null || FunctionObjectProperties.GetProperties(function, this)
                 .DeletePropertyStrict(name, strictMode),
             BoundFunction bound => bound.DeleteProperty(name, strictMode),
             SharpTSInstance tsInst => tsInst.DeleteFieldStrict(name, strictMode),
+            SharpTSPromise promise => promise.DeletePropertyStrict(name, strictMode),
             SharpTSMath math => math.DeleteExtra(name),
             SharpTSJSON json => json.DeleteExtra(name),
             SharpTSDate date => date.DeleteExtra(name),
@@ -1078,7 +1116,7 @@ public partial class Interpreter
             SharpTSBigIntPrototype bigIntPrototype => bigIntPrototype.DeleteProperty(name),
             SharpTSSymbolPrototype symbolPrototype => symbolPrototype.DeleteProperty(name),
             SharpTSObjectPrototype objectPrototype => objectPrototype.DeleteProperty(name),
-            SharpTSClassPrototype classPrototype => classPrototype.DeleteProperty(name),
+            SharpTSClassPrototype classPrototype => DeleteClassPrototypeProperty(classPrototype, name, strictMode),
             SharpTSPromisePrototype promisePrototype => promisePrototype.DeleteProperty(name),
             SharpTSClass when name == "prototype" =>
                 DeleteNonConfigurableClassPrototype(name, strictMode),
@@ -1106,11 +1144,22 @@ public partial class Interpreter
         object? obj = (await ctx.EvaluateExprAsync(getIndex.Object)).ToObject();
         object? key = (await ctx.EvaluateExprAsync(getIndex.Index)).ToObject();
 
+        if (obj is ISharpTSOwnPropertyObject carrier)
+        {
+            var propertyKey = ToPropertyKey(key);
+            return propertyKey is SharpTSSymbol ownSymbol
+                ? !carrier.OwnProperties.HasSymbolProperty(ownSymbol)
+                    || carrier.OwnProperties.DeleteBySymbolStrict(ownSymbol, strictMode)
+                : DeleteProperty(obj, (string)propertyKey, strictMode);
+        }
+
         // Handle proxy
         if (obj is SharpTSProxy proxy)
         {
-            string proxyKey = key is SharpTSSymbol ? key.ToString()! : Stringify(key);
-            bool deleted = proxy.TrapDeleteProperty(proxyKey, this);
+            object proxyKey = key is SharpTSSymbol ? key : Stringify(key);
+            bool deleted = proxyKey is SharpTSSymbol proxySymbol
+                ? proxy.TrapDeleteProperty(proxySymbol, this)
+                : proxy.TrapDeleteProperty((string)proxyKey, this);
             if (!deleted && strictMode)
                 throw new ThrowException(new SharpTSTypeError(
                     $"Cannot delete property '{proxyKey}' through proxy"));
@@ -1119,34 +1168,51 @@ public partial class Interpreter
 
         // Handle symbol keys
         if (key is SharpTSSymbol symbol)
-        {
-            if (FunctionObjectProperties.TryGetStorage(obj, this, out var properties))
-            {
-                return !properties.HasSymbolProperty(symbol)
-                    || properties.DeleteBySymbolStrict(symbol, strictMode);
-            }
-            return obj switch
-            {
-                SharpTSObject tsObj => tsObj.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSInstance tsInst => tsInst.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSClass klass => klass.DeleteStaticSymbolProperty(symbol, strictMode),
-                SharpTSClassPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSArray array => array.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSMath math => math.DeleteBySymbolStrict(symbol, strictMode),
-                ISharpTSPrimitiveConstructor primitiveConstructor => primitiveConstructor.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSStringPrototype stringPrototype
-                    => stringPrototype.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSJSON json => json.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSBigIntPrototype bigIntPrototype
-                    => bigIntPrototype.DeleteBySymbolStrict(symbol, strictMode),
-                SharpTSFunctionPrototype functionPrototype
-                    => functionPrototype.DeleteBySymbolStrict(symbol, strictMode),
-                _ => true
-            };
-        }
+            return DeleteSymbolProperty(obj, symbol, strictMode);
 
         string keyStr = Stringify(key);
         return DeleteProperty(obj, keyStr, strictMode);
+    }
+
+    internal bool DeleteSymbolProperty(object? target, SharpTSSymbol symbol, bool strictMode)
+    {
+        if (target is SharpTSProxy proxy)
+        {
+            bool deleted = proxy.TrapDeleteProperty(symbol, this);
+            if (!deleted && strictMode)
+                throw new ThrowException(new SharpTSTypeError($"Cannot delete property '{symbol}' through proxy"));
+            return deleted;
+        }
+        if (target is ISharpTSOwnPropertyObject carrier)
+            return !carrier.OwnProperties.HasSymbolProperty(symbol)
+                || carrier.OwnProperties.DeleteBySymbolStrict(symbol, strictMode);
+        if (FunctionObjectProperties.TryGetStorage(target, this, out var properties))
+            return !properties.HasSymbolProperty(symbol)
+                || properties.DeleteBySymbolStrict(symbol, strictMode);
+        return target switch
+        {
+            SharpTSObject obj => obj.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSInstance instance => instance.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSClass klass => klass.DeleteStaticSymbolProperty(symbol, strictMode),
+            SharpTSClassPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSArray array => array.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSMath math => math.DeleteBySymbolStrict(symbol, strictMode),
+            ISharpTSPrimitiveConstructor constructor => constructor.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSStringPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSJSON json => json.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSBigIntPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
+            SharpTSFunctionPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
+            _ => true
+        };
+    }
+
+    private static bool DeleteClassPrototypeProperty(
+        SharpTSClassPrototype prototype, string name, bool strictMode)
+    {
+        bool deleted = prototype.DeleteProperty(name);
+        if (!deleted && strictMode)
+            throw StrictModeErrors.TypeError($"Cannot delete property '{name}' of class prototype");
+        return deleted;
     }
 
     private static bool DeleteNonConfigurableClassPrototype(

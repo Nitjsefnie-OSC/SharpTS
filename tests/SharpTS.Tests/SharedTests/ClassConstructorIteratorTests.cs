@@ -438,10 +438,8 @@ public sealed class ClassConstructorIteratorTests
 
     public static IEnumerable<object[]> MissingConsumerModeCases()
         // Compiled missing-class spread/async for-of/for-await are #2271, #2322 and #2323.
-        // Interpreted explicit-null/undefined Array.from fallback is #2320.
         => MissingConsumerCases().SelectMany(row => ((string)row[0] switch {
                 "missing-required-consumers" => new[] { ExecutionMode.Interpreted },
-                "missing-array-like-fallback" => new[] { ExecutionMode.Compiled },
                 _ => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             })
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));

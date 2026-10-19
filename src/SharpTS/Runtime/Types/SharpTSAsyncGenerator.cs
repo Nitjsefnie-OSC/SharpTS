@@ -35,8 +35,11 @@ namespace SharpTS.Runtime.Types;
 /// <seealso cref="SharpTSAsyncGeneratorFunction"/>
 /// <seealso cref="SharpTSAsyncArrowGeneratorFunction"/>
 /// <seealso cref="SharpTSGenerator"/>
-public class SharpTSAsyncGenerator : ITypeCategorized
+public class SharpTSAsyncGenerator : ITypeCategorized, ISharpTSOwnPropertyObject
 {
+    private SharpTSObject? _ownProperties;
+    SharpTSObject ISharpTSOwnPropertyObject.OwnProperties => _ownProperties ??= new([]);
+
     internal object? Prototype { get; init; }
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.AsyncGenerator;

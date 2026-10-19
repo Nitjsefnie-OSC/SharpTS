@@ -124,13 +124,14 @@ public sealed class UndefinedSetterCallableDescriptorTests
     public static IEnumerable<object[]> CompiledCases()
     {
         foreach (var row in Cases()) yield return row;
-        // Interpreter strict callable rejection (#2217) and frozen callable descriptors (#2245) remain separate.
         foreach (var (name, constructor) in Shapes())
             yield return [name + "-strict-and-frozen-setter", "const C: any = " + constructor + ";\n" + StrictControl, StrictExpected];
         yield return ["array-own-and-nearest-inherited-presence", ArrayPresenceControl, ArrayPresenceExpected];
     }
 
-    public static IEnumerable<object[]> ModeCases() => Cases()
+    public static IEnumerable<object[]> ModeCases() => CompiledCases()
+        // #2723: interpreter numeric array writes still shadow inherited getterless accessors.
+        .Where(row => (string)row[0] != "array-own-and-nearest-inherited-presence")
         .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted })
         .Concat(CompiledCases().Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Compiled }));
 

@@ -649,8 +649,9 @@ public sealed class DapEndToEndTests
     {
         string directory = CreateFixtureDirectory();
         string program = Path.Combine(directory, "latency.ts");
+        // #2345 keeps marker uninitialized at its declaration; pause after its initializer.
         await File.WriteAllTextAsync(program,
-            "for (let index = 0; index < 1000; index++) {\n  let marker = index;\n}\n");
+            "for (let index = 0; index < 1000; index++) {\n  let marker = index;\n  marker;\n}\n");
 
         await using var dap = new DapProtocolHarness();
         AssertSuccess(await dap.RequestAsync("initialize", new { adapterID = "sharpts" }));
@@ -659,7 +660,7 @@ public sealed class DapEndToEndTests
         AssertSuccess(await dap.RequestAsync("setBreakpoints", new
         {
             source = new { path = program },
-            breakpoints = new[] { new { line = 2 } },
+            breakpoints = new[] { new { line = 3 } },
         }));
         AssertSuccess(await dap.RequestAsync("configurationDone"));
         await dap.WaitForEventAsync("stopped");
@@ -684,9 +685,13 @@ public sealed class DapEndToEndTests
         for (int index = 0; index < 21; index++)
         {
             var stopwatch = Stopwatch.StartNew();
-            AssertSuccess(await dap.RequestAsync("variables", new { variablesReference }));
+            JsonElement variables = await dap.RequestAsync("variables", new { variablesReference });
+            AssertSuccess(variables);
             stopwatch.Stop();
             variableLatencies.Add(stopwatch.Elapsed.TotalMilliseconds);
+            Assert.Contains(variables.GetProperty("body").GetProperty("variables").EnumerateArray(),
+                variable => variable.GetProperty("name").GetString() == "marker"
+                    && variable.GetProperty("value").GetString() == "21");
         }
 
         continueLatencies.Sort();
@@ -861,6 +866,76 @@ public sealed class DapEndToEndTests
         JsonElement element = Assert.Single(indexed.GetProperty("body").GetProperty("variables").EnumerateArray());
         Assert.Equal("1", element.GetProperty("name").GetString());
         Assert.Equal("20", element.GetProperty("value").GetString());
+        AssertSuccess(await dap.RequestAsync("continue", new { threadId = 1 }));
+        await dap.WaitForEventAsync("terminated");
+    }
+
+    [Fact]
+    public async Task VariablesShowUninitializedLexicalsWhileEvaluationRetainsReferenceError()
+    {
+        string directory = CreateFixtureDirectory();
+        string program = Path.Combine(directory, "tdz-inspection.ts");
+        await File.WriteAllTextAsync(program,
+            "{\n  let ready = 40;\n  let marker = ready + 2;\n  console.log(marker);\n}\n");
+
+        await using var dap = new DapProtocolHarness();
+        AssertSuccess(await dap.RequestAsync("initialize", new { adapterID = "sharpts" }));
+        AssertSuccess(await dap.RequestAsync("launch", new { program }));
+        AssertSuccess(await dap.RequestAsync("setBreakpoints", new
+        {
+            source = new { path = program },
+            breakpoints = new[] { new { line = 3 }, new { line = 4 } },
+        }));
+        AssertSuccess(await dap.RequestAsync("configurationDone"));
+        await dap.WaitForEventAsync("stopped");
+        JsonElement stack = await dap.RequestAsync("stackTrace", new { threadId = 1 });
+        AssertSuccess(stack);
+        JsonElement frame = stack.GetProperty("body").GetProperty("stackFrames")[0];
+        Assert.Equal(3, frame.GetProperty("line").GetInt32());
+        int frameId = frame.GetProperty("id").GetInt32();
+        JsonElement scopes = await dap.RequestAsync("scopes", new { frameId });
+        AssertSuccess(scopes);
+        int reference = scopes.GetProperty("body").GetProperty("scopes")[0]
+            .GetProperty("variablesReference").GetInt32();
+        JsonElement variables = await dap.RequestAsync("variables", new { variablesReference = reference });
+        AssertSuccess(variables);
+        JsonElement[] locals = variables.GetProperty("body").GetProperty("variables").EnumerateArray().ToArray();
+        JsonElement marker = Assert.Single(locals, variable => variable.GetProperty("name").GetString() == "marker");
+        Assert.Equal("<uninitialized>", marker.GetProperty("value").GetString());
+        Assert.Equal("uninitialized", marker.GetProperty("type").GetString());
+        Assert.Equal(0, marker.GetProperty("variablesReference").GetInt32());
+        Assert.Contains(locals, variable => variable.GetProperty("name").GetString() == "ready"
+            && variable.GetProperty("value").GetString() == "40");
+
+        JsonElement unavailable = await dap.RequestAsync("evaluate", new
+        {
+            expression = "marker", frameId, context = "watch",
+        });
+        Assert.False(unavailable.GetProperty("success").GetBoolean());
+        Assert.Contains("ReferenceError", unavailable.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.Contains("before initialization", unavailable.GetProperty("message").GetString(), StringComparison.Ordinal);
+        AssertSuccess(await dap.RequestAsync("continue", new { threadId = 1 }));
+        await dap.WaitForEventAsync("stopped");
+        stack = await dap.RequestAsync("stackTrace", new { threadId = 1 });
+        AssertSuccess(stack);
+        frame = stack.GetProperty("body").GetProperty("stackFrames")[0];
+        Assert.Equal(4, frame.GetProperty("line").GetInt32());
+        frameId = frame.GetProperty("id").GetInt32();
+        scopes = await dap.RequestAsync("scopes", new { frameId });
+        AssertSuccess(scopes);
+        reference = scopes.GetProperty("body").GetProperty("scopes")[0]
+            .GetProperty("variablesReference").GetInt32();
+        variables = await dap.RequestAsync("variables", new { variablesReference = reference });
+        AssertSuccess(variables);
+        Assert.Contains(variables.GetProperty("body").GetProperty("variables").EnumerateArray(),
+            variable => variable.GetProperty("name").GetString() == "marker"
+                && variable.GetProperty("value").GetString() == "42");
+        JsonElement initialized = await dap.RequestAsync("evaluate", new
+        {
+            expression = "marker", frameId, context = "watch",
+        });
+        AssertSuccess(initialized);
+        Assert.Equal("42", initialized.GetProperty("body").GetProperty("result").GetString());
         AssertSuccess(await dap.RequestAsync("continue", new { threadId = 1 }));
         await dap.WaitForEventAsync("terminated");
     }

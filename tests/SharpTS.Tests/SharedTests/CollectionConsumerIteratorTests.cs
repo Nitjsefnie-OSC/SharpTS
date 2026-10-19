@@ -336,8 +336,7 @@ public sealed class CollectionConsumerIteratorTests
         Assert.Equal(expected, TestHarness.Run(source, mode));
     }
 
-    // The interpreter's eager array-like snapshot has a separate follow-up (#2392).
-    [Theory, CompiledOnlyData]
+    [Theory, ModeData]
     public void ArrayLikeGetsInterleaveWithMapperAndRetainCapturedLength(ExecutionMode mode)
     {
         const string source = """
@@ -351,7 +350,123 @@ public sealed class CollectionConsumerIteratorTests
             }, context);
             console.log(result.join(","), correctReceiver);
             """;
-        Assert.Equal("1,9 true\n", TestHarness.Run(source, mode));
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            Assert.Equal("1,9 true\n", output);
+        }
+        else
+        {
+            Assert.Equal("1,9 true\n", TestHarness.Run(source, mode));
+        }
+    }
+
+    public static IEnumerable<object[]> ArrayLikeMappingOrderCases()
+    {
+        yield return ["live-inherited-index-and-captured-length", """
+            const state = { events: "", mapperThis: true, getterThis: true };
+            const context = {}, prototype: any = {};
+            Object.defineProperty(prototype, "1", {
+                get() { state.events += "old1;"; return -1; }, configurable: true
+            });
+            const source: any = Object.create(prototype);
+            source.marker = 9;
+            Object.defineProperty(source, "length", {
+                get() { state.events += "length;"; return 2; }, configurable: true
+            });
+            Object.defineProperty(source, "0", {
+                get() { state.events += "get0;"; return 1; }
+            });
+            const result = Array.from(source, function(this: any, value: any, index: number) {
+                state.events += "map" + index + ";";
+                state.mapperThis = state.mapperThis && this === context;
+                if (index === 0) {
+                    Object.defineProperty(source, "length", { value: 0, configurable: true });
+                    Object.defineProperty(prototype, "1", {
+                        get: function(this: any) {
+                            state.events += "new1;";
+                            state.getterThis = state.getterThis && this === source;
+                            return this.marker;
+                        }, configurable: true
+                    });
+                }
+                return value;
+            }, context);
+            console.log(result.join(","), source.length, state.mapperThis, state.getterThis);
+            console.log(state.events);
+            """, "1,9 0 true true\nlength;get0;map0;new1;map1;\n"];
+
+        yield return ["mapper-throw-before-later-index", """
+            const original = {}, poison = {}, cleanup = {};
+            const state = { events: "", maps: 0, laterGets: 0, returnGets: 0, returnCalls: 0 };
+            const source: any = {
+                get length() { state.events += "length;"; return 2; },
+                get 0() { state.events += "get0;"; return 1; },
+                get 1() { state.events += "get1;"; state.laterGets++; throw poison; },
+                get return() {
+                    state.returnGets++;
+                    return function() { state.returnCalls++; throw cleanup; };
+                }
+            };
+            try {
+                Array.from(source, function(value: any, index: number) {
+                    state.events += "map" + index + ";";
+                    state.maps++;
+                    throw original;
+                });
+            } catch (error) {
+                console.log(error === original, error === poison, state.maps, state.laterGets,
+                    state.returnGets, state.returnCalls, state.events);
+            }
+            """, "true false 1 0 0 0 length;get0;map0;\n"];
+
+        yield return ["indexed-throw-before-next-map-without-close", """
+            const original = {}, poison = {}, cleanup = {};
+            const state = { events: "", maps: 0, laterGets: 0, returnGets: 0, returnCalls: 0 };
+            const source: any = {
+                get length() { state.events += "length;"; return 3; },
+                get 0() { state.events += "get0;"; return 1; },
+                get 1() { state.events += "get1;"; throw original; },
+                get 2() { state.events += "get2;"; state.laterGets++; throw poison; },
+                get return() {
+                    state.returnGets++;
+                    return function() { state.returnCalls++; throw cleanup; };
+                }
+            };
+            try {
+                Array.from(source, function(value: any, index: number) {
+                    state.events += "map" + index + ";";
+                    state.maps++;
+                    return value;
+                });
+            } catch (error) {
+                console.log(error === original, error === poison, state.maps, state.laterGets,
+                    state.returnGets, state.returnCalls, state.events);
+            }
+            """, "true false 1 0 0 0 length;get0;map0;get1;\n"];
+    }
+
+    public static IEnumerable<object[]> ArrayLikeMappingOrderModeCases() =>
+        ArrayLikeMappingOrderCases().SelectMany(row =>
+            new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+                .Select(mode => new object[] { row[0], row[1], row[2], mode }));
+
+    [Theory, MemberData(nameof(ArrayLikeMappingOrderModeCases))]
+    public void ArrayLikeMappingInterleavesReadsAndStopsAtAbruptCompletion(
+        string name, string source, string expected, ExecutionMode mode)
+    {
+        Assert.NotEmpty(name);
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            Assert.Equal(expected, output);
+        }
+        else
+        {
+            Assert.Equal(expected, TestHarness.Run(source, mode));
+        }
     }
 
     [Theory, CompiledOnlyData]

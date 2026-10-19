@@ -98,10 +98,6 @@ public sealed class StaticSymbolMethodAssignmentTests
 
     public static IEnumerable<object[]> DescriptorModeCases()
         => DescriptorCases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            // Constructor own-key enumeration, static Symbol deletion and partial method
-            // definitions remain separate interpreter issues #2430, #2431 and #2432.
-            .Where(mode => (string)row[0] != "keys-partial-definition-and-delete"
-                || mode == ExecutionMode.Compiled)
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(DescriptorModeCases))]

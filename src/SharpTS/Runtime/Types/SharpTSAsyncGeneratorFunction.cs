@@ -78,7 +78,7 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
         environment.ConstructionFrame = null;
 
         // #775: an async generator expression / object method binds its own dynamic `this`. The bound
-        // receiver (or globalThis for a plain call) is defined in the generator's OWN body environment,
+        // receiver (or globalThis for a plain call) is defined in the generator's invocation environment,
         // NOT a parent scope, so a captured enclosing-function local keeps its lexical scope distance.
         if (_thisBound)
         {
@@ -97,14 +97,15 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
 
         // Snapshot before defaults and before the lazy async generator is returned.
         if (ArgumentsUsage.UsesArguments(_declaration))
-            environment.Define("arguments", new SharpTSArguments(arguments));
+            environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
         // Bind parameters to arguments
-        ParameterBinder.Bind(_declaration.Parameters ?? [], arguments, environment, interpreter);
+        ParameterBinder.Bind(_declaration.Parameters ?? [], arguments, environment, interpreter, _declaration.Body);
+        var prepared = ParameterBinder.PrepareBody(_declaration.Parameters ?? [], _declaration.Body, environment);
 
         // Return the async generator object (not yet started). It drives the same SharpTSAsyncGenerator
         // as a function expression — only the body and captured environment differ.
         return new SharpTSAsyncGenerator(
-            _declaration.Body ?? [], environment, interpreter,
+            prepared.Statements, prepared.Environment, interpreter,
             _declaration.Name?.Lexeme ?? "<async generator>", _declaration)
         { Prototype = _functionProperties.GetIteratorPrototype(interpreter) };
     }
@@ -149,6 +150,8 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSGeneratorFunctionValue, IRe
 /// <seealso cref="SharpTSArrowGeneratorFunction"/>
 public class SharpTSAsyncArrowGeneratorFunction : ISharpTSGeneratorFunctionValue, IReceiverBindable
 {
+    // A receiver view keeps the named expression's original callable identity.
+    private SharpTSAsyncArrowGeneratorFunction? _selfReference;
     private GeneratorFunctionProperties _functionProperties;
     GeneratorFunctionProperties ISharpTSGeneratorFunctionValue.FunctionProperties => _functionProperties;
     private readonly Expr.ArrowFunction _declaration;
@@ -193,22 +196,23 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSGeneratorFunctionValue
         // Named async generator function expression: bind self-reference alongside params.
         if (_declaration.Name != null)
         {
-            environment.Define(_declaration.Name.Lexeme, this);
+            environment.Define(_declaration.Name.Lexeme, _selfReference ?? this);
         }
         // #775: a `function*` expression binds its own dynamic `this`; the bound receiver (or globalThis for
-        // a plain call) is defined in the generator's OWN body environment, NOT a parent scope.
+        // a plain call) is defined in the invocation environment, NOT a parent scope.
         if (_thisBound)
             environment.Define("this", _boundThis);
         else if (HasOwnThis)
             environment.Define("this", interpreter.GlobalThis); // sloppy-mode `this` = globalThis (#775)
         if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
-            environment.Define("arguments", new SharpTSArguments(arguments));
-        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
+            environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
+        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter, _declaration.BlockBody);
+        var prepared = ParameterBinder.PrepareBody(_declaration.Parameters, _declaration.BlockBody, environment);
 
         // Generator expressions always have a block body (the parser never produces an
         // expression-bodied generator).
         return new SharpTSAsyncGenerator(
-            _declaration.BlockBody ?? [], environment, interpreter,
+            prepared.Statements, prepared.Environment, interpreter,
             _declaration.Name?.Lexeme ?? "<async generator>", _declaration)
         { Prototype = _functionProperties.GetIteratorPrototype(interpreter) };
     }
@@ -219,6 +223,7 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSGeneratorFunctionValue
         var bound = new SharpTSAsyncArrowGeneratorFunction(
             _declaration, _closure, hasOwnThis: true, thisBound: true, boundThis: thisObject);
         bound._functionProperties = _functionProperties;
+        bound._selfReference = _selfReference ?? this;
         return bound;
     }
 

@@ -201,12 +201,7 @@ public sealed class PromiseDerivedCapabilityTests
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
-        // #2347: interpreter reaction wrappers retry failed capability construction
-        // and register handlers before validation. Keep the full saved regression.
-        // #2409: interpreted then rejects surplus arguments before reaction processing.
-        ((string)row[0] is "validation-order" or "suspended-arguments"
-            ? new[] { ExecutionMode.Compiled }
-            : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }).Select(mode =>
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }.Select(mode =>
             new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]

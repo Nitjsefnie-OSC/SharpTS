@@ -142,7 +142,7 @@ public sealed class NumericBitwiseLoweringTests
             """);
 
         var hot = FindFunction(assembly, "hot").CreateDelegate<Func<double, double>>();
-        long[] samples = MeasureRunAllocations(() => hot(1_000_000), 64);
+        long[] samples = AllocationTestHelper.MeasureRunAllocations(() => hot(1_000_000), 64);
         _output.WriteLine($"One million bitwise iterations allocation samples: {string.Join(", ", samples)} bytes.");
         Assert.InRange(samples.Min(), 0, 4_096);
     }
@@ -214,7 +214,7 @@ public sealed class NumericBitwiseLoweringTests
             .Invoke(null, [5_000d])!;
         object jumps = FindFunction(assembly, "buildJumps")
             .Invoke(null, [program])!;
-        long[] samples = MeasureRunAllocations(() => run(program, jumps), 168);
+        long[] samples = AllocationTestHelper.MeasureRunAllocations(() => run(program, jumps), 168);
         _output.WriteLine($"Brainfuck N=5,000 runBF allocation samples: {string.Join(", ", samples)} bytes.");
         Assert.InRange(samples.Min(), 0, 8_192);
     }
@@ -235,25 +235,9 @@ public sealed class NumericBitwiseLoweringTests
             return 168;
         }
 
-        long[] samples = MeasureRunAllocations(Run, 168);
+        long[] samples = AllocationTestHelper.MeasureRunAllocations(Run, 168);
         Assert.Contains(samples, allocated => allocated > budget);
         Assert.Equal(persistent, samples.Min() > budget);
-    }
-
-    private static long[] MeasureRunAllocations(Func<double> run, double expectedResult)
-    {
-        Assert.Equal(expectedResult, run()); // Warm JIT and emitted runtime state.
-        var samples = new long[5];
-        // Use the steady-state floor so transient runtime bookkeeping on busy CI
-        // runners does not fail the gate. Persistent allocations remain in every sample.
-        for (int sample = 0; sample < samples.Length; sample++)
-        {
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            double result = run();
-            samples[sample] = GC.GetAllocatedBytesForCurrentThread() - before;
-            Assert.Equal(expectedResult, result);
-        }
-        return samples;
     }
 
     [Fact]

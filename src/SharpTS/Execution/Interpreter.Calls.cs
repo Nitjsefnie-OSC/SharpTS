@@ -217,7 +217,8 @@ public partial class Interpreter
         if (call.Callee is Expr.Get gtChainedGet &&
             gtChainedGet.Object is Expr.Get gtInnerGet &&
             gtInnerGet.Object is Expr.Variable gtVar &&
-            gtVar.Name.Lexeme == BuiltInNames.GlobalThis)
+            gtVar.Name.Lexeme == BuiltInNames.GlobalThis &&
+            CanUseGlobalThisRegistryNamespace(gtVar, gtInnerGet.Name.Lexeme))
         {
             var method = BuiltInRegistry.Instance.GetStaticMethod(gtInnerGet.Name.Lexeme, gtChainedGet.Name.Lexeme);
             if (method != null)
@@ -229,7 +230,7 @@ public partial class Interpreter
         // Handle built-in static methods: Object.keys(), Array.isArray(), JSON.parse(), etc.
         if (call.Callee is Expr.Get get &&
             get.Object is Expr.Variable nsVar &&
-            nsVar.Name.Lexeme != BuiltInNames.Promise)
+            CanUseRegistryNamespace(nsVar))
         {
             var method = BuiltInRegistry.Instance.GetStaticMethod(nsVar.Name.Lexeme, get.Name.Lexeme);
             if (method != null)
@@ -239,14 +240,11 @@ public partial class Interpreter
         }
 
         // Handle global functions via registry (Symbol, BigInt, parseInt, setTimeout, Error types, etc.)
-        // Skip if the variable is shadowed by a module import (e.g., stdlib 'timers' / 'timers/promises'
-        // re-exports setTimeout as a SharpTSFunction, which implements ISharpTSCallable).
+        // A lexical binding or a live global-object replacement takes precedence.
         if (call.Callee is Expr.Variable globalVar)
         {
             var gvName = globalVar.Name.Lexeme;
-            bool isShadowed = _environment.TryGet(gvName, out var shadowVal) &&
-                shadowVal.ToObject() is ISharpTSCallable or ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
-            if (!isShadowed)
+            if (CanUseGlobalFunctionHandler(globalVar))
             {
                 if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
                 {
@@ -476,7 +474,8 @@ public partial class Interpreter
         if (call.Callee is Expr.Get gtChainedGet &&
             gtChainedGet.Object is Expr.Get gtInnerGet &&
             gtInnerGet.Object is Expr.Variable gtVar &&
-            gtVar.Name.Lexeme == BuiltInNames.GlobalThis)
+            gtVar.Name.Lexeme == BuiltInNames.GlobalThis &&
+            CanUseGlobalThisRegistryNamespace(gtVar, gtInnerGet.Name.Lexeme))
         {
             var method = BuiltInRegistry.Instance.GetStaticMethod(gtInnerGet.Name.Lexeme, gtChainedGet.Name.Lexeme);
             if (method != null)
@@ -488,7 +487,7 @@ public partial class Interpreter
         // Handle built-in static methods: Object.keys(), Array.isArray(), JSON.parse(), etc.
         if (call.Callee is Expr.Get get &&
             get.Object is Expr.Variable nsVar &&
-            nsVar.Name.Lexeme != BuiltInNames.Promise)
+            CanUseRegistryNamespace(nsVar))
         {
             var method = BuiltInRegistry.Instance.GetStaticMethod(nsVar.Name.Lexeme, get.Name.Lexeme);
             if (method != null)
@@ -498,14 +497,11 @@ public partial class Interpreter
         }
 
         // Handle global functions via registry (Symbol, BigInt, parseInt, setTimeout, Error types, etc.)
-        // Skip if the variable is shadowed by a module import (e.g., stdlib 'timers' / 'timers/promises'
-        // re-exports setTimeout as a SharpTSFunction, which implements ISharpTSCallable).
+        // A lexical binding or a live global-object replacement takes precedence.
         if (call.Callee is Expr.Variable globalVar)
         {
             var gvName = globalVar.Name.Lexeme;
-            bool isShadowed = _environment.TryGet(gvName, out var shadowVal) &&
-                shadowVal.ToObject() is ISharpTSCallable or ISharpTSAsyncCallable or Runtime.BuiltIns.BuiltInMethod;
-            if (!isShadowed)
+            if (CanUseGlobalFunctionHandler(globalVar))
             {
                 if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(gvName, out var handlerV2))
                 {
@@ -738,9 +734,14 @@ public partial class Interpreter
     /// </summary>
     private RuntimeValue EvaluateBinaryOperationRV(Token op, RuntimeValue leftRV, RuntimeValue rightRV)
     {
+        var desc = SemanticOperatorResolver.Resolve(op.Type);
+        bool numericOperator = desc is OperatorDescriptor.Plus or OperatorDescriptor.Arithmetic
+            or OperatorDescriptor.Power or OperatorDescriptor.Bitwise
+            or OperatorDescriptor.BitwiseShift or OperatorDescriptor.UnsignedRightShift;
         // instanceof/in are valid with any operand — fall through to the normal path below
         // so a bigint operand gets unboxed to object and reaches EvaluateInstanceof/EvaluateIn.
-        if (op.Type is not (TokenType.INSTANCEOF or TokenType.IN))
+        // Numeric operators must convert both operands before selecting their kind.
+        if (!numericOperator && op.Type is not (TokenType.INSTANCEOF or TokenType.IN))
         {
             // Check for BigInt (Kind == BigInt, not Object)
             System.Numerics.BigInteger? leftBigInt = leftRV.IsBigInt ? leftRV.AsBigInt().Value : null;
@@ -777,26 +778,17 @@ public partial class Interpreter
         if (TryEvaluateDotNetBinary(op.Type, left, right, out var clrResult))
             return clrResult;
 
-        var desc = SemanticOperatorResolver.Resolve(op.Type);
-
         return desc switch
         {
-            // EvaluatePlus handles string concat, object ToPrimitive concat, and
-            // numeric addition with ToNumber coercion (undefined→NaN, null→0,
-            // booleans→0/1) — a raw (double) cast crashed with
-            // InvalidCastException on any-typed undefined operands (#190).
-            OperatorDescriptor.Plus => RuntimeValue.FromBoxed(EvaluatePlus(left, right)),
-            OperatorDescriptor.Arithmetic => RuntimeValue.FromNumber(EvaluateArithmetic(op.Type, ToNumberWithPrimitive(left), ToNumberWithPrimitive(right))),
-            OperatorDescriptor.Power => RuntimeValue.FromNumber(Math.Pow(ToNumberWithPrimitive(left), ToNumberWithPrimitive(right))),
+            OperatorDescriptor.Plus or OperatorDescriptor.Arithmetic or OperatorDescriptor.Power
+                or OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift
+                or OperatorDescriptor.UnsignedRightShift => EvaluateNumericBinaryRV(op.Type, leftRV, rightRV),
             // JS AbstractRelationalComparison: string vs string → lexicographic.
             OperatorDescriptor.Comparison =>
                 left is string ls && right is string rs
                     ? RuntimeValue.FromBoolean(EvaluateStringComparison(op.Type, ls, rs))
                     : RuntimeValue.FromBoolean(EvaluateComparison(op.Type, CoerceToNumber(left), CoerceToNumber(right))),
             OperatorDescriptor.Equality eq => RuntimeValue.FromBoolean(EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated)),
-            OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
-                RuntimeValue.FromNumber(EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right))),
-            OperatorDescriptor.UnsignedRightShift => RuntimeValue.FromNumber((double)(ToUint32(left) >> (ToInt32(right) & 0x1F))),
             OperatorDescriptor.In => RuntimeValue.FromBoxed(EvaluateIn(left, right)),
             OperatorDescriptor.InstanceOf => RuntimeValue.FromBoxed(EvaluateInstanceof(left, right)),
             _ => RuntimeValue.Undefined
@@ -1065,12 +1057,6 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Converts a boxed double to a 32-bit signed integer per ECMA-262 ToInt32.
-    /// </summary>
-    /// <seealso href="https://tc39.es/ecma262/#sec-toint32">ECMAScript ToInt32</seealso>
-    private int ToInt32(object? value) => JsToInt32(ToNumberWithPrimitive(value));
-
-    /// <summary>
     /// Converts a boxed double to a 32-bit unsigned integer per ECMA-262 ToUint32.
     /// </summary>
     /// <seealso href="https://tc39.es/ecma262/#sec-touint32">ECMAScript ToUint32</seealso>
@@ -1095,21 +1081,9 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Evaluates the <c>instanceof</c> operator.
-    /// </summary>
-    /// <param name="left">The instance to check.</param>
-    /// <param name="right">The class to check against.</param>
-    /// <returns><c>true</c> if the instance is of the specified class or a subclass; otherwise <c>false</c>.</returns>
-    /// <remarks>
-    /// Walks up the inheritance chain to check if the instance's class or any superclass
-    /// matches the target class name.
-    /// </remarks>
-    /// <seealso href="https://www.typescriptlang.org/docs/handbook/2/narrowing.html#instanceof-narrowing">TypeScript instanceof Narrowing</seealso>
-    /// <summary>
     /// ECMA-262 §7.3.21 OrdinaryHasInstance — walks <paramref name="left"/>'s
     /// __proto__ chain looking for a link === <paramref name="ctor"/>.prototype.
-    /// Capped at depth 64 to prevent runaway loops on cyclic chains. Used by
-    /// both the SharpTSFunction and SharpTSArrowFunction instanceof arms.
+    /// Capped at depth 64 to prevent runaway loops on cyclic chains.
     /// </summary>
     private bool InstanceOfByPrototype(object? left, ISharpTSCallable ctor)
     {
@@ -1187,7 +1161,7 @@ public partial class Interpreter
         // Namespace-style constructors still require their prototype to occur
         // in the candidate's actual chain. A null-rooted object or callable
         // does not inherit Object.prototype or Function.prototype.
-        if (right is SharpTSObjectNamespace or SharpTSFunctionGlobal)
+        if (right is SharpTSObjectNamespace or SharpTSFunctionGlobal or SharpTSArrayGlobal)
             return InstanceOfByPrototype(left, (ISharpTSCallable)right);
 
         // `x instanceof Number/String/Boolean` — the RHS resolves to the namespace
@@ -1252,14 +1226,6 @@ public partial class Interpreter
         if (right is SharpTSTransformStreamConstructor)
             return left is SharpTSTransformStream;
 
-        // Array is registered as a namespace singleton (SharpTSArrayGlobal), not
-        // as a SharpTSBuiltInConstructor — so `arr instanceof Array` lands here.
-        // Real arrays AND the Array.prototype dict itself satisfy the check
-        // (ECMA-262 23.1.3 — Array.prototype is itself an Array exotic object).
-        if (right is SharpTSArrayGlobal)
-            return left is SharpTSArray and not SharpTSArguments
-                || left is SharpTSArrayPrototype;
-
         // Constructor-function instanceof (JS `new Func()` pattern).
         // An object is `instanceof Func` when any link in its prototype
         // chain === Func.prototype.
@@ -1280,26 +1246,18 @@ public partial class Interpreter
         if (right is not SharpTSClass targetClass)
             return InstanceOfByPrototype(left, (ISharpTSCallable)right);
 
+        // Array storage and the nominal class remain intact when a guest changes
+        // the instance or class prototype. Membership follows those live links,
+        // including for ordinary objects inheriting an Array subclass prototype.
+        if (left is SharpTSArray || targetClass is SharpTSArrayClass)
+            return InstanceOfByPrototype(left, targetClass);
+
         // Standard path: SharpTSInstance — walk the class chain
         if (left is SharpTSInstance instance)
         {
             if (instance.UsesDynamicPrototypeChain)
                 return InstanceOfByPrototype(left, targetClass);
             SharpTSClass? current = instance.GetClass();
-            while (current != null)
-            {
-                if (ReferenceEquals(current, targetClass)) return true;
-                current = current.Superclass;
-            }
-            return false;
-        }
-
-        // Array subclass instances (#233): real SharpTSArrays carrying a guest
-        // class — walk its chain (`m instanceof Array` is handled by the
-        // SharpTSArrayGlobal arm above via `left is SharpTSArray`).
-        if (left is SharpTSArraySubclassInstance subclassArray)
-        {
-            SharpTSClass? current = subclassArray.Klass;
             while (current != null)
             {
                 if (ReferenceEquals(current, targetClass)) return true;
@@ -1431,15 +1389,24 @@ public partial class Interpreter
             return clrResult;
         }
 
+        return EvaluateNumericBinaryRV(binaryToken, left, right);
+    }
+
+    // Both binary and compound arithmetic use the same ordered conversions.
+    // Addition first reduces both operands with the default hint; all other
+    // numeric operators complete left ToNumeric before starting the right.
+    private RuntimeValue EvaluateNumericBinaryRV(TokenType op, RuntimeValue left, RuntimeValue right)
+    {
         if (!left.IsNumber || !right.IsNumber)
         {
-            if (op == TokenType.PLUS_EQUAL)
+            if (op == TokenType.PLUS)
             {
                 // Addition reduces both operands with the default hint before
                 // deciding whether to concatenate or perform numeric addition.
                 object? leftPrimitive = ToPrimitive(left.ToObject(), PrimitiveHint.Default);
                 object? rightPrimitive = ToPrimitive(right.ToObject(), PrimitiveHint.Default);
-                if (leftPrimitive is string || rightPrimitive is string)
+                if (leftPrimitive is string || rightPrimitive is string
+                    || IsObjectLike(leftPrimitive) || IsObjectLike(rightPrimitive))
                     return RuntimeValue.FromBoxed(EvaluatePlus(leftPrimitive, rightPrimitive));
                 left = RuntimeValue.FromBoxed(leftPrimitive);
                 right = RuntimeValue.FromBoxed(rightPrimitive);
@@ -1447,20 +1414,22 @@ public partial class Interpreter
 
             // ToNumeric must finish on the left before converting the right:
             // a left-hand Symbol failure must not invoke a right-hand hook.
-            left = ToCompoundNumeric(left);
-            right = ToCompoundNumeric(right);
+            left = ToNumericRV(left);
+            right = ToNumericRV(right);
             if (left.IsBigInt || right.IsBigInt)
             {
                 if (!left.IsBigInt || !right.IsBigInt)
                     throw new ThrowException(new SharpTSTypeError(
                         "Cannot mix BigInt and other types in operations"));
-                if (op == TokenType.GREATER_GREATER_GREATER_EQUAL)
+                if (op == TokenType.GREATER_GREATER_GREATER)
                     throw new ThrowException(new SharpTSTypeError(
                         "BigInts have no unsigned right shift"));
+                if (op == TokenType.STAR_STAR && right.AsBigInt().Value.Sign < 0)
+                    throw new ThrowException(new SharpTSRangeError("BigInt exponent must be non-negative"));
                 try
                 {
                     return BigIntOperatorHelper.EvaluateBinaryRV(
-                        binaryToken, left.AsBigInt().Value, right.AsBigInt().Value);
+                        op, left.AsBigInt().Value, right.AsBigInt().Value);
                 }
                 catch (DivideByZeroException)
                 {
@@ -1469,32 +1438,34 @@ public partial class Interpreter
             }
         }
 
-        // Fast path: both numeric (most common for compound assignment)
+        // Fast path: both Number primitives.
         if (left.IsNumber && right.IsNumber)
         {
             double l = left.AsNumberUnsafe(), r = right.AsNumberUnsafe();
             return op switch
             {
-                TokenType.PLUS_EQUAL => RuntimeValue.FromNumber(l + r),
-                TokenType.MINUS_EQUAL => RuntimeValue.FromNumber(l - r),
-                TokenType.STAR_EQUAL => RuntimeValue.FromNumber(l * r),
-                TokenType.SLASH_EQUAL => RuntimeValue.FromNumber(l / r),
-                TokenType.PERCENT_EQUAL => RuntimeValue.FromNumber(l % r),
-                TokenType.AMPERSAND_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) & JsToInt32(r)),
-                TokenType.PIPE_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) | JsToInt32(r)),
-                TokenType.CARET_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) ^ JsToInt32(r)),
-                TokenType.LESS_LESS_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) << (JsToInt32(r) & 0x1F)),
-                TokenType.GREATER_GREATER_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) >> (JsToInt32(r) & 0x1F)),
-                TokenType.GREATER_GREATER_GREATER_EQUAL => RuntimeValue.FromNumber(JsToUint32(l) >> (JsToInt32(r) & 0x1F)),
-                _ => throw new InterpreterException($"Unknown compound operator: {op}")
+                TokenType.PLUS => RuntimeValue.FromNumber(l + r),
+                TokenType.MINUS => RuntimeValue.FromNumber(l - r),
+                TokenType.STAR => RuntimeValue.FromNumber(l * r),
+                TokenType.SLASH => RuntimeValue.FromNumber(l / r),
+                TokenType.PERCENT => RuntimeValue.FromNumber(l % r),
+                TokenType.STAR_STAR => RuntimeValue.FromNumber(Math.Pow(l, r)),
+                TokenType.AMPERSAND => RuntimeValue.FromNumber(JsToInt32(l) & JsToInt32(r)),
+                TokenType.PIPE => RuntimeValue.FromNumber(JsToInt32(l) | JsToInt32(r)),
+                TokenType.CARET => RuntimeValue.FromNumber(JsToInt32(l) ^ JsToInt32(r)),
+                TokenType.LESS_LESS => RuntimeValue.FromNumber(JsToInt32(l) << (JsToInt32(r) & 0x1F)),
+                TokenType.GREATER_GREATER => RuntimeValue.FromNumber(JsToInt32(l) >> (JsToInt32(r) & 0x1F)),
+                TokenType.GREATER_GREATER_GREATER => RuntimeValue.FromNumber(JsToUint32(l) >> (JsToInt32(r) & 0x1F)),
+                _ => throw new InterpreterException($"Unknown numeric operator: {op}")
             };
         }
 
-        throw new InterpreterException($"Unknown compound operator: {op}");
+        throw new InterpreterException($"Unknown numeric operator: {op}");
     }
 
-    private RuntimeValue ToCompoundNumeric(RuntimeValue value)
+    private RuntimeValue ToNumericRV(RuntimeValue value)
     {
+        if (value.IsNumber || value.IsBigInt) return value;
         object? primitive = ToPrimitive(value.ToObject(), PrimitiveHint.Number);
         return primitive is SharpTSBigInt bigint
             ? RuntimeValue.FromBigInt(bigint)

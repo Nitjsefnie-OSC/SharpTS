@@ -63,6 +63,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     private object? _currentModuleOwner;
 
     public Dictionary<object, Dictionary<string, Token>> ClosureCaptures { get; } = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<object, Dictionary<string, Token>> _privateSelfCaptures = new(ReferenceEqualityComparer.Instance);
     public IEnumerable<Token> CellDeclarations => _cells;
     public bool IsCellDeclaration(Token token) => _cells.Contains(token);
     public bool IsOrdinaryBlockShadowDeclaration(Token token) => _ordinaryBlockShadows.Contains(token);
@@ -82,6 +83,15 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     public bool TryGetClassSelfOwner(Expr.Variable reference, out Expr.ClassExpr owner) =>
         _classSelfReferences.TryGetValue(reference, out owner!);
     public bool CanTransportClassSelf(Expr.Variable reference) => _transportedClassSelfReferences.Contains(reference);
+    public bool IsReferenceToDeclaration(Expr.Variable reference, Token declaration) =>
+        _variableBindings.TryGetValue(reference, out var binding) && ReferenceEquals(binding.Name, declaration);
+    public bool TryGetPrivateSelfCapture(object closure, string name, out Token declaration)
+    {
+        if (_privateSelfCaptures.TryGetValue(closure, out var captures) && captures.TryGetValue(name, out declaration!))
+            return true;
+        declaration = null!;
+        return false;
+    }
 
     public bool TryGetCaptureDeclaration(object closure, string name, out Token declaration)
     {
@@ -94,6 +104,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     public void Analyze(List<Stmt> statements, IReadOnlyDictionary<Stmt, object>? moduleOwners = null)
     {
         _owners.Clear(); _scopes.Clear(); _declarations.Clear(); _tentative.Clear(); _cells.Clear(); ClosureCaptures.Clear();
+        _privateSelfCaptures.Clear();
         _variableBindings.Clear();
         _classSelfDeclarations.Clear();
         _moduleRootBindings.Clear();
@@ -166,7 +177,14 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         }
         foreach (var (closure, captures) in _tentative)
             foreach (var (name, binding) in captures)
-                if (_cells.Contains(binding.Name))
+                if (IsAsyncPrivateSelfBinding(binding))
+                {
+                    // A private function name carries the function value, never a lexical box.
+                    if (!_privateSelfCaptures.TryGetValue(closure, out var output))
+                        _privateSelfCaptures[closure] = output = new(StringComparer.Ordinal);
+                    output[name] = binding.Name;
+                }
+                else if (_cells.Contains(binding.Name))
                 {
                     if (!ClosureCaptures.TryGetValue(closure, out var output))
                         ClosureCaptures[closure] = output = new(StringComparer.Ordinal);
@@ -340,6 +358,9 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         }
         if (ReferenceEquals(binding.Owner, _owners[^1])) return;
         binding.Captured = true;
+        if (IsAsyncPrivateSelfBinding(binding))
+            for (int index = _owners.Count - 1; index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
+                RecordCapture(_owners[index].Node, name, binding);
         if (binding.Lexical)
         {
             bool generator = false;
@@ -365,6 +386,10 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             RecordCapture(owner.Node, name, binding);
         }
     }
+
+    private static bool IsAsyncPrivateSelfBinding(Binding binding) =>
+        binding.Owner.Node is Expr.ArrowFunction { IsAsync: true, IsGenerator: false, Name: { } name }
+        && ReferenceEquals(binding.Name, name);
 
     private void RecordCapture(object node, string name, Binding binding)
     {

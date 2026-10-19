@@ -23,7 +23,25 @@ public partial class AsyncArrowMoveNextEmitter
 
         string name = v.Name.Lexeme;
 
+        // A private-name reference keeps its declaration identity after an inner
+        // loop or block has left same-spelled storage in the flattened local map.
+        if (_builder.Arrow.Name is { } selfName && _builder.PrivateSelfField is { } selfField
+            && _ctx?.ClosureAnalyzer?.IsReferenceToDeclaration(checkedReference, selfName) == true)
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, selfField);
+            SetStackUnknown();
+            return;
+        }
         if (LexicalEnvironmentCellAccess.TryLoad(_il, Ctx, name)) { SetStackUnknown(); return; }
+        // Per-iteration cells are authoritative after the loop initializer's
+        // local has been copied into a box, matching assignment/store routing.
+        if (_resolver!.TryResolveCell(name) is { } cellStorage)
+        {
+            cellStorage.EmitLoad(_il);
+            SetStackUnknown();
+            return;
+        }
         // An expression's private name precedes outer/module captures, while
         // actual parameters and body declarations keep their ordinary storage.
         if (_resolver!.TryResolvePrivateSelf(name) is { } selfStorage)

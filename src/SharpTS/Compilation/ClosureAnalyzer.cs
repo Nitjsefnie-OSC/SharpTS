@@ -168,6 +168,10 @@ public class ClosureAnalyzer : AstVisitorBase
         _bodyCells.TryGetCaptureDeclaration(closure, name, out declaration);
     internal IReadOnlyDictionary<string, Token>? GetLoopBodyCellCaptures(object closure) =>
         _bodyCells.ClosureCaptures.GetValueOrDefault(closure);
+    internal bool IsReferenceToDeclaration(Expr.Variable reference, Token declaration) =>
+        _bodyCells.IsReferenceToDeclaration(reference, declaration);
+    internal bool TryGetPrivateSelfCapture(object closure, string name, out Token declaration) =>
+        _bodyCells.TryGetPrivateSelfCapture(closure, name, out declaration);
     internal bool TryGetClassSelfOwner(Expr.Variable reference, out Expr.ClassExpr owner)
     {
         if (_bodyCells.CanTransportClassSelf(reference))

@@ -89,7 +89,8 @@ public partial class AsyncArrowMoveNextEmitter
 
             // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE, not its
             // value (LoadVariableForCapture would deref the cell). The closure body derefs.
-            if (capturedVar == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
+            if (TryEmitPrivateSelfCapture(af, capturedVar)) { }
+            else if (capturedVar == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
             else if (capturedVar == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
             else if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(_il, _ctx, af, capturedVar)) { }
             else if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
@@ -173,7 +174,8 @@ public partial class AsyncArrowMoveNextEmitter
                     _il.Emit(OpCodes.Dup);
                     _il.Emit(OpCodes.Ldc_I4, i);
                     var name = captureOrder[i];
-                    if (name == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
+                    if (TryEmitPrivateSelfCapture(af, name)) { }
+                    else if (name == CompilationContext.NewTargetCaptureName) EmitNewTargetValue();
                     else if (name == CompilationContext.SuperOwnerCaptureName && TryEmitOwnedClassDefinition()) { }
                     else if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(_il, _ctx!, af, name)) { }
                     else if (nestedBuilder.StandaloneLiveCaptureFields.TryGetValue(name, out var liveField))
@@ -210,5 +212,16 @@ public partial class AsyncArrowMoveNextEmitter
         }
 
         EmitAsyncFunctionValue(nestedBuilder);
+    }
+
+    private bool TryEmitPrivateSelfCapture(Expr.ArrowFunction closure, string name)
+    {
+        if (_builder.Arrow.Name is not { } selfName || _builder.PrivateSelfField is not { } selfField
+            || _ctx?.ClosureAnalyzer?.TryGetPrivateSelfCapture(closure, name, out var declaration) != true
+            || !ReferenceEquals(declaration, selfName))
+            return false;
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, selfField);
+        return true;
     }
 }

@@ -764,7 +764,13 @@ public partial class ILCompiler
                 // binding even when no mutable display class was needed.
                 if (parentBuilder.PrivateSelfName is { } selfName
                     && parentBuilder.PrivateSelfField is { } selfField)
-                    outerHoistedFields.TryAdd(selfName, selfField);
+                {
+                    if (_closures.Analyzer.TryGetPrivateSelfCapture(arrowInfo.Arrow, selfName, out var declaration)
+                        && ReferenceEquals(declaration, parentBuilder.Arrow.Name))
+                        outerHoistedFields[selfName] = selfField;
+                    else
+                        outerHoistedFields.TryAdd(selfName, selfField);
+                }
                 // Also include captured fields - they're accessible through parent's outer reference
                 // These are "transitive" captures - we need to go through parent's <>__outer to access them
                 HashSet<string> transitiveCaptures = [];

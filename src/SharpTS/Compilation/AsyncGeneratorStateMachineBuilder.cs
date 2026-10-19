@@ -608,11 +608,8 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
     {
         var il = ReturnMethod.GetILGenerator();
 
-        // Reject return() while a request is in flight (the body executing, or a next() still pending on
-        // the request chain): return() drives MoveNextAsync synchronously to run finallys, which would
-        // re-enter a suspended/advancing state machine and corrupt it. Full per-spec queuing of return()
-        // behind pending next()s is a follow-up; in a `for await…of` early-exit (the common return() path)
-        // each next() is awaited before return() is called, so this fast-rejects only pathological overlap (#542).
+        // Preserve the existing rejection of overlapping requests. Return-request queuing is separate
+        // from carrying one accepted completion through the body's cleanup suspension points.
         EmitThrowIfBusyAsync(il);
 
         // If state >= 0 (suspended at a yield point), we need to trigger finally blocks
@@ -632,6 +629,28 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Stfld, CurrentField);
+
+        // An ordinary yield consumes the request and routes it like a source return. Use the same
+        // result builder as next()/throw(): cleanup may yield, await, or replace the completion value.
+        // Delegation still lacks return forwarding (#2788); retain its existing force-close path below.
+        var delegatedReturnLabel = il.DefineLabel();
+        if (DelegatedAsyncEnumeratorField is not null)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, DelegatedAsyncEnumeratorField);
+            il.Emit(OpCodes.Brtrue, delegatedReturnLabel);
+        }
+        var resultLocal = il.DeclareLocal(_types.TaskOfObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _driveOnceMethod);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Stfld, PendingTailField);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(delegatedReturnLabel);
 
         // Drive MoveNextAsync to run the finally blocks, with the executing flag set so a re-entrant
         // call from inside a finally hits the guard (#542). The try/finally clears it even if a finally

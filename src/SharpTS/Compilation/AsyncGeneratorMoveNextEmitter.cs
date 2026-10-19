@@ -37,10 +37,6 @@ public partial class AsyncGeneratorMoveNextEmitter : IteratorMoveNextEmitter
     // Current suspension point being processed
     private int _currentSuspensionState = 0;
 
-    // Label to jump to when __returnRequested is detected at a yield resume point.
-    // Set to the afterTryBody label of the enclosing try/finally block (if any).
-    private Label? _returnCleanupLabel;
-
     // While emitting a flag-based try BODY (EmitTryCatchWithSuspensions), these carry that try's
     // exception-capture target down to suspension points, which are emitted at the top level —
     // outside the sync segments' mini try/catch. A rejected `await` inside the try captures its

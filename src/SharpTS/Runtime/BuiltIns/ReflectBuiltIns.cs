@@ -161,7 +161,9 @@ public static class ReflectBuiltIns
                         return RuntimeValue.FromBoolean(
                             obj.DeleteProperty(propertyKey));
                     case ISharpTSFunctionObject function:
-                        return RuntimeValue.FromBoolean(FunctionObjectProperties.GetProperties(function, interpreter).DeletePropertyStrict(propertyKey, false));
+                        var properties = FunctionObjectProperties.GetProperties(function, interpreter);
+                        return RuntimeValue.FromBoolean(properties.GetOwnPropertyDescriptor(propertyKey) is null
+                            || properties.DeletePropertyStrict(propertyKey, false));
                     case BoundFunction bound:
                         return RuntimeValue.FromBoolean(bound.DeleteProperty(propertyKey, false));
                     case SharpTSFunction ordinaryFunction:

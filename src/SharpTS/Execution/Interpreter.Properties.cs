@@ -581,22 +581,6 @@ public partial class Interpreter
                     : arrowDescriptor.Value;
             }
 
-            if (current is SharpTSAsyncFunction asyncFunction)
-            {
-                if (asyncFunction.TryGetProperty(name, out var asyncValue))
-                    return asyncValue;
-                if (name is "name" or "length")
-                    return FunctionBuiltIns.GetMember(asyncFunction, name, this);
-            }
-
-            if (current is SharpTSAsyncArrowFunction asyncArrow)
-            {
-                if (asyncArrow.TryGetProperty(name, out var asyncArrowValue))
-                    return asyncArrowValue;
-                if (name is "name" or "length")
-                    return FunctionBuiltIns.GetMember(asyncArrow, name, this);
-            }
-
             if (current is SharpTSClass klass)
             {
                 if (TryReadDescriptor(klass.GetOwnStaticPropertyDescriptor(name), receiver, out var classValue))
@@ -1442,11 +1426,6 @@ public partial class Interpreter
                 return RuntimeValue.FromBoxed(proto);
             }
         }
-        if (obj is SharpTSAsyncFunction asyncFn && asyncFn.TryGetProperty(memberName, out var asyncProp))
-            return RuntimeValue.FromBoxed(asyncProp);
-        if (obj is SharpTSAsyncArrowFunction asyncArrowFn && asyncArrowFn.TryGetProperty(memberName, out var asyncArrowProp))
-            return RuntimeValue.FromBoxed(asyncArrowProp);
-
         // Callable objects inherit guest-defined fields from the realm's
         // Function.prototype. Own metadata/properties above still win.
         if (obj is ISharpTSCallable
@@ -2469,17 +2448,6 @@ public partial class Interpreter
                 return GetObjectPrototype().TryGetExtra(memberName);
             return SharpTSUndefined.Instance;
         }
-        if (obj is SharpTSAsyncFunction asyncFn2)
-        {
-            if (asyncFn2.TryGetProperty(memberName, out var asyncProp2)) return asyncProp2;
-            return SharpTSUndefined.Instance;
-        }
-        if (obj is SharpTSAsyncArrowFunction asyncArrowFn2)
-        {
-            if (asyncArrowFn2.TryGetProperty(memberName, out var asyncArrowProp2)) return asyncArrowProp2;
-            return SharpTSUndefined.Instance;
-        }
-
         // Array global constructor: resolves `Array.prototype`, `Array.from`, etc.
         if (obj is SharpTSArrayGlobal arrGlobal)
             return GetPropertyValue(arrGlobal, memberName);
@@ -2786,8 +2754,7 @@ public partial class Interpreter
         };
 
         if (!mutableFunctionPrototype && strictMode && set.Name.Lexeme == "length" && !hasWritableOwnLength
-            && obj is SharpTSFunction or SharpTSArrowFunction
-                or SharpTSAsyncFunction or SharpTSAsyncArrowFunction)
+            && obj is SharpTSFunction or SharpTSArrowFunction)
         {
             throw new ThrowException(new SharpTSTypeError(
                 "Cannot assign to read only property 'length' of function"));
@@ -2841,16 +2808,6 @@ public partial class Interpreter
         {
             SetOrdinaryFunctionOwnProperty(
                 arrowFn, arrowFn.OwnPropertyStorage, set.Name.Lexeme, value, strictMode);
-            return value;
-        }
-        if (obj is SharpTSAsyncFunction asyncFn)
-        {
-            asyncFn.SetProperty(set.Name.Lexeme, value);
-            return value;
-        }
-        if (obj is SharpTSAsyncArrowFunction asyncArrowFn)
-        {
-            asyncArrowFn.SetProperty(set.Name.Lexeme, value);
             return value;
         }
         if (obj is SharpTSObjectNamespace objectNamespace)

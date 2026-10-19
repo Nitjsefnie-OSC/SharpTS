@@ -30,7 +30,7 @@ public interface ISharpTSAsyncCallable : ISharpTSCallable
 /// The synchronous Call method returns a <see cref="SharpTSPromise"/> immediately,
 /// while CallAsync executes the function body asynchronously.
 /// </remarks>
-public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
+public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ISharpTSFunctionObject, ITypeCategorized
 {
     // JS async functions are functions — categorize as Function so member
     // access routes through FunctionBuiltIns (call/apply/bind/length/name).
@@ -43,8 +43,10 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
     internal SharpTSClass? PrivateOwner { get; set; }
     private readonly bool _receiverBound;
     internal bool HasBoundReceiver => _receiverBound;
-    // JS: functions (including async) are objects and support property assignment.
-    private Dictionary<string, object?>? _properties;
+    // Receiver views retain one descriptor-backed function object, including
+    // the absence of configurable metadata after deletion.
+    private SharpTSObject _properties;
+    SharpTSObject ISharpTSFunctionObject.OwnProperties => _properties;
 
     public SharpTSAsyncFunction(Stmt.Function declaration, RuntimeEnvironment closure, bool receiverBound = false)
     {
@@ -53,21 +55,31 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         _receiverBound = receiverBound;
         _arity = declaration.IsPrivate ? declaration.Parameters.TakeWhile(p => p.DefaultValue == null && !p.IsRest).Count()
             : declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
+        _properties = FunctionObjectProperties.Create(declaration.RuntimeName ?? declaration.Name.Lexeme, _arity);
+    }
+
+    private SharpTSAsyncFunction(SharpTSAsyncFunction source, RuntimeEnvironment closure)
+    {
+        _declaration = source._declaration;
+        _closure = closure;
+        _arity = source._arity;
+        _receiverBound = true;
+        _properties = source._properties;
+        PrivateOwner = source.PrivateOwner;
     }
 
     public bool TryGetProperty(string name, out object? value)
     {
-        if (_properties != null && _properties.TryGetValue(name, out value))
+        if (_properties.Fields.TryGetValue(name, out value))
             return true;
         value = null;
         return false;
     }
 
-    public void SetProperty(string name, object? value)
-    {
-        _properties ??= [];
-        _properties[name] = value;
-    }
+    public void SetProperty(string name, object? value) => _properties.SetProperty(name, value);
+
+    internal bool DefineProperty(string name, SharpTSPropertyDescriptor descriptor)
+        => _properties.DefineProperty(name, descriptor);
 
     public int Arity() => _arity;
 
@@ -204,7 +216,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
             // 'super' not in scope - ignore
         }
 
-        return ShareObjectState(new SharpTSAsyncFunction(_declaration, environment, receiverBound: true));
+        return new SharpTSAsyncFunction(this, environment);
     }
 
     /// <summary>
@@ -217,7 +229,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         RuntimeEnvironment closure = _receiverBound ? _closure.Enclosing! : _closure;
         RuntimeEnvironment environment = new(closure);
         environment.Define("this", thisObject);
-        return ShareObjectState(new SharpTSAsyncFunction(_declaration, environment, receiverBound: true));
+        return new SharpTSAsyncFunction(this, environment);
     }
 
     public SharpTSAsyncFunction BindStatic(SharpTSClass klass)
@@ -227,15 +239,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         environment.Define("this", klass);
         if (klass.Superclass != null)
             environment.Define("super", klass.Superclass);
-        return ShareObjectState(new SharpTSAsyncFunction(_declaration, environment, receiverBound: true));
-    }
-
-    private SharpTSAsyncFunction ShareObjectState(SharpTSAsyncFunction bound)
-    {
-        _properties ??= [];
-        bound._properties = _properties;
-        bound.PrivateOwner = PrivateOwner;
-        return bound;
+        return new SharpTSAsyncFunction(this, environment);
     }
 
     public override string ToString() => $"<async fn {_declaration.Name.Lexeme}>";
@@ -250,7 +254,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
 /// For arrow functions (<c>HasOwnThis=false</c>), <c>this</c> is captured from the enclosing scope.
 /// For async function expressions (<c>HasOwnThis=true</c>), <c>this</c> is bound at call time.
 /// </remarks>
-public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
+public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ISharpTSFunctionObject, ITypeCategorized
 {
     // JS async arrows / async function expressions are functions — categorize
     // as Function so member access routes through FunctionBuiltIns.
@@ -259,8 +263,8 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
     private readonly Expr.ArrowFunction _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
-    // JS: async arrows are objects and support property assignment.
-    private Dictionary<string, object?>? _properties;
+    private SharpTSObject _properties;
+    SharpTSObject ISharpTSFunctionObject.OwnProperties => _properties;
 
     /// <summary>
     /// Indicates whether this function has its own 'this' binding (function expressions)
@@ -274,21 +278,27 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
         _closure = closure;
         HasOwnThis = hasOwnThis;
         _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
+        _properties = FunctionObjectProperties.Create(declaration.RuntimeName ?? declaration.Name?.Lexeme ?? "", _arity);
+    }
+
+    private SharpTSAsyncArrowFunction(SharpTSAsyncArrowFunction source, RuntimeEnvironment closure)
+    {
+        _declaration = source._declaration;
+        _closure = closure;
+        _arity = source._arity;
+        HasOwnThis = true;
+        _properties = source._properties;
     }
 
     public bool TryGetProperty(string name, out object? value)
     {
-        if (_properties != null && _properties.TryGetValue(name, out value))
+        if (_properties.Fields.TryGetValue(name, out value))
             return true;
         value = null;
         return false;
     }
 
-    public void SetProperty(string name, object? value)
-    {
-        _properties ??= [];
-        _properties[name] = value;
-    }
+    public void SetProperty(string name, object? value) => _properties.SetProperty(name, value);
 
     public int Arity() => _arity;
 
@@ -363,7 +373,7 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
     {
         RuntimeEnvironment environment = new(_closure);
         environment.Define("this", thisObject);
-        return new SharpTSAsyncArrowFunction(_declaration, environment, hasOwnThis: true);
+        return new SharpTSAsyncArrowFunction(this, environment);
     }
 
     public override string ToString() => "<async arrow fn>";

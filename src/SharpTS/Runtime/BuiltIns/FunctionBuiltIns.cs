@@ -118,7 +118,6 @@ public static class FunctionBuiltIns
                 function.OwnProperties.GetOwnPropertyDescriptor("name")?.Value as string ?? "",
             IBuiltInFunctionMetadata builtIn => builtIn.FunctionName,
             SharpTSFunction fn => fn.TryGetProperty("name", out var name) ? name as string ?? "" : "",
-            SharpTSAsyncFunction fn => fn.TryGetProperty("name", out var name) ? name as string ?? "" : "",
             SharpTSArrowFunction arrow => arrow.ToString().Contains("<fn ")
                 ? arrow.ToString().Replace("<fn ", "").TrimEnd('>')
                 : "",

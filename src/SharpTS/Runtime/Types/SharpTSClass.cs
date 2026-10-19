@@ -673,7 +673,7 @@ public partial class SharpTSClass(
                 function.DefineProperty("name", new SharpTSPropertyDescriptor(value: name, configurable: true));
                 break;
             case SharpTSAsyncFunction function:
-                function.SetProperty("name", name);
+                function.DefineProperty("name", new SharpTSPropertyDescriptor(value: name, configurable: true));
                 break;
             case SharpTSGeneratorFunction function:
                 function.ComputedName = name;

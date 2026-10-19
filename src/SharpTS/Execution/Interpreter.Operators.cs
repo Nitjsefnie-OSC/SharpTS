@@ -1093,6 +1093,7 @@ public partial class Interpreter
             SharpTSArray array => array.DeletePropertyStrict(name, strictMode),
             SharpTSObject tsObj => tsObj.DeletePropertyStrict(name, strictMode),
             ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, this)
+                .GetOwnPropertyDescriptor(name) is null || FunctionObjectProperties.GetProperties(function, this)
                 .DeletePropertyStrict(name, strictMode),
             BoundFunction bound => bound.DeleteProperty(name, strictMode),
             SharpTSInstance tsInst => tsInst.DeleteFieldStrict(name, strictMode),

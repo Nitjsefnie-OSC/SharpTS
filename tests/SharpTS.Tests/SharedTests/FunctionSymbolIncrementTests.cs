@@ -147,8 +147,6 @@ public sealed class FunctionSymbolIncrementTests
         => Cases().SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             // #2595: compiled updates reject an object key producing a Symbol.
             .Where(mode => mode == ExecutionMode.Interpreted || (string)row[0] != "object-to-symbol-key")
-            // #2615: async callable Symbol assignment has a separate storage gap.
-            .Where(mode => mode == ExecutionMode.Compiled || (string)row[0] != "async-function-forms")
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ParityCases))]

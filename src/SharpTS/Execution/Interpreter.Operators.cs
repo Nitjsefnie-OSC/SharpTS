@@ -162,10 +162,23 @@ public partial class Interpreter
 
         if (obj is SharpTSArray array && index is double idx)
         {
-            RuntimeValue current = array.GetRV((int)idx);
+            int arrayIndex = (int)idx;
+            bool strictMode = _environment.IsStrictMode;
+            string key = arrayIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            RuntimeValue current = arrayIndex >= 0
+                ? GetArrayIndexValue(array, arrayIndex)
+                : array.GetRV(arrayIndex);
             RuntimeValue addValue = await ctx.EvaluateExprAsync(compound.Value);
             RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, current, addValue);
-            array.Set((int)idx, newValue.ToObject());
+            // Preserve the existing out-of-range numeric path. Valid indices
+            // use fresh descriptors after the RHS, retaining the original array
+            // as the receiver for both own and inherited accessors.
+            if (arrayIndex < 0)
+                array.Set(arrayIndex, newValue.ToObject());
+            else if (!SharpTSProxy.OrdinarySet(this, array, key, newValue.ToObject(), array)
+                && strictMode)
+                throw new ThrowException(new SharpTSTypeError(
+                    $"Cannot assign to array index '{key}'"));
             return newValue;
         }
 

@@ -3129,12 +3129,16 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
     /// <summary>
     /// Returns whether a bare built-in name may use its registry-backed static
-    /// property representation. Promise is special because primitive-await
+    /// property representation. Lexical Number/Math bindings require ordinary member reads.
+    /// Promise additionally checks mutation because primitive-await
     /// lowering must preserve a shadowed or mutated <c>Promise.resolve</c> call
     /// all the way through method materialization and receiver binding.
     /// </summary>
     protected bool CanUseStaticTypeStrategy(string name)
     {
+        if (name is "Number" or "Math")
+            return !Resolver.HasVariable(name) && !Ctx.HasVisibleValueBinding(name);
+
         return name != "Promise"
             || (Ctx.RuntimeFeatures?.UsesPromisePrototypeMutation != true
                 && !Resolver.HasVariable(name)

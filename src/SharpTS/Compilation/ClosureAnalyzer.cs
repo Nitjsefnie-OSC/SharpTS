@@ -462,8 +462,13 @@ public class ClosureAnalyzer : AstVisitorBase
     {
         if (_currentFunction == null) return;
 
-        // Skip built-ins
-        if (name is "console.log" or "Math" or "console" or "undefined" or "NaN" or "Infinity" or "Symbol")
+        // The intrinsic Math object needs no capture, but a lexical declaration with that name
+        // must reach the ordinary self/local/outer ownership checks below.
+        if (name == "Math" && !_scopeStack.Any(scope => scope.Contains(name)))
+            return;
+
+        // Skip other built-ins.
+        if (name is "console.log" or "console" or "undefined" or "NaN" or "Infinity" or "Symbol")
             return;
 
         // Check for self-reference in named function expressions

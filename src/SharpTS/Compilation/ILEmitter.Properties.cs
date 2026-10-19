@@ -1168,6 +1168,8 @@ public partial class ILEmitter
         if (!gi.Optional
             && gi.Object is Expr.Variable staticIndexVar
             && gi.Index is Expr.Literal { Value: string staticIndexName }
+            && (staticIndexVar.Name.Lexeme is not ("Number" or "Math")
+                || CanUseStaticTypeStrategy(staticIndexVar.Name.Lexeme))
             && _ctx.TypeEmitterRegistry?.GetStaticStrategy(staticIndexVar.Name.Lexeme) is { } staticIndexStrategy
             && staticIndexStrategy.TryEmitStaticPropertyGet(this, staticIndexName))
         {

@@ -58,7 +58,10 @@ public class AsyncArrowVariableResolver : IVariableResolver
     }
 
     /// <inheritdoc />
-    public bool HasVariable(string name) => TryResolveVariable(name) != null;
+    // Include emitter-owned live paths and standalone captures without changing their read priority.
+    public bool HasVariable(string name) => TryResolveVariable(name) != null
+        || _builder.CapturedLiveStorage.ContainsKey(name)
+        || _builder.StandaloneCaptureFields.ContainsKey(name);
 
     /// <inheritdoc />
     public bool TryStoreVariable(string name)

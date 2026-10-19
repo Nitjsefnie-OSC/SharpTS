@@ -7,6 +7,7 @@ public partial class RuntimeEmitter
 {
     private readonly record struct SetIndexInputs(
         EmittedClassDefinitionRuntime ClassDefinitions,
+        EmittedClassPrototypeRuntime ClassPrototypes,
         EmittedArrayOperationsRuntime ArrayOperations,
         EmittedArrayStorageRuntime ArrayStorage,
         EmittedBufferRuntime? Buffer,
@@ -1493,6 +1494,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
         il.Emit(OpCodes.Brtrue, tsFunctionIdxSetLabel);
+
+        if (_features.UsesUserClasses)
+        {
+            // Registered class prototypes need ordinary inherited descriptor
+            // resolution before an indexed write creates any own storage.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, inputs.ClassPrototypes.IsPrototype);
+            il.Emit(OpCodes.Brtrue, tsObjectIdxSetLabel);
+        }
 
         // Class instance / unknown receiver fallback: route to SetFieldsProperty
         // with index coerced to string. SetFieldsProperty's own scoped PDS-store

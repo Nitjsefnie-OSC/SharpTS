@@ -1592,6 +1592,7 @@ public partial class RuntimeEmitter
             runtime.ObjectWrite,
             new SetIndexInputs(
                 runtime.ClassDefinitions,
+                runtime.ClassPrototypes,
                 runtime.ArrayOperations,
                 runtime.ArrayStorage,
                 runtime.Buffer,

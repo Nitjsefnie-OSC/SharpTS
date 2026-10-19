@@ -59,11 +59,7 @@ public sealed class NativeClassExpressionConstructorTests
             """, "3 ab 2 2\n"];
     }
 
-    // #2709 owns native Promise class-expression species construction during then.
-    // Keep both full Promise-expression sources interpreted until that compiler owner is fixed.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] is not ("implicit-native-promise-expression-issue" or
-            "implicit-native-promise-expression-declare-fields-erase"));
+    public static IEnumerable<object[]> SavedCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases()
     {

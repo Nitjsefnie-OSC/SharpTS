@@ -1037,6 +1037,7 @@ public partial class RuntimeEmitter
         var returnIntrinsicLabel = il.DefineLabel();
         var haveSpeciesLabel = il.DefineLabel();
         var expandoLookupLabel = il.DefineLabel();
+        var haveExpandoLabel = il.DefineLabel();
         // #390: a resolved @@species value that is NOT a Type (a function-valued
         // species, or a non-constructor like a number) but is also not
         // undefined/null is routed here with its raw value preserved.
@@ -1045,6 +1046,8 @@ public partial class RuntimeEmitter
         var speciesTypeLocal = il.DeclareLocal(_types.Type);   // resolved SpeciesConstructor
         var speciesValLocal = il.DeclareLocal(_types.Object);  // raw @@species value (#390)
         var getterLocal = il.DeclareLocal(_types.Object);
+        var expandoValLocal = il.DeclareLocal(_types.Object);
+        var expandoReceiverLocal = il.DeclareLocal(_types.Object);
         var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
 
         il.Emit(OpCodes.Ldarg_0);
@@ -1068,6 +1071,12 @@ public partial class RuntimeEmitter
         // SpeciesConstructor(receiver, %Promise%): C = recvType; species default = C.
         il.Emit(OpCodes.Ldloc, typeLocal);
         il.Emit(OpCodes.Stloc, speciesTypeLocal); // speciesType = recvType (default)
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Stloc, expandoReceiverLocal);
+        // Evaluated constructors own their symbols independently of the CLR
+        // template. Consult that identity before any inherited Type getter.
+        EmitClassDefinitionPromiseSpeciesLookup(il, runtime, typeLocal,
+            expandoReceiverLocal, expandoValLocal, haveExpandoLabel);
         // var getter = FindSymbolGetter(recvType, Symbol.species);  // static-slot lookup
         il.Emit(OpCodes.Ldloc, typeLocal);
         il.Emit(OpCodes.Ldsfld, runtime.Symbols.Species);
@@ -1114,9 +1123,7 @@ public partial class RuntimeEmitter
         il.MarkLabel(expandoLookupLabel);
         var expandoOwnerLocal = il.DeclareLocal(_types.Type);
         var expandoDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
-        var expandoValLocal = il.DeclareLocal(_types.Object);
         var expandoLoopLabel = il.DefineLabel();
-        var haveExpandoLabel = il.DefineLabel();
         var getBaseType = _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!;
         var dictTryGetValue = _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue");
 
@@ -1166,7 +1173,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, getterLocal);
         il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
         il.Emit(OpCodes.Brtrue, expandoUndefinedLabel);
-        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldloc, expandoReceiverLocal);
         il.Emit(OpCodes.Ldloc, getterLocal);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newarr, _types.Object);
@@ -1234,6 +1241,161 @@ public partial class RuntimeEmitter
         il.MarkLabel(returnIntrinsicLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
+    }
+
+    // Emits only the evaluated-class branch. A nominal child can inherit the
+    // interface from an expression parent, so exact template identity is required
+    // before replacing its existing Type-based species resolution.
+    private void EmitClassDefinitionPromiseSpeciesLookup(ILGenerator il, EmittedRuntime runtime,
+        LocalBuilder receiverType, LocalBuilder speciesReceiver, LocalBuilder value, Label found)
+    {
+        var legacy = il.DefineLabel();
+        var definitionInstance = il.DeclareLocal(runtime.ClassDefinitions.InstanceInterface);
+        var definition = il.DeclareLocal(runtime.ClassDefinitions.Type);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.ClassDefinitions.InstanceInterface);
+        il.Emit(OpCodes.Stloc, definitionInstance);
+        il.Emit(OpCodes.Ldloc, definitionInstance);
+        il.Emit(OpCodes.Brfalse, legacy);
+        il.Emit(OpCodes.Ldloc, definitionInstance);
+        il.Emit(OpCodes.Callvirt, runtime.ClassDefinitions.GetDefinition);
+        il.Emit(OpCodes.Isinst, runtime.ClassDefinitions.Type);
+        il.Emit(OpCodes.Stloc, definition);
+        il.Emit(OpCodes.Ldloc, definition);
+        il.Emit(OpCodes.Brfalse, legacy);
+        il.Emit(OpCodes.Ldloc, definition);
+        il.Emit(OpCodes.Ldfld, runtime.ClassDefinitions.Template);
+        il.Emit(OpCodes.Ldloc, receiverType);
+        il.Emit(OpCodes.Bne_Un, legacy);
+
+        il.Emit(OpCodes.Ldloc, definition);
+        il.Emit(OpCodes.Stloc, speciesReceiver);
+        var owner = il.DeclareLocal(_types.Object);
+        var ownerType = il.DeclareLocal(_types.Type);
+        var canonicalOwner = il.DeclareLocal(_types.Type);
+        var getter = il.DeclareLocal(_types.Object);
+        var setter = il.DeclareLocal(_types.Object);
+        var loop = il.DefineLabel();
+        var next = il.DefineLabel();
+        var defaultSpecies = il.DefineLabel();
+        var tryGetter = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, definition);
+        il.Emit(OpCodes.Stloc, owner);
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldloc, owner);
+        il.Emit(OpCodes.Brfalse, defaultSpecies);
+        il.Emit(OpCodes.Ldloc, owner);
+        il.Emit(OpCodes.Isinst, runtime.Sentinels.UndefinedType);
+        il.Emit(OpCodes.Brtrue, defaultSpecies);
+        // Registry lookup initializes a nominal owner's cctor without calling
+        // its getter. Cache it first so newly installed data still wins below.
+        il.Emit(OpCodes.Ldloc, owner);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Stloc, ownerType);
+        var probeStorage = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, ownerType);
+        il.Emit(OpCodes.Brfalse, probeStorage);
+        il.Emit(OpCodes.Ldloc, ownerType);
+        il.Emit(OpCodes.Ldsfld, runtime.Symbols.Species);
+        il.Emit(OpCodes.Call, runtime.SymbolAccessors.FindOwnGetter);
+        il.Emit(OpCodes.Stloc, getter);
+        il.MarkLabel(probeStorage);
+        EmitOwnSymbolStorage(() => il.Emit(OpCodes.Ldloc, owner));
+
+        // Ordinary constructor descriptors precede that owner's cached getter.
+        // Probe only this Type, so a farther accessor cannot skip a closer key.
+        il.Emit(OpCodes.Ldloc, ownerType);
+        il.Emit(OpCodes.Brfalse, next);
+        il.Emit(OpCodes.Ldloc, ownerType);
+        il.Emit(OpCodes.Call, runtime.SymbolAccessors.RegistryKey);
+        il.Emit(OpCodes.Stloc, canonicalOwner);
+        il.Emit(OpCodes.Ldloc, canonicalOwner);
+        il.Emit(OpCodes.Ldloc, ownerType);
+        il.Emit(OpCodes.Beq, tryGetter);
+        EmitOwnSymbolStorage(() => il.Emit(OpCodes.Ldloc, canonicalOwner));
+        il.MarkLabel(tryGetter);
+        var noGetter = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, getter);
+        il.Emit(OpCodes.Brfalse, noGetter);
+        // Use the existing function wrapper so nominal static getters also
+        // receive the evaluated constructor through the current-this transport.
+        il.Emit(OpCodes.Ldloc, definition);
+        EmitGetterFunction();
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, runtime.Invocation.Method);
+        il.Emit(OpCodes.Stloc, value);
+        il.Emit(OpCodes.Br, found);
+
+        il.MarkLabel(noGetter);
+        il.Emit(OpCodes.Ldloc, ownerType);
+        il.Emit(OpCodes.Ldsfld, runtime.Symbols.Species);
+        il.Emit(OpCodes.Call, runtime.SymbolAccessors.FindSetter);
+        il.Emit(OpCodes.Stloc, setter);
+        var noOwnSetter = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, setter);
+        il.Emit(OpCodes.Brfalse, noOwnSetter);
+        il.Emit(OpCodes.Ldloc, setter);
+        il.Emit(OpCodes.Castclass, _types.MethodBase);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.MethodBase, "DeclaringType").GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.SymbolAccessors.RegistryKey);
+        il.Emit(OpCodes.Ldloc, canonicalOwner);
+        il.Emit(OpCodes.Bne_Un, noOwnSetter);
+        il.Emit(OpCodes.Ldsfld, runtime.Sentinels.UndefinedInstance);
+        il.Emit(OpCodes.Stloc, value);
+        il.Emit(OpCodes.Br, found);
+
+        il.MarkLabel(noOwnSetter);
+        il.Emit(OpCodes.Ldloc, ownerType);
+        il.Emit(OpCodes.Ldsfld, runtime.Symbols.Species);
+        il.Emit(OpCodes.Call, runtime.SymbolAccessors.FindOwnMethod);
+        il.Emit(OpCodes.Stloc, getter);
+        il.Emit(OpCodes.Ldloc, getter);
+        il.Emit(OpCodes.Brfalse, next);
+        il.Emit(OpCodes.Ldloc, getter);
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
+        il.Emit(OpCodes.Ldsfld, runtime.Symbols.Species);
+        il.Emit(OpCodes.Call, runtime.SymbolAccessors.GetOrCreateStaticMethod);
+        il.Emit(OpCodes.Stloc, value);
+        il.Emit(OpCodes.Br, found);
+
+        il.MarkLabel(next);
+        // The intrinsic getter is implicit in this runtime. An absent own slot
+        // on %Promise% therefore defaults to the constructor, before any farther
+        // Function.prototype symbol can be considered.
+        il.Emit(OpCodes.Ldloc, owner);
+        il.Emit(OpCodes.Ldtoken, _types.TaskOfObject);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Beq, defaultSpecies);
+        il.Emit(OpCodes.Ldloc, owner);
+        il.Emit(OpCodes.Call, runtime.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, owner);
+        il.Emit(OpCodes.Br, loop);
+
+        il.MarkLabel(defaultSpecies);
+        il.Emit(OpCodes.Ldloc, definition);
+        il.Emit(OpCodes.Call, runtime.RequirePromise().PreparePromiseCapabilityMethod);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(legacy);
+
+        void EmitOwnSymbolStorage(Action loadOwner)
+        {
+            loadOwner();
+            il.Emit(OpCodes.Call, runtime.Symbols.GetStorage);
+            il.Emit(OpCodes.Ldsfld, runtime.Symbols.Species);
+            il.Emit(OpCodes.Ldloca, value);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+            il.Emit(OpCodes.Brtrue, found);
+        }
+
+        void EmitGetterFunction()
+        {
+            il.Emit(OpCodes.Ldloc, getter);
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Ldstr, "get [Symbol.species]");
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Call, runtime.FunctionConstruction.GetOrCreate);
+        }
     }
 
     /// <summary>Adopts a reaction task into the capability prepared before registration.</summary>

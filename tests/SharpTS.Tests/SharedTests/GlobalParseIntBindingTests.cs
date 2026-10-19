@@ -164,18 +164,90 @@ public sealed class GlobalParseIntBindingTests
                 console.log((parseInt("7", 10) as any) === undefined, (held("8", 10) as any) === undefined);
             } finally { target.parseInt = original; }
             """, "true true\n"];
+        yield return ["pending-argument-keeps-descriptor-callee-snapshot", """
+            const target: any = globalThis;
+            const original = Object.getOwnPropertyDescriptor(target, 'parseInt')!;
+            const events: string[] = [];
+            let reads = 0, calls = 0;
+            async function run() {
+                let release: (value: string) => void = () => {};
+                const pending = new Promise<string>(resolve => { release = resolve; });
+                let current: any = function(text: string, radix: number) {
+                    calls++; events.push('call:' + text + ':' + radix); return 17;
+                };
+                try {
+                    Object.defineProperty(target, 'parseInt', {
+                        configurable: true,
+                        get() { reads++; events.push('get:' + (this === target)); return current; }
+                    });
+                    function argument() { events.push('argument'); return pending; }
+                    const task = (async () => parseInt(await argument(), 10))();
+                    console.log('pending', reads, calls, events.join(','));
+                    current = () => 99;
+                    Object.defineProperty(target, 'parseInt', { value: current, writable: true, configurable: true });
+                    release('7');
+                    console.log('settled', await task, reads, calls, events.join(','));
+                } finally { Object.defineProperty(target, 'parseInt', original); }
+                console.log(parseInt('12', 10));
+            }
+            run().catch((error: any) => console.log('unexpected', error && error.name));
+            """, "pending 1 0 get:true,argument\nsettled 17 1 1 get:true,argument,call:7:10\n12\n"];
+        yield return ["reflect-and-map-descriptor-installs-share-the-global-binding", """
+            const target: any = globalThis;
+            const original = Object.getOwnPropertyDescriptor(target, 'parseInt')!;
+            const first = (_text: string, _radix?: number) => 23;
+            const second = (_text: string, _radix?: number) => 29;
+            let reads = 0, receiver = true;
+            try {
+                const defined = Reflect.defineProperty(target, 'parseInt', { value: first, writable: true, configurable: true });
+                const held = parseInt;
+                console.log(defined, held === first, parseInt('7', 10), held('8', 10));
+                Object.defineProperties(target, {
+                    parseInt: { configurable: true, get() { reads++; receiver = receiver && this === target; return second; } }
+                });
+                const fresh = parseInt;
+                console.log(fresh === second, parseInt('7', 10), fresh('8', 10), held('9', 10), reads, receiver);
+            } finally { Object.defineProperty(target, 'parseInt', original); }
+            console.log(parseInt('12', 10));
+            """, "true true 23 23\ntrue 29 29 23 2 true\n12\n"];
+        yield return ["dot-assigned-awaited-argument-control", """
+            const original = globalThis.parseInt;
+            const events: string[] = [];
+            async function run() {
+                try {
+                    globalThis.parseInt = (_text: string, _radix?: number) => { events.push("call"); return 17; };
+                    async function argument() {
+                        events.push("argument");
+                        await Promise.resolve(0);
+                        globalThis.parseInt = () => 99;
+                        return "7";
+                    }
+                    const result = parseInt(await argument(), 10);
+                    console.log(result, events.join(","));
+                } finally { globalThis.parseInt = original; }
+            }
+            run().catch((error: any) => console.log("unexpected", error && error.name));
+            """, "17 argument,call\n"];
     }
+
+    public static IEnumerable<object[]> SavedCases() => Cases().Where(row => (string)row[0] is
+        "defineproperty-data-write-and-identity" or "accessor-callee-read-before-arguments" or
+        "async-accessor-callee-read-before-awaited-argument" or "throwing-accessor-suppresses-arguments" or
+        "dot-bracket-writes-and-captured-values" or "local-parameter-let-and-captured-shadows" or
+        "pending-argument-keeps-descriptor-callee-snapshot" or
+        "reflect-and-map-descriptor-installs-share-the-global-binding" or "dot-assigned-awaited-argument-control");
 
     public static IEnumerable<object[]> ModeCases()
     {
         foreach (var row in Cases())
         {
-            yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
-            // Qualified compiled call is #2539; descriptor-defined bare calls are #2693.
+            // Interpreter Reflect.defineProperty refuses the global target; that separate owner is under audit.
+            // Keep its full source and assertions active in compiled and isolated saved coverage.
+            if ((string)row[0] != "reflect-and-map-descriptor-installs-share-the-global-binding")
+                yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
+            // The qualified compiled call in the original issue source is #2539.
             // A deleted global's compiled bare read returns undefined instead of throwing (#2696).
-            if ((string)row[0] is "dot-bracket-writes-and-captured-values" or
-                "local-parameter-let-and-captured-shadows" or "noncallable-and-nullish-optional-call" or
-                "canonical-with-number-alias" or "strict-bare-and-detached-receiver")
+            if ((string)row[0] is not ("issue" or "delete-and-restore-global-function"))
                 yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
     }

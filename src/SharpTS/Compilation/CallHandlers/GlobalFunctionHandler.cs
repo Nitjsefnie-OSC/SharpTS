@@ -57,10 +57,18 @@ public class GlobalFunctionHandler : ICallHandler
         // A bare call to a mutable global binding must observe the current
         // globalThis property. Undefined preserves ordinary call-this binding:
         // sloppy functions receive globalThis and strict functions keep undefined.
-        il.Emit(System.Reflection.Emit.OpCodes.Ldsfld, ctx.Runtime!.Sentinels.UndefinedInstance);
         il.Emit(System.Reflection.Emit.OpCodes.Ldstr, name);
-        il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime.GlobalObject.GetProperty);
+        il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.GlobalObject.GetProperty);
+        var callee = emitter.SpillStackToObjectLocal();
+
+        // Keep the selected callable off the evaluation stack while arguments can suspend. The
+        // spill survives MoveNext re-entry and descriptor replacement during argument evaluation.
         emitter.EmitArgsArrayWithSpread(call.Arguments);
+        var arguments = il.DeclareLocal(ctx.Types.ObjectArray);
+        il.Emit(System.Reflection.Emit.OpCodes.Stloc, arguments);
+        il.Emit(System.Reflection.Emit.OpCodes.Ldsfld, ctx.Runtime.Sentinels.UndefinedInstance);
+        il.Emit(System.Reflection.Emit.OpCodes.Ldloc, callee);
+        il.Emit(System.Reflection.Emit.OpCodes.Ldloc, arguments);
         il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime.Invocation.Method);
         emitter.SetStackUnknown();
         return true;

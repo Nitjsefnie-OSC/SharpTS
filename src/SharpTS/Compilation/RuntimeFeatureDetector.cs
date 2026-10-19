@@ -1227,6 +1227,7 @@ public sealed class RuntimeFeatureDetector
                     _set.UsesRegExpPrototypeMutation = true;
                     _set.UsesStringPrototypeMutation = true;
                     _set.UsesMathMutation = true;
+                    _set.UsesGlobalParseIntMutation = true;
                 }
                 if (c.Callee is not Expr.Variable directSourceCall ||
                     !_sourceFunctions.Contains(directSourceCall.Name.Lexeme))

@@ -2402,6 +2402,7 @@ public partial class Interpreter
             klass.OrderedInstanceFields = classExpr.Fields.Where(field => !field.IsStatic)
                 .SelectMany(field => (field.IsPrivate ? instancePrivateFields : instanceFields)
                     .Where(captured => captured.Name == field.Name)).ToList();
+            InitializeClassInstanceKeyOrder(klass, memberDefinitions, classExpr.AutoAccessors);
             InstallInstanceConstructorProperties(klass, constructorProperties);
 
             InitializeClassStaticKeyOrder(klass, memberDefinitions, classExpr.AutoAccessors);

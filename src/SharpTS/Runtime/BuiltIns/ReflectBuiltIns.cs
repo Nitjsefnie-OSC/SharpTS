@@ -591,6 +591,10 @@ public static class ReflectBuiltIns
                         keys.AddRange(klass.OwnStaticStringKeys());
                         keys.AddRange(klass.OwnStaticSymbolKeys());
                         break;
+                    case SharpTSClassPrototype prototype:
+                        keys.AddRange(prototype.OwnStringKeys());
+                        keys.AddRange(prototype.GetSymbolPropertyNames());
+                        break;
                     case SharpTSArray array:
                         keys.AddRange(array.OwnStringKeys().Select(k => (object?)k));
                         keys.AddRange(array.GetSymbolPropertyNames().Select(s => (object?)s));

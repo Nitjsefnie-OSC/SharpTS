@@ -64,6 +64,14 @@ public partial class SharpTSClass(
     internal RuntimeEnvironment? InitializerEnvironment { get; set; }
     internal virtual bool RequiresNew => true;
     internal IReadOnlyList<Stmt.Field>? OrderedInstanceFields { get; set; }
+    // Host-created classes have no source-order seed. Capture their own member
+    // names before the lookup dictionaries are frozen; guest definitions replace
+    // this fallback with their interleaved method/accessor order.
+    internal IReadOnlyList<string> OwnInstancePropertyNames { get; } = methods.Keys
+        .Concat(getters?.Keys.AsEnumerable() ?? [])
+        .Concat(setters?.Keys.AsEnumerable() ?? [])
+        .Concat(instanceAutoAccessors?.Select(accessor => accessor.Name.Lexeme) ?? [])
+        .Distinct(StringComparer.Ordinal).ToArray();
     private readonly FrozenDictionary<string, ISharpTSCallable> _methods = methods.ToFrozenDictionary();
     private readonly FrozenDictionary<string, ISharpTSCallable> _staticMethods = staticMethods.ToFrozenDictionary();
     private readonly Dictionary<string, object?> _staticProperties = staticProperties;

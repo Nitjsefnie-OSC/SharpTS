@@ -1657,6 +1657,10 @@ public class SharpTSProxy : ISharpTSCallable
                 keys.AddRange(klass.OwnStaticStringKeys());
                 keys.AddRange(klass.OwnStaticSymbolKeys());
                 break;
+            case SharpTSClassPrototype prototype:
+                keys.AddRange(prototype.OwnStringKeys());
+                keys.AddRange(prototype.GetSymbolPropertyNames());
+                break;
             case SharpTSObject obj:
                 keys.AddRange(obj.OwnVisibleStringKeys());
                 keys.AddRange(obj.GetSymbolPropertyNames());

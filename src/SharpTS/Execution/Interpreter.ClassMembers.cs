@@ -86,4 +86,14 @@ public partial class Interpreter
                 .Select(member => (member.Name.SourceOrderOffset, (object)member.Name.Lexeme)));
         klass.InitializeOwnStaticKeyOrder(keys.OrderBy(member => member.Item1).Select(member => member.Item2));
     }
+
+    private static void InitializeClassInstanceKeyOrder(SharpTSClass klass,
+        List<ClassMemberDefinition> definitions, List<Stmt.AutoAccessor>? autoAccessors)
+    {
+        var keys = definitions.Where(member => !member.IsStatic)
+            .Select(member => (member.Position, member.Key))
+            .Concat((autoAccessors ?? []).Where(member => !member.IsStatic)
+                .Select(member => (member.Name.SourceOrderOffset, (object)member.Name.Lexeme)));
+        klass.Prototype.InitializeOwnKeyOrder(keys.OrderBy(member => member.Item1).Select(member => member.Item2));
+    }
 }

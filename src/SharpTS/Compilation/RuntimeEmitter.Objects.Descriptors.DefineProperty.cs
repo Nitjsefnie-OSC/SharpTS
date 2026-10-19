@@ -509,6 +509,11 @@ public partial class RuntimeEmitter
         var newIsDataOuter = il.DeclareLocal(_types.Boolean);
         var tmpClassifyVal = il.DeclareLocal(_types.Object);
         var skipClassifyLabel = il.DefineLabel();
+        // Descriptor-map loops reuse these generated locals across entries.
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, newIsAccessorOuter);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, newIsDataOuter);
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Brfalse, skipClassifyLabel);
 

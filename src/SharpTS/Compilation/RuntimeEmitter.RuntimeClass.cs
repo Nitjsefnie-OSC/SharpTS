@@ -1954,8 +1954,10 @@ public partial class RuntimeEmitter
                 runtime.ReflectedMethods.InvokeUnwrapped,
                 runtime.NumericCoercion,
                 runtime.ObjectOperations.Is,
+                runtime.ObjectPrototypes,
                 runtime.ObjectState,
                 runtime.ObjectStorage,
+                runtime.Operators,
                 runtime.Records,
                 runtime.RegExps,
                 runtime.StringCoercion,
@@ -2024,9 +2026,24 @@ public partial class RuntimeEmitter
             typeBuilder,
             runtime.ObjectDescriptors,
             new ObjectDefinePropertiesInputs(
+                runtime.Booleans,
+                runtime.DescriptorStorage,
                 runtime.Errors,
-                runtime.ObjectKeys.Keys,
                 runtime.ObjectRead.Property,
+                runtime.ObjectKeys,
+                runtime.ObjectOwnProperties,
+                runtime.ObjectPrototypes,
+                runtime.Operators,
+                new ProxyOwnKeysCallInputs(
+                    runtime.ObjectKeys.Ordinary,
+                    runtime.ObjectKeys.CreateProxyList,
+                    runtime.ObjectDescriptors.GetOwnPropertyDescriptor,
+                    runtime.ObjectState.IsExtensible,
+                    runtime.Symbols.IsSymbol,
+                    runtime.ObjectRead.Property,
+                    runtime.ReflectedMethods.InvokeUnwrapped
+                ),
+                runtime.Reflect,
                 runtime.Symbols,
                 runtime.Sentinels.UndefinedType
             )

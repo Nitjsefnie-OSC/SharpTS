@@ -1444,20 +1444,26 @@ public static partial class ObjectBuiltIns
             return target;
         }
 
-        if (props is ISharpTSOwnPropertyObject ownSource)
+        var ownProperties = props switch
         {
-            var keys = ownSource.OwnProperties.OwnVisibleStringKeys().Cast<object>()
-                .Concat(ownSource.OwnProperties.GetSymbolPropertyNames()).ToList();
+            ISharpTSOwnPropertyObject ownSource => ownSource.OwnProperties,
+            SharpTSObject ordinarySource => ordinarySource,
+            _ => null
+        };
+        if (ownProperties != null)
+        {
+            var keys = ownProperties.OwnVisibleStringKeys().Cast<object>()
+                .Concat(ownProperties.GetSymbolPropertyNames()).ToList();
             List<KeyValuePair<object, object?>> ownEntries = [];
             foreach (var key in keys)
             {
                 var descriptor = key is SharpTSSymbol symbol
-                    ? ownSource.OwnProperties.GetOwnPropertyDescriptor(symbol)
-                    : ownSource.OwnProperties.GetOwnPropertyDescriptor((string)key);
+                    ? ownProperties.GetOwnPropertyDescriptor(symbol)
+                    : ownProperties.GetOwnPropertyDescriptor((string)key);
                 if (descriptor?.Enumerable != true) continue;
                 var value = key is SharpTSSymbol symbolKey
-                    ? interpreter.GetSymbolPropertyValue(ownSource, symbolKey)
-                    : interpreter.GetPropertyValue(ownSource, (string)key);
+                    ? interpreter.GetSymbolPropertyValue(props, symbolKey)
+                    : interpreter.GetPropertyValue(props, (string)key);
                 ownEntries.Add(new(key, ConvertDefinePropertiesDescriptor(interpreter, value)));
             }
             foreach (var entry in ownEntries)

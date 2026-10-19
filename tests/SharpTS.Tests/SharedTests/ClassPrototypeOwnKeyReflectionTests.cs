@@ -204,8 +204,6 @@ public sealed class ClassPrototypeOwnKeyReflectionTests
                 "numeric-string-symbol-order-and-pairing" => false,
                 // #2676: compiled Proxy values/entries omit class-prototype values.
                 "transparent-proxy-reflection" => false,
-                // #2674: compiled defineProperties skips Symbol descriptor-map keys.
-                "enumerable-apis-avoid-getters-and-keep-receiver" => false,
                 _ => true
             })
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));

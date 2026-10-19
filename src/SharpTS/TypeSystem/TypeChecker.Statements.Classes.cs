@@ -64,7 +64,7 @@ public partial class TypeChecker
         }
     }
 
-    private TypeInfo BuildDeclaredClassMethodType(Stmt.Function method) => BuildClassMethodSignature(method);
+    private TypeInfo BuildDeclaredClassMethodType(Stmt.Function method) => BuildClassMethodSignature(method, validateDefaults: false);
 
     // Signature collection runs in the caller-owned class type environment and populates
     // the supplied class metadata. Diagnostic recovery and scope restoration remain
@@ -137,7 +137,7 @@ public partial class TypeChecker
             // Generator<Iterator<number>>. An un-annotated generator factory stays <inferred> here
             // and is filled in by the inferred-return post-pass below as Generator<yieldType>.
             var representative = implementations.Count == 1 ? implementations[0] : members[^1];
-            var funcType = BuildClassMethodSignature(representative, wrapGeneratorReturn: false);
+            var funcType = BuildClassMethodSignature(representative, wrapGeneratorReturn: false, validateDefaults: false);
             if (representative.IsStatic)
                 mutableClass.StaticMethods[memberName] = funcType;
             else
@@ -646,6 +646,12 @@ public partial class TypeChecker
                 _identityCompatibilityCache = null;
             }
 
+            if (CheckClassMethodParameterDefaults(classStmt.Methods, mutableClass, classTypeEnv))
+            {
+                RevalidateClassFieldInitializers(classStmt, classStmt.Fields, mutableClass, classTypeEnv, classTypeParams);
+                classTypeForBody = PublishInitialClassType(classStmt, mutableClass, classTypeParams);
+            }
+
             ValidateDeclaredClassInterfaces(classStmt, classTypeForBody, classTypeParams);
 
             ValidateDeclaredClassMembers(classStmt, classTypeForBody, classTypeParams, classTypeEnv);
@@ -758,7 +764,9 @@ public partial class TypeChecker
                 }
                 else
                 {
-                    declaredMethodType = BuildClassMethodSignature(method, wrapGeneratorReturn: false);
+                    declaredMethodType = _classMethodSignatures.TryGetValue(method, out var signature)
+                        ? ClassMethodCallable(signature.Body, signature.Parameters)
+                        : BuildClassMethodSignature(method, wrapGeneratorReturn: false);
                 }
             }
             else if (method.IsPrivate)

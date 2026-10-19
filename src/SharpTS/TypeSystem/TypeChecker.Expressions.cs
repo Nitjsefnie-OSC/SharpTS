@@ -2585,7 +2585,7 @@ public partial class TypeChecker
         using (new EnvironmentScope(this, classTypeEnv))
         {
             CollectClassIndexSignatures(classExpr.IndexSignatures, mutableClass);
-            TypeInfo BuildMethodFuncType(Stmt.Function method) => BuildClassMethodSignature(method);
+            TypeInfo BuildMethodFuncType(Stmt.Function method) => BuildClassMethodSignature(method, validateDefaults: false);
 
             // Computed symbol-keyed methods (`[Symbol.iterator]() {...}`) are modeled under their
             // canonical @@name (@@iterator, …) so structural iterability sees them (#592). They carry the
@@ -2596,7 +2596,7 @@ public partial class TypeChecker
             {
                 if (TryGetWellKnownSymbolMemberName(method.ComputedKey) is not { } memberName)
                     continue;
-                var computedFunc = BuildClassMethodSignature(method, wrapGeneratorReturn: false);
+                var computedFunc = BuildClassMethodSignature(method, wrapGeneratorReturn: false, validateDefaults: false);
                 if (method.IsStatic)
                     mutableClass.StaticMethods[memberName] = computedFunc;
                 else
@@ -2746,6 +2746,9 @@ public partial class TypeChecker
             _identityCompatibilityCache = null;
         }
 
+        if (CheckClassMethodParameterDefaults(classExpr.Methods, mutableClass, classTypeEnv))
+            RevalidateClassFieldInitializers(classExpr, classExpr.Fields, mutableClass, classTypeEnv, classTypeParams);
+
         // Freeze the mutable class after initializer inference so every body and
         // external expression result sees the same completed field metadata.
         // For body checking, always use the frozen MutableClass (which is a TypeInfo.Class)
@@ -2872,7 +2875,9 @@ public partial class TypeChecker
                     }
                     else
                     {
-                        declaredMethodType = BuildClassMethodSignature(method, wrapGeneratorReturn: false);
+                        declaredMethodType = _classMethodSignatures.TryGetValue(method, out var signature)
+                            ? ClassMethodCallable(signature.Body, signature.Parameters)
+                            : BuildClassMethodSignature(method, wrapGeneratorReturn: false);
                     }
                 }
                 else

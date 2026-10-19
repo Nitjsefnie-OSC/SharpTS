@@ -1166,7 +1166,8 @@ public partial class TypeChecker
         bool validateDefaults,
         string contextName,
         object? editorOwner = null,
-        bool inspectDestructuredDefaults = true)
+        bool inspectDestructuredDefaults = true,
+        bool deferClassContextDefaults = false)
     {
         List<TypeInfo> paramTypes = [];
         List<string> paramNames = [];
@@ -1181,7 +1182,8 @@ public partial class TypeChecker
         var paramScope = new TypeEnvironment(_environment);
         if (editorOwner is not null)
             RegisterEditorParameterScope(editorOwner, paramScope);
-        using var bindingScope = new ParameterBindingCheckScope(this, editorOwner, validateDefaults);
+        using var bindingScope = new ParameterBindingCheckScope(this, editorOwner, validateDefaults,
+            deferClassContextDefaults);
 
         foreach (var param in parameters)
         {
@@ -1195,7 +1197,7 @@ public partial class TypeChecker
                     using (new EnvironmentScope(this, paramScope))
                         fields[property.Key.Lexeme] = property.DefaultValue is { } defaultExpression
                             ? inspectDestructuredDefaults
-                                ? WidenLiteralType(CheckDeferredClassDefault(defaultExpression))
+                                ? WidenLiteralType(CheckMethodSignatureDefault(defaultExpression, deferClassContextDefaults))
                                 : defaultExpression is Expr.Literal literal
                                     ? WidenLiteralType(GetLiteralType(literal.Value))
                                     : TypeInfo.Any.Shared
@@ -1245,7 +1247,8 @@ public partial class TypeChecker
                     }
                     if (!IsCompatible(paramType, defaultType))
                     {
-                        throw new TypeMismatchException($"Default value type is not assignable to parameter type in {contextName}", paramType, defaultType, tsCode: "TS2322");
+                        throw new TypeMismatchException($"Default value type is not assignable to parameter type in {contextName}",
+                            paramType, defaultType, line: TryGetExprLine(param.DefaultValue) ?? param.Name.Line, tsCode: "TS2322");
                     }
                 }
             }

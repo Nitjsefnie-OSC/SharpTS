@@ -16,11 +16,14 @@ public partial class TypeChecker
         private readonly Dictionary<BindingSymbol, bool>? _flow;
         private readonly bool _immediate;
         private readonly bool _validate;
+        private readonly bool _deferClassContext;
 
-        internal ParameterBindingCheckScope(TypeChecker checker, object? owner, bool validate)
+        internal ParameterBindingCheckScope(TypeChecker checker, object? owner, bool validate,
+            bool deferClassContext = false)
         {
             _checker = checker;
             _validate = validate;
+            _deferClassContext = deferClassContext;
             List<Stmt>? body = owner switch
             {
                 Stmt.Function function => function.Body,
@@ -56,6 +59,20 @@ public partial class TypeChecker
             if (!_initializers.TryGetValue(parameter.Name, out var initializer)) return;
 
             using var scope = new EnvironmentScope(_checker, environment);
+            if (_deferClassContext)
+            {
+                var visitor = new MethodDefaultClassContextVisitor();
+                visitor.Visit(initializer);
+                if (visitor.RequiresContext)
+                {
+                    // The completed class pass checks this lowering. Do not visit its
+                    // arrows while lexical this/private/super context is unavailable.
+                    foreach (var name in LexicalDeclarationBindings.Collect(initializer.Statements))
+                        if (!environment.IsDefinedLocally(name.Lexeme))
+                            _checker.DeclareValue(environment, name, TypeInfo.Any.Shared);
+                    return;
+                }
+            }
             // An invalid binding aborts the signature, just like an invalid whole-parameter
             // default, rather than recovering here and repeating its diagnostic in the body.
             bool recoveryMode = _checker._recoveryMode;

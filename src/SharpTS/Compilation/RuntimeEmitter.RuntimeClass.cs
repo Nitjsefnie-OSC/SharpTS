@@ -1341,6 +1341,8 @@ public partial class RuntimeEmitter
                 runtime.Errors.CreateException, runtime.Errors.TypeErrorConstructor);
         EmitToNumber(typeBuilder, runtime.NumericCoercion, numberInputs);
         EmitConvertToNumber(typeBuilder, runtime.NumericCoercion, numberInputs, runtime.BigInt.ToNumber);
+        EmitToNumeric(typeBuilder, runtime.NumericCoercion, numberInputs);
+        EmitNumericBinary(typeBuilder, runtime.Operators, runtime.NumericCoercion, runtime.Errors);
         // String.raw lives here so its body can read `template.raw` via
         // GetProperty and ToString-coerce substitutions via ToJsString.
         EmitStringRaw(typeBuilder, runtime.Templates,

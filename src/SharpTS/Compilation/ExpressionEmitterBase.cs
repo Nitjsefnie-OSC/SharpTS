@@ -475,10 +475,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         if (TryEmitStableNumericLocalComparison(b))
             return;
 
-        // Bitwise and shift operators need int32 coercion of both operands per ECMA-262 ToInt32.
-        if (IsBitwiseOrShiftOp(b.Operator.Type))
+        // Numeric binary operations select Number or BigInt only after both
+        // values are evaluated and each ordered ToNumeric completes.
+        if (IsNumericBinaryOp(b.Operator.Type))
         {
-            EmitBitwiseOrShiftBinary(b);
+            EmitDynamicNumericBinary(b);
             return;
         }
 
@@ -568,62 +569,23 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         TypeSystem.TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER }
         or TypeSystem.TypeInfo.NumberLiteral;
 
-    private static bool IsBitwiseOrShiftOp(TokenType op) => op is
+    private static bool IsNumericBinaryOp(TokenType op) => op is
+        TokenType.MINUS or TokenType.STAR or TokenType.SLASH or TokenType.PERCENT or TokenType.STAR_STAR or
         TokenType.AMPERSAND or TokenType.PIPE or TokenType.CARET or
         TokenType.LESS_LESS or TokenType.GREATER_GREATER or TokenType.GREATER_GREATER_GREATER;
 
     /// <summary>
-    /// Emits a bitwise (&amp;, |, ^) or shift (&lt;&lt;, &gt;&gt;, &gt;&gt;&gt;) binary operator.
-    /// Per ECMA-262 ToInt32, both operands are coerced to int32, then the op applies.
-    /// Mirrors ILEmitter.EmitBitwiseBinary but without stack-type tracking.
+    /// Evaluates both operands before ordered numeric conversion, preserving
+    /// spilled values when a state-machine RHS suspends.
     /// </summary>
-    private void EmitBitwiseOrShiftBinary(Expr.Binary b)
+    protected void EmitDynamicNumericBinary(Expr.Binary b)
     {
-        // Spill the coerced left operand so an await inside Right suspends with an empty stack.
-        EmitExpression(b.Left);
-        EnsureBoxed();
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.NumericCoercion.JsToInt32);
-        var leftLocal = IL.DeclareLocal(typeof(int));
-        IL.Emit(OpCodes.Stloc, leftLocal);
-
-        EmitExpression(b.Right);
-        EnsureBoxed();
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.NumericCoercion.JsToInt32);
-        var rightLocal = IL.DeclareLocal(typeof(int));
-        IL.Emit(OpCodes.Stloc, rightLocal);
-
+        var leftLocal = SpillBoxed(b.Left);
+        var rightLocal = SpillBoxed(b.Right);
         IL.Emit(OpCodes.Ldloc, leftLocal);
         IL.Emit(OpCodes.Ldloc, rightLocal);
-
-        switch (b.Operator.Type)
-        {
-            case TokenType.AMPERSAND: IL.Emit(OpCodes.And); break;
-            case TokenType.PIPE: IL.Emit(OpCodes.Or); break;
-            case TokenType.CARET: IL.Emit(OpCodes.Xor); break;
-            case TokenType.LESS_LESS:
-                IL.Emit(OpCodes.Ldc_I4, 0x1F);
-                IL.Emit(OpCodes.And);
-                IL.Emit(OpCodes.Shl);
-                break;
-            case TokenType.GREATER_GREATER:
-                IL.Emit(OpCodes.Ldc_I4, 0x1F);
-                IL.Emit(OpCodes.And);
-                IL.Emit(OpCodes.Shr);
-                break;
-            case TokenType.GREATER_GREATER_GREATER:
-                IL.Emit(OpCodes.Ldc_I4, 0x1F);
-                IL.Emit(OpCodes.And);
-                IL.Emit(OpCodes.Shr_Un);
-                IL.Emit(OpCodes.Conv_U8);
-                IL.Emit(OpCodes.Conv_R8);
-                IL.Emit(OpCodes.Box, typeof(double));
-                SetStackUnknown();
-                return;
-        }
-
-        // Integer-result ops: convert int32 result back to double and box to match JS number semantics.
-        IL.Emit(OpCodes.Conv_R8);
-        IL.Emit(OpCodes.Box, typeof(double));
+        IL.Emit(OpCodes.Ldc_I4, (int)b.Operator.Type);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.Operators.NumericBinary);
         SetStackUnknown();
     }
 

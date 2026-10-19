@@ -82,7 +82,7 @@ public partial class TypeChecker
     /// Hoists function declarations by registering their types before checking bodies.
     /// This enables functions to reference each other regardless of declaration order.
     /// </summary>
-    private void HoistFunctionDeclarations(IEnumerable<Stmt> statements)
+    private void HoistFunctionDeclarations(IEnumerable<Stmt> statements, bool hoistBodyVars = false)
     {
         // Materialized once: the two passes below each iterate the statements.
         var stmtList = statements as IReadOnlyList<Stmt> ?? statements.ToList();
@@ -108,6 +108,11 @@ public partial class TypeChecker
         // Hoist const/let/var declarations with function expressions
         // This enables mutual recursion like: const isEven = function(n) { return isOdd(n-1); };
         HoistConstFunctionExpressions(stmtList);
+
+        // Body vars must be available during nested return inference, while preserving the
+        // existing signature order (including `typeof` references to sibling functions).
+        if (hoistBodyVars)
+            HoistVarDeclarations(stmtList);
 
         // Pass 2: now that every sibling signature is registered, speculatively infer the return
         // type of un-annotated functions so calls appearing earlier in the same scope type
@@ -211,10 +216,11 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Pre-registers top-level var declarations by defining them as 'any' in the type environment.
+    /// Pre-registers a scope's var declarations by defining them as 'any' in the type environment.
     /// This enables forward references to var-declared variables from within function bodies,
     /// matching JavaScript's var hoisting semantics. <c>let</c>/<c>const</c> are handled by the
-    /// sibling <see cref="HoistLexicalDeclarations"/>.
+    /// sibling <see cref="HoistLexicalDeclarations"/>. Register function-expression signatures
+    /// first so their precise callable types are preserved instead of replaced by placeholders.
     /// </summary>
     private void HoistVarDeclarations(IEnumerable<Stmt> statements)
     {
@@ -222,6 +228,10 @@ public partial class TypeChecker
         {
             switch (stmt)
             {
+                case Stmt.Sequence sequence:
+                    // Comma declarations and destructuring lower to a sequence in the same scope.
+                    HoistVarDeclarations(sequence.Statements);
+                    break;
                 case Stmt.Var v when v.IsVar:
                     RegisterValueDeclaration(v.Name, mergeWithLocal: true);
                     if (!_environment.IsDefinedLocally(v.Name.Lexeme))
@@ -850,12 +860,10 @@ public partial class TypeChecker
                 // scope before any statement executes; the TypeChecker needs to
                 // mirror that to accept well-formed mutually-recursive inner fns.
                 HoistClassDeclarations(body);
-                HoistFunctionDeclarations(body);
+                HoistFunctionDeclarations(body, hoistBodyVars: true);
 
                 // Hoist the body's own let/const (as `any`) so an inner function declared before a
-                // later block-scoped binding in the SAME body can forward-reference it (#533). `var`
-                // is already lifted to the body top by the parse-time VarHoister, so it is not repeated
-                // here; let/const are not physically moved (TDZ), so they need this registration.
+                // later block-scoped binding in the SAME body can forward-reference it (#533).
                 HoistLexicalDeclarations(body);
 
                 CheckStmtList(body);

@@ -852,7 +852,7 @@ public partial class TypeChecker
                     // semantics. GeneratorArrowLifter appends a synthesized __genArrow_N
                     // declaration after the earlier forwarding reference, so predeclare both
                     // declaration kinds before the source-order body pass.
-                    HoistFunctionDeclarations(method.Body);
+                    HoistFunctionDeclarations(method.Body, hoistBodyVars: true);
                     HoistLexicalDeclarations(method.Body);
                     CheckClassBodyStatements(method.Body, recoverComputedSymbolDiagnostics);
 
@@ -1032,6 +1032,7 @@ public partial class TypeChecker
 
                 try
                 {
+                    HoistVarDeclarations(accessor.Body);
                     CheckClassBodyStatements(accessor.Body, recoverComputedSymbolDiagnostics);
 
                     if (inferringGetter && accessorName != null)

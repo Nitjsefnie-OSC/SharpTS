@@ -1946,7 +1946,7 @@ public partial class TypeChecker
                 // an arrow body (incl. IIFEs like `(function runInContext() {…})()`)
                 // resolve. Matches the behavior in CheckFunctionDeclaration.
                 HoistClassDeclarations(arrow.BlockBody);
-                HoistFunctionDeclarations(arrow.BlockBody);
+                HoistFunctionDeclarations(arrow.BlockBody, hoistBodyVars: true);
 
                 // Likewise hoist the body's own let/const (as `any`) so an inner function declared
                 // before a later block-scoped binding in the same body can forward-reference it (#533).
@@ -2936,7 +2936,7 @@ public partial class TypeChecker
                         // referenced earlier, so declarations and lexical bindings must be visible
                         // before the sequential pass.
                         HoistClassDeclarations(method.Body);
-                        HoistFunctionDeclarations(method.Body);
+                        HoistFunctionDeclarations(method.Body, hoistBodyVars: true);
                         HoistLexicalDeclarations(method.Body);
                         CheckStmtList(method.Body);
 

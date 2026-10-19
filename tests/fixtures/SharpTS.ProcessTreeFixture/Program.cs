@@ -23,7 +23,13 @@ internal static class Program
                 [ParentMode] => RunParent(),
                 [ChildMode] => RunChild(),
                 ["output"] => RunOutput(),
+                ["dual-output"] => RunDualOutput(),
                 ["orphan"] => RunOrphan(),
+                ["orphan-with-pid-file", var pidPath] => RunOrphan(pidPath),
+                ["delayed-ready"] => RunDelayedReady(),
+                ["capture-scheduling", var tests, var directory, var backlog] =>
+                    StandaloneCaptureScheduling.Run(tests, directory, int.Parse(backlog)),
+                ["capture-scheduling-child", var pidPath] => StandaloneCaptureScheduling.RunChild(pidPath),
                 _ => ReportUsage()
             };
         }
@@ -60,11 +66,31 @@ internal static class Program
         return 7;
     }
 
-    private static int RunOrphan()
+    private static int RunDualOutput()
+    {
+        // Both streams exceed a pipe buffer and deliberately omit final newlines.
+        Console.Out.Write("stdout-begin:" + new string('o', 256 * 1024) + ":stdout-end");
+        Console.Out.Flush();
+        Console.Error.Write("stderr-begin:" + new string('e', 256 * 1024) + ":stderr-end");
+        Console.Error.Flush();
+        return 7;
+    }
+
+    private static int RunOrphan(string? pidPath = null)
     {
         using Process child = Process.Start(CreateSelfStartInfo(ChildMode))!;
+        // The test owns cleanup even if output capture itself fails.
+        if (pidPath is not null) File.WriteAllText(pidPath, child.Id.ToString());
         Console.WriteLine($"CHILD:{child.Id}");
         return 0; // Child deliberately retains our inherited output handles.
+    }
+
+    private static int RunDelayedReady()
+    {
+        // Longer than the caller's execution budget, within its readiness budget.
+        Thread.Sleep(1500);
+        Console.WriteLine("READY");
+        return 0;
     }
 
     private static ProcessStartInfo CreateSelfStartInfo(string mode)

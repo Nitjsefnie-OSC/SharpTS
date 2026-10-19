@@ -1707,6 +1707,7 @@ public partial class TypeChecker
             // which the function-declaration/method path already uses (#698).
             var paramScope = new TypeEnvironment(_environment);
             RegisterEditorParameterScope(arrow, paramScope);
+            using var bindingScope = new ParameterBindingCheckScope(this, arrow, validate: true);
 
             // Build parameter types and check defaults
             for (int i = 0; i < arrow.Parameters.Count; i++)
@@ -1735,6 +1736,7 @@ public partial class TypeChecker
                 if (param.IsRest)
                 {
                     DeclareValue(paramScope, param.Name, paramType);
+                    bindingScope.Initialize(param, paramScope, paramType);
                     continue;
                 }
 
@@ -1767,6 +1769,7 @@ public partial class TypeChecker
                 }
 
                 DeclareValue(paramScope, param.Name, paramType);
+                bindingScope.Initialize(param, paramScope, paramType);
             }
 
             // Determine return type (use expected type if available and no explicit annotation)

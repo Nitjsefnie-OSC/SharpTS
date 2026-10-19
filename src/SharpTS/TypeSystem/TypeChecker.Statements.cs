@@ -220,6 +220,16 @@ public partial class TypeChecker
             _excessivelyRecursiveVariables.Add(stmt.Name.Lexeme);
         if (stmt.IsVar && string.Equals(stmt.TypeAnnotation?.Trim(), "any", StringComparison.Ordinal))
             _explicitAnyVarSymbols.Add(variableSymbol);
+        if (stmt.IsVar && !stmt.IsDeclare && stmt.TypeAnnotation is null &&
+            stmt.TypeAnnotationNode is null && stmt.Initializer is null &&
+            stmt.HoistTypeInferenceInitializer is null &&
+            localPreExistingType is not null and not TypeInfo.Any)
+        {
+            // A bare var redeclaration does not reinitialize a known own binding. Keep both
+            // its current flow type and original declared type, including parameter copies.
+            RecordEditorFinalDeclaration(stmt.Name, localPreExistingType);
+            return VoidResult.Instance;
+        }
         bool isImplicitAnyDeclaration = _noImplicitAny && stmt.TypeAnnotation is null &&
             stmt.TypeAnnotationNode is null && stmt.Initializer is null &&
             stmt.HoistTypeInferenceInitializer is null;

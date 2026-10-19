@@ -1181,6 +1181,7 @@ public partial class TypeChecker
         var paramScope = new TypeEnvironment(_environment);
         if (editorOwner is not null)
             RegisterEditorParameterScope(editorOwner, paramScope);
+        using var bindingScope = new ParameterBindingCheckScope(this, editorOwner, validateDefaults);
 
         foreach (var param in parameters)
         {
@@ -1191,13 +1192,14 @@ public partial class TypeChecker
                 var optional = new HashSet<string>(StringComparer.Ordinal);
                 foreach (Stmt.DestructuredParameterProperty property in properties)
                 {
-                    fields[property.Key.Lexeme] = property.DefaultValue is { } defaultExpression
-                        ? inspectDestructuredDefaults
-                            ? WidenLiteralType(CheckDeferredClassDefault(defaultExpression))
-                            : defaultExpression is Expr.Literal literal
-                                ? WidenLiteralType(GetLiteralType(literal.Value))
-                                : TypeInfo.Any.Shared
-                        : TypeInfo.Any.Shared;
+                    using (new EnvironmentScope(this, paramScope))
+                        fields[property.Key.Lexeme] = property.DefaultValue is { } defaultExpression
+                            ? inspectDestructuredDefaults
+                                ? WidenLiteralType(CheckDeferredClassDefault(defaultExpression))
+                                : defaultExpression is Expr.Literal literal
+                                    ? WidenLiteralType(GetLiteralType(literal.Value))
+                                    : TypeInfo.Any.Shared
+                            : TypeInfo.Any.Shared;
                     if (property.DefaultValue is not null) optional.Add(property.Key.Lexeme);
 
                     if (property.IsRenamed && property.Binding.Lexeme is
@@ -1225,6 +1227,7 @@ public partial class TypeChecker
             if (param.IsRest)
             {
                 DeclareParameterValue(paramScope, param, paramType);
+                bindingScope.Initialize(param, paramScope, paramType);
                 continue;
             }
 
@@ -1259,12 +1262,14 @@ public partial class TypeChecker
                 requiredParams++;
             }
 
+            TypeInfo visibleType = param.IsOptional && param.DefaultValue == null
+                ? CreateUnion(paramType, TypeInfo.Undefined.Shared)
+                : paramType;
             DeclareParameterValue(
                 paramScope,
                 param,
-                param.IsOptional && param.DefaultValue == null
-                    ? CreateUnion(paramType, TypeInfo.Undefined.Shared)
-                    : paramType);
+                visibleType);
+            bindingScope.Initialize(param, paramScope, visibleType);
         }
 
         bool hasRest = parameters.Any(p => p.IsRest);

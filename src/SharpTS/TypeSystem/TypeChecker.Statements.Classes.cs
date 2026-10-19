@@ -10,6 +10,8 @@ namespace SharpTS.TypeSystem;
 /// </summary>
 public partial class TypeChecker
 {
+    private Func<IndexedAccessTypeNode, TypeInfo, TypeInfo, TypeInfo?>? _classFieldIndexedAccessResolver;
+
     /// <summary>
     /// Maps a class computed method/accessor key expression to the canonical well-known-symbol member
     /// name the type system uses (<c>Symbol.iterator</c> → <c>@@iterator</c>,
@@ -251,6 +253,81 @@ public partial class TypeChecker
     // Runs in the class type-parameter environment and populates the caller-owned mutable signature model.
     private void CollectClassFieldTypes(Stmt.Class classStmt, TypeInfo.MutableClass mutableClass)
     {
+        // C["field"] names an instance member, even within a static field's
+        // annotation. Keep declarations distinct when their spellings coincide.
+        Dictionary<string, Stmt.Field> instanceFields = new(StringComparer.Ordinal);
+        foreach (var field in classStmt.Fields)
+            if (!field.IsStatic && !field.IsPrivate)
+                instanceFields.TryAdd(GetFieldMemberName(field), field);
+
+        // Resolve explicit sibling annotations directly from their declarations. Looking
+        // through a frozen view of this class here would publish an incomplete signature,
+        // and looking through the mutable model would lose forward siblings as `any`.
+        Dictionary<Stmt.Field, TypeInfo> resolvedFields = new(ReferenceEqualityComparer.Instance);
+        HashSet<Stmt.Field> resolvingFields = new(ReferenceEqualityComparer.Instance);
+        HashSet<IndexedAccessTypeNode> annotationAccesses = new(ReferenceEqualityComparer.Instance);
+        TypeEnvironment fieldEnvironment = _environment;
+        foreach (var field in classStmt.Fields)
+            if (field.TypeAnnotationNode is { } annotation)
+                CollectAnnotationAccesses(annotation);
+
+        void CollectAnnotationAccesses(TypeNode node)
+        {
+            if (node is IndexedAccessTypeNode indexed)
+                annotationAccesses.Add(indexed);
+            foreach (var child in TypeNodeChildren(node))
+                CollectAnnotationAccesses(child);
+        }
+
+        TypeInfo ResolveFieldType(Stmt.Field field)
+        {
+            if (resolvedFields.TryGetValue(field, out var resolved))
+                return resolved;
+
+            var previousResolver = _classFieldIndexedAccessResolver;
+            resolvingFields.Add(field);
+            _classFieldIndexedAccessResolver = ResolveSiblingAccess;
+            try
+            {
+                // A dependency belongs to the class scope, even when its reference
+                // occurs inside another annotation's generic function signature.
+                using var _ = new EnvironmentScope(this, fieldEnvironment);
+                resolved = ResolveAnnotation(field.TypeAnnotation, field.TypeAnnotationNode, field)
+                    ?? TypeInfo.Any.Shared;
+                resolvedFields[field] = resolved;
+                return resolved;
+            }
+            finally
+            {
+                _classFieldIndexedAccessResolver = previousResolver;
+                resolvingFields.Remove(field);
+            }
+        }
+
+        TypeInfo? ResolveSiblingAccess(IndexedAccessTypeNode indexed, TypeInfo objectType, TypeInfo indexType)
+        {
+            if (!annotationAccesses.Contains(indexed)
+                || indexed.ObjectType is not NamedTypeNode { Name: var objectName, TypeArguments: null }
+                || objectName != classStmt.Name.Lexeme
+                || indexed.IndexType is not LiteralTypeNode
+                || objectType is not TypeInfo.Instance instance
+                || !ReferenceEquals(instance.ClassType, mutableClass))
+                return null;
+
+            string? memberName = indexType switch
+            {
+                TypeInfo.StringLiteral literal => literal.Value,
+                TypeInfo.NumberLiteral literal => literal.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                _ => null
+            };
+            if (memberName is null || !instanceFields.TryGetValue(memberName, out var dependency)
+                || (dependency.TypeAnnotationNode is null && dependency.TypeAnnotation is null)
+                || resolvingFields.Contains(dependency))
+                return null;
+
+            return WithOptionalPropertyUndefined(ResolveFieldType(dependency), dependency.IsOptional);
+        }
+
         // Collect static property types, field access modifiers, and non-static field types
         foreach (var field in classStmt.Fields)
         {
@@ -260,15 +337,14 @@ public partial class TypeChecker
 
             string fieldName = GetFieldMemberName(field);
             if (field.TypeAnnotationNode is { } fieldNode &&
-                ContainsSelfIndexedAccess(fieldNode, classStmt.Name.Lexeme, requireLiteralIndex: true))
+                ContainsClassFieldIndexedCycle(fieldNode, classStmt.Name.Lexeme, field, instanceFields))
             {
                 RecordTypeError(new TypeCheckException(
                     $"'{fieldName}' is referenced directly or indirectly in its own type annotation.",
                     field.Name.Line,
                     tsCode: "TS2502"));
             }
-            TypeInfo fieldType = ResolveAnnotation(field.TypeAnnotation, field.TypeAnnotationNode, field)
-                ?? TypeInfo.Any.Shared;
+            TypeInfo fieldType = ResolveFieldType(field);
 
             // TS1166: a computed DATA-property name (a class field, unlike a method/accessor) must be a
             // literal type or a 'unique symbol'. A plain, non-unique `symbol` — e.g. `[Symbol()]` —
@@ -308,6 +384,42 @@ public partial class TypeChecker
             {
                 (field.IsStatic ? mutableClass.StaticReadonlyFields : mutableClass.ReadonlyFields).Add(fieldName);
             }
+        }
+    }
+
+    private static bool ContainsClassFieldIndexedCycle(
+        TypeNode annotation, string className, Stmt.Field field,
+        IReadOnlyDictionary<string, Stmt.Field> instanceFields)
+    {
+        HashSet<Stmt.Field> visited = new(ReferenceEqualityComparer.Instance);
+        return Visit(annotation);
+
+        bool Visit(TypeNode node)
+        {
+            if (node is IndexedAccessTypeNode
+                {
+                    ObjectType: NamedTypeNode { Name: var objectName },
+                    IndexType: LiteralTypeNode { Value: var key }
+                } && objectName == className)
+            {
+                string? memberName = key switch
+                {
+                    string name => name,
+                    double number => number.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    _ => null
+                };
+                if (memberName is not null && instanceFields.TryGetValue(memberName, out var dependency))
+                {
+                    if (ReferenceEquals(dependency, field)) return true;
+                    if (visited.Add(dependency) && dependency.TypeAnnotationNode is { } sibling
+                        && Visit(sibling))
+                        return true;
+                }
+            }
+
+            foreach (var child in TypeNodeChildren(node))
+                if (Visit(child)) return true;
+            return false;
         }
     }
 
@@ -604,6 +716,11 @@ public partial class TypeChecker
             RegisterSourceClassMembers(classStmt, mutableClass);
             MarkEditorBodyEntered(classStmt);
             classTypeEnv.Define(classStmt.Name.Lexeme, mutableClass);
+            // A module's preparatory pass may have published an older type facet.
+            // Keep nongeneric self annotations on this declaration's live signature;
+            // explicit generic references still need their prepared GenericClass facet.
+            if (classTypeParams is not { Count: > 0 })
+                classTypeEnv.DefineType(classStmt.Name.Lexeme, mutableClass);
             BindEditorClassSelf(classStmt, classTypeEnv, mutableClass);
             // `this` in an instance method signature is the polymorphic instance type, not the
             // global object. Make it visible while collecting signatures so `K extends keyof this`

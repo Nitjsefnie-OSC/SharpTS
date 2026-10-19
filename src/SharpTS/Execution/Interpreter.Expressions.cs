@@ -1983,7 +1983,9 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.BuiltInPrototypeString t:
-                if (t.Target is not ISharpTSPrimitiveConstructor indexedConstructor
+                if (t.Target is SharpTSClassPrototype classPrototype)
+                    SetClassPrototypeProperty(classPrototype, t.Key, value, strictMode);
+                else if (t.Target is not ISharpTSPrimitiveConstructor indexedConstructor
                     || !TryAssignThroughDescriptor(indexedConstructor.GetOwnPropertyDescriptor(t.Key),
                         indexedConstructor, t.Key, value, strictMode))
                     t.Target.SetExtra(t.Key, value);

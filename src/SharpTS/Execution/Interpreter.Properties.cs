@@ -2292,6 +2292,30 @@ public partial class Interpreter
         return false;
     }
 
+    private void SetClassPrototypeProperty(
+        SharpTSClassPrototype prototype, string name, object? value, bool strictMode)
+    {
+        object? current = prototype;
+        for (int depth = 0; depth < 64 && current is not (null or SharpTSUndefined); depth++)
+        {
+            if (current is SharpTSProxy proxy)
+            {
+                if (!proxy.TrapSetProperty(name, value, this, prototype) && strictMode)
+                    throw StrictModeErrors.TypeError($"Proxy set trap rejected property '{name}'");
+                return;
+            }
+            if (ObjectBuiltIns.OwnPropertyDescriptorOf(this, current, name) is { } descriptor)
+            {
+                if (TryAssignThroughDescriptor(descriptor, prototype, name, value, strictMode)) return;
+                // The nearest writable data descriptor permits a write on the
+                // original receiver; more distant descriptors cannot intercept it.
+                break;
+            }
+            current = ObjectBuiltIns.PrototypeOf(this, current);
+        }
+        prototype.SetExtra(name, value);
+    }
+
     // Inspect actual prototypes rather than assuming every callable immediately
     // inherits Function.prototype (generator functions have another level).
     internal SharpTSPropertyDescriptor? FindInheritedSymbolDescriptor(object target, SharpTSSymbol symbol)
@@ -2928,6 +2952,11 @@ public partial class Interpreter
             if (!TryAssignThroughDescriptor(primitiveConstructor.GetOwnPropertyDescriptor(set.Name.Lexeme),
                     primitiveConstructor, set.Name.Lexeme, value, strictMode))
                 primitiveConstructor.SetExtra(set.Name.Lexeme, value);
+            return value;
+        }
+        if (obj is SharpTSClassPrototype classPrototype)
+        {
+            SetClassPrototypeProperty(classPrototype, set.Name.Lexeme, value, strictMode);
             return value;
         }
         if (obj is ISharpTSMutableBuiltIn builtInProto)

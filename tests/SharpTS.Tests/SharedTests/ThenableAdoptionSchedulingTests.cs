@@ -105,8 +105,8 @@ public sealed class ThenableAdoptionSchedulingTests
 
     public static IEnumerable<object[]> ModeCases() => Cases()
         .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted })
-        // Compiled adoption ordering is tracked by #2740; self-resolution also has a
-        // separate backend boundary. Keep the supported settlement/rejection parity rows.
+        // Compiled adoption ordering is tracked by #2740 and self-resolution by #2741.
+        // Keep the supported settlement/rejection parity rows.
         .Concat(Cases().Where(row => (string)row[0] is
                 "first-settlement-and-nested-rejection" or "nested-getter-rejection")
             .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Compiled }));

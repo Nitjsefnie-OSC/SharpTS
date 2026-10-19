@@ -1347,6 +1347,7 @@ public partial class Interpreter
         {
             while (iterator.MoveNext())
             {
+                ThrowIfExecutionCancelled();
                 var loopEnv = CreateIterationEnvironment(variable, isDeclaration, iterator.Current);
 
                 using (PushScope(loopEnv))
@@ -1359,7 +1360,7 @@ public partial class Interpreter
                     if (abruptResult.HasValue) return abruptResult.Value;
 
                     // Process any pending timer callbacks
-                    ProcessPendingCallbacks();
+                    ProcessPendingCallbacks(processMicrotasks: false);
                 }
             }
             return ExecutionResult.Success();
@@ -1404,7 +1405,7 @@ public partial class Interpreter
 
             // Process any pending timer callbacks. Timer threads enqueue callbacks
             // and we execute them here, avoiding thread scheduling issues on macOS.
-            ProcessPendingCallbacks();
+            ProcessPendingCallbacks(processMicrotasks: false);
         }
         return ExecutionResult.Success();
     }
@@ -1420,13 +1421,14 @@ public partial class Interpreter
     {
         do
         {
+            ThrowIfExecutionCancelled();
             var result = await ctx.ExecuteStmtAsync(doWhileStmt.Body);
             var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
             if (shouldContinue) continue;
             if (abruptResult.HasValue) return abruptResult.Value;
             // Process any pending timer callbacks
-            ProcessPendingCallbacks();
+            ProcessPendingCallbacks(processMicrotasks: false);
         } while ((await ctx.EvaluateExprAsync(doWhileStmt.Condition)).IsTruthy());
         return ExecutionResult.Success();
     }
@@ -1872,6 +1874,7 @@ public partial class Interpreter
             while (forStmt.Condition is null
                 || EvaluateRV(forStmt.Condition).IsTruthy())
             {
+                ThrowIfExecutionCancelled();
                 ExecutionResult result = Execute(forStmt.Body);
                 var (shouldBreak, shouldContinue, abruptResult) =
                     HandleLoopResult(result, labels);
@@ -1885,8 +1888,8 @@ public partial class Interpreter
                             loopEnv, perIterationNames);
                     if (forStmt.Increment is not null)
                         EvaluateRV(forStmt.Increment);
-                    if (HasPendingCallbacks)
-                        ProcessPendingCallbacks();
+                    if (HasPendingLoopCallbacks)
+                        ProcessPendingCallbacks(processMicrotasks: false);
                     continue;
                 }
 
@@ -1897,8 +1900,8 @@ public partial class Interpreter
                     CreatePerIterationEnvironment(loopEnv, perIterationNames);
                 if (forStmt.Increment is not null)
                     EvaluateRV(forStmt.Increment);
-                if (HasPendingCallbacks)
-                    ProcessPendingCallbacks();
+                if (HasPendingLoopCallbacks)
+                    ProcessPendingCallbacks(processMicrotasks: false);
             }
 
             return ExecutionResult.Success();
@@ -1907,8 +1910,7 @@ public partial class Interpreter
 
     /// <summary>
     /// Core C-style for-loop execution logic shared by the sync and async evaluators. The evaluation
-    /// context supplies the per-clause evaluation strategy and the between-iteration scheduler yield
-    /// (<see cref="IEvaluationContext.YieldToSchedulerAsync"/>), so a single body serves both paths.
+    /// context supplies the per-clause evaluation strategy, so a single body serves both paths.
     /// </summary>
     private async ValueTask<ExecutionResult> ExecuteForCore(IEvaluationContext ctx, Stmt.For forStmt, IReadOnlyList<string>? labels)
     {
@@ -1934,6 +1936,7 @@ public partial class Interpreter
             // Loop with proper continue handling - increment always runs
             while (forStmt.Condition == null || (await ctx.EvaluateExprAsync(forStmt.Condition)).IsTruthy())
             {
+                ThrowIfExecutionCancelled();
                 var result = await ctx.ExecuteStmtAsync(forStmt.Body);
                 var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
                 if (shouldBreak) break;
@@ -1944,8 +1947,8 @@ public partial class Interpreter
                         CreatePerIterationEnvironment(loopEnv, perIterationNames);
                     if (forStmt.Increment != null)
                         await ctx.EvaluateExprAsync(forStmt.Increment);
-                    // Yield to allow timer callbacks and other threads to execute
-                    await ctx.YieldToSchedulerAsync();
+                    if (HasPendingLoopCallbacks)
+                        ProcessPendingCallbacks(processMicrotasks: false);
                     continue;
                 }
                 if (abruptResult.HasValue) return abruptResult.Value;
@@ -1955,8 +1958,8 @@ public partial class Interpreter
                 if (forStmt.Increment != null)
                     await ctx.EvaluateExprAsync(forStmt.Increment);
                 // Process any pending timer callbacks
-                if (HasPendingCallbacks)
-                    ProcessPendingCallbacks();
+                if (HasPendingLoopCallbacks)
+                    ProcessPendingCallbacks(processMicrotasks: false);
             }
             return ExecutionResult.Success();
         }

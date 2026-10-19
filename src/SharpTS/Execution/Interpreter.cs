@@ -1060,11 +1060,10 @@ public partial class Interpreter : IDisposable
     private readonly object _finalizationRegistriesLock = new();
     private volatile bool _hasFinalizationRegistries;
 
-    /// <summary>Whether a loop checkpoint has timer, microtask, or finalizer work.</summary>
-    private bool HasPendingCallbacks =>
+    /// <summary>Whether a loop poll has legacy timer or finalizer work.</summary>
+    private bool HasPendingLoopCallbacks =>
         !_isDisposed
-        && (HasMicrotasks()
-            || _hasFinalizationRegistries
+        && (_hasFinalizationRegistries
             || _hasScheduledTimers);
 
     /// <summary>
@@ -1106,21 +1105,24 @@ public partial class Interpreter : IDisposable
                 registry.DrainCleanups(this);
     }
 
-    internal void ProcessPendingCallbacks()
+    internal void ProcessPendingCallbacks(bool processMicrotasks = true)
     {
         // A guest loop inside a Promise job cannot reenter its checkpoint or run timers.
         if (_processingMicrotasks) return;
         // A hosted runtime owns event-loop turns. Pumping from an ordinary guest
         // loop reenters synchronous rendering (and other application code).
         if (_hostedOwnerThreadId.HasValue) return;
+        // Legacy loop polling can deliver timers, but a synchronous loop is not a
+        // Promise checkpoint. Pending jobs also prevent timers overtaking that checkpoint.
+        if (!processMicrotasks && HasMicrotasks()) return;
         // Process microtasks first - they always run before any macrotask (timers)
-        // This ensures correct JavaScript event loop semantics during busy-wait loops
-        ProcessMicrotasks();
+        if (processMicrotasks) ProcessMicrotasks();
 
         // FinalizationRegistry cleanups ride event-loop ticks (Node runs them as
         // ordinary tasks after GC observes a target collection).
         if (_hasFinalizationRegistries)
             DrainFinalizationRegistries();
+        if (!processMicrotasks && HasMicrotasks()) return;
 
         // Quick checks before acquiring lock
         if (_isDisposed || !_hasScheduledTimers) return;
@@ -1155,6 +1157,9 @@ public partial class Interpreter : IDisposable
                     toReschedule ??= new List<VirtualTimer>();
                     toReschedule.Add(timer);
                 }
+                // A loop poll cannot drain jobs created by this callback. Leave
+                // later timers queued so the next poll can respect those jobs.
+                if (!processMicrotasks) break;
             }
 
             // Re-enqueue interval timers with updated fire times
@@ -1180,7 +1185,7 @@ public partial class Interpreter : IDisposable
                     timer.Callback();
                     // Each timer is its own task, even when multiple timers became
                     // due before this tick. Drain its Promise jobs before the next.
-                    ProcessMicrotasks();
+                    if (processMicrotasks) ProcessMicrotasks();
                 }
             }
         }

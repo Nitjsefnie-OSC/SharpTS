@@ -151,6 +151,7 @@ public partial class Interpreter
         {
             while (iterator.MoveNext())
             {
+                ThrowIfExecutionCancelled();
                 // CreateAsyncFromSyncIterator adopts each yielded value.
                 object? value = iterator.Current;
                 if (forOf.IsAsync)
@@ -169,7 +170,7 @@ public partial class Interpreter
                 if (shouldContinue) continue;
                 if (abruptResult.HasValue) return abruptResult.Value;
 
-                ProcessPendingCallbacks();
+                ProcessPendingCallbacks(processMicrotasks: false);
             }
             return ExecutionResult.Success();
         }
@@ -301,6 +302,7 @@ public partial class Interpreter
         RuntimeEnvironment hostEnv = _environment;
         while (true)
         {
+            ThrowIfExecutionCancelled();
             // Call iterator.next()
             var nextResult = CallMethodOnObject(asyncIterator, "next", []);
 
@@ -369,7 +371,7 @@ public partial class Interpreter
             }
 
             // Process any pending timer callbacks
-            ProcessPendingCallbacks();
+            ProcessPendingCallbacks(processMicrotasks: false);
         }
 
         return ExecutionResult.Success();
@@ -484,6 +486,7 @@ public partial class Interpreter
 
         foreach (var key in keys)
         {
+            ThrowIfExecutionCancelled();
             var result = await ExecuteLoopBodyAsync(forIn.Variable, forIn.IsDeclaration, key, forIn.Body);
             var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
@@ -491,7 +494,7 @@ public partial class Interpreter
             if (abruptResult.HasValue) return abruptResult.Value;
 
             // Process any pending timer callbacks
-            ProcessPendingCallbacks();
+            ProcessPendingCallbacks(processMicrotasks: false);
         }
 
         return ExecutionResult.Success();

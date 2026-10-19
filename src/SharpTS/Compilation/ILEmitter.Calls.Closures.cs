@@ -394,7 +394,7 @@ public partial class ILEmitter
             else if (capturedVar == CompilationContext.SuperOwnerCaptureName)
             {
                 if (!TryEmitOwnedClassDefinition())
-                    throw new InvalidOperationException("A static super closure requires its lexical class definition.");
+                    throw new InvalidOperationException("A super closure requires its lexical class definition.");
             }
             else if (capturedVar == "this")
             {

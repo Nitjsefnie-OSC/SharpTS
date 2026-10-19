@@ -1283,7 +1283,9 @@ public partial class ILCompiler
 
         protected override void BeforeVisit(Expr expression)
         {
-            if (expression is Expr.GetPrivate or Expr.SetPrivate or Expr.CompoundSetPrivate or Expr.LogicalSetPrivate or Expr.CallPrivate or Expr.PrivateIn ||
+            // A super arrow retains its evaluated lexical home independently
+            // of this, which can be allocated by a selected parent constructor.
+            if (expression is Expr.Super or Expr.GetPrivate or Expr.SetPrivate or Expr.CompoundSetPrivate or Expr.LogicalSetPrivate or Expr.CallPrivate or Expr.PrivateIn ||
                 expression is Expr.Variable variable && referencesSelf(variable))
             {
                 UsesDefinition = true;

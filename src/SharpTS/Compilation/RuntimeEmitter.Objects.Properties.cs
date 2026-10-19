@@ -2451,7 +2451,7 @@ public partial class RuntimeEmitter
             var computedStaticGetterLocal = il.DeclareLocal(_types.Object);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindGetter);
+            il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindOwnGetter);
             il.Emit(OpCodes.Stloc, computedStaticGetterLocal);
             il.Emit(OpCodes.Ldloc, computedStaticGetterLocal);
             il.Emit(OpCodes.Brfalse, noComputedStaticGetterLabel);
@@ -2476,7 +2476,7 @@ public partial class RuntimeEmitter
                 var computedStaticMethodLocal = il.DeclareLocal(_types.Object);
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Ldarg_1);
-                il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindMethod);
+                il.Emit(OpCodes.Call, inputs.SymbolAccessors.FindOwnMethod);
                 il.Emit(OpCodes.Stloc, computedStaticMethodLocal);
                 il.Emit(OpCodes.Ldloc, computedStaticMethodLocal);
                 il.Emit(OpCodes.Brfalse, noComputedStaticMethodLabel);
@@ -2581,23 +2581,6 @@ public partial class RuntimeEmitter
             il.MarkLabel(notBigIntLengthLabel);
             il.MarkLabel(notTypeLengthLabel);
 
-            // hasOwnProperty — return a $TSFunction wrapping HasOwnPropertyHelper,
-            // bound to this Type as the receiver. Test262 patterns like
-            // `Number.hasOwnProperty("prototype")` must dispatch through this.
-            // Without this arm the lookup falls through to the .NET reflection
-            // tail and finds nothing (or accidentally finds a CLR member by
-            // case-insensitive matching).
-            var notHasOwnLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Ldstr, "hasOwnProperty");
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-            il.Emit(OpCodes.Brfalse, notHasOwnLabel);
-            il.Emit(OpCodes.Ldarg_0);
-            _types.EmitLoadMethodInfo(il, inputs.ObjectOwnProperties.HasOwnProperty);
-            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(notHasOwnLabel);
-
             // Cache the casted Type reference for the three reflection probes below.
             var typeLocal = il.DeclareLocal(_types.Type);
             il.Emit(OpCodes.Ldarg_0);
@@ -2697,6 +2680,33 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "Name").GetGetMethod()!);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notClassNameLabel);
+
+            if (_features.UsesUserClasses)
+            {
+                // Own slots have been exhausted. Inherited reads must follow
+                // the live guest prototype rather than the CLR BaseType chain.
+                var notUserClass = il.DefineLabel();
+                il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+                il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+                il.Emit(OpCodes.Ldloc, typeLocal);
+                il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+                il.Emit(OpCodes.Brfalse, notUserClass);
+                EmitTypePrototypeReadAndReturn(il, inputs);
+                il.MarkLabel(notUserClass);
+            }
+
+            // Built-in constructor Types retain their inherited helper surface.
+            // User classes reached the live prototype lookup above instead.
+            var notHasOwnLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "hasOwnProperty");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, notHasOwnLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            _types.EmitLoadMethodInfo(il, inputs.ObjectOwnProperties.HasOwnProperty);
+            il.Emit(OpCodes.Newobj, inputs.TSFunctionCtor);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notHasOwnLabel);
 
             // ECMA-262 §20.2.3: every Function instance inherits from
             // %Function.prototype%. Constructors (System.Type tokens) are

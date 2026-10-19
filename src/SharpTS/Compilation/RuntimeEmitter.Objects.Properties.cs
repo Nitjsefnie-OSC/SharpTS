@@ -1849,7 +1849,7 @@ public partial class RuntimeEmitter
 
         // String - "length"/"constructor"/index/String.prototype methods.
         var notStringArmLabel = il.DefineLabel();
-        EmitStringGetBranch(il, inputs.Strings, method, notStringArmLabel);
+        EmitStringGetBranch(il, inputs.Strings, inputs.Reflect.Get, notStringArmLabel);
         il.MarkLabel(notStringArmLabel);
 
         // $Buffer - "length" and "toString". Only meaningful when some feature

@@ -726,10 +726,10 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// String arm: "length" → boxed double; "constructor" → typeof(string); numeric-string keys
-    /// return the single-char string in-bounds; anything else walks String.prototype (recursing
-    /// through <paramref name="method"/>) for borrowed methods (valueOf/toLowerCase/...).
+    /// return the single-char string in-bounds; anything else walks String.prototype through
+    /// receiver-aware <paramref name="reflectGet"/> for accessors and borrowed methods.
     /// </summary>
-    private void EmitStringGetBranch(ILGenerator il, EmittedStringRuntime strings, MethodBuilder method, Label notMatch)
+    private void EmitStringGetBranch(ILGenerator il, EmittedStringRuntime strings, MethodBuilder reflectGet, Label notMatch)
     {
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.String);
@@ -796,7 +796,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, strings.PrototypePopulateMethod);
         il.Emit(OpCodes.Ldsfld, strings.PrototypeField);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, method);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, reflectGet);
         il.Emit(OpCodes.Ret);
     }
 

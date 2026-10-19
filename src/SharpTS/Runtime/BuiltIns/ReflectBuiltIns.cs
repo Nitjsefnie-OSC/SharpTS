@@ -333,7 +333,9 @@ public static class ReflectBuiltIns
                     return RuntimeValue.FromBoxed(ObjectBuiltIns.PrototypeOf(interpreter, target));
                 return RuntimeValue.FromBoxed(target switch
                 {
-                    SharpTSObject obj => obj.Prototype,
+                    // Null storage also represents the ordinary implicit default;
+                    // the realm-aware operation distinguishes explicit null roots.
+                    SharpTSObject obj => ObjectBuiltIns.PrototypeOf(interpreter, obj),
                     SharpTSInstance inst => inst.Prototype,
                     Dictionary<string, object?> dict => PropertyDescriptorStore.GetPrototype(dict),
                     _ => null

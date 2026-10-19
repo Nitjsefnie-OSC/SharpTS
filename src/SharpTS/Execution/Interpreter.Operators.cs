@@ -160,9 +160,16 @@ public partial class Interpreter
             return newValue;
         }
 
-        if (obj is SharpTSArray array && index is double idx)
+        if (obj is SharpTSArray array)
         {
-            int arrayIndex = (int)idx;
+            // Keep the established numeric normalization while canonical
+            // string keys retain the full uint32 array-index range.
+            long arrayIndex = index switch
+            {
+                double idx => (int)idx,
+                string indexKey when PropertySemantics.TryGetArrayIndex(indexKey, out uint parsedIndex) => parsedIndex,
+                _ => throw new InterpreterException("Compound index assignment not supported on this type.")
+            };
             bool strictMode = _environment.IsStrictMode;
             string key = arrayIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
             RuntimeValue current = arrayIndex >= 0

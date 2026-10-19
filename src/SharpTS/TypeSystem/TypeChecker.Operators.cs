@@ -782,19 +782,25 @@ public partial class TypeChecker
                 compound.Operator.Line,
                 tsCode: "TS2322");
 
-        if (!IsNumber(indexType))
+        bool canonicalArrayStringIndex = objType is TypeInfo.Array &&
+            TryGetStringLiteralKeys(indexType, out var stringKeys) &&
+            stringKeys.All(key => Runtime.Types.PropertySemantics.TryGetArrayIndex(key, out _));
+        if (!IsNumber(indexType) && !canonicalArrayStringIndex)
             throw new TypeCheckException("Array index must be a number.", tsCode: "TS7053");
 
         if (objType is TypeInfo.Array arrayType)
         {
+            // Preserve the existing += guard and apply it to every newly
+            // accepted canonical string-key write, including other operators.
+            if (arrayType.IsReadonly &&
+                (compound.Operator.Type == TokenType.PLUS_EQUAL || canonicalArrayStringIndex))
+                throw new TypeCheckException(
+                    $" Index signature in type '{objType}' only permits reading.",
+                    compound.Operator.Line > 0 ? compound.Operator.Line : null, tsCode: "TS2542");
+
             if (compound.Operator.Type == TokenType.PLUS_EQUAL)
             {
                 int line = compound.Operator.Line;
-                if (arrayType.IsReadonly)
-                    throw new TypeCheckException(
-                        $" Index signature in type '{objType}' only permits reading.",
-                        line > 0 ? line : null, tsCode: "TS2542");
-
                 // A never-valued RHS does not complete the write. Retain the
                 // existing numeric compound result rather than rejecting number + never.
                 if (valueType is TypeInfo.Never && IsNumber(arrayType.ElementType))

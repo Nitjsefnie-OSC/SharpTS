@@ -694,9 +694,9 @@ public partial class Interpreter
                     bool equal = l == r;
                     return RuntimeValue.FromBoolean(eq.IsNegated ? !equal : equal);
                 case OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift:
-                    return RuntimeValue.FromNumber(EvaluateBitwise(binary.Operator.Type, (int)l, (int)r));
+                    return RuntimeValue.FromNumber(EvaluateBitwise(binary.Operator.Type, JsToInt32(l), JsToInt32(r)));
                 case OperatorDescriptor.UnsignedRightShift:
-                    return RuntimeValue.FromNumber((double)((uint)(int)l >> ((int)r & 0x1F)));
+                    return RuntimeValue.FromNumber((double)(JsToUint32(l) >> (JsToInt32(r) & 0x1F)));
             }
         }
 

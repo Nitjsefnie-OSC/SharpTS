@@ -1653,14 +1653,12 @@ public partial class Interpreter
         }
         if (obj is SharpTSFunction fn)
         {
-            SetOrdinaryFunctionOwnProperty(
-                fn, fn.OwnPropertyStorage, index?.ToString() ?? "", value, strictMode);
+            SetOwnPropertyObjectValue(fn, index?.ToString() ?? "", value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
         if (obj is SharpTSArrowFunction afn)
         {
-            SetOrdinaryFunctionOwnProperty(
-                afn, afn.OwnPropertyStorage, index?.ToString() ?? "", value, strictMode);
+            SetOwnPropertyObjectValue(afn, index?.ToString() ?? "", value, strictMode);
             return RuntimeValue.FromBoxed(value);
         }
 

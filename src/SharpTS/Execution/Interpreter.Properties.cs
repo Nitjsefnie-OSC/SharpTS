@@ -2392,14 +2392,6 @@ public partial class Interpreter
         return false;
     }
 
-    private void SetOrdinaryFunctionOwnProperty(
-        object function, SharpTSObject properties, string name, object? value, bool strictMode)
-    {
-        if (!TryAssignThroughDescriptor(
-                properties.GetOwnPropertyDescriptor(name), function, name, value, strictMode))
-            properties.SetPropertyStrict(name, value, strictMode);
-    }
-
     private bool TrySetExplicitFunctionPrototypeProperty(
         object function, string name, object? value, bool strictMode)
     {
@@ -2815,20 +2807,6 @@ public partial class Interpreter
         bool strictMode = forceStrict || _environment.IsStrictMode;
         bool mutableFunctionPrototype = UsesMutableFunctionPrototype(obj);
 
-        bool hasWritableOwnLength = obj switch
-        {
-            SharpTSFunction function => function.GetOwnPropertyDescriptor("length") is { Writable: true },
-            SharpTSArrowFunction function => function.GetOwnPropertyDescriptor("length") is { Writable: true },
-            _ => false
-        };
-
-        if (!mutableFunctionPrototype && strictMode && set.Name.Lexeme == "length" && !hasWritableOwnLength
-            && obj is SharpTSFunction or SharpTSArrowFunction)
-        {
-            throw new ThrowException(new SharpTSTypeError(
-                "Cannot assign to read only property 'length' of function"));
-        }
-
         // Proxy interception - must be before any other dispatch
         if (obj is SharpTSProxy proxy)
         {
@@ -2869,14 +2847,12 @@ public partial class Interpreter
         }
         if (obj is SharpTSFunction userFn)
         {
-            SetOrdinaryFunctionOwnProperty(
-                userFn, userFn.OwnPropertyStorage, set.Name.Lexeme, value, strictMode);
+            SetOwnPropertyObjectValue(userFn, set.Name.Lexeme, value, strictMode);
             return value;
         }
         if (obj is SharpTSArrowFunction arrowFn)
         {
-            SetOrdinaryFunctionOwnProperty(
-                arrowFn, arrowFn.OwnPropertyStorage, set.Name.Lexeme, value, strictMode);
+            SetOwnPropertyObjectValue(arrowFn, set.Name.Lexeme, value, strictMode);
             return value;
         }
         if (obj is SharpTSObjectNamespace objectNamespace)

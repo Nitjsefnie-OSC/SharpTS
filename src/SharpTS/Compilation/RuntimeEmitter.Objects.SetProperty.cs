@@ -1657,7 +1657,13 @@ public partial class RuntimeEmitter
             // Function `name` and `length` are intrinsic own data properties with
             // [[Writable]] false. It is synthesized by Get/descriptor helpers
             // rather than stored in PDS, so an absent PDS entry must not be
-            // mistaken for permission to create a writable shadow.
+            // mistaken for permission to create a writable shadow. Deletion
+            // removes that authority; the inherited walk above then decides.
+            var tsFnIntrinsicMetadataAbsentLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+            il.Emit(OpCodes.Brtrue, tsFnIntrinsicMetadataAbsentLabel);
             var tsFnNotIntrinsicLengthLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldstr, "length");
@@ -1672,6 +1678,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brfalse, tsFnNotIntrinsicNameLabel);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(tsFnNotIntrinsicNameLabel);
+            il.MarkLabel(tsFnIntrinsicMetadataAbsentLabel);
             var tsFnDoSetLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
@@ -2887,21 +2894,21 @@ public partial class RuntimeEmitter
             il.MarkLabel(tsFnStrictNewPropertyLabel);
             var tsFnStrictCheckCanAddLabel = il.DefineLabel();
             var tsFnStrictSyntheticMetadataLabel = il.DefineLabel();
+            var tsFnStrictInheritedDescriptorLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Isinst, inputs.ClassDefinitions.Type);
             il.Emit(OpCodes.Brfalse, tsFnStrictSyntheticMetadataLabel);
             // Evaluated class definitions materialize their metadata in PDS.
             // Once an own slot is deleted, its actual prototype chain decides
             // whether ordinary assignment may create that slot again.
-            EmitConstructorPrototypeSetGuard(il, inputs, () =>
-            {
-                il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
-            }, tsFnStrictCheckCanAddLabel, tsFnStrictRejectLabel);
+            il.Emit(OpCodes.Br, tsFnStrictInheritedDescriptorLabel);
             il.MarkLabel(tsFnStrictSyntheticMetadataLabel);
             // The synthesized intrinsic function `name` and `length` properties are
-            // non-writable even though it has no backing PDS entry. A strict
-            // Set must reject it instead of defining a writable shadow.
+            // non-writable until deleted, even without a backing PDS entry.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+            il.Emit(OpCodes.Brtrue, tsFnStrictInheritedDescriptorLabel);
             var tsFnStrictNotIntrinsicLengthLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldstr, "length");
@@ -2920,6 +2927,12 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brfalse, nullLabel);
             EmitThrowTypeErrorWithName(il, inputs.Errors, "Cannot assign to read only property '", "' of function");
             il.MarkLabel(tsFnStrictNotIntrinsicNameLabel);
+            il.MarkLabel(tsFnStrictInheritedDescriptorLabel);
+            EmitConstructorPrototypeSetGuard(il, inputs, () =>
+            {
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+            }, tsFnStrictCheckCanAddLabel, tsFnStrictRejectLabel);
             il.MarkLabel(tsFnStrictCheckCanAddLabel);
             var tsFnStrictCanAddLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);

@@ -13,6 +13,10 @@ internal sealed class PrototypePropertyOverlay(
     // and presence remain authoritative in the existing overlay/tombstones.
     private readonly List<string>? _stringKeyOrder = initialStringKeys?.Distinct(StringComparer.Ordinal).ToList();
 
+    public bool IsExtensible => _extras.IsExtensible;
+    public void Freeze() => _extras.Freeze();
+    public void Seal() => _extras.Seal();
+
     public bool HasExtra(string name) => _extras.HasProperty(name) || _extras.HasSetter(name);
     public object? GetProperty(string name) => _extras.GetProperty(name);
 

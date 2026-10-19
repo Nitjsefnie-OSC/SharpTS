@@ -130,7 +130,7 @@ public partial class Interpreter
     /// <param name="compound">The compound index assignment expression AST node.</param>
     /// <returns>The new value after the operation.</returns>
     /// <remarks>
-    /// Currently only supports array element compound assignment.
+    /// Retains the current element value before evaluating the right-hand side.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Addition_assignment">MDN Compound Assignment</seealso>
     private RuntimeValue EvaluateCompoundSetIndex(Expr.CompoundSetIndex compound)
@@ -162,8 +162,9 @@ public partial class Interpreter
 
         if (obj is SharpTSArray array && index is double idx)
         {
+            RuntimeValue current = array.GetRV((int)idx);
             RuntimeValue addValue = await ctx.EvaluateExprAsync(compound.Value);
-            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, array.GetRV((int)idx), addValue);
+            RuntimeValue newValue = ApplyCompoundOperatorRV(compound.Operator.Type, current, addValue);
             array.Set((int)idx, newValue.ToObject());
             return newValue;
         }
@@ -175,9 +176,10 @@ public partial class Interpreter
         if (obj is SharpTSTypedArray typedArray && index is double typedIdx)
         {
             int ti = (int)typedIdx;
+            RuntimeValue current = RuntimeValue.FromBoxed(typedArray[ti]);
             RuntimeValue addValue = await ctx.EvaluateExprAsync(compound.Value);
             RuntimeValue newValue = ApplyCompoundOperatorRV(
-                compound.Operator.Type, RuntimeValue.FromBoxed(typedArray[ti]), addValue);
+                compound.Operator.Type, current, addValue);
             typedArray[ti] = newValue.ToObject();
             return newValue;
         }

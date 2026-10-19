@@ -1794,6 +1794,15 @@ public partial class Interpreter
         switch (target)
         {
             case IndexTarget.Array t:
+                if (t.Target is not SharpTSArguments)
+                {
+                    // Simple writes share compound assignment's OrdinarySet
+                    // policy, including present-but-undefined accessors.
+                    string key = t.Index.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture);
+                    SetOwnPropertyObjectValue(t.Target, key, value, strictMode);
+                    break;
+                }
                 if (t.Target is SharpTSArguments && t.Index >= t.Target.LongLength)
                 {
                     t.Target.SetNamedProperty(t.Index.ToString(

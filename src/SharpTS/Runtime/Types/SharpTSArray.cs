@@ -292,7 +292,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     }
 
     /// <summary>
-    /// Writes the common ordinary dense-array case without property-key
+    /// Writes a present ordinary dense-array index without property-key
     /// conversion or descriptor lookup. Returns false when any observable array
     /// exotic behavior requires the full interpreter property path.
     /// </summary>
@@ -305,7 +305,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
             || _descriptors is not null
             || _indexAccessors is not null
             || index < 0
-            || index > MaxWriteIndex)
+            || index >= _length)
         {
             return false;
         }
@@ -323,51 +323,14 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
                 _numericStore[(int)index] = value.AsNumberUnsafe();
                 return true;
             }
-            if (index != _numericCount
-                || !_lengthWritable
-                || !IsExtensible
-                || HasExplicitPrototype)
-            {
-                return false;
-            }
-
-            EnsureNumericCapacity(_numericCount + 1);
-            _numericStore[_numericCount++] = value.AsNumberUnsafe();
-            _length = _numericCount;
-            return true;
-        }
-
-        // An existing ordinary data property always shadows the prototype.
-        if (index < _length)
-        {
-            if (index >= _dense.Count || _dense[(int)index] is ArrayHole)
-                return false;
-            _dense[(int)index] = value.ToObject();
-            return true;
-        }
-
-        // Sequential growth is the Num Write hot path. Decline gaps and custom
-        // prototypes so inherited indexed behavior stays on the generic path.
-        if (index != _length
-            || index >= int.MaxValue
-            || !_lengthWritable
-            || !IsExtensible
-            || HasExplicitPrototype)
-        {
             return false;
         }
 
-        if (_length == 0 && _ownsDenseStorage && value.Kind == ValueKind.Number)
-        {
-            EnsureNumericCapacity(1);
-            _numericStore![_numericCount++] = value.AsNumberUnsafe();
-            _length = _numericCount;
-        }
-        else
-        {
-            _dense.Add(value.ToObject());
-            _length = _dense.Count;
-        }
+        // An existing ordinary data property always shadows the prototype.
+        // Holes and new indices must consult the actual prototype chain.
+        if (index >= _dense.Count || _dense[(int)index] is ArrayHole)
+            return false;
+        _dense[(int)index] = value.ToObject();
         return true;
     }
 

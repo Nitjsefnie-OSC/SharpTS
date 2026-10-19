@@ -3081,6 +3081,12 @@ public partial class Interpreter
                         out uint arrayIndex)
                     && arrayIndex < uint.MaxValue)
                 {
+                    if (array is not SharpTSArguments)
+                    {
+                        SetOwnPropertyObjectValue(array, arrayIndex.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture), value, strictMode);
+                        return value;
+                    }
                     if (array.TryGetIndexAccessor(
                             arrayIndex, out _, out var ownSetter))
                     {

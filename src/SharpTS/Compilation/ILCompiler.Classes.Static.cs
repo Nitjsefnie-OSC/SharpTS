@@ -481,7 +481,13 @@ public partial class ILCompiler
         }
         else
             il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
-        il.Emit(OpCodes.Call, _runtime.ObjectWrite.Index);
+
+        // A field defines an own W/E/C data property. Assignment would instead
+        // refuse configurable readonly constructor metadata such as name/length
+        // or invoke an inherited setter instead of creating the field.
+        var value = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, value);
+        EmitOwnDataDefinition(il, value);
     }
 
     private static bool ExpressionContainsSuspension(Expr expression)

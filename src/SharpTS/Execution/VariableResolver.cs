@@ -218,7 +218,7 @@ public class VariableResolver : AstVisitorBase
     {
         bool separateBody = ParameterBinder.HasParameterExpressions(parameters);
         if (separateBody) BeginScope();
-        foreach (var (name, _) in ParameterBinder.BodyVarDeclarations(body))
+        foreach (var (name, _) in ParameterBinder.InterpreterBodyVarDeclarations(body))
         {
             Declare(name.Lexeme);
             Define(name.Lexeme);
@@ -325,7 +325,7 @@ public class VariableResolver : AstVisitorBase
         Visit(stmt.Iterable);
 
         BeginScope();
-        if (stmt.IsDeclaration)
+        if (stmt.IsDeclaration && !stmt.IsVar)
         {
             Declare(stmt.Variable.Lexeme);
             Define(stmt.Variable.Lexeme);
@@ -341,7 +341,7 @@ public class VariableResolver : AstVisitorBase
         Visit(stmt.Object);
 
         BeginScope();
-        if (stmt.IsDeclaration)
+        if (stmt.IsDeclaration && !stmt.IsVar)
         {
             Declare(stmt.Variable.Lexeme);
             Define(stmt.Variable.Lexeme);
@@ -425,6 +425,7 @@ public class VariableResolver : AstVisitorBase
         Define(stmt.Name.Lexeme);
 
         BeginScope();
+        PredeclareLoopVarBindings(stmt.Members);
         foreach (var member in stmt.Members)
             Visit(member);
         EndScope();
@@ -446,6 +447,31 @@ public class VariableResolver : AstVisitorBase
                 Define(binding.Name.Lexeme);
             }
         }
+    }
+
+    private void PredeclareLoopVarBindings(IEnumerable<Stmt> statements)
+    {
+        foreach (var name in InterpreterVarDeclarations.CollectLoopHeads(statements))
+        {
+            Declare(name.Lexeme);
+            Define(name.Lexeme);
+        }
+    }
+
+    protected override void VisitStaticBlock(Stmt.StaticBlock stmt)
+    {
+        if (InterpreterVarDeclarations.CollectLoopHeads(stmt.Body).Count == 0)
+        {
+            base.VisitStaticBlock(stmt);
+            return;
+        }
+
+        BeginScope();
+        PredeclareLoopVarBindings(stmt.Body);
+        PredeclareLexicalBindings(stmt.Body);
+        foreach (var statement in stmt.Body)
+            Visit(statement);
+        EndScope();
     }
 
     #endregion
@@ -593,6 +619,15 @@ public class VariableResolver : AstVisitorBase
                     : new List<Stmt.Parameter>();
                 ResolveFunction(parameters, accessor.Body, FunctionType.Method);
             }
+        }
+
+        // Match the extra runtime owner only for static blocks with loop-head
+        // vars; the remaining class-expression initializer paths are unchanged.
+        if (expr.StaticInitializers != null)
+        {
+            foreach (var block in expr.StaticInitializers.OfType<Stmt.StaticBlock>())
+                if (InterpreterVarDeclarations.CollectLoopHeads(block.Body).Count != 0)
+                    Visit(block);
         }
 
         EndScope(); // 'this' scope

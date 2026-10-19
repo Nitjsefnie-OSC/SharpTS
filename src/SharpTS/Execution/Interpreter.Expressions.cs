@@ -2480,19 +2480,7 @@ public partial class Interpreter
                                 break;
 
                             case Stmt.StaticBlock block:
-                                foreach (var blockStmt in block.Body)
-                                {
-                                    var result = Execute(blockStmt);
-                                    if (result.IsAbrupt)
-                                    {
-                                        // Handle throw from static block
-                                        if (result.Type == ExecutionResult.ResultType.Throw)
-                                        {
-                                            throw new InterpreterException($"Error in static block: {Stringify(result.Value.ToObject())}");
-                                        }
-                                        // Return, break, continue are not allowed (validated by type checker)
-                                    }
-                                }
+                                ExecuteClassStaticBlock(block);
                                 break;
                         }
                     }

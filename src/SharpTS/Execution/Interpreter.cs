@@ -1371,6 +1371,11 @@ public partial class Interpreter : IDisposable
             // Hoist function declarations first
             HoistFunctionDeclarations(statements);
 
+            // A same-name function must be initialized before a loop-head var
+            // publishes its binding; registering the var must not replace it.
+            foreach (var name in InterpreterVarDeclarations.CollectLoopHeads(statements))
+                RegisterClassicGlobalVar(name.Lexeme);
+
             foreach (Stmt statement in statements)
             {
                 // For expression statements, we may get a Promise that needs to be awaited
@@ -1453,6 +1458,7 @@ public partial class Interpreter : IDisposable
 
         // Hoist function declarations first
         HoistFunctionDeclarations(statements);
+        HoistLocalLoopVarDeclarations(statements);
 
         foreach (Stmt statement in statements)
         {
@@ -1640,6 +1646,7 @@ public partial class Interpreter : IDisposable
 
             // Hoist function declarations first
             HoistFunctionDeclarations(script.Statements);
+            HoistLocalLoopVarDeclarations(script.Statements);
 
             // Execute all statements in the shared environment
             foreach (var stmt in script.Statements)
@@ -1845,6 +1852,7 @@ public partial class Interpreter : IDisposable
         {
             // First pass: hoist function declarations
             HoistFunctionDeclarations(module.Statements);
+            HoistLocalLoopVarDeclarations(module.Statements);
 
             // Second pass: execute all statements
             foreach (var stmt in module.Statements)
@@ -2261,21 +2269,34 @@ public partial class Interpreter : IDisposable
             }
             if (stmt is not Stmt.Var { IsVar: true } variable) continue;
 
-            string name = variable.Name.Lexeme;
-            if (GlobalThis.GetOwnPropertyDescriptor(name) is null)
-            {
-                object? initialValue = _environment.IsDefinedLocally(name) && !_environment.HasObjectBinding(name)
-                    ? _environment.GetAt(0, name).ToObject()
-                    : SharpTSUndefined.Instance;
-                if (!GlobalThis.DefineProperty(name, new SharpTSPropertyDescriptor(
-                        initialValue, writable: true, enumerable: true, configurable: false)
-                        { HasValue = true }))
-                    throw new InterpreterException($"TypeError: Cannot declare global variable '{name}'.");
-            }
+            RegisterClassicGlobalVar(variable.Name.Lexeme);
+        }
+    }
 
-            _environment.DefineObjectBinding(name,
-                () => ReadClassicGlobalVariable(name),
-                (value, strict) => WriteClassicGlobalVariable(name, value, strict));
+    private void RegisterClassicGlobalVar(string name)
+    {
+        if (GlobalThis.GetOwnPropertyDescriptor(name) is null)
+        {
+            object? initialValue = _environment.IsDefinedLocally(name) && !_environment.HasObjectBinding(name)
+                ? _environment.GetAt(0, name).ToObject()
+                : SharpTSUndefined.Instance;
+            if (!GlobalThis.DefineProperty(name, new SharpTSPropertyDescriptor(
+                    initialValue, writable: true, enumerable: true, configurable: false)
+                    { HasValue = true }))
+                throw new InterpreterException($"TypeError: Cannot declare global variable '{name}'.");
+        }
+
+        _environment.DefineObjectBinding(name,
+            () => ReadClassicGlobalVariable(name),
+            (value, strict) => WriteClassicGlobalVariable(name, value, strict));
+    }
+
+    private void HoistLocalLoopVarDeclarations(IEnumerable<Stmt> statements)
+    {
+        foreach (var name in InterpreterVarDeclarations.CollectLoopHeads(statements))
+        {
+            if (!_environment.IsDefinedLocally(name.Lexeme))
+                _environment.Define(name.Lexeme, RuntimeValue.Undefined);
         }
     }
 

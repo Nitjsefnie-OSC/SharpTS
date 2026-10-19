@@ -117,6 +117,7 @@ public partial class Interpreter
             using (PushModuleContext(moduleEnvironment, module, moduleInstance))
             {
                 HoistFunctionDeclarations(module.Statements);
+                HoistLocalLoopVarDeclarations(module.Statements);
                 foreach (Stmt statement in module.Statements)
                 {
                     ExecutionResult result = statement is Stmt.Export export

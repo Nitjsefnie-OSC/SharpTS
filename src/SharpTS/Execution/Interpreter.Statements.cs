@@ -728,7 +728,7 @@ public partial class Interpreter
         IEnumerable<object?>? customIterator = TryGetSymbolIterator(iterable);
         if (customIterator != null)
         {
-            return IterateWithBreakContinue(customIterator, forOf.Variable, forOf.IsDeclaration, forOf.Body, labels);
+            return IterateWithBreakContinue(customIterator, forOf.Variable, forOf.IsDeclaration && !forOf.IsVar, forOf.Body, labels);
         }
 
         // Get elements based on iterable type.
@@ -752,7 +752,7 @@ public partial class Interpreter
                 "for...of requires an iterable (array, Map, Set, or iterator)."))
         };
 
-        return IterateWithBreakContinue(elements, forOf.Variable, forOf.IsDeclaration, forOf.Body, labels);
+        return IterateWithBreakContinue(elements, forOf.Variable, forOf.IsDeclaration && !forOf.IsVar, forOf.Body, labels);
     }
 
     /// <summary>
@@ -807,7 +807,7 @@ public partial class Interpreter
             _ => throw new InterpreterException("for...in requires an object.")
         };
 
-        return IterateWithBreakContinue(keys.Cast<object?>(), forIn.Variable, forIn.IsDeclaration, forIn.Body, labels);
+        return IterateWithBreakContinue(keys.Cast<object?>(), forIn.Variable, forIn.IsDeclaration && !forIn.IsVar, forIn.Body, labels);
     }
 
     /// <summary>
@@ -2488,19 +2488,7 @@ public partial class Interpreter
                             break;
 
                         case Stmt.StaticBlock block:
-                            foreach (var blockStmt in block.Body)
-                            {
-                                var result = Execute(blockStmt);
-                                if (result.IsAbrupt)
-                                {
-                                    // Handle throw from static block
-                                    if (result.Type == ExecutionResult.ResultType.Throw)
-                                    {
-                                        throw new InterpreterException($"Error in static block: {Stringify(result.Value.ToObject())}");
-                                    }
-                                    // Return, break, continue are not allowed (validated by type checker)
-                                }
-                            }
+                            ExecuteClassStaticBlock(block);
                             break;
                     }
                 }
@@ -2521,6 +2509,28 @@ public partial class Interpreter
 
         _environment.Assign(classStmt.Name, klass);
         return ExecutionResult.Success();
+    }
+
+    private void ExecuteClassStaticBlock(Stmt.StaticBlock block)
+    {
+        // A static block owns its var heads independently of the surrounding
+        // class initializer environment and any sibling static block.
+        bool ownsLoopVars = InterpreterVarDeclarations.CollectLoopHeads(block.Body).Count != 0;
+        using ScopedEnvironment? scope = ownsLoopVars ? PushScope(new RuntimeEnvironment(_environment)) : null;
+        if (ownsLoopVars)
+        {
+            ReserveLexicalDeclarations(block.Body);
+            HoistFunctionDeclarations(block.Body);
+            HoistLocalLoopVarDeclarations(block.Body);
+        }
+
+        foreach (var statement in block.Body)
+        {
+            var result = Execute(statement);
+            if (result.Type == ExecutionResult.ResultType.Throw)
+                throw new InterpreterException($"Error in static block: {Stringify(result.Value.ToObject())}");
+            // Return, break, continue are not allowed (validated by type checker).
+        }
     }
 
     internal ExecutionResult VisitTypeAlias(Stmt.TypeAlias typeAlias) =>

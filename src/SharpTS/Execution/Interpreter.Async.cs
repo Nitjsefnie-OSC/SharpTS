@@ -163,7 +163,7 @@ public partial class Interpreter
                     disposeIterator = true;
                 }
 
-                var result = await ExecuteLoopBodyAsync(forOf.Variable, forOf.IsDeclaration, value, forOf.Body);
+                var result = await ExecuteLoopBodyAsync(forOf.Variable, forOf.IsDeclaration && !forOf.IsVar, value, forOf.Body);
                 preserveThrow = result.Type == ExecutionResult.ResultType.Throw;
                 var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
                 if (shouldBreak) return ExecutionResult.Success();
@@ -343,7 +343,7 @@ public partial class Interpreter
             ExecutionResult result;
             try
             {
-                result = await ExecuteLoopBodyAsync(forOf.Variable, forOf.IsDeclaration, value, forOf.Body);
+                result = await ExecuteLoopBodyAsync(forOf.Variable, forOf.IsDeclaration && !forOf.IsVar, value, forOf.Body);
             }
             catch
             {
@@ -487,7 +487,7 @@ public partial class Interpreter
         foreach (var key in keys)
         {
             ThrowIfExecutionCancelled();
-            var result = await ExecuteLoopBodyAsync(forIn.Variable, forIn.IsDeclaration, key, forIn.Body);
+            var result = await ExecuteLoopBodyAsync(forIn.Variable, forIn.IsDeclaration && !forIn.IsVar, key, forIn.Body);
             var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
             if (shouldContinue) continue;

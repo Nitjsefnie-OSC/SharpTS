@@ -738,9 +738,14 @@ public partial class Interpreter
     /// </summary>
     private RuntimeValue EvaluateBinaryOperationRV(Token op, RuntimeValue leftRV, RuntimeValue rightRV)
     {
+        var desc = SemanticOperatorResolver.Resolve(op.Type);
+        bool numericOperator = desc is OperatorDescriptor.Plus or OperatorDescriptor.Arithmetic
+            or OperatorDescriptor.Power or OperatorDescriptor.Bitwise
+            or OperatorDescriptor.BitwiseShift or OperatorDescriptor.UnsignedRightShift;
         // instanceof/in are valid with any operand — fall through to the normal path below
         // so a bigint operand gets unboxed to object and reaches EvaluateInstanceof/EvaluateIn.
-        if (op.Type is not (TokenType.INSTANCEOF or TokenType.IN))
+        // Numeric operators must convert both operands before selecting their kind.
+        if (!numericOperator && op.Type is not (TokenType.INSTANCEOF or TokenType.IN))
         {
             // Check for BigInt (Kind == BigInt, not Object)
             System.Numerics.BigInteger? leftBigInt = leftRV.IsBigInt ? leftRV.AsBigInt().Value : null;
@@ -777,26 +782,17 @@ public partial class Interpreter
         if (TryEvaluateDotNetBinary(op.Type, left, right, out var clrResult))
             return clrResult;
 
-        var desc = SemanticOperatorResolver.Resolve(op.Type);
-
         return desc switch
         {
-            // EvaluatePlus handles string concat, object ToPrimitive concat, and
-            // numeric addition with ToNumber coercion (undefined→NaN, null→0,
-            // booleans→0/1) — a raw (double) cast crashed with
-            // InvalidCastException on any-typed undefined operands (#190).
-            OperatorDescriptor.Plus => RuntimeValue.FromBoxed(EvaluatePlus(left, right)),
-            OperatorDescriptor.Arithmetic => RuntimeValue.FromNumber(EvaluateArithmetic(op.Type, ToNumberWithPrimitive(left), ToNumberWithPrimitive(right))),
-            OperatorDescriptor.Power => RuntimeValue.FromNumber(Math.Pow(ToNumberWithPrimitive(left), ToNumberWithPrimitive(right))),
+            OperatorDescriptor.Plus or OperatorDescriptor.Arithmetic or OperatorDescriptor.Power
+                or OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift
+                or OperatorDescriptor.UnsignedRightShift => EvaluateNumericBinaryRV(op.Type, leftRV, rightRV),
             // JS AbstractRelationalComparison: string vs string → lexicographic.
             OperatorDescriptor.Comparison =>
                 left is string ls && right is string rs
                     ? RuntimeValue.FromBoolean(EvaluateStringComparison(op.Type, ls, rs))
                     : RuntimeValue.FromBoolean(EvaluateComparison(op.Type, CoerceToNumber(left), CoerceToNumber(right))),
             OperatorDescriptor.Equality eq => RuntimeValue.FromBoolean(EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated)),
-            OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
-                RuntimeValue.FromNumber(EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right))),
-            OperatorDescriptor.UnsignedRightShift => RuntimeValue.FromNumber((double)(ToUint32(left) >> (ToInt32(right) & 0x1F))),
             OperatorDescriptor.In => RuntimeValue.FromBoxed(EvaluateIn(left, right)),
             OperatorDescriptor.InstanceOf => RuntimeValue.FromBoxed(EvaluateInstanceof(left, right)),
             _ => RuntimeValue.Undefined
@@ -1063,12 +1059,6 @@ public partial class Interpreter
         if (t.Length == 0) { value = System.Numerics.BigInteger.Zero; return true; }
         return System.Numerics.BigInteger.TryParse(t, out value);
     }
-
-    /// <summary>
-    /// Converts a boxed double to a 32-bit signed integer per ECMA-262 ToInt32.
-    /// </summary>
-    /// <seealso href="https://tc39.es/ecma262/#sec-toint32">ECMAScript ToInt32</seealso>
-    private int ToInt32(object? value) => JsToInt32(ToNumberWithPrimitive(value));
 
     /// <summary>
     /// Converts a boxed double to a 32-bit unsigned integer per ECMA-262 ToUint32.
@@ -1403,15 +1393,24 @@ public partial class Interpreter
             return clrResult;
         }
 
+        return EvaluateNumericBinaryRV(binaryToken, left, right);
+    }
+
+    // Both binary and compound arithmetic use the same ordered conversions.
+    // Addition first reduces both operands with the default hint; all other
+    // numeric operators complete left ToNumeric before starting the right.
+    private RuntimeValue EvaluateNumericBinaryRV(TokenType op, RuntimeValue left, RuntimeValue right)
+    {
         if (!left.IsNumber || !right.IsNumber)
         {
-            if (op == TokenType.PLUS_EQUAL)
+            if (op == TokenType.PLUS)
             {
                 // Addition reduces both operands with the default hint before
                 // deciding whether to concatenate or perform numeric addition.
                 object? leftPrimitive = ToPrimitive(left.ToObject(), PrimitiveHint.Default);
                 object? rightPrimitive = ToPrimitive(right.ToObject(), PrimitiveHint.Default);
-                if (leftPrimitive is string || rightPrimitive is string)
+                if (leftPrimitive is string || rightPrimitive is string
+                    || IsObjectLike(leftPrimitive) || IsObjectLike(rightPrimitive))
                     return RuntimeValue.FromBoxed(EvaluatePlus(leftPrimitive, rightPrimitive));
                 left = RuntimeValue.FromBoxed(leftPrimitive);
                 right = RuntimeValue.FromBoxed(rightPrimitive);
@@ -1419,20 +1418,22 @@ public partial class Interpreter
 
             // ToNumeric must finish on the left before converting the right:
             // a left-hand Symbol failure must not invoke a right-hand hook.
-            left = ToCompoundNumeric(left);
-            right = ToCompoundNumeric(right);
+            left = ToNumericRV(left);
+            right = ToNumericRV(right);
             if (left.IsBigInt || right.IsBigInt)
             {
                 if (!left.IsBigInt || !right.IsBigInt)
                     throw new ThrowException(new SharpTSTypeError(
                         "Cannot mix BigInt and other types in operations"));
-                if (op == TokenType.GREATER_GREATER_GREATER_EQUAL)
+                if (op == TokenType.GREATER_GREATER_GREATER)
                     throw new ThrowException(new SharpTSTypeError(
                         "BigInts have no unsigned right shift"));
+                if (op == TokenType.STAR_STAR && right.AsBigInt().Value.Sign < 0)
+                    throw new ThrowException(new SharpTSRangeError("BigInt exponent must be non-negative"));
                 try
                 {
                     return BigIntOperatorHelper.EvaluateBinaryRV(
-                        binaryToken, left.AsBigInt().Value, right.AsBigInt().Value);
+                        op, left.AsBigInt().Value, right.AsBigInt().Value);
                 }
                 catch (DivideByZeroException)
                 {
@@ -1441,32 +1442,34 @@ public partial class Interpreter
             }
         }
 
-        // Fast path: both numeric (most common for compound assignment)
+        // Fast path: both Number primitives.
         if (left.IsNumber && right.IsNumber)
         {
             double l = left.AsNumberUnsafe(), r = right.AsNumberUnsafe();
             return op switch
             {
-                TokenType.PLUS_EQUAL => RuntimeValue.FromNumber(l + r),
-                TokenType.MINUS_EQUAL => RuntimeValue.FromNumber(l - r),
-                TokenType.STAR_EQUAL => RuntimeValue.FromNumber(l * r),
-                TokenType.SLASH_EQUAL => RuntimeValue.FromNumber(l / r),
-                TokenType.PERCENT_EQUAL => RuntimeValue.FromNumber(l % r),
-                TokenType.AMPERSAND_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) & JsToInt32(r)),
-                TokenType.PIPE_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) | JsToInt32(r)),
-                TokenType.CARET_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) ^ JsToInt32(r)),
-                TokenType.LESS_LESS_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) << (JsToInt32(r) & 0x1F)),
-                TokenType.GREATER_GREATER_EQUAL => RuntimeValue.FromNumber(JsToInt32(l) >> (JsToInt32(r) & 0x1F)),
-                TokenType.GREATER_GREATER_GREATER_EQUAL => RuntimeValue.FromNumber(JsToUint32(l) >> (JsToInt32(r) & 0x1F)),
-                _ => throw new InterpreterException($"Unknown compound operator: {op}")
+                TokenType.PLUS => RuntimeValue.FromNumber(l + r),
+                TokenType.MINUS => RuntimeValue.FromNumber(l - r),
+                TokenType.STAR => RuntimeValue.FromNumber(l * r),
+                TokenType.SLASH => RuntimeValue.FromNumber(l / r),
+                TokenType.PERCENT => RuntimeValue.FromNumber(l % r),
+                TokenType.STAR_STAR => RuntimeValue.FromNumber(Math.Pow(l, r)),
+                TokenType.AMPERSAND => RuntimeValue.FromNumber(JsToInt32(l) & JsToInt32(r)),
+                TokenType.PIPE => RuntimeValue.FromNumber(JsToInt32(l) | JsToInt32(r)),
+                TokenType.CARET => RuntimeValue.FromNumber(JsToInt32(l) ^ JsToInt32(r)),
+                TokenType.LESS_LESS => RuntimeValue.FromNumber(JsToInt32(l) << (JsToInt32(r) & 0x1F)),
+                TokenType.GREATER_GREATER => RuntimeValue.FromNumber(JsToInt32(l) >> (JsToInt32(r) & 0x1F)),
+                TokenType.GREATER_GREATER_GREATER => RuntimeValue.FromNumber(JsToUint32(l) >> (JsToInt32(r) & 0x1F)),
+                _ => throw new InterpreterException($"Unknown numeric operator: {op}")
             };
         }
 
-        throw new InterpreterException($"Unknown compound operator: {op}");
+        throw new InterpreterException($"Unknown numeric operator: {op}");
     }
 
-    private RuntimeValue ToCompoundNumeric(RuntimeValue value)
+    private RuntimeValue ToNumericRV(RuntimeValue value)
     {
+        if (value.IsNumber || value.IsBigInt) return value;
         object? primitive = ToPrimitive(value.ToObject(), PrimitiveHint.Number);
         return primitive is SharpTSBigInt bigint
             ? RuntimeValue.FromBigInt(bigint)

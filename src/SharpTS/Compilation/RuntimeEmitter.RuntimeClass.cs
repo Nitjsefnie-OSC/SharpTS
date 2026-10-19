@@ -1183,10 +1183,14 @@ public partial class RuntimeEmitter
         }
         // DataView method values are bound by GetProperty below. Emit the
         // constructor/property/method adapters now so those wrappers can use
-        // their MethodInfo tokens; the remaining Worker helpers stay in their
-        // usual late block.
+        // their MethodInfo tokens. ArrayBuffer.isView must also be available
+        // before the static-member table body; the remaining Worker helpers
+        // stay in their usual late block.
         if (_features.HasAnyTypedArray)
+        {
             EmitDataViewHelper(typeBuilder, runtime);
+            EmitArrayBufferIsView(typeBuilder, runtime);
+        }
         // Weak collections/references and FinalizationRegistry are represented
         // by BCL types, so generic property access cannot discover their
         // JavaScript method names. Emit their helpers before GetProperty so its
@@ -3110,7 +3114,8 @@ public partial class RuntimeEmitter
                 runtime.ObjectDescriptors, runtime.ObjectOwnProperties.HasOwn,
                 runtime.Symbols.Type, runtime.Symbols.For, runtime.Symbols.KeyFor,
                 runtime.BigInt.Implementation, _features.UsesPromise ? runtime.RequirePromise() : null,
-                runtime.Errors.Type, runtime.Errors.IsError, runtime.Dates.Implementation, runtime.Map));
+                runtime.Errors.Type, runtime.Errors.IsError, runtime.Dates.Implementation, runtime.Map,
+                runtime.ArrayBuffer));
         runtime.BuiltInStatics.CompleteEmission();
         // Set methods — gated on UsesSet.
         if (runtime.Set is not null)

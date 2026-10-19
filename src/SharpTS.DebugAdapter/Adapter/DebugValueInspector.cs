@@ -24,7 +24,9 @@ internal static class DebugValueInspector
         IEnumerable<string> names = scope.Names ?? scope.Environment.Names;
         return names
             .OrderBy(name => name, StringComparer.Ordinal)
-            .Select(name => Describe(name, scope.Environment.Get(name), name));
+            .Select(name => scope.Environment.IsUninitializedLocally(name)
+                ? new DebugVariableValue(name, "<uninitialized>", "uninitialized", EvaluateName: name)
+                : Describe(name, scope.Environment.Get(name), name));
     }
 
     public static IReadOnlyList<DebugVariableValue> EnumerateChildren(

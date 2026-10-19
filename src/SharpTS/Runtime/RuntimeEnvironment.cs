@@ -175,6 +175,10 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     public override bool IsDefinedLocally(string name) =>
         HasLocalBinding(name);
 
+    /// <summary>Reports a reserved local binding without reading or initializing its value.</summary>
+    internal bool IsUninitializedLocally(string name) =>
+        _uninitializedLexicalNames?.Contains(name) == true;
+
     public RuntimeValue Get(Token name)
     {
         if (TryGetLocal(name.Lexeme, out RuntimeValue value))

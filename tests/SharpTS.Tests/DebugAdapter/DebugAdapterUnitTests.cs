@@ -4,6 +4,7 @@ using SharpTS.DebugAdapter.Protocol;
 using SharpTS.Execution;
 using SharpTS.Runtime;
 using SharpTS.Runtime.DotNet;
+using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
 using Xunit;
 
@@ -107,6 +108,48 @@ public sealed class DebugAdapterUnitTests
 
         Exception exception = Assert.ThrowsAny<Exception>(() => handles.Add(new object()));
         Assert.Contains("limit", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ScopeExpansionReportsUninitializedBindingsWithoutReadingOrInitializingThem()
+    {
+        var outer = new RuntimeEnvironment();
+        outer.Define("marker", 99d);
+        var environment = new RuntimeEnvironment(outer, "caught", RuntimeValue.FromBoxed(5d));
+        environment.Define("ready", 40d);
+        environment.Define("ordinaryUndefined", SharpTSUndefined.Instance);
+        environment.Define("excluded", 10d);
+        environment.ReserveLexical("marker");
+        var handle = new DebugScopeHandle(environment,
+            new HashSet<string>(["caught", "marker", "ordinaryUndefined", "ready"], StringComparer.Ordinal));
+
+        IReadOnlyList<DebugVariableValue> children =
+            DebugValueInspector.EnumerateChildren(handle, 0, count: null);
+        DebugVariableValue marker = Assert.Single(children, child => child.Name == "marker");
+        Assert.Equal("<uninitialized>", marker.Value);
+        Assert.Equal("uninitialized", marker.Type);
+        Assert.Equal("marker", marker.EvaluateName);
+        Assert.Null(marker.ExpandableValue);
+        Assert.Contains(children, child => child.Name == "ready" && child.Value == "40");
+        Assert.Contains(children, child => child.Name == "caught" && child.Value == "5");
+        Assert.Contains(children, child => child.Name == "ordinaryUndefined"
+            && child.Value == "undefined" && child.Type == "undefined");
+        Assert.DoesNotContain(children, child => child.Name == "excluded");
+        Assert.True(environment.IsUninitializedLocally("marker"));
+        Assert.False(outer.IsUninitializedLocally("marker"));
+        Assert.False(environment.IsUninitializedLocally("ordinaryUndefined"));
+        Assert.IsType<SharpTSReferenceError>(Assert.Throws<ThrowException>(() => environment.Get("marker")).Value);
+        Assert.IsType<SharpTSReferenceError>(Assert.Throws<ThrowException>(() => environment.GetAt(0, "marker")).Value);
+        Assert.Equal(99d, outer.Get("marker").ToObject());
+
+        environment.Define("marker", 42d);
+        Assert.False(environment.IsUninitializedLocally("marker"));
+        marker = Assert.Single(DebugValueInspector.EnumerateChildren(handle, 0, count: null),
+            child => child.Name == "marker");
+        Assert.Equal("42", marker.Value);
+        Assert.Equal("number", marker.Type);
+        Assert.Equal(42d, environment.Get("marker").ToObject());
+        Assert.Equal(42d, environment.GetAt(0, "marker").ToObject());
     }
 
     [Fact]

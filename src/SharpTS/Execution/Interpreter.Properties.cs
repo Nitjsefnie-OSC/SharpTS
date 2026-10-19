@@ -654,6 +654,11 @@ public partial class Interpreter
             if (current is SharpTSFunctionGlobal && name == "prototype")
                 return GetFunctionPrototype();
 
+            // Native own statics remain visible before following a callable's parent.
+            if (current is ArrayBufferConstructorImpl arrayBufferConstructor
+                && arrayBufferConstructor.GetProperty(name) is { } arrayBufferStatic)
+                return arrayBufferStatic;
+
             if (FunctionObjectProperties.TryGetExplicitPrototype(current, this, out var explicitPrototype))
             {
                 current = explicitPrototype;
@@ -662,7 +667,9 @@ public partial class Interpreter
 
             if (current is SharpTSBuiltInConstructor nativeConstructor
                 && nativeConstructor.GetMember(name) is { } nativeStatic)
-                return nativeStatic;
+                return nativeStatic is BuiltInMethod { IsConstant: true } constant
+                    ? constant.ConstantValue
+                    : nativeStatic;
 
             if (current is ISharpTSCallable callable)
             {
@@ -2421,6 +2428,9 @@ public partial class Interpreter
     /// </summary>
     private object? EvaluateGetOnFallback(object? obj, string memberName)
     {
+        if (obj is ArrayBufferConstructorImpl)
+            return GetPropertyValue(obj, memberName);
+
         if (obj is SharpTSMath math
             && TryReadDescriptor(math.GetOwnPropertyDescriptor(memberName), math, out var ownMathValue))
             return ownMathValue;

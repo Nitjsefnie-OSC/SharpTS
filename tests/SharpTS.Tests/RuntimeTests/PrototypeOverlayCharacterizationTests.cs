@@ -24,7 +24,9 @@ public class PrototypeOverlayCharacterizationTests
                 console.log(Object.getOwnPropertyDescriptor(p, "constructor").enumerable);
             }
             """;
-        Assert.Equal(string.Concat(Enumerable.Repeat("true\ntrue\n", 8)) + "false\nfalse\nfalse\nfalse\n",
+        // #2732 tracks constructor enumerability on the other intrinsic prototypes.
+        Assert.Equal(string.Concat(Enumerable.Repeat("true\ntrue\n", 5)) + "false\ntrue\n"
+            + string.Concat(Enumerable.Repeat("true\ntrue\n", 2)) + "false\nfalse\nfalse\nfalse\n",
             TestHarness.Run(source, ExecutionMode.Interpreted));
     }
 
@@ -80,13 +82,13 @@ public class PrototypeOverlayCharacterizationTests
         Assert.Same(prototype, child.Prototype);
         Assert.Same(child, prototype.GetMember("constructor"));
         Assert.Same(method, prototype.GetMember("method"));
-        Assert.True(prototype.HasOwnProperty("method"));
+        Assert.False(prototype.HasOwnProperty("method"));
         prototype.SetExtra("method", null);
         Assert.Null(prototype.GetMember("method"));
         Assert.True(prototype.HasOwnProperty("method"));
         Assert.True(prototype.DeleteProperty("method"));
         Assert.False(prototype.HasOwnProperty("method"));
-        Assert.Null(prototype.GetMember("method"));
+        Assert.Same(method, prototype.GetMember("method"));
         Assert.Same(method, child.FindMethod("method"));
         Assert.Same(method, parent.Prototype.GetMember("method"));
     }

@@ -263,6 +263,10 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ISharpTSFunction
     private readonly Expr.ArrowFunction _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    // Receiver views keep the resolver's original closure depth.
+    private readonly SharpTSAsyncArrowFunction? _selfReference;
+    private readonly object? _boundThis;
+    private readonly bool _hasBoundThis;
     private SharpTSObject _properties;
     SharpTSObject ISharpTSFunctionObject.OwnProperties => _properties;
 
@@ -281,10 +285,13 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ISharpTSFunction
         _properties = FunctionObjectProperties.Create(declaration.RuntimeName ?? declaration.Name?.Lexeme ?? "", _arity);
     }
 
-    private SharpTSAsyncArrowFunction(SharpTSAsyncArrowFunction source, RuntimeEnvironment closure)
+    private SharpTSAsyncArrowFunction(SharpTSAsyncArrowFunction source, object receiver)
     {
+        _selfReference = source._selfReference ?? source;
         _declaration = source._declaration;
-        _closure = closure;
+        _closure = source._closure;
+        _boundThis = receiver;
+        _hasBoundThis = true;
         _arity = source._arity;
         HasOwnThis = true;
         _properties = source._properties;
@@ -325,8 +332,11 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ISharpTSFunction
         // Named async function expression: bind self-reference alongside params.
         if (_declaration.Name != null)
         {
-            environment.Define(_declaration.Name.Lexeme, this);
+            environment.Define(_declaration.Name.Lexeme, _selfReference ?? this);
         }
+        // Install the receiver before defaults without inserting a lexical scope.
+        if (_hasBoundThis)
+            environment.Define("this", _boundThis);
         // Function expressions own arguments; true arrows retain the enclosing binding.
         if (HasOwnThis && ArgumentsUsage.UsesArguments(_declaration))
             environment.Define("arguments", SharpTSArguments.Create(arguments, interpreter));
@@ -371,9 +381,7 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ISharpTSFunction
 
     public SharpTSAsyncArrowFunction Bind(object thisObject)
     {
-        RuntimeEnvironment environment = new(_closure);
-        environment.Define("this", thisObject);
-        return new SharpTSAsyncArrowFunction(this, environment);
+        return new SharpTSAsyncArrowFunction(this, thisObject);
     }
 
     public override string ToString() => "<async arrow fn>";

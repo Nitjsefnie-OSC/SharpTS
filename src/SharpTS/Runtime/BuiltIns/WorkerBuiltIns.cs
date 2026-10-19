@@ -149,6 +149,9 @@ internal class SharedArrayBufferConstructorImpl : ISharpTSCallable, IBuiltInType
 /// </summary>
 internal class ArrayBufferConstructorImpl : ISharpTSCallable, IBuiltInTypeConstructor
 {
+    private static readonly BuiltInMethod _isViewMethod = BuiltInMethod.CreateV2("isView", 1, static (_, _, args) =>
+        RuntimeValue.FromBoolean(SharpTSArrayBuffer.IsView(args.Length > 0 ? args[0].ToObject() : null)));
+
     public int Arity() => 1;
 
     public bool IsInstance(object? value) => value is SharpTSArrayBuffer;
@@ -170,10 +173,7 @@ internal class ArrayBufferConstructorImpl : ISharpTSCallable, IBuiltInTypeConstr
     {
         return name switch
         {
-            "isView" => BuiltInMethod.CreateV2("isView", 1, static (_, _, args) =>
-            {
-                return RuntimeValue.FromBoolean(SharpTSArrayBuffer.IsView(args.Length > 0 ? args[0].ToObject() : null));
-            }),
+            "isView" => _isViewMethod,
             "prototype" => null,
             _ => null
         };

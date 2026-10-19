@@ -54,9 +54,8 @@ public class CaughtErrorIdentityTests
     [Theory, InterpretedOnlyData]
     public void InternalRuntimeError_CaughtByGuest_RecoversTypedError(ExecutionMode mode)
     {
-        // Interpreter-specific: the "Runtime Error: " wrapper with no inner JS error name is
-        // recovered as a generic Error carrying the unwrapped message. (Compiled mode surfaces a
-        // different underlying .NET message, so the exact text is asserted for the interpreter only.)
+        // A negative BigInt exponent throws a guest RangeError. Keep the message assertion
+        // interpreter-specific because compiled output uses a different underlying message.
         var source = """
             try { const r = 1n ** -1n; console.log("unreachable", r); }
             catch (e: any) {
@@ -65,7 +64,7 @@ public class CaughtErrorIdentityTests
             }
             """;
 
-        Assert.Equal("Error\nBigInt exponent must be non-negative.\n", TestHarness.Run(source, mode));
+        Assert.Equal("RangeError\nBigInt exponent must be non-negative\n", TestHarness.Run(source, mode));
     }
 
     // ---- Cross-boundary residual (#694 follow-up) ----------------------------------------------

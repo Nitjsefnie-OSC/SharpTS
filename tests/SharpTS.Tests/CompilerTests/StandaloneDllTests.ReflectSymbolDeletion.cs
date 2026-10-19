@@ -1,3 +1,4 @@
+using SharpTS.Tests.Infrastructure;
 using SharpTS.Tests.SharedTests;
 using SharpTS.TypeSystem;
 using Xunit;
@@ -39,7 +40,13 @@ public partial class StandaloneDllTests
             directory.GetPath("reflect-symbol-delete-" + name + ".dll"), expected);
     }
 
-    [Theory, MemberData(nameof(ReflectSymbolDeletionTests.ProxyCases), MemberType = typeof(ReflectSymbolDeletionTests))]
+    // #2617 remains a compiled-only deletion gap; share the common fixture's eligibility.
+    public static IEnumerable<object[]> Issue2160ProxyDeletionCompiledCases()
+        => ReflectSymbolDeletionTests.ProxyModeCases()
+            .Where(row => (ExecutionMode)row[3] == ExecutionMode.Compiled)
+            .Select(row => new object[] { row[0], row[1], row[2] });
+
+    [Theory, MemberData(nameof(Issue2160ProxyDeletionCompiledCases))]
     public void Saved_Issue2160ReflectSymbolDeletion_UsesDeclaredProxyRuntime(
         string name, string source, string expected)
     {

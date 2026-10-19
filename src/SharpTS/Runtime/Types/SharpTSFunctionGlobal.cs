@@ -96,7 +96,18 @@ public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSS
     public object? TryGetExtra(string name) => _overlay.GetProperty(name);
     public void SetExtra(string name, object? value) => _overlay.SetProperty(name, value);
     public bool DefineExtraProperty(string name, SharpTSPropertyDescriptor descriptor)
-        => _overlay.DefineProperty(name, descriptor);
+    {
+        // A partial update retains the virtual own builtin's attributes. An
+        // absent or deleted builtin must instead use ordinary property defaults.
+        if (_overlay.GetOwnPropertyDescriptor(name) is null
+            && HasOwnProperty(name)
+            && GetMember(name) is ISharpTSCallable builtIn)
+        {
+            if (!_overlay.DefineProperty(name, SharpTSPropertyDescriptor.ForMethod(builtIn)))
+                return false;
+        }
+        return _overlay.DefineProperty(name, descriptor);
+    }
     public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
         => _overlay.GetOwnPropertyDescriptor(name);
     public ISharpTSCallable? GetExtraGetter(string name) => _overlay.GetGetter(name);

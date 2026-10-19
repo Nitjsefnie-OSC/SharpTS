@@ -166,6 +166,35 @@ public sealed class FunctionIntrinsicPrototypeMutationTests
             console.log(ordinary.length, prototype.length, arrow.length, Object.hasOwn(ordinary, "length"),
                 descriptor.writable, descriptor.enumerable, descriptor.configurable);
             """, "false 7 7 7\n7 7\ntrue true\n21 21 0\n22 23 0 true true true true\n"];
+        yield return ["symbol-constants-stay-values-through-parent-mutation", """
+            const prototype: any = Function.prototype;
+            const original = Object.getPrototypeOf(prototype);
+            const iterator = Symbol.iterator, hasInstance = Symbol.hasInstance;
+            console.log(typeof iterator, typeof hasInstance,
+                Reflect.get(Symbol, "iterator") === iterator, Reflect.get(Symbol, "hasInstance") === hasInstance);
+            Object.setPrototypeOf(prototype, {});
+            console.log(Symbol.iterator === iterator, Symbol.hasInstance === hasInstance,
+                Reflect.get(Symbol, "iterator") === iterator, Reflect.get(Symbol, "hasInstance") === hasInstance,
+                prototype[hasInstance] === prototype[Symbol.hasInstance]);
+            Object.setPrototypeOf(prototype, original);
+            console.log(Symbol.iterator === iterator, Symbol.hasInstance === hasInstance,
+                Reflect.get(Symbol, "iterator") === iterator, Reflect.get(Symbol, "hasInstance") === hasInstance);
+            """, "symbol symbol true true\ntrue true true true true\ntrue true true true\n"];
+        yield return ["virtual-constructor-assignment-preserves-descriptors", """
+            const prototype: any = Function.prototype;
+            const original = Object.getOwnPropertyDescriptor(prototype, "constructor")!;
+            try {
+                prototype.constructor = 1;
+                let descriptor = Object.getOwnPropertyDescriptor(prototype, "constructor")!;
+                console.log(descriptor.value, descriptor.writable, descriptor.enumerable, descriptor.configurable);
+                console.log(delete prototype.constructor, Object.hasOwn(prototype, "constructor"));
+                prototype.constructor = 2;
+                descriptor = Object.getOwnPropertyDescriptor(prototype, "constructor")!;
+                console.log(descriptor.value, descriptor.writable, descriptor.enumerable, descriptor.configurable);
+            } finally {
+                Object.defineProperty(prototype, "constructor", original);
+            }
+            """, "1 true false true\ntrue false\n2 true true true\n"];
     }
 
     public static IEnumerable<object[]> ParityCases()

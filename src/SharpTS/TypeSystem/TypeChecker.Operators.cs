@@ -787,6 +787,42 @@ public partial class TypeChecker
 
         if (objType is TypeInfo.Array arrayType)
         {
+            if (compound.Operator.Type == TokenType.PLUS_EQUAL)
+            {
+                int line = compound.Operator.Line;
+                if (arrayType.IsReadonly)
+                    throw new TypeCheckException(
+                        $" Index signature in type '{objType}' only permits reading.",
+                        line > 0 ? line : null, tsCode: "TS2542");
+
+                // A never-valued RHS does not complete the write. Retain the
+                // existing numeric compound result rather than rejecting number + never.
+                if (valueType is TypeInfo.Never && IsNumber(arrayType.ElementType))
+                    return arrayType.ElementType;
+
+                TypeInfo result = CheckPlusOperator(arrayType.ElementType, valueType, line);
+                // A known string operand fixes the concatenation result even
+                // when the other operand is any. Validate Symbols above first.
+                if (result is TypeInfo.Any &&
+                    (IsKnownStringOperand(arrayType.ElementType) || IsKnownStringOperand(valueType)))
+                    result = TypeInfo.String.Shared;
+                // Compound arithmetic widens literal slots, but its result must
+                // still fit the writable element domain (e.g. not string into number[]).
+                if (!IsCompatible(WidenLiteralType(arrayType.ElementType), result))
+                    throw new TypeCheckException(
+                        $"Type '{result}' is not assignable to type '{arrayType.ElementType}'.",
+                        line > 0 ? line : null, tsCode: "TS2322");
+                return result;
+
+                static bool IsKnownStringOperand(TypeInfo type) => type switch
+                {
+                    TypeInfo.String or TypeInfo.StringLiteral => true,
+                    TypeInfo.Union union => union.FlattenedTypes.All(IsKnownStringOperand),
+                    TypeInfo.TypeParameter { Constraint: { } constraint } => IsKnownStringOperand(constraint),
+                    _ => false,
+                };
+            }
+
             if (!IsNumber(arrayType.ElementType) || (valueType is not TypeInfo.Never && !IsNumber(valueType)))
                 throw new TypeCheckException("Compound assignment requires numeric operands.", tsCode: "TS2365");
             return arrayType.ElementType;

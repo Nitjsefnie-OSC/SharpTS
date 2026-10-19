@@ -52,9 +52,9 @@ namespace SharpTS.Compilation;
 /// candidate whose name matches an existing top-level binding is left nested.</item>
 /// </list>
 ///
-/// <para><b>Known limitation (#583 §2):</b> a relocated declaration becomes a single top-level
-/// function, so its identity is shared across separate invocations of the enclosing function rather
-/// than fresh per call. Same class of limitation as <see cref="GeneratorArrowLifter"/> / #534.</para>
+/// <para>Plain async declarations instead use live function expressions, preserving one function
+/// value per activation. Other declarations still relocated to a single top-level function share
+/// identity across enclosing invocations (the remaining #583 §2 limitation).</para>
 /// </summary>
 internal sealed class NestedFunctionLifter
 {
@@ -91,8 +91,8 @@ internal sealed class NestedFunctionLifter
     }
 
     /// <summary>
-    /// Returns a statement list with all liftable non-capturing nested function-likes relocated to
-    /// the top level. Returns the input list unchanged (by reference) when nothing needs lifting,
+    /// Returns a statement list with supported nested function-likes lowered into live function
+    /// values or relocated helpers. Returns the input list unchanged when nothing needs lowering,
     /// so untouched programs pay only a cheap structural pre-scan.
     /// </summary>
     /// <param name="spans">
@@ -722,9 +722,9 @@ internal sealed class NestedFunctionLifter
     }
 
     /// <summary>
-    /// Processes a statement list (a function body or block). Safe nested function-likes are moved to
-    /// the module top level under a fresh name and replaced, at the top of this list, by a
-    /// <c>var &lt;name&gt; = &lt;freshName&gt;;</c> alias so references in this scope still resolve.
+    /// Processes a statement list (a function body or block), replacing nested declarations with
+    /// live function expressions or aliases to relocated helpers. Function-scoped replacements
+    /// are inserted at the top of the list to preserve declaration hoisting.
     /// </summary>
     private List<Stmt> ProcessBody(List<Stmt> body, bool enclosingIsStateMachine, bool enclosingIsAsyncFunction, bool enclosingIsGeneratorClassMethod)
     {
@@ -738,19 +738,20 @@ internal sealed class NestedFunctionLifter
             {
                 if (_safeCandidates.Contains(f))
                 {
-                    // Non-capturing relocation: hoist a `var name = freshName;` alias to the top of
-                    // this body (function declarations hoist, so the alias must too).
+                    // Async declarations need one function value per activation even without
+                    // captures; a relocated helper alias would reuse its global cached value.
                     aliases ??= new List<Stmt>();
-                    aliases.Add(LiftCandidate(f));
+                    aliases.Add(f.IsAsync && !f.IsGenerator
+                        ? MakeLiveFunctionClosure(f)
+                        : LiftCandidate(f));
                     result ??= new List<Stmt>(body.GetRange(0, i));
                     continue; // drop the declaration from this body
                 }
                 if (_lambdaForwards.TryGetValue(f, out var forwarded))
                 {
-                    // A generator must retain its capture owners across every yield.
-                    // Forwarding scalar parameters only snapshots their call-time values,
-                    // so use the existing generator-expression live storage instead.
-                    if (f.IsGenerator)
+                    // State-machine declarations retain their capture owners and their own
+                    // per-activation function value through the live expression machinery.
+                    if (f.IsGenerator || f.IsAsync)
                     {
                         result ??= new List<Stmt>(body.GetRange(0, i));
                         bool hoisted = _hoistedForwards.Contains(f);
@@ -866,7 +867,7 @@ internal sealed class NestedFunctionLifter
         var body = ProcessBody(function.Body!, function.IsGenerator || function.IsAsync,
             function.IsAsync && !function.IsGenerator, enclosingIsGeneratorClassMethod: false);
         var closure = new Expr.ArrowFunction(
-            Name: function.IsGenerator ? null : function.Name,
+            Name: function.IsGenerator || function.IsAsync ? null : function.Name,
             TypeParams: function.TypeParams,
             ThisType: function.ThisType,
             Parameters: function.Parameters,
@@ -879,7 +880,11 @@ internal sealed class NestedFunctionLifter
             ThisTypeNode: function.ThisTypeNode,
             ReturnTypeNode: function.ReturnTypeNode)
         {
-            RuntimeName = function.IsGenerator ? function.RuntimeName ?? function.Name.Lexeme : null,
+            // Keep declaration self references on the mutable outer binding, rather than
+            // introducing the private self binding of a named function expression.
+            RuntimeName = function.IsGenerator || function.IsAsync
+                ? function.RuntimeName ?? function.Name.Lexeme
+                : null,
         };
         _spans?.CopySpan(function, closure);
         _recordRewrite?.Invoke(function, closure);

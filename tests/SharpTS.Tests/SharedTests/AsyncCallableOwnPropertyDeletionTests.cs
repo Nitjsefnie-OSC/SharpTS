@@ -173,7 +173,8 @@ public sealed class AsyncCallableOwnPropertyDeletionTests
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            // #2678/#2679: async factory identity and named self binding.
+            // #2679: named async self binding.
+            // #2680: compiled sealed/frozen callable deletion rejects absent own properties.
             // #2415/#2680: compiled strict indexed deletion. The ordinary
             // interpreter carrier in #2680 remains separate from async storage.
             .Where(mode => mode == ExecutionMode.Interpreted || (string)row[0] is not

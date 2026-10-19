@@ -805,7 +805,7 @@ public partial class ILCompiler
                 DefineAsyncArrowStub(arrowBuilder);
                 MarkPadsUndefined(arrowBuilder.StubMethod); // #640
                 MarkFunctionLength(arrowBuilder.StubMethod, arrowInfo.Arrow.Parameters);
-                MarkFunctionName(arrowBuilder.StubMethod, arrowInfo.Arrow.Name?.Lexeme ?? "");
+                MarkFunctionName(arrowBuilder.StubMethod, arrowInfo.Arrow.RuntimeName ?? arrowInfo.Arrow.Name?.Lexeme ?? "");
                 RegisterStateMachine(
                     arrowBuilder.StubMethod,
                     arrowBuilder.StateMachineType,
@@ -832,7 +832,7 @@ public partial class ILCompiler
             DefineAsyncArrowStub(arrowBuilder);
             MarkPadsUndefined(arrowBuilder.StubMethod); // #640
             MarkFunctionLength(arrowBuilder.StubMethod, arrowInfo.Arrow.Parameters);
-            MarkFunctionName(arrowBuilder.StubMethod, arrowInfo.Arrow.Name?.Lexeme ?? "");
+            MarkFunctionName(arrowBuilder.StubMethod, arrowInfo.Arrow.RuntimeName ?? arrowInfo.Arrow.Name?.Lexeme ?? "");
             RegisterStateMachine(
                 arrowBuilder.StubMethod,
                 arrowBuilder.StateMachineType,
@@ -1907,7 +1907,7 @@ public partial class ILCompiler
             DefineAsyncArrowStub(arrowBuilder);
             MarkPadsUndefined(arrowBuilder.StubMethod); // #640
             MarkFunctionLength(arrowBuilder.StubMethod, arrow.Parameters);
-            MarkFunctionName(arrowBuilder.StubMethod, arrow.Name?.Lexeme ?? "");
+            MarkFunctionName(arrowBuilder.StubMethod, arrow.RuntimeName ?? arrow.Name?.Lexeme ?? "");
             RegisterStateMachine(
                 arrowBuilder.StubMethod,
                 arrowBuilder.StateMachineType,

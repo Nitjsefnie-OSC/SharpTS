@@ -337,7 +337,22 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 break;
             case Expr.ArrowFunction af:
                 if (af.IsGenerator) EmitGeneratorExpression(af);
-                else EmitArrowFunction(af);
+                else
+                {
+                    EmitArrowFunction(af);
+                    if (af.IsAsync && af.HasOwnThis && af.RuntimeName != null)
+                    {
+                        // Lowered declarations own properties and integrity state per activation.
+                        var function = IL.DeclareLocal(Ctx.Runtime!.FunctionValues.Type);
+                        IL.Emit(OpCodes.Castclass, Ctx.Runtime.FunctionValues.Type);
+                        IL.Emit(OpCodes.Stloc, function);
+                        IL.Emit(OpCodes.Ldloc, function);
+                        IL.Emit(OpCodes.Ldloc, function);
+                        IL.Emit(OpCodes.Stfld, Ctx.Runtime.FunctionValues.PropertyIdentityField);
+                        IL.Emit(OpCodes.Ldloc, function);
+                        SetStackUnknown();
+                    }
+                }
                 break;
             case Expr.RegexLiteral re:
                 EmitRegexLiteral(re);

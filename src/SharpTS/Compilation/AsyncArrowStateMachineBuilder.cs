@@ -40,7 +40,7 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
     // Self-boxed field for sharing this state machine with nested async arrows
     public FieldBuilder? SelfBoxedField { get; private set; }
 
-    // Dynamic `this` field for a standalone async FUNCTION EXPRESSION (HasOwnThis).
+    // Dynamic `this` field for an async function expression or lowered declaration (HasOwnThis).
     // Unlike a true arrow (lexical this), its `this` is bound at call time via
     // fn.call/apply/bind, so it lives in its own field populated by the stub from
     // the thread-local — not in a lexical capture field. Null for true arrows.
@@ -314,18 +314,6 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
 
         DefineOwnVariableFields(arrowParameters, hoistedLocals);
 
-        // Async function expressions bind `this` dynamically at call time, so give
-        // them a dedicated field the stub fills from the thread-local receiver
-        // (see DefineStubMethod). True arrows capture `this` lexically instead.
-        if (Arrow.HasOwnThis)
-        {
-            OwnThisField = _stateMachineType.DefineField(
-                "<>4__this",
-                _types.Object,
-                FieldAttributes.Public
-            );
-        }
-
         // Capture slots carry a live display-class reference where one exists;
         // remaining values keep the existing snapshot path.
         foreach (var captureName in Captures)
@@ -407,6 +395,16 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
     /// </summary>
     private void DefineOwnVariableFields(List<Stmt.Parameter> parameters, HashSet<string> locals)
     {
+        // Function expressions and lowered declarations bind `this` at call time,
+        // including when an enclosing async state machine owns their captures.
+        if (Arrow.HasOwnThis)
+        {
+            OwnThisField = _stateMachineType.DefineField(
+                "<>4__this",
+                _types.Object,
+                FieldAttributes.Public
+            );
+        }
         if (Arrow.HasOwnThis && SharpTS.Parsing.Visitors.ArgumentsRefScanner.Contains(
                 Arrow.Parameters, Arrow.BlockBody, Arrow.ExpressionBody, treatEvalReferenceAsUse: true))
             locals = [.. locals, "arguments"];
@@ -503,7 +501,7 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
         // suspension/resume on another thread. A null thread-local means a plain
         // call → sloppy `this` (globalThis sentinel), matching
         // LocalVariableResolver.LoadThis.
-        if (IsStandalone && Arrow.HasOwnThis && runtime != null && OwnThisField != null)
+        if (Arrow.HasOwnThis && runtime != null && OwnThisField != null)
         {
             il.Emit(OpCodes.Ldloca, smLocal);
             il.Emit(OpCodes.Ldsfld, runtime.FunctionValues.CurrentThisField);

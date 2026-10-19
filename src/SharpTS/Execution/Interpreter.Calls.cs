@@ -217,7 +217,8 @@ public partial class Interpreter
         if (call.Callee is Expr.Get gtChainedGet &&
             gtChainedGet.Object is Expr.Get gtInnerGet &&
             gtInnerGet.Object is Expr.Variable gtVar &&
-            gtVar.Name.Lexeme == BuiltInNames.GlobalThis)
+            gtVar.Name.Lexeme == BuiltInNames.GlobalThis &&
+            CanUseGlobalThisRegistryNamespace(gtVar, gtInnerGet.Name.Lexeme))
         {
             var method = BuiltInRegistry.Instance.GetStaticMethod(gtInnerGet.Name.Lexeme, gtChainedGet.Name.Lexeme);
             if (method != null)
@@ -229,7 +230,7 @@ public partial class Interpreter
         // Handle built-in static methods: Object.keys(), Array.isArray(), JSON.parse(), etc.
         if (call.Callee is Expr.Get get &&
             get.Object is Expr.Variable nsVar &&
-            nsVar.Name.Lexeme != BuiltInNames.Promise)
+            CanUseRegistryNamespace(nsVar))
         {
             var method = BuiltInRegistry.Instance.GetStaticMethod(nsVar.Name.Lexeme, get.Name.Lexeme);
             if (method != null)
@@ -476,7 +477,8 @@ public partial class Interpreter
         if (call.Callee is Expr.Get gtChainedGet &&
             gtChainedGet.Object is Expr.Get gtInnerGet &&
             gtInnerGet.Object is Expr.Variable gtVar &&
-            gtVar.Name.Lexeme == BuiltInNames.GlobalThis)
+            gtVar.Name.Lexeme == BuiltInNames.GlobalThis &&
+            CanUseGlobalThisRegistryNamespace(gtVar, gtInnerGet.Name.Lexeme))
         {
             var method = BuiltInRegistry.Instance.GetStaticMethod(gtInnerGet.Name.Lexeme, gtChainedGet.Name.Lexeme);
             if (method != null)
@@ -488,7 +490,7 @@ public partial class Interpreter
         // Handle built-in static methods: Object.keys(), Array.isArray(), JSON.parse(), etc.
         if (call.Callee is Expr.Get get &&
             get.Object is Expr.Variable nsVar &&
-            nsVar.Name.Lexeme != BuiltInNames.Promise)
+            CanUseRegistryNamespace(nsVar))
         {
             var method = BuiltInRegistry.Instance.GetStaticMethod(nsVar.Name.Lexeme, get.Name.Lexeme);
             if (method != null)

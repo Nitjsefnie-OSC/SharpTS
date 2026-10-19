@@ -314,9 +314,7 @@ public partial class Interpreter
         // Keep ordinary synchronous member reads out of the shared async state
         // machine. SyncEvaluationContext only returns completed ValueTasks, but
         // resuming that state machine still dominates tight traversal loops.
-        if (get.Object is Expr.Variable nsVar
-            && !IsRealmIntrinsicName(nsVar.Name.Lexeme)
-            && nsVar.Name.Lexeme != BuiltInNames.Promise)
+        if (get.Object is Expr.Variable nsVar && CanUseRegistryNamespace(nsVar))
         {
             object? member = BuiltInRegistry.Instance.GetStaticMethod(
                 nsVar.Name.Lexeme, get.Name.Lexeme);
@@ -337,17 +335,9 @@ public partial class Interpreter
     /// </summary>
     private async ValueTask<RuntimeValue> EvaluateGetCore(IEvaluationContext ctx, Expr.Get get)
     {
-        // Handle namespace static property access (e.g., Number.MAX_VALUE, Number.NaN)
-        // These namespaces don't have runtime values, but have static properties.
-        // Per-realm intrinsics (Math) are skipped here so they resolve through the
-        // normal object path onto this realm's instance — that keeps member
-        // identity stable across access forms (`Math.max === Math.max`, and the
-        // value-form `const m = Math; m.max === Math.max`, #288) and lets a user
-        // `let Math = …` shadow correctly, since the static fast-path binds to a
-        // process-wide singleton that the realm instance no longer matches.
-        if (get.Object is Expr.Variable nsVar
-            && !IsRealmIntrinsicName(nsVar.Name.Lexeme)
-            && nsVar.Name.Lexeme != BuiltInNames.Promise)
+        // Only synthetic namespaces lack a runtime owner. Real objects and
+        // lexical bindings must use their live properties below.
+        if (get.Object is Expr.Variable nsVar && CanUseRegistryNamespace(nsVar))
         {
             var member = BuiltInRegistry.Instance.GetStaticMethod(nsVar.Name.Lexeme, get.Name.Lexeme);
             if (member != null)
@@ -368,6 +358,20 @@ public partial class Interpreter
         object? obj = (await ctx.EvaluateExprAsync(get.Object)).ToObject();
         return EvaluateGetOnObject(get, obj);
     }
+
+    private bool IsRegistryOnlyNamespace(string name)
+        => !IsRealmIntrinsicName(name) && !_globalConstants.ContainsKey(name);
+
+    private bool CanUseRegistryNamespace(Expr.Variable reference)
+        => IsRegistryOnlyNamespace(reference.Name.Lexeme)
+            && !_locals.ContainsKey(reference)
+            && !_environment.TryGet(reference.Name.Lexeme, out _);
+
+    private bool CanUseGlobalThisRegistryNamespace(Expr.Variable reference, string name)
+        => IsRegistryOnlyNamespace(name)
+            && !_locals.ContainsKey(reference)
+            && !_environment.TryGet(reference.Name.Lexeme, out _)
+            && !GlobalThis.HasUserProperty(name);
 
     /// <summary>
     /// ECMA-262 §7.3.3 Get(O, P) abstract operation. Reads a string-named
@@ -554,6 +558,10 @@ public partial class Interpreter
                 && TryReadDescriptor(FunctionObjectProperties.GetProperties(functionObject, this).GetOwnPropertyDescriptor(name),
                     receiver, out var functionObjectValue))
                 return functionObjectValue;
+
+            if (current is SharpTSMath math
+                && TryReadDescriptor(math.GetOwnPropertyDescriptor(name), receiver, out var mathValue))
+                return mathValue;
 
             if (current is BuiltInMethod { OwnProperties: { } ownProperties }
                 && ownProperties.TryGetValue(name, out var builtInOwnValue))
@@ -2366,6 +2374,10 @@ public partial class Interpreter
     /// </summary>
     private object? EvaluateGetOnFallback(object? obj, string memberName)
     {
+        if (obj is SharpTSMath math
+            && TryReadDescriptor(math.GetOwnPropertyDescriptor(memberName), math, out var ownMathValue))
+            return ownMathValue;
+
         if (NeedsLiveFunctionPrototypeRead(obj, memberName))
             return GetPropertyValue(obj, memberName);
         if (obj is SharpTSClassPrototype)

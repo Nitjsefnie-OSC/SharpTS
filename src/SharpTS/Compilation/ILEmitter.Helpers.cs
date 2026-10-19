@@ -133,20 +133,31 @@ public partial class ILEmitter
     }
 
     /// <summary>
-    /// Copies overlapping parameter bindings into fresh function-body var cells.
+    /// Instantiates selected function-body var bindings before body evaluation.
+    /// Parameter copies retain their final value; forward vars begin undefined.
     /// Default-created closures retain the parameter environment's existing slots.
     /// </summary>
-    internal void InitializeParameterBodyBindings(List<Stmt>? body)
+    internal void InitializeFunctionBodyVarBindings(List<Stmt>? body)
     {
         if (body is null || _ctx.ClosureAnalyzer is not { } analyzer) return;
         foreach (var (declaration, parameter) in analyzer.GetParameterBodyCopies(body))
         {
+            CreateCell(declaration, () =>
+            {
+                var parameterType = _resolver.TryLoadVariable(parameter.Lexeme)
+                    ?? throw new InvalidOperationException($"Parameter binding '{parameter.Lexeme}' is unavailable.");
+                SetStackType(parameterType);
+                EnsureBoxed();
+            });
+        }
+        foreach (var declaration in analyzer.GetUndefinedBodyVars(body))
+            CreateCell(declaration, () => IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.Sentinels.UndefinedInstance));
+
+        void CreateCell(Token declaration, Action emitValue)
+        {
             string name = declaration.Lexeme;
-            if (_ctx.LoopBodyCellDeclarations.ContainsKey(name)) continue;
-            var parameterType = _resolver.TryLoadVariable(parameter.Lexeme)
-                ?? throw new InvalidOperationException($"Parameter binding '{parameter.Lexeme}' is unavailable.");
-            SetStackType(parameterType);
-            EnsureBoxed();
+            if (_ctx.LoopBodyCellDeclarations.ContainsKey(name)) return;
+            emitValue();
             IL.Emit(OpCodes.Newobj, _ctx.Types.StrongBoxOfObjectCtor);
             var cell = IL.DeclareLocal(_ctx.Types.StrongBoxOfObject);
             IL.Emit(OpCodes.Stloc, cell);

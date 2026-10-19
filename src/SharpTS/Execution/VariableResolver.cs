@@ -216,14 +216,14 @@ public class VariableResolver : AstVisitorBase
 
     private bool BeginParameterBodyScope(List<Stmt.Parameter> parameters, List<Stmt> body)
     {
-        if (!ParameterBinder.HasParameterExpressions(parameters)) return false;
-        BeginScope();
+        bool separateBody = ParameterBinder.HasParameterExpressions(parameters);
+        if (separateBody) BeginScope();
         foreach (var (name, _) in ParameterBinder.BodyVarDeclarations(body))
         {
             Declare(name.Lexeme);
             Define(name.Lexeme);
         }
-        return true;
+        return separateBody;
     }
 
     protected override void VisitClass(Stmt.Class stmt)

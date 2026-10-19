@@ -21,6 +21,15 @@ public abstract partial class StatementEmitterBase
         foreach (var (declaration, token) in DirectLexicalDeclarations(statements))
             EnterLexicalCellBinding(declaration, token, prior,
                 Ctx.ClosureAnalyzer?.IsOrdinaryBlockShadowDeclaration(token) == true);
+        foreach (var declaration in statements.OfType<Stmt.Class>())
+        {
+            if (!Ctx.LoopBodyCellDeclarations.TryGetValue(declaration.Name.Lexeme, out var outer)
+                || Ctx.ClosureAnalyzer?.IsFunctionBodyVarDeclaration(outer) != true) continue;
+            // A block class owns its binding even when the outer function var
+            // uses a cell outside LocalsManager. Restore that cell on block exit.
+            Ctx.RuntimeClassLexicalShadows.Add(declaration);
+            EnterLexicalCellBinding(declaration, declaration.Name, prior);
+        }
     }
 
     protected void EnterLexicalCellBinding(object declaration, Token token, List<LoopBodyCellScopeEntry> prior,
@@ -80,7 +89,8 @@ public abstract partial class StatementEmitterBase
                 }
                 else
                 {
-                    var shadow = Ctx.Locals.DeclareLocal(name, Ctx.Types.Object, token);
+                    var shadow = Ctx.Locals.DeclareLocal(name, Ctx.Types.Object,
+                        declaration is Stmt.Class ? declaration : token);
                     IL.Emit(OpCodes.Stloc, shadow);
                 }
                 Ctx.LoopBodyCellShadows[name] = token;
@@ -165,7 +175,7 @@ public abstract partial class StatementEmitterBase
     protected bool TryInitializeLoopBodyBinding(Stmt.Var declaration)
     {
         var declarationToken = declaration.IsVar
-            ? Ctx.ClosureAnalyzer?.GetParameterBodyDeclaration(declaration.Name) ?? declaration.Name
+            ? Ctx.ClosureAnalyzer?.GetFunctionBodyVarDeclaration(declaration.Name) ?? declaration.Name
             : declaration.Name;
         string name = Ctx.LexicalCellStorageNames.GetValueOrDefault(declarationToken) ?? declarationToken.Lexeme;
         bool cell = Ctx.LoopBodyCellDeclarations.TryGetValue(name, out var token)
@@ -174,10 +184,10 @@ public abstract partial class StatementEmitterBase
             && ReferenceEquals(token, declarationToken);
         if (!cell && !shadow) return false;
 
-        // The parameter/body environment prologue already copied this var's
-        // initial value. An initializer-free declaration must preserve it.
+        // Body declaration instantiation already supplied this var's initial
+        // value. An initializer-free declaration must preserve it.
         if (declaration.IsVar && declaration.Initializer is null
-            && Ctx.ClosureAnalyzer?.IsParameterBodyDeclaration(declaration.Name) == true)
+            && Ctx.ClosureAnalyzer?.IsFunctionBodyVarDeclaration(declaration.Name) == true)
             return true;
 
         if (declaration.Initializer is { } initializer)

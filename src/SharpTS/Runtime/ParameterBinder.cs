@@ -273,9 +273,10 @@ internal static class ParameterBinder
     {
         var bindings = GetBodyBindings(body);
         var statements = bindings.Statements;
-        if (!HasParameterExpressions(parameters)) return (statements, parameterEnvironment);
-
-        var environment = new RuntimeEnvironment(parameterEnvironment);
+        bool separateBody = HasParameterExpressions(parameters);
+        var environment = separateBody
+            ? new RuntimeEnvironment(parameterEnvironment)
+            : parameterEnvironment;
         if (bindings.Declarations.Count == 0) return (statements, environment);
         var parameterNames = parameters.Select(parameter => parameter.Name.Lexeme).ToHashSet(StringComparer.Ordinal);
         if (parameterEnvironment.IsDefinedLocally("arguments")) parameterNames.Add("arguments");

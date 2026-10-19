@@ -3259,6 +3259,10 @@ public partial class ILEmitter
             if (_ctx.BlockScopedClassBuilders?.ContainsKey(classStmt) != true)
                 continue;
 
+            if (_ctx.LoopBodyCellShadows.TryGetValue(classStmt.Name.Lexeme, out var shadow)
+                && ReferenceEquals(shadow, classStmt.Name))
+                continue; // The selected outer-cell mask already entered this binding's TDZ.
+
             var local = _ctx.Locals.GetCurrentScopeLocal(classStmt.Name.Lexeme)
                 ?? _ctx.Locals.DeclareLocal(classStmt.Name.Lexeme, _ctx.Types.Object, classStmt);
             IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.Sentinels.UndefinedInstance);

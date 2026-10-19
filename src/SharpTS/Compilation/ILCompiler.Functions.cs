@@ -887,9 +887,9 @@ public partial class ILCompiler
         emitter.EmitDefaultParameters(parameters, argumentOffset, paramTypes);
         ctx.InitializedParameterNames = parameters.Select(parameter => parameter.Name.Lexeme)
             .ToHashSet(StringComparer.Ordinal);
-        // With parameter expressions, a same-named body var starts with the
-        // final parameter value but owns storage independent of default closures.
-        emitter.InitializeParameterBodyBindings(body);
+        // Body vars exist before their source initializer executes. Parameter
+        // copies keep separate storage from closures created by defaults.
+        emitter.InitializeFunctionBodyVarBindings(body);
     }
 
     /// <summary>

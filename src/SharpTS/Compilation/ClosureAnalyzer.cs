@@ -158,10 +158,11 @@ public class ClosureAnalyzer : AstVisitorBase
 
     internal bool IsLoopBodyCellDeclaration(Token declaration) => _bodyCells.IsCellDeclaration(declaration);
     internal bool IsOrdinaryBlockShadowDeclaration(Token declaration) => _bodyCells.IsOrdinaryBlockShadowDeclaration(declaration);
-    internal bool IsParameterBodyDeclaration(Token declaration) => _bodyCells.IsParameterBodyDeclaration(declaration);
-    internal Token? GetParameterBodyDeclaration(Token declaration) => _bodyCells.GetParameterBodyDeclaration(declaration);
+    internal bool IsFunctionBodyVarDeclaration(Token declaration) => _bodyCells.IsFunctionBodyVarDeclaration(declaration);
+    internal Token? GetFunctionBodyVarDeclaration(Token declaration) => _bodyCells.GetFunctionBodyVarDeclaration(declaration);
     internal IReadOnlyList<(Token Declaration, Token Parameter)> GetParameterBodyCopies(List<Stmt> body) =>
         _bodyCells.GetParameterBodyCopies(body);
+    internal IReadOnlyList<Token> GetUndefinedBodyVars(List<Stmt> body) => _bodyCells.GetUndefinedBodyVars(body);
     internal HashSet<string> GetCellOnlyCapturedLocalNames(object owner) => _bodyCells.GetCellOnlyCapturedNames(owner);
     internal bool TryGetLoopBodyCellCapture(object closure, string name, out Token declaration) =>
         _bodyCells.TryGetCaptureDeclaration(closure, name, out declaration);
@@ -321,6 +322,7 @@ public class ClosureAnalyzer : AstVisitorBase
         // A named class expression's immutable self is carried by its evaluated
         // definition, independently of any same-spelled outer variable storage.
         _bodyCells.Analyze(statements, moduleOwners);
+        if (checkedTypes != null) _bodyCells.MarkUndefinedBodyVarReferences(checkedTypes);
         _checkedTypes = checkedTypes;
         _scopeStack.Push([]);
         HoistFunctionDeclarations(statements, hoistOwnedVars: true);

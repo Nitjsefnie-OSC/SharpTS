@@ -264,7 +264,7 @@ public partial class ILCompiler
         ctx.UseOwnedCapturedParameterStorage = true;
         ctx.InitializedParameterNames = constructor?.Parameters.Select(parameter => parameter.Name.Lexeme)
             .ToHashSet(StringComparer.Ordinal);
-        emitter.InitializeParameterBodyBindings(constructor?.Body);
+        emitter.InitializeFunctionBodyVarBindings(constructor?.Body);
         emitter.InitializeCapturedLexicalTdzBindings(constructor?.Body ?? []);
         bool implicitSuper = constructor == null && declaration.SuperclassExpr != null;
         if (implicitSuper)

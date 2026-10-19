@@ -1872,7 +1872,7 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         {
             emitValue();
             TryInitializeLexicalCell(declaration,
-                fresh: Ctx.ClosureAnalyzer?.IsParameterBodyDeclaration(declaration) != true);
+                fresh: Ctx.ClosureAnalyzer?.IsFunctionBodyVarDeclaration(declaration) != true);
             return;
         }
         var field = GetHoistedVariableField(name);

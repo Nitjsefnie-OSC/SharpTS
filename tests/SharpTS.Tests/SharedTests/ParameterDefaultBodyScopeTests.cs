@@ -164,8 +164,6 @@ public sealed class ParameterDefaultBodyScopeTests
             {
                 // #2661: an async expression default captures future body var storage and rejects.
                 "async-and-generator-default-outer-binding" => false,
-                // #2659: a compiled forward body var read resolves the outer binding.
-                "body-lexical-tdz-and-hoisted-declarations" => false,
                 // #2662: compiled async no-initializer var resets an initialized parameter.
                 "async-uninitialized-var-preserves-parameter" => false,
                 // #2663: compiled nested defaults lose enclosing local capture storage.

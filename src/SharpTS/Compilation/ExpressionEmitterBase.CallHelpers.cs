@@ -1781,6 +1781,11 @@ public abstract partial class ExpressionEmitterBase
     {
         if (Ctx.TypeEmitterRegistry == null)
             return false;
+        // Math's property strategy declines live mutations. Its ordinary lookup must retain the
+        // original namespace receiver, including when evaluating an argument suspends this call.
+        if (obj is Expr.Variable { Name.Lexeme: "Math" }
+            && Ctx.RuntimeFeatures?.UsesMathMutation == true)
+            return false;
         if (obj is Expr.Variable v
             && CanUseStaticTypeStrategy(v.Name.Lexeme)
             && Ctx.TypeEmitterRegistry.GetStaticStrategy(v.Name.Lexeme) != null)

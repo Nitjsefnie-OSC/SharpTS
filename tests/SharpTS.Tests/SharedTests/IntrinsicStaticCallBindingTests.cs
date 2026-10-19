@@ -168,16 +168,9 @@ public sealed class IntrinsicStaticCallBindingTests
             """, "true true true 2\n"];
     }
 
-    public static IEnumerable<object[]> ModeCases()
-    {
-        foreach (var row in Cases())
-        {
-            yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
-            // #2691: receiver retained across an awaited argument.
-            if ((string)row[0] != "async-getter-before-awaited-argument-and-receiver")
-                yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
-        }
-    }
+    public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]
     public void CallsRespectTheResolvedBindingAndLiveMemberBeforeArguments(

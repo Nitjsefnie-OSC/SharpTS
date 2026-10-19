@@ -197,6 +197,7 @@ public partial class Interpreter : IDisposable
     // Producers publish this flag while holding the queue lock. Empty checks on
     // ordinary loop iterations can then avoid acquiring that lock altogether.
     private int _hasMicrotasks;
+    private bool _processingMicrotasks;
 
     // Active handles counter - keeps the event loop alive while there are active operations.
     // Uses Interlocked operations for thread-safe lock-free access, consistent with _hasScheduledTimers.
@@ -505,39 +506,47 @@ public partial class Interpreter : IDisposable
     /// </summary>
     internal void ProcessMicrotasks()
     {
-        if (Volatile.Read(ref _hasMicrotasks) == 0)
+        if (_processingMicrotasks || Volatile.Read(ref _hasMicrotasks) == 0)
             return;
 
-        bool drainingCheckpointCallbacks = false;
-        while (true)
+        _processingMicrotasks = true;
+        try
         {
-            Action? callback;
-            lock (_microtaskQueueLock)
+            bool drainingCheckpointCallbacks = false;
+            while (true)
             {
-                if (_isDisposed)
+                Action? callback;
+                lock (_microtaskQueueLock)
                 {
-                    Volatile.Write(ref _hasMicrotasks, 0);
-                    return;
+                    if (_isDisposed)
+                    {
+                        Volatile.Write(ref _hasMicrotasks, 0);
+                        return;
+                    }
+                    if (drainingCheckpointCallbacks && _afterPromiseCheckpointQueue.TryDequeue(out callback))
+                    {
+                        // Finish this callback batch before running jobs it created.
+                    }
+                    else if (_microtaskQueue.TryDequeue(out callback))
+                    {
+                        drainingCheckpointCallbacks = false;
+                    }
+                    else if (_afterPromiseCheckpointQueue.TryDequeue(out callback))
+                    {
+                        drainingCheckpointCallbacks = true;
+                    }
+                    else
+                    {
+                        Volatile.Write(ref _hasMicrotasks, 0);
+                        return;
+                    }
                 }
-                if (drainingCheckpointCallbacks && _afterPromiseCheckpointQueue.TryDequeue(out callback))
-                {
-                    // Finish this callback batch before running jobs it created.
-                }
-                else if (_microtaskQueue.TryDequeue(out callback))
-                {
-                    drainingCheckpointCallbacks = false;
-                }
-                else if (_afterPromiseCheckpointQueue.TryDequeue(out callback))
-                {
-                    drainingCheckpointCallbacks = true;
-                }
-                else
-                {
-                    Volatile.Write(ref _hasMicrotasks, 0);
-                    return;
-                }
+                callback();
             }
-            callback();
+        }
+        finally
+        {
+            _processingMicrotasks = false;
         }
     }
 
@@ -552,9 +561,9 @@ public partial class Interpreter : IDisposable
         WakeEventLoop();
     }
 
-    // Async continuations settle Promise chains inside the same checkpoint,
+    // Promise jobs and async continuations settle chains inside the same checkpoint,
     // before timers and captured listener errors are dispatched.
-    private void EnqueueAsyncContinuation(Action continuation)
+    internal void EnqueuePromiseJob(Action continuation)
     {
         lock (_microtaskQueueLock)
         {
@@ -853,7 +862,7 @@ public partial class Interpreter : IDisposable
     /// </summary>
     private SynchronizationContext? InstallEventLoopSyncContext()
     {
-        _eventLoopSyncContext ??= new InterpreterSynchronizationContext(EnqueueAsyncContinuation);
+        _eventLoopSyncContext ??= new InterpreterSynchronizationContext(EnqueuePromiseJob);
         var previous = SynchronizationContext.Current;
         SynchronizationContext.SetSynchronizationContext(_eventLoopSyncContext);
         return previous;
@@ -1099,6 +1108,8 @@ public partial class Interpreter : IDisposable
 
     internal void ProcessPendingCallbacks()
     {
+        // A guest loop inside a Promise job cannot reenter its checkpoint or run timers.
+        if (_processingMicrotasks) return;
         // A hosted runtime owns event-loop turns. Pumping from an ordinary guest
         // loop reenters synchronous rendering (and other application code).
         if (_hostedOwnerThreadId.HasValue) return;

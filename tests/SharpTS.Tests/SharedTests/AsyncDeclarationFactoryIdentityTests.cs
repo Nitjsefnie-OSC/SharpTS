@@ -110,7 +110,8 @@ public sealed class AsyncDeclarationFactoryIdentityTests
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     public static IEnumerable<object[]> SavedCases() => Cases().Concat(
-        AsyncCallableOwnPropertyDeletionTests.Cases().Where(row => (string)row[0] == "absent-and-integrity-deletion"));
+        AsyncCallableOwnPropertyDeletionTests.Cases().Where(row => (string)row[0] is
+            "absent-and-integrity-deletion" or "strict-absent-and-frozen-string-deletion"));
 
     [Theory, MemberData(nameof(ModeCases))]
     public void AsyncDeclarationEvaluationCreatesFreshOwnStatePerActivation(

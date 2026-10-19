@@ -173,9 +173,6 @@ public sealed class AsyncCallableOwnPropertyDeletionTests
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            // #2415: compiled strict deletion of an existing nonconfigurable callable property must throw.
-            .Where(mode => mode == ExecutionMode.Interpreted ||
-                (string)row[0] != "strict-absent-and-frozen-string-deletion")
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]

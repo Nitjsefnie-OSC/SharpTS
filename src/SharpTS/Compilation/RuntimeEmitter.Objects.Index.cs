@@ -2303,8 +2303,9 @@ public partial class RuntimeEmitter
     /// DeleteIndexStrict(object obj, object key, bool strictMode) -> bool.
     /// Handles both symbol keys and string keys. On a frozen/sealed dictionary
     /// receiver the non-strict variant returns false; the strict variant throws
-    /// a TypeError when strictMode is set, else returns false. All other
-    /// branches ($TSFunction, $Array, symbol keys, System.Type, PDS
+    /// a TypeError when strictMode is set, else returns false. Callable
+    /// deletion likewise applies strictness to the ordinary deletion result.
+    /// Other branches ($Array, symbol keys, System.Type, PDS
     /// configurability, Math/JSON singletons) are identical in both variants.
     /// </summary>
     private void EmitDeleteIndexCore(
@@ -2327,7 +2328,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Emits the failed-delete path for the dict receiver: strict mode
+        // Emits the failed-delete path: strict mode
         // (arg 2 set) throws TypeError, otherwise returns false.
         void EmitDeleteIndexFail(string message)
         {
@@ -2431,15 +2432,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, objectDeletion.Property);
         il.Emit(OpCodes.Ret);
 
-        // Keep the existing callable string coercion and strict-refusal policy.
-        // Property owns complete own-descriptor checks and actual PDS removal;
-        // the legacy indexed callable path returns false rather than throwing.
+        // Property owns complete own-descriptor checks and actual PDS removal.
+        // Apply strictness to its boolean result without bypassing that cleanup.
         il.MarkLabel(tsFunctionNamedDeleteIdxLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
         il.Emit(OpCodes.Call, objectDeletion.Property);
-        il.Emit(OpCodes.Ret);
+        if (strict)
+        {
+            il.Emit(OpCodes.Brtrue, trueLabel);
+            EmitDeleteIndexFail("Cannot delete property of function");
+        }
+        else
+        {
+            il.Emit(OpCodes.Ret);
+        }
 
         // Promise callback wrappers retain their existing PDS/metadata path.
         il.MarkLabel(tsFunctionDeleteIdxLabel);

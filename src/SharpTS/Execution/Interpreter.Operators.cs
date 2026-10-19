@@ -1129,9 +1129,9 @@ public partial class Interpreter
                 DeleteBuiltInConstructorProperty(constructor, name),
             IBuiltInFunctionMetadata builtInFn => builtInFn.DeleteMetadataProperty(name),
             SharpTSFunction function => function.GetOwnPropertyDescriptor(name) is null
-                || function.DeleteProperty(name),
+                || CompleteFunctionPropertyDeletion(function.DeleteProperty(name), name, strictMode),
             SharpTSArrowFunction arrow => arrow.GetOwnPropertyDescriptor(name) is null
-                || arrow.DeleteProperty(name),
+                || CompleteFunctionPropertyDeletion(arrow.DeleteProperty(name), name, strictMode),
             Dictionary<string, object?> dict => dict.Remove(name),
             _ => true // Deleting non-existent property on primitive returns true
         };
@@ -1206,6 +1206,14 @@ public partial class Interpreter
             SharpTSFunctionPrototype prototype => prototype.DeleteBySymbolStrict(symbol, strictMode),
             _ => true
         };
+    }
+
+    private static bool CompleteFunctionPropertyDeletion(bool deleted, string name, bool strictMode)
+    {
+        if (!deleted && strictMode)
+            throw new ThrowException(new SharpTSTypeError(
+                $"Cannot delete non-configurable property '{name}' of function"));
+        return deleted;
     }
 
     private static bool DeleteClassPrototypeProperty(

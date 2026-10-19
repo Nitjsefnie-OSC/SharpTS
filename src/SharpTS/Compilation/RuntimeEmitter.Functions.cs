@@ -904,9 +904,9 @@ public partial class RuntimeEmitter
         il.MarkLabel(noOwnShadow);
 
         // BoundFunctionCreate snapshots the target's actual internal prototype.
-        // Only name/length are synthesized own slots; every other property must
-        // follow that retained link, including an explicitly null prototype.
-        // Keep ordinary function lookup on its existing path (#2359).
+        // Only name/length are synthesized own slots; every other bound property
+        // follows that retained link, including an explicitly null prototype.
+        // Ordinary functions share this inherited path for deleted own metadata.
         var boundPrototypeLookup = il.DefineLabel();
         var ordinaryFunctionLookup = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -917,7 +917,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, ordinaryFunctionLookup);
         il.MarkLabel(boundPrototypeLookup);
         var boundMetadata = il.DefineLabel();
-        var inheritedBoundProperty = il.DefineLabel();
+        var inheritedFunctionProperty = il.DefineLabel();
         foreach (string metadata in new[] { "name", "length" })
         {
             il.Emit(OpCodes.Ldarg_1);
@@ -925,20 +925,21 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, _types.StringOpEquality);
             il.Emit(OpCodes.Brtrue, boundMetadata);
         }
-        il.Emit(OpCodes.Br, inheritedBoundProperty);
+        il.Emit(OpCodes.Br, inheritedFunctionProperty);
         il.MarkLabel(boundMetadata);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
         il.Emit(OpCodes.Brfalse, ordinaryFunctionLookup);
-        il.MarkLabel(inheritedBoundProperty);
-        var boundPrototype = il.DeclareLocal(_types.Object);
+        // A deleted own metadata slot uses this same actual-parent lookup.
+        il.MarkLabel(inheritedFunctionProperty);
+        var inheritedPrototype = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
-        il.Emit(OpCodes.Stloc, boundPrototype);
-        il.Emit(OpCodes.Ldloc, boundPrototype);
+        il.Emit(OpCodes.Stloc, inheritedPrototype);
+        il.Emit(OpCodes.Ldloc, inheritedPrototype);
         il.Emit(OpCodes.Brfalse, missLabel);
-        il.Emit(OpCodes.Ldloc, boundPrototype);
+        il.Emit(OpCodes.Ldloc, inheritedPrototype);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, inputs.ReflectGet);
@@ -1278,16 +1279,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.FunctionValues.Type);
         il.Emit(OpCodes.Brfalse, lengthNotTSFunctionLabel);
-        // If `length` was deleted on this $TSFunction, return undefined
-        // instead of the cached spec value (ECMA-262 §17 configurable).
-        var lengthDeletedSkipLabel = il.DefineLabel();
+        // Deleted own metadata must continue through the actual prototype.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "length");
         il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
-        il.Emit(OpCodes.Brfalse, lengthDeletedSkipLabel);
-        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(lengthDeletedSkipLabel);
+        il.Emit(OpCodes.Brtrue, inheritedFunctionProperty);
         // It's a $TSFunction - call get_Length()
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, inputs.FunctionValues.Type);
@@ -1402,17 +1398,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "");
         il.Emit(OpCodes.Br, nameEndLabel);
 
-        // It's a $TSFunction. If `name` was deleted on this instance, the
-        // property is gone — return undefined instead of the cached value.
+        // Deleting the own name exposes the inherited property with func as Receiver.
         il.MarkLabel(nameIsTSFunctionLabel);
-        var nameDeletedSkipLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "name");
         il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
-        il.Emit(OpCodes.Brfalse, nameDeletedSkipLabel);
-        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(nameDeletedSkipLabel);
+        il.Emit(OpCodes.Brtrue, inheritedFunctionProperty);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, inputs.FunctionValues.Type);
         il.Emit(OpCodes.Call, inputs.FunctionValues.NameGetter);

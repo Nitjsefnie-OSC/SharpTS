@@ -26,8 +26,7 @@ public sealed class ForwardedIntrinsicReturnTests
         }];
     }
 
-    // Remaining interpreter dispatch gap: #2542 (string prototype).
-    // The includes cast also avoids checker gap #2543.
+    // The includes cast avoids checker gap #2543.
     // Their strict TypeScript/Node and fully verified saved baselines are recorded in
     // artifacts/p1-bugs/2299-followup-prep/baseline-controls; preserve correct compiler behavior.
     public static IEnumerable<object[]> CompiledCases()
@@ -78,7 +77,8 @@ public sealed class ForwardedIntrinsicReturnTests
             new object[] { row[0], row[1], mode }))
         .Concat(CompiledCases()
             .Where(row => (string)row[0] is "number-parameter-shadow" or "number-member-mutation"
-                or "math-parameter-shadow" or "math-member-mutation" or "global-parseint-mutation")
+                or "math-parameter-shadow" or "math-member-mutation" or "global-parseint-mutation"
+                or "string-indexof-prototype-mutation" or "string-includes-prototype-mutation")
             .Select(row => new object[] { row[0], row[1], ExecutionMode.Interpreted }));
 
     [Theory, MemberData(nameof(ModeCases))]

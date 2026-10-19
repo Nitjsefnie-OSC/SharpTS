@@ -326,6 +326,12 @@ internal sealed class StringPrototypeMethodWrapper : ISharpTSCallable, IBuiltInF
                 $"String.prototype.{_name} called on null or undefined"));
         }
 
+        // The string implementation already performs protocol dispatch and
+        // observable argument reads. Use it directly when no receiver coercion
+        // is needed, rather than repeating those operations in the generic adapter.
+        if (_receiver is string text)
+            return _inner.Bind(text).Call(interpreter, arguments);
+
         if (_name is "replace" or "replaceAll"
             && StringBuiltIns.TryInvokeCustomReplace(
                 interpreter, _receiver, arguments,

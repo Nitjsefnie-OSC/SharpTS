@@ -462,6 +462,26 @@ public partial class Interpreter
                 continue;
             }
 
+            if (current is string text)
+            {
+                if (name == "length") return (double)text.Length;
+                if (PropertySemantics.TryGetArrayIndex(name, out uint index) && index < text.Length)
+                    return text[(int)index].ToString();
+                current = GetStringPrototype();
+                continue;
+            }
+
+            if (current is SharpTSStringPrototype stringPrototype)
+            {
+                if (TryReadDescriptor(stringPrototype.GetOwnPropertyDescriptor(name),
+                        receiver, out var prototypeValue))
+                    return prototypeValue;
+                if (stringPrototype.HasOwnProperty(name))
+                    return stringPrototype.GetMember(name);
+                current = ObjectBuiltIns.PrototypeOf(this, stringPrototype);
+                continue;
+            }
+
             if (current is bool)
             {
                 var prototype = GetBooleanPrototype();
@@ -1253,6 +1273,11 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(GetPropertyValue(obj, get.Name.Lexeme));
 
         if (NeedsLiveFunctionPrototypeRead(obj, get.Name.Lexeme))
+            return RuntimeValue.FromBoxed(GetPropertyValue(obj, get.Name.Lexeme));
+
+        // Strings retain their own length/characters, then inherit live realm
+        // descriptors. Return raw methods; only a member call supplies this.
+        if (obj is string)
             return RuntimeValue.FromBoxed(GetPropertyValue(obj, get.Name.Lexeme));
 
         var category = TypeCategoryResolver.ClassifyRuntime(obj);

@@ -228,6 +228,79 @@ public sealed class GlobalParseIntBindingTests
             }
             run().catch((error: any) => console.log("unexpected", error && error.name));
             """, "17 argument,call\n"];
+        yield return ["deleted-binding-throws-before-call-arguments-with-lexical-shadows", """
+            const target: any = globalThis;
+            const original = Object.getOwnPropertyDescriptor(target, 'parseInt')!;
+            let argumentsRead = 0;
+            function argument() { argumentsRead++; return '7'; }
+            function local() { const parseInt = (_text: string, _radix?: number) => 17; return parseInt('7', 10); }
+            function parameter(parseInt: any) { return () => parseInt('8', 10); }
+            try {
+                delete target.parseInt;
+                console.log(typeof parseInt, typeof (parseInt), Object.hasOwn(target, 'parseInt'));
+                try { const value = parseInt; console.log('unexpected', value); }
+                catch (error) { console.log(error instanceof ReferenceError); }
+                try { const value = (parseInt); console.log('unexpected', value); }
+                catch (error) { console.log(error instanceof ReferenceError); }
+                try { parseInt(argument(), 10); }
+                catch (error) { console.log(error instanceof ReferenceError, argumentsRead); }
+                console.log(local(), parameter(() => 23)(), argumentsRead);
+            } finally { Object.defineProperty(target, 'parseInt', original); }
+            console.log(parseInt('12', 10));
+            """, "undefined undefined false\ntrue\ntrue\ntrue 0\n17 23 0\n12\n"];
+        yield return ["present-undefined-null-and-number-are-values-with-noncallable-errors", """
+            const target: any = globalThis;
+            const original = Object.getOwnPropertyDescriptor(target, 'parseInt')!;
+            const values: any[] = [undefined, null, 5];
+            let argumentsRead = 0;
+            function argument() { argumentsRead++; return '7'; }
+            try {
+                for (const current of values) {
+                    target.parseInt = current;
+                    const held: any = parseInt;
+                    console.log(held === current, typeof parseInt, Object.hasOwn(target, 'parseInt'));
+                    argumentsRead = 0;
+                    try { parseInt(argument(), 10); }
+                    catch (error) { console.log(error instanceof TypeError, argumentsRead); }
+                }
+                delete target.parseInt;
+                target.parseInt = undefined;
+                console.log('revived', parseInt === undefined, typeof parseInt);
+                delete target.parseInt;
+                target.parseInt = (_text: string, _radix?: number) => 23;
+                const revived = parseInt;
+                console.log(revived === target.parseInt, parseInt('7', 10), revived('8', 10));
+            } finally { Object.defineProperty(target, 'parseInt', original); }
+            console.log(parseInt('12', 10));
+            """, "true undefined true\ntrue 1\ntrue object true\ntrue 1\ntrue number true\ntrue 1\nrevived true undefined\ntrue 23 23\n12\n"];
+        yield return ["deleted-binding-typeof-and-read-after-await-in-both-async-forms", """
+            const target: any = globalThis;
+            const original = Object.getOwnPropertyDescriptor(target, 'parseInt')!;
+            async function declaration() {
+                await Promise.resolve(0);
+                console.log('declaration', typeof parseInt, typeof (parseInt));
+                try { const held = parseInt; console.log('value', held === undefined); }
+                catch (error) { console.log(error instanceof ReferenceError); }
+            }
+            const arrow = async () => {
+                await Promise.resolve(0);
+                console.log('arrow', typeof parseInt, typeof (parseInt));
+                try { const held = parseInt; console.log('value', held === undefined); }
+                catch (error) { console.log(error instanceof ReferenceError); }
+            };
+            async function run() {
+                try {
+                    delete target.parseInt;
+                    await declaration();
+                    await arrow();
+                    target.parseInt = undefined;
+                    await declaration();
+                    await arrow();
+                } finally { Object.defineProperty(target, 'parseInt', original); }
+                console.log(parseInt('12', 10));
+            }
+            run().catch((error: any) => console.log('unexpected', error && error.name));
+            """, "declaration undefined undefined\ntrue\narrow undefined undefined\ntrue\ndeclaration undefined undefined\nvalue true\narrow undefined undefined\nvalue true\n12\n"];
     }
 
     public static IEnumerable<object[]> SavedCases() => Cases().Where(row => (string)row[0] is
@@ -235,19 +308,24 @@ public sealed class GlobalParseIntBindingTests
         "async-accessor-callee-read-before-awaited-argument" or "throwing-accessor-suppresses-arguments" or
         "dot-bracket-writes-and-captured-values" or "local-parameter-let-and-captured-shadows" or
         "pending-argument-keeps-descriptor-callee-snapshot" or
-        "reflect-and-map-descriptor-installs-share-the-global-binding" or "dot-assigned-awaited-argument-control");
+        "reflect-and-map-descriptor-installs-share-the-global-binding" or "dot-assigned-awaited-argument-control" or
+        "delete-and-restore-global-function" or "deleted-binding-throws-before-call-arguments-with-lexical-shadows" or
+        "present-undefined-null-and-number-are-values-with-noncallable-errors" or
+        "deleted-binding-typeof-and-read-after-await-in-both-async-forms");
 
     public static IEnumerable<object[]> ModeCases()
     {
         foreach (var row in Cases())
         {
             // Interpreter Reflect.defineProperty refuses the global target; that separate owner is under audit.
-            // Keep its full source and assertions active in compiled and isolated saved coverage.
-            if ((string)row[0] != "reflect-and-map-descriptor-installs-share-the-global-binding")
+            // Interpreter typeof of a grouped missing binding also throws; that separate owner is under audit.
+            // Keep these full sources and assertions active in compiled and isolated saved coverage.
+            if ((string)row[0] is not ("reflect-and-map-descriptor-installs-share-the-global-binding" or
+                "deleted-binding-throws-before-call-arguments-with-lexical-shadows" or
+                "deleted-binding-typeof-and-read-after-await-in-both-async-forms"))
                 yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             // The qualified compiled call in the original issue source is #2539.
-            // A deleted global's compiled bare read returns undefined instead of throwing (#2696).
-            if ((string)row[0] is not ("issue" or "delete-and-restore-global-function"))
+            if ((string)row[0] != "issue")
                 yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
     }

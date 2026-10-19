@@ -2287,7 +2287,39 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // including state-machine bodies; direct static eval keeps its own lowering.
         if (TryEmitIndirectEvalValue(name)) return true;
 
+        if (name == "parseInt")
+        {
+            EmitGlobalParseIntRead(IL, Ctx);
+            SetStackUnknown();
+            return true;
+        }
+
         return false;
+    }
+
+    // A global identifier read must distinguish a missing binding from a present
+    // property whose value is undefined. Qualified property reads remain unchecked.
+    internal static void EmitGlobalParseIntRead(
+        ILGenerator il, CompilationContext ctx, bool allowMissing = false)
+    {
+        il.Emit(OpCodes.Ldstr, "parseInt");
+        il.Emit(OpCodes.Call, allowMissing
+            ? ctx.Runtime!.GlobalObject.GetProperty
+            : ctx.Runtime!.GlobalObject.GetBinding);
+    }
+
+    protected bool TryEmitGlobalParseIntTypeOf(Expr operand)
+    {
+        if (ExpressionUnwrapper.Unwrap(operand) is not Expr.Variable { Name.Lexeme: "parseInt" }
+            || Resolver.HasVariable("parseInt") || Ctx.HasVisibleValueBinding("parseInt"))
+            return false;
+
+        // Parentheses preserve an identifier reference's typeof exemption.
+        // Still perform the property read so present accessors run normally.
+        EmitGlobalParseIntRead(IL, Ctx, allowMissing: true);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.Operators.TypeOf);
+        SetStackType(StackType.String);
+        return true;
     }
 
     protected bool TryEmitIndirectEvalValue(string name)
@@ -2797,7 +2829,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 break;
             case TokenType.TYPEOF:
                 // typeof never throws on undeclared variables - returns "undefined"
-                if (u.Right is Expr.Variable { Name.Lexeme: "Proxy" })
+                if (TryEmitGlobalParseIntTypeOf(u.Right))
+                {
+                    break;
+                }
+                else if (u.Right is Expr.Variable { Name.Lexeme: "Proxy" })
                 {
                     _helpers.IL.Emit(OpCodes.Ldstr, "function");
                     _helpers.SetStackUnknown();

@@ -632,7 +632,11 @@ public partial class ILEmitter
 
             case TokenType.TYPEOF:
                 // typeof never throws on undeclared variables - returns "undefined"
-                if (u.Right is Expr.Variable { Name.Lexeme: "Proxy" })
+                if (TryEmitGlobalParseIntTypeOf(u.Right))
+                {
+                    break;
+                }
+                else if (u.Right is Expr.Variable { Name.Lexeme: "Proxy" })
                 {
                     IL.Emit(OpCodes.Ldstr, "function");
                 }

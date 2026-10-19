@@ -64,6 +64,8 @@ public partial class RuntimeEmitter
                 runtime.DescriptorStorage.DescriptorWritable.GetGetMethod()!,
                 runtime.DescriptorStorage.DescriptorValue.GetSetMethod()!,
                 runtime.DescriptorStorage.TryGetSetter, runtime.Invocation.Method));
+        EmitGlobalThisGetBinding(runtime.GlobalObject,
+            runtime.ObjectOwnProperties.HasOwnProperty, runtime.Errors.ThrowUndefinedVariable);
         runtime.GlobalObject.CompleteEmission();
     }
 
@@ -87,6 +89,39 @@ public partial class RuntimeEmitter
         MethodBuilder TryGetSetter, MethodBuilder InvokeMethod);
 
     private readonly record struct UriComponentInputs(ConstructorBuilder? PadUndefinedCtor, MethodBuilder ToJsString);
+
+    private void EmitGlobalThisGetBinding(
+        EmittedGlobalObjectRuntime globalObject,
+        MethodBuilder hasOwnProperty,
+        MethodBuilder throwUndefinedVariable)
+    {
+        var il = globalObject.GetBinding.GetILGenerator();
+        var present = il.DefineLabel();
+        var checkOwn = il.DefineLabel();
+
+        // Assignment revives a deleted global through the private dictionary,
+        // even when its deletion marker remains. Presence must not invoke a getter.
+        il.Emit(OpCodes.Ldsfld, globalObject.Properties);
+        il.Emit(OpCodes.Brfalse, checkOwn);
+        il.Emit(OpCodes.Ldsfld, globalObject.Properties);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(
+            _types.DictionaryStringObject, "ContainsKey", _types.String));
+        il.Emit(OpCodes.Brtrue, present);
+        il.MarkLabel(checkOwn);
+        il.Emit(OpCodes.Ldsfld, globalObject.SingletonField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, hasOwnProperty);
+        il.Emit(OpCodes.Brtrue, present);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, throwUndefinedVariable);
+        il.MarkLabel(present);
+
+        // Only the actual property read invokes an accessor, exactly once.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, globalObject.GetProperty);
+        il.Emit(OpCodes.Ret);
+    }
 
     private void EmitUriComponentFunctions(TypeBuilder typeBuilder, EmittedUriComponentRuntime uriComponents, UriComponentInputs inputs)
     {

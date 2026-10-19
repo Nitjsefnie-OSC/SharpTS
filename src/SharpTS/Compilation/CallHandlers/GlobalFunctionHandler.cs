@@ -23,10 +23,13 @@ public class GlobalFunctionHandler : ICallHandler
         if (emitter.HasVariable(v.Name.Lexeme))
             return false;
 
+        if (v.Name.Lexeme == "parseInt" && ctx.HasVisibleValueBinding("parseInt"))
+            return false;
+
         if (v.Name.Lexeme == "parseInt"
             && ctx.RuntimeFeatures?.UsesGlobalParseIntMutation == true)
         {
-            return EmitLiveGlobalFunctionCall(emitter, il, ctx, call, "parseInt");
+            return EmitLiveGlobalParseIntCall(emitter, il, ctx, call);
         }
 
         return v.Name.Lexeme switch
@@ -47,18 +50,16 @@ public class GlobalFunctionHandler : ICallHandler
         };
     }
 
-    private static bool EmitLiveGlobalFunctionCall(
+    private static bool EmitLiveGlobalParseIntCall(
         IEmitterContext emitter,
         System.Reflection.Emit.ILGenerator il,
         CompilationContext ctx,
-        Expr.Call call,
-        string name)
+        Expr.Call call)
     {
         // A bare call to a mutable global binding must observe the current
         // globalThis property. Undefined preserves ordinary call-this binding:
         // sloppy functions receive globalThis and strict functions keep undefined.
-        il.Emit(System.Reflection.Emit.OpCodes.Ldstr, name);
-        il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.GlobalObject.GetProperty);
+        ExpressionEmitterBase.EmitGlobalParseIntRead(il, ctx);
         var callee = emitter.SpillStackToObjectLocal();
 
         // Keep the selected callable off the evaluation stack while arguments can suspend. The
@@ -66,7 +67,7 @@ public class GlobalFunctionHandler : ICallHandler
         emitter.EmitArgsArrayWithSpread(call.Arguments);
         var arguments = il.DeclareLocal(ctx.Types.ObjectArray);
         il.Emit(System.Reflection.Emit.OpCodes.Stloc, arguments);
-        il.Emit(System.Reflection.Emit.OpCodes.Ldsfld, ctx.Runtime.Sentinels.UndefinedInstance);
+        il.Emit(System.Reflection.Emit.OpCodes.Ldsfld, ctx.Runtime!.Sentinels.UndefinedInstance);
         il.Emit(System.Reflection.Emit.OpCodes.Ldloc, callee);
         il.Emit(System.Reflection.Emit.OpCodes.Ldloc, arguments);
         il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime.Invocation.Method);

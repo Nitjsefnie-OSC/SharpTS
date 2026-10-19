@@ -354,36 +354,37 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notSharpTSArrayLengthLabel);
-        // Numeric-string index — same purpose as the list branch above:
-        // proto-chain walks (`f.__proto__ === [1,2,3]; f[0]`) bottom out here
-        // when the prototype is a $Array. Without this, GetListProperty returns
-        // null for any digit-string name and the array element is invisible.
-        var tsArrIdxLocal = il.DeclareLocal(_types.Int32);
+        // Array indices retain their full uint32 range in both indexed and
+        // named Get paths, including sparse storage and prototype-chain reads.
+        var tsArrIdxLocal = il.DeclareLocal(_types.UInt32);
         var tsArrayPrototypeFallback = il.DefineLabel();
         var readArrayPrototype = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloca, tsArrIdxLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.UInt32, "TryParse", _types.String, _types.UInt32.MakeByRefType()));
         var tsArrNotIndexLabel = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, tsArrNotIndexLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, tsArrIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.UInt32, "ToString"));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, tsArrNotIndexLabel);
         il.Emit(OpCodes.Ldloc, tsArrIdxLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Blt, tsArrNotIndexLabel);
-        il.Emit(OpCodes.Ldloc, tsArrIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Conv_U4);
+        il.Emit(OpCodes.Beq, tsArrNotIndexLabel);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.ListOfObject);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, tsArrayPrototypeFallback);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Castclass, inputs.ArrayStorage.Type);
         il.Emit(OpCodes.Ldloc, tsArrIdxLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        var tsArrayIndexPresent = il.DefineLabel();
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Isinst, inputs.ArrayStorage.HoleType);
-        il.Emit(OpCodes.Brfalse, tsArrayIndexPresent);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Br, tsArrayPrototypeFallback);
+        il.Emit(OpCodes.Conv_U8);
+        il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.HasIndex);
+        il.Emit(OpCodes.Brfalse, tsArrayPrototypeFallback);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, inputs.ArrayStorage.Type);
+        il.Emit(OpCodes.Ldloc, tsArrIdxLocal);
+        il.Emit(OpCodes.Conv_U8);
+        il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.GetLong);
+        il.Emit(OpCodes.Ret);
         il.MarkLabel(tsArrayPrototypeFallback);
         var tsArrayNoDescriptorFallback = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, tsArrayDescriptorLocal);
@@ -393,8 +394,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(tsArrayNoDescriptorFallback);
         il.Emit(OpCodes.Br, readArrayPrototype);
-        il.MarkLabel(tsArrayIndexPresent);
-        il.Emit(OpCodes.Ret);
         il.MarkLabel(tsArrNotIndexLabel);
 
         // An explicit prototype replaces the inherited Array surface while

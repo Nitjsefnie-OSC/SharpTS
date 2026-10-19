@@ -1693,9 +1693,7 @@ public partial class Interpreter
         // `Get(result, "0")`) rely on this — without it, numeric-string Get
         // returns undefined and the algorithm reads the wrong value.
         if (obj is SharpTSArray arrIdx
-            && long.TryParse(memberName, System.Globalization.NumberStyles.None,
-                System.Globalization.CultureInfo.InvariantCulture, out long idx)
-            && idx >= 0 && idx < arrIdx.Length
+            && PropertySemantics.TryGetArrayIndex(memberName, out uint idx)
             && arrIdx.HasIndex(idx))
         {
             return GetArrayIndexValue(arrIdx, idx);

@@ -832,30 +832,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(tsArrayIndexIsPrimitiveLabel);
 
-        // Non-numeric string index → route as named-property get (ECMA-262
-        // §23.1.5). Convert.ToInt64("foo") throws FormatException — pre-fix
-        // the array would crash when verifyProperty did `arr["foo"]` on a
-        // PDS-installed named property.
-        var tsArrayStringIdxLabel = il.DefineLabel();
-        var tsArrayProceedToInt64Label = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brtrue, tsArrayStringIdxLabel);
-        il.Emit(OpCodes.Br, tsArrayProceedToInt64Label);
-        il.MarkLabel(tsArrayStringIdxLabel);
-        var tsArrayStrIdxParsed = il.DeclareLocal(_types.Int32);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, _types.String);
-        il.Emit(OpCodes.Ldloca, tsArrayStrIdxParsed);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
-        il.Emit(OpCodes.Brtrue, tsArrayProceedToInt64Label);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, _types.String);
-        il.Emit(OpCodes.Call, objectRead.Property);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(tsArrayProceedToInt64Label);
-
         // ECMA-262 6.1.7: array indexes are uint32 < 2^32-1. Indexes ≥ 2^32-1
         // (or negative) are NOT array indexes — they're regular named
         // properties. Route those via GetProperty(arr, idx.ToString()) so

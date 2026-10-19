@@ -159,15 +159,18 @@ internal static class GlobalFunctionHandlers
             return RuntimeValue.FromNumber(double.NaN);
 
         var strRV = await evaluateArg(arguments[0]);
+        var radixRV = arguments.Count > 1
+            ? await evaluateArg(arguments[1])
+            : RuntimeValue.Undefined;
+
+        // Evaluate the supplied radix before converting either value. Input
+        // string conversion still precedes radix number conversion.
         var str = strRV.IsString
             ? strRV.AsString()
             : interpreter.ToStringForBuiltInArgument(strRV.ToObject());
-        int radix = 0;
-        if (arguments.Count > 1)
-        {
-            var radixRV = await evaluateArg(arguments[1]);
-            radix = unchecked((int)interpreter.ToUint32(radixRV.ToObject()));
-        }
+        int radix = arguments.Count > 1
+            ? unchecked((int)interpreter.ToUint32(radixRV.ToObject()))
+            : 0;
         return RuntimeValue.FromNumber(NumberBuiltIns.ParseInt(str, radix));
     }
 

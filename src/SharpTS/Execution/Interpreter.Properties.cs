@@ -2079,6 +2079,8 @@ public partial class Interpreter
                 return RuntimeValue.FromBoxed(GetPropertyValue(functionPrototype, memberName, simpleObj));
             if (current is SharpTSClassPrototype classPrototype)
                 return RuntimeValue.FromBoxed(GetPropertyValue(classPrototype, memberName, simpleObj));
+            if (current is SharpTSMath mathPrototype)
+                return RuntimeValue.FromBoxed(GetPropertyValue(mathPrototype, memberName, simpleObj));
             // `function Foo(){}; Foo.prototype = new Array(1,2,3)` — an array standing in as a
             // prototype. Instances must inherit both its own indexed/named data and the
             // Array.prototype methods, the latter applied to the *original* receiver so

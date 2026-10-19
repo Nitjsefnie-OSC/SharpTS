@@ -1649,20 +1649,11 @@ public partial class RuntimeEmitter
         //   - sparse transition past SparseThreshold
         //   - internal _isFrozen check (silently no-ops on frozen arrays;
         //     strict-mode wraps via SetIndexStrict)
-        // Legacy FrozenObjectsField check kept for pre-M2 paths that froze
-        // the $Array via the global weak table instead of arr.Freeze().
         // Per ECMA-262 6.1.7: array indexes are uint32 < 2^32-1. Indexes ≥
         // 2^32-1 are NOT array indexes — they're regular named properties.
         // Route those via SetProperty(arr, idx.ToString(), value) so the
         // $Array PDS-data-store fallback picks them up. Without this, $Array.Set
         // throws RangeError for `a[4294967295] = X`.
-        var tsArrayFrozenLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloca, tsArrayFrozenLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
-        il.Emit(OpCodes.Brtrue, nullLabel); // Frozen — silently return
-
         var tsArraySetKeyLocal = il.DeclareLocal(_types.String);
         var idxLong = il.DeclareLocal(_types.Int64);
         il.Emit(OpCodes.Ldarg_1);
@@ -1675,22 +1666,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(
             _types.Int64, "TryParse", _types.String, _types.Int64.MakeByRefType()));
         il.Emit(OpCodes.Brfalse, routeAsNamedLabel);
-
-        // Non-extensible check: spec ECMA-262 §10.4.2 Array exotic [[Set]]
-        // delegates to OrdinarySet which rejects new-property additions on
-        // non-extensible receivers. For arrays, "new" means index >= length.
-        var tsArrayExtensibleLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, inputs.DescriptorStorage.IsExtensible);
-        il.Emit(OpCodes.Brtrue, tsArrayExtensibleLabel);
-        // Non-extensible: silently return if idx >= length (new index).
-        il.Emit(OpCodes.Ldloc, idxLong);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.ListOfObject);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Conv_I8);
-        il.Emit(OpCodes.Bge, nullLabel);
-        il.MarkLabel(tsArrayExtensibleLabel);
 
         // If idx < 0 OR idx >= 2^32-1, route to SetProperty (named property).
         var doArraySetLabel = il.DefineLabel();
@@ -1715,41 +1690,55 @@ public partial class RuntimeEmitter
         // Indexed descriptors participate in [[Set]] before array storage.
         var tsArraySetDescriptorLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
         var tsArraySetRawStorage = il.DefineLabel();
+        var tsArraySetNoOwnDescriptor = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, tsArraySetKeyLocal);
         il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
         il.Emit(OpCodes.Stloc, tsArraySetDescriptorLocal);
         il.Emit(OpCodes.Ldloc, tsArraySetDescriptorLocal);
-        il.Emit(OpCodes.Brfalse, tsArraySetRawStorage);
-        var tsArraySetterLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldloc, tsArraySetDescriptorLocal);
-        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, tsArraySetterLocal);
-        var tsArrayNoSetter = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, tsArraySetterLocal);
-        il.Emit(OpCodes.Brfalse, tsArrayNoSetter);
-        il.Emit(OpCodes.Ldloc, tsArraySetterLocal);
-        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
-        il.Emit(OpCodes.Brtrue, nullLabel);
+        il.Emit(OpCodes.Brfalse, tsArraySetNoOwnDescriptor);
+        EmitArrayDescriptorSetPolicy(
+            il, inputs.DescriptorStorage, inputs.UndefinedType, inputs.InvokeMethodValue,
+            tsArraySetDescriptorLocal, tsArraySetRawStorage, nullLabel);
+
+        il.MarkLabel(tsArraySetNoOwnDescriptor);
+        // A dense own element claims the key just like an own descriptor.
+        // Only a hole can dispatch through the current prototype chain.
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, tsArraySetterLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Call, inputs.InvokeMethodValue);
-        il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(tsArrayNoSetter);
-        il.Emit(OpCodes.Ldloc, tsArraySetDescriptorLocal);
-        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
-        il.Emit(OpCodes.Brtrue, nullLabel); // getter-only accessor
-        il.Emit(OpCodes.Ldloc, tsArraySetDescriptorLocal);
-        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorWritable.GetGetMethod()!);
-        il.Emit(OpCodes.Brfalse, nullLabel);
+        il.Emit(OpCodes.Castclass, inputs.ArrayStorage.Type);
+        il.Emit(OpCodes.Ldloc, idxLong);
+        il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.HasIndex);
+        il.Emit(OpCodes.Brtrue, tsArraySetRawStorage);
+        EmitArrayIndexPrototypeSetPolicy(
+            il, new ArrayIndexPrototypeSetInputs(inputs.DescriptorStorage,
+                inputs.InvokeMethodUnwrapped, inputs.InvokeMethodValue, inputs.ObjectDescriptors,
+                inputs.ObjectPrototypes, inputs.ObjectRead, inputs.ProxySelected,
+                inputs.ReflectAssignment, inputs.UndefinedType),
+            () => il.Emit(OpCodes.Ldloc, tsArraySetKeyLocal),
+            tsArraySetRawStorage, nullLabel);
+
         il.MarkLabel(tsArraySetRawStorage);
+        // Receiver integrity applies to data storage, after inherited setters
+        // have had the opportunity to handle the write without adding a slot.
+        var tsArrayFrozenLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, tsArrayFrozenLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brtrue, nullLabel);
+
+        var tsArrayExtensibleLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.IsExtensible);
+        il.Emit(OpCodes.Brtrue, tsArrayExtensibleLabel);
+        il.Emit(OpCodes.Ldloc, idxLong);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Bge, nullLabel);
+        il.MarkLabel(tsArrayExtensibleLabel);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, inputs.ArrayStorage.Type);
         il.Emit(OpCodes.Ldloc, idxLong);

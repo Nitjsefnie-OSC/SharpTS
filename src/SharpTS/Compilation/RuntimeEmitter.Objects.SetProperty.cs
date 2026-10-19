@@ -121,8 +121,14 @@ public partial class RuntimeEmitter
         EmittedArrayStorageRuntime ArrayStorage,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
+        MethodBuilder InvokeMethodUnwrapped,
         MethodBuilder InvokeMethodValue,
+        EmittedObjectDescriptorRuntime ObjectDescriptors,
+        EmittedObjectPrototypeRuntime ObjectPrototypes,
+        EmittedObjectReadRuntime ObjectRead,
         EmittedObjectStateRuntime ObjectState,
+        bool ProxySelected,
+        EmittedReflectAssignment? ReflectAssignment,
         EmittedStringCoercionRuntime StringCoercion,
         EmittedSymbolRuntime Symbols,
         Type UndefinedType
@@ -2489,6 +2495,112 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loop);
     }
 
+    private readonly record struct ArrayIndexPrototypeSetInputs(
+        EmittedDescriptorStorageRuntime DescriptorStorage,
+        MethodBuilder InvokeMethodUnwrapped,
+        MethodBuilder InvokeMethodValue,
+        EmittedObjectDescriptorRuntime ObjectDescriptors,
+        EmittedObjectPrototypeRuntime ObjectPrototypes,
+        EmittedObjectReadRuntime ObjectRead,
+        bool ProxySelected,
+        EmittedReflectAssignment? ReflectAssignment,
+        Type UndefinedType
+    );
+
+    // Empty stack on entry and every branch. A successful inherited setter or
+    // Proxy returns from SetIndex; data continues to the existing storage path
+    // after the nearest descriptor has claimed the key.
+    private void EmitArrayIndexPrototypeSetPolicy(
+        ILGenerator il, ArrayIndexPrototypeSetInputs inputs, Action loadKey,
+        Label writableData, Label reject)
+    {
+        var prototype = il.DeclareLocal(_types.Object);
+        var descriptor = il.DeclareLocal(_types.Object);
+        var setter = il.DeclareLocal(_types.Object);
+        var writable = il.DeclareLocal(_types.Object);
+        var loop = il.DefineLabel();
+        var next = il.DefineLabel();
+        var data = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Brfalse, writableData);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, writableData);
+
+        // A Proxy supplies [[Set]] itself. Do not replace it with observable
+        // descriptor/prototype probes or lose the original array receiver.
+        if (inputs.ProxySelected)
+        {
+            var proxy = il.DefineLabel();
+            var notProxy = il.DefineLabel();
+            EmitProxyTypeCheck(il, () => il.Emit(OpCodes.Ldloc, prototype), proxy, notProxy);
+            il.MarkLabel(proxy);
+            EmitProxySetCompiledCall(
+                il, new ProxySetCallInputs(inputs.ReflectAssignment!.Set,
+                    inputs.ObjectDescriptors.GetOwnPropertyDescriptor,
+                    inputs.ObjectRead.Property, inputs.InvokeMethodUnwrapped),
+                () => il.Emit(OpCodes.Ldloc, prototype), loadKey,
+                () => il.Emit(OpCodes.Ldarg_2), () => il.Emit(OpCodes.Ldarg_0));
+            il.Emit(OpCodes.Brfalse, reject);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notProxy);
+        }
+
+        il.Emit(OpCodes.Ldloc, prototype);
+        loadKey();
+        il.Emit(OpCodes.Call, inputs.ObjectDescriptors.GetOwnPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descriptor);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Brfalse, next);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, next);
+
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldstr, "set");
+        il.Emit(OpCodes.Ldloca, setter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
+        il.Emit(OpCodes.Brfalse, data);
+        il.Emit(OpCodes.Ldloc, setter);
+        il.Emit(OpCodes.Brfalse, data);
+        il.Emit(OpCodes.Ldloc, setter);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, data);
+        EmitInvokePdsSetterWithValueAndReturn(il, inputs.InvokeMethodValue, setter);
+
+        il.MarkLabel(data);
+        // Complete own data descriptors have a Boolean writable field;
+        // setterless accessors have none and must refuse rather than walking on.
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldstr, "writable");
+        il.Emit(OpCodes.Ldloca, writable);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
+        il.Emit(OpCodes.Brfalse, reject);
+        il.Emit(OpCodes.Ldloc, writable);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, reject);
+        il.Emit(OpCodes.Ldloc, writable);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, reject);
+        il.Emit(OpCodes.Ldloc, prototype);
+        loadKey();
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.IsWritable);
+        il.Emit(OpCodes.Brfalse, reject);
+        il.Emit(OpCodes.Br, writableData);
+
+        il.MarkLabel(next);
+        il.Emit(OpCodes.Ldloc, prototype);
+        il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, prototype);
+        il.Emit(OpCodes.Br, loop);
+    }
+
     /// <summary>
     /// Emits SetPropertyStrict(object obj, string name, object value, bool strictMode) -> void
     /// In strict mode, throws TypeError for modifications to frozen objects or new properties on sealed objects.
@@ -3341,9 +3453,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
         il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.HasIndex);
         il.Emit(OpCodes.Brtrue, strictArrayNoInheritedSetterLabel);
-        EmitInheritedArrayIndexSetPolicy(
-            il, inputs.DescriptorStorage, inputs.UndefinedType, inputs.InvokeMethodValue,
-            inputs.ArrayOperations.PrototypeField, () => il.Emit(OpCodes.Ldloc, strictArrayKeyLocal),
+        EmitArrayIndexPrototypeSetPolicy(
+            il, new ArrayIndexPrototypeSetInputs(inputs.DescriptorStorage,
+                inputs.InvokeMethodUnwrapped, inputs.InvokeMethodValue, inputs.ObjectDescriptors,
+                inputs.ObjectPrototypes, inputs.ObjectRead, inputs.ProxySelected,
+                inputs.ReflectAssignment, inputs.UndefinedType),
+            () => il.Emit(OpCodes.Ldloc, strictArrayKeyLocal),
             strictArrayNoInheritedSetterLabel, strictArrayRejectLabel);
 
         il.MarkLabel(strictArrayNoInheritedSetterLabel);

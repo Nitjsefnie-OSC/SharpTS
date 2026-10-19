@@ -78,6 +78,8 @@ public class AsyncArrowVariableResolver : IVariableResolver
             return lexicalThis;
         if (TryResolveOwnHoisted(name) is { } own)
             return own;
+        if (TryResolvePrivateSelf(name) is { } self)
+            return self;
         if (_builder.IsCaptured(name) && _builder.CapturedFieldMap.TryGetValue(name, out var captured))
             return AsyncArrowStorageAccess.CapturedField(_builder, name, captured);
         return null;
@@ -94,6 +96,12 @@ public class AsyncArrowVariableResolver : IVariableResolver
 
     internal AsyncArrowStorageAccess? TryResolveLocal(string name)
         => _locals.TryGetValue(name, out var local) ? AsyncArrowStorageAccess.Local(local) : null;
+
+    internal AsyncArrowStorageAccess? TryResolvePrivateSelf(string name)
+        => name == _builder.PrivateSelfName && _builder.PrivateSelfField is { } field
+            && !_builder.ParameterFields.ContainsKey(name) && !_builder.LocalFields.ContainsKey(name)
+            && !_locals.ContainsKey(name)
+                ? AsyncArrowStorageAccess.StateMachineField(field) : null;
 
     internal AsyncArrowStorageAccess GetOrCreateLocal(string name)
     {

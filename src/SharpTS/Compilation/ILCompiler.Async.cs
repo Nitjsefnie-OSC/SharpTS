@@ -760,6 +760,11 @@ public partial class ILCompiler
                     outerHoistedFields[name] = field;
                 foreach (var (name, field) in parentBuilder.LocalFields)
                     outerHoistedFields[name] = field;
+                // Read-only descendants retain the named expression's own
+                // binding even when no mutable display class was needed.
+                if (parentBuilder.PrivateSelfName is { } selfName
+                    && parentBuilder.PrivateSelfField is { } selfField)
+                    outerHoistedFields.TryAdd(selfName, selfField);
                 // Also include captured fields - they're accessible through parent's outer reference
                 // These are "transitive" captures - we need to go through parent's <>__outer to access them
                 HashSet<string> transitiveCaptures = [];

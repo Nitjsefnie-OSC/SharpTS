@@ -186,6 +186,17 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
                 _il.Emit(OpCodes.Ldfld, arguments);
                 _il.Emit(OpCodes.Stfld, capturedArguments);
             }
+            if (_builder.PrivateSelfName is { } selfName
+                && _builder.PrivateSelfField is { } self
+                && !_builder.PrivateSelfHasOwnShadow
+                && _builder.FunctionDCFieldMap.TryGetValue(selfName, out var capturedSelf))
+            {
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldfld, _builder.FunctionDCField);
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldfld, self);
+                _il.Emit(OpCodes.Stfld, capturedSelf);
+            }
             _il.MarkLabel(dcAlreadySet);
         }
 

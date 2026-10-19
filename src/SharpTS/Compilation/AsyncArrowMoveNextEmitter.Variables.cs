@@ -24,6 +24,14 @@ public partial class AsyncArrowMoveNextEmitter
         string name = v.Name.Lexeme;
 
         if (LexicalEnvironmentCellAccess.TryLoad(_il, Ctx, name)) { SetStackUnknown(); return; }
+        // An expression's private name precedes outer/module captures, while
+        // actual parameters and body declarations keep their ordinary storage.
+        if (_resolver!.TryResolvePrivateSelf(name) is { } selfStorage)
+        {
+            selfStorage.EmitLoad(_il);
+            SetStackUnknown();
+            return;
+        }
         // A declaration-owned IL local shadows surrounding captures. Display-class
         // storage still precedes potentially stale hoisted copies of promoted captures.
         if ((_resolver!.TryResolveLocal(name) ?? TryResolveDisplayClassStorage(name)) is { } displayStorage)

@@ -98,7 +98,7 @@ public sealed class AsyncFunctionExpressionCaptureTests
     [Fact]
     public void ReceiverViewsKeepCanonicalNamedSelfAndFunctionState()
     {
-        // #2679 owns compiled named async expression creation; retain the full runtime preservation control.
+        // #2769 owns eager compiled reads of the later selectedPrototype module binding.
         const string source = """
             const target: any = async function self(this: any) {
                 await Promise.resolve(0);

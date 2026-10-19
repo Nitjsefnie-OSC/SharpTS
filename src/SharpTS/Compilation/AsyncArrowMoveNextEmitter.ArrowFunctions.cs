@@ -191,9 +191,7 @@ public partial class AsyncArrowMoveNextEmitter
                 _il.Emit(OpCodes.Ldnull);
             }
 
-            Types.EmitLoadMethodInfoViaHandle(_il, nestedBuilder.StubMethod);
-            _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.FunctionConstruction.Constructor);
-            SetStackUnknown();
+            EmitAsyncFunctionValue(nestedBuilder);
             return;
         }
 
@@ -211,12 +209,6 @@ public partial class AsyncArrowMoveNextEmitter
                 "Async arrow with nested arrows does not have SelfBoxedField set.");
         }
 
-        // Load the stub method for the nested arrow
-        Types.EmitLoadMethodInfoViaHandle(_il, nestedBuilder.StubMethod);
-
-        // Create TSFunction(target: self boxed, method: stub)
-        _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.FunctionConstruction.Constructor);
-
-        SetStackUnknown();
+        EmitAsyncFunctionValue(nestedBuilder);
     }
 }

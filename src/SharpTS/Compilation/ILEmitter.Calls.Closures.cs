@@ -105,8 +105,6 @@ public partial class ILEmitter
 
     private void EmitAsyncArrowFunction(Expr.ArrowFunction af, AsyncArrowStateMachineBuilder arrowBuilder)
     {
-        var stubMethod = arrowBuilder.StubMethod;
-
         // For standalone async arrows with captures, TSFunction's "static method with target"
         // mechanism prepends the single target to the args. Pack EVERY captured value into one
         // object[] and pass it as that target; the stub unpacks each into its own field. One
@@ -150,13 +148,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldnull);
         }
 
-        // Load method info for the stub method
-        IL.Emit(OpCodes.Ldtoken, stubMethod);
-        IL.Emit(OpCodes.Call, _ctx.Types.MethodBaseGetMethodFromHandle);
-        IL.Emit(OpCodes.Castclass, _ctx.Types.MethodInfo);
-
-        // Create TSFunction
-        IL.Emit(OpCodes.Newobj, _ctx.Runtime!.FunctionConstruction.Constructor);
+        EmitAsyncFunctionValue(arrowBuilder);
     }
 
     private void EmitNonCapturingArrowFunction(Expr.ArrowFunction af, MethodBuilder method)

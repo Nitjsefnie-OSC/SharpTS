@@ -215,6 +215,7 @@ public partial class AsyncMoveNextEmitter : AsyncFunctionMoveNextEmitter, IEmitt
         if (parameters != null)
         {
             EmitDefaultParametersWithResumeGuard(parameters, body);
+            RegisterInitializedParameterNames(parameters, body);
         }
 
         // Emit the function body (will emit await points inline)

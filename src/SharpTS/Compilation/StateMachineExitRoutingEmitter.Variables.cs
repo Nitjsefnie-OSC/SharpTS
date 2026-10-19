@@ -5,6 +5,13 @@ namespace SharpTS.Compilation;
 
 public abstract partial class StateMachineExitRoutingEmitter
 {
+    protected void RegisterInitializedParameterNames(List<Stmt.Parameter> parameters, List<Stmt>? body)
+    {
+        Ctx.InitializedParameterNames = parameters.Select(parameter => parameter.Name.Lexeme)
+            .Concat(ParameterPatternBindings.Declarations(body).Select(binding => binding.Name.Lexeme))
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
     /// <summary>
     /// Checks whether a variable is a captured-AND-mutated function local routed through the shared
     /// function display class (#674/#725), i.e. the state machine holds a function DC and the name

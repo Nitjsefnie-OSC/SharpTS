@@ -162,8 +162,6 @@ public sealed class ParameterDefaultBodyScopeTests
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Where(mode => mode == ExecutionMode.Interpreted || (string)row[0] switch
             {
-                // #2662: compiled async no-initializer var resets an initialized parameter.
-                "async-uninitialized-var-preserves-parameter" => false,
                 // #2663: compiled nested defaults lose enclosing local capture storage.
                 "enclosing-local-default-outer-binding" => false,
                 _ => true

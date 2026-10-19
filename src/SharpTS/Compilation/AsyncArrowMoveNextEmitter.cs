@@ -197,6 +197,7 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
         if (parameters != null)
         {
             EmitDefaultParameters(parameters, body);
+            RegisterInitializedParameterNames(parameters, body);
         }
 
         // Emit the body
@@ -264,6 +265,10 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
         // Route a shadowing block-scoped binding to its own storage (#766).
         if (BlockScopeRenames.TryGetValue(v, out var renamed))
             v = v with { Name = RenameToken(v.Name, renamed) };
+
+        if (v.IsVar && v.Initializer is null
+            && Ctx.InitializedParameterNames?.Contains(v.Name.Lexeme) == true)
+            return;
 
         // A declaration owns local storage even when the module has a binding with
         // the same spelling. Unhoisted locals otherwise reach the global-store

@@ -120,19 +120,54 @@ public sealed class ClassWritableNameMetadataTests
             ordinary.name = "written";
             console.log(ordinary.name, Reflect.get(ordinary, "name"), Object.getOwnPropertyDescriptor(ordinary, "name")!.value);
             """, "written written written\ntrue\nwritten written written\n"];
+        yield return ["exact-strict-indexed-writable-class-name-and-length", """
+            function write(target: any, key: string) { "use strict"; target[key] = 8; }
+            class C {}
+            for (const key of ["name", "length"]) {
+                Object.defineProperty(C, key, { value: 7, writable: true, configurable: true });
+                try { write(C, key); console.log("accepted"); }
+                catch (error) { console.log(error instanceof TypeError); }
+                const descriptor = Object.getOwnPropertyDescriptor(C, key)!;
+                console.log(descriptor.value, descriptor.writable);
+            }
+            """, "accepted\n8 true\naccepted\n8 true\n"];
+        yield return ["nearest-metadata-descriptors-and-prototype-invariant-preservation", """
+            function sloppyWrite(target: any, key: string, value: any) { return target[key] = value; }
+            function strictWrite(target: any, key: string, value: any) { 'use strict'; return target[key] = value; }
+            class Base {}
+            class Child extends Base {}
+            const base: any = Base, child: any = Child;
+            const state = { gets: 0, sets: 0, stored: 0, same: false };
+            delete child.name;
+            delete child.length;
+            Object.defineProperty(base, 'name', { value: 4, writable: false, configurable: true });
+            Object.defineProperty(base, 'length', { get() { state.gets++; return 5; }, configurable: true });
+            console.log(sloppyWrite(child, 'name', 7), sloppyWrite(child, 'length', 7), state.gets,
+                Object.hasOwn(child, 'name'), Object.hasOwn(child, 'length'));
+            for (const key of ['name', 'length']) {
+                try { strictWrite(child, key, 9); console.log(false); }
+                catch (error) { console.log(error instanceof TypeError); }
+            }
+            console.log(state.gets, child.name, child.length, state.gets,
+                Object.hasOwn(child, 'name'), Object.hasOwn(child, 'length'));
+            Object.defineProperty(base, 'name', {
+                set(next: number) { state.sets++; state.stored = next; state.same = this === child; }, configurable: true
+            });
+            console.log(strictWrite(child, 'name', 13), state.sets, state.stored, state.same, Object.hasOwn(child, 'name'));
+            const originalPrototype = child.prototype;
+            const replacement = {};
+            console.log(sloppyWrite(child, 'prototype', replacement) === replacement, child.prototype === originalPrototype);
+            try { strictWrite(child, 'prototype', replacement); console.log(false); }
+            catch (error) { console.log(error instanceof TypeError); }
+            const descriptor = Object.getOwnPropertyDescriptor(child, 'prototype')!;
+            console.log(child.prototype === originalPrototype, descriptor.writable, descriptor.enumerable, descriptor.configurable);
+            """, "7 7 0 false false\ntrue\ntrue\n0 4 5 1 false false\n13 1 13 true false\ntrue true\ntrue\ntrue false false false\n"];
     }
 
     public static IEnumerable<object[]> SavedCases() => Cases();
 
-    // #2722 owns interpreter bracket writes to class name/length metadata.
-    // Preserve the full programs and Node expectations in compiled and saved modes.
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            .Where(mode => mode == ExecutionMode.Compiled || (string)row[0] is not
-                "class-state-and-constructor-identity-survive-renaming"
-                and not "generic-and-native-array-constructor-name-writes"
-                and not "readonly-name-refusal-and-reenabled-writes"
-                and not "typed-and-dynamic-dot-computed-name-writes")
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]

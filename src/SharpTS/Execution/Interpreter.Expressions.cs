@@ -1761,7 +1761,8 @@ public partial class Interpreter
         // writability. Other keys on a callable (user-stored fn[k] = v) aren't
         // supported here either; let them fall through to the spec-conformant
         // error.
-        if (obj is ISharpTSCallable && obj is not (SharpTSFunction or ISharpTSPrimitiveConstructor)
+        // Class metadata follows the descriptor-aware ClassString path below.
+        if (obj is ISharpTSCallable && obj is not (SharpTSFunction or ISharpTSPrimitiveConstructor or SharpTSClass)
             && index?.ToString() is "name" or "length")
         {
             if (strictMode)

@@ -1164,8 +1164,14 @@ public class SharpTSProxy : ISharpTSCallable
     internal bool TrapDefineField(object prop, object descriptor, Interpreter interpreter)
         => TrapDefinePropertyCore(prop, descriptor, interpreter, classField: true);
 
+    internal bool TrapDefineConvertedProperty(
+        object prop, SharpTSPropertyDescriptor descriptor, Interpreter interpreter)
+        => TrapDefinePropertyCore(prop, ObjectBuiltIns.ToPartialDescriptorObject(descriptor),
+            interpreter, classField: false, convertedDescriptor: descriptor);
+
     private bool TrapDefinePropertyCore(
-        object prop, object descriptor, Interpreter interpreter, bool classField)
+        object prop, object descriptor, Interpreter interpreter, bool classField,
+        SharpTSPropertyDescriptor? convertedDescriptor = null)
     {
         var trap = GetTrapCallable("defineProperty", interpreter);
         if (trap == null)
@@ -1176,6 +1182,8 @@ public class SharpTSProxy : ISharpTSCallable
                     SharpTSPropertyDescriptor.FromAnyObject(descriptor).Value);
                 return true;
             }
+            if (convertedDescriptor is not null && _target is SharpTSProxy convertedProxy)
+                return convertedProxy.TrapDefineConvertedProperty(prop, convertedDescriptor, interpreter);
             if (prop is SharpTSSymbol symbol && _target is SharpTSProxy symbolProxy)
                 return symbolProxy.TrapDefineProperty(symbol, descriptor, interpreter);
             try
@@ -1200,13 +1208,17 @@ public class SharpTSProxy : ISharpTSCallable
             }
         }
 
+        // Internal converted records stay isolated from Object.prototype during
+        // forwarding. Only a user trap receives the ordinary public object.
+        object trapDescriptor = convertedDescriptor is null ? descriptor
+            : ObjectBuiltIns.ToPartialDescriptorObject(convertedDescriptor, nullPrototype: false);
         bool trapResult = ToBoolean(InvokeTrap(
-            trap, interpreter, [_target, prop, descriptor]));
+            trap, interpreter, [_target, prop, trapDescriptor]));
         if (!trapResult) return false;
 
         object? targetDescriptor = GetTargetOwnPropertyDescriptor(prop, interpreter);
         bool targetHasProperty = targetDescriptor is not (null or SharpTSUndefined);
-        var requested = SharpTSPropertyDescriptor.FromAnyObject(descriptor);
+        var requested = convertedDescriptor ?? SharpTSPropertyDescriptor.FromAnyObject(descriptor);
         if (!targetHasProperty)
         {
             if (!TargetIsExtensible(_target))

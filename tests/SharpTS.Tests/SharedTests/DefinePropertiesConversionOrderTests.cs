@@ -104,6 +104,30 @@ public sealed class DefinePropertiesConversionOrderTests
             console.log(trace.join(","), target.first, target[key], receiver);
             console.log(Object.hasOwn(target, key), Reflect.ownKeys(target)[1] === key, Object.getOwnPropertyDescriptor(target, key)!.writable);
             """, "get-first,convert-first,get-symbol:0,convert-symbol:0 3 5 true\ntrue true false\n"];
+        yield return ["proxy-descriptor-public-prototype", """
+            const proxy: any = new Proxy({}, {
+                defineProperty(target: any, key: PropertyKey, descriptor: PropertyDescriptor) {
+                    console.log(Object.getPrototypeOf(descriptor) === Object.prototype);
+                    return true;
+                }
+            });
+            Object.defineProperties(proxy, { value: { value: 1 } });
+            """, "true\n"];
+        yield return ["transparent-proxy-keeps-normalized-descriptor-internal", """
+            const target: any = {}, empty: any = Object.create(null);
+            const proxy: any = new Proxy(target, {}), prototype: any = Object.prototype;
+            let reads = 0, caught = false;
+            const marker = {};
+            Object.defineProperty(prototype, "value", {
+                get() { reads++; throw marker; },
+                configurable: true
+            });
+            try { Object.defineProperties(proxy, { entry: empty }); }
+            catch (error) { caught = true; }
+            finally { delete prototype.value; }
+            console.log(caught, reads, Object.hasOwn(target, "entry"));
+            """, "false 0 true\n"];
+
     }
 
     // #2717: compiled valid descriptors are applied before all conversions finish.

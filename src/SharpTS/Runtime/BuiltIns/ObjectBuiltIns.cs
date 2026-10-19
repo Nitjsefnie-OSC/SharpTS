@@ -733,7 +733,7 @@ public static partial class ObjectBuiltIns
             switch (target)
             {
                 case SharpTSProxy symbolProxy:
-                    if (!symbolProxy.TrapDefineProperty(symKey, descriptorArg, interpreter))
+                    if (!symbolProxy.TrapDefineConvertedProperty(symKey, descriptor, interpreter))
                         throw new ThrowException(new SharpTSTypeError("Proxy defineProperty trap returned false"));
                     return target;
                 case SharpTSObject symObj:
@@ -928,8 +928,7 @@ public static partial class ObjectBuiltIns
                     throw new ThrowException(new SharpTSTypeError($"Cannot redefine property '{propertyKey}'"));
                 break;
             case SharpTSProxy proxy:
-                success = proxy.TrapDefineProperty(
-                    propertyKey, descriptorArg, interpreter);
+                success = proxy.TrapDefineConvertedProperty(propertyKey, descriptor, interpreter);
                 break;
             default:
                 throw new Exception("TypeError: Object.defineProperty called on non-object");
@@ -1511,9 +1510,14 @@ public static partial class ObjectBuiltIns
     // DefineProperties converts each descriptor before reading the next key,
     // but applies none until conversion succeeds for the entire key snapshot.
     // Retain omitted fields when handing the converted record to DefineProperty.
-    private static SharpTSObject ToPartialDescriptorObject(SharpTSPropertyDescriptor descriptor)
+    internal static SharpTSObject ToPartialDescriptorObject(
+        SharpTSPropertyDescriptor descriptor, bool nullPrototype = true)
     {
-        var result = new SharpTSObject([]) { PreserveCallableValueIdentity = true, IsNullPrototype = true };
+        var result = new SharpTSObject([])
+        {
+            PreserveCallableValueIdentity = true,
+            IsNullPrototype = nullPrototype,
+        };
         if (descriptor.HasValue) result.SetProperty("value", descriptor.Value);
         if (descriptor.HasWritable) result.SetProperty("writable", descriptor.Writable);
         if (descriptor.HasGet) result.SetProperty("get", descriptor.RawGet ?? SharpTSUndefined.Instance);

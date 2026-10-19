@@ -129,9 +129,9 @@ public partial class ILCompiler
         // If an inner arrow needs $functionDC, parent arrows also need it
         PropagateFunctionDCRequirements();
 
-        // Ordinary declarations can need a method's environment solely to create
+        // Ordinary declarations can need an enclosing environment solely to create
         // a capturing descendant. Resolve that typed-reference path before definitions.
-        ResolveInnerFunctionMethodDCSources();
+        ResolveInnerFunctionRelayDCSources();
 
         // Define arrow scope display classes (for arrow-local vars captured by nested arrows)
         // Skip async arrows - their bodies are emitted by async state machine emitters,

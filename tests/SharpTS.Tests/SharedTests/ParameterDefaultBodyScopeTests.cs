@@ -160,12 +160,6 @@ public sealed class ParameterDefaultBodyScopeTests
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            .Where(mode => mode == ExecutionMode.Interpreted || (string)row[0] switch
-            {
-                // #2663: compiled nested defaults lose enclosing local capture storage.
-                "enclosing-local-default-outer-binding" => false,
-                _ => true
-            })
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]

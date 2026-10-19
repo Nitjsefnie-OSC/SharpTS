@@ -365,12 +365,12 @@ public partial class Interpreter
     private bool CanUseRegistryNamespace(Expr.Variable reference)
         => IsRegistryOnlyNamespace(reference.Name.Lexeme)
             && !_locals.ContainsKey(reference)
-            && !_environment.TryGet(reference.Name.Lexeme, out _);
+            && !_environment.IsDefined(reference.Name.Lexeme);
 
     private bool CanUseGlobalThisRegistryNamespace(Expr.Variable reference, string name)
         => IsRegistryOnlyNamespace(name)
             && !_locals.ContainsKey(reference)
-            && !_environment.TryGet(reference.Name.Lexeme, out _)
+            && !_environment.IsDefined(reference.Name.Lexeme)
             && !GlobalThis.HasUserProperty(name);
 
     /// <summary>

@@ -2034,7 +2034,9 @@ public partial class Interpreter
         if (varStmt.IsVar && varStmt.Initializer is null && target.IsDefinedLocally(varStmt.Name.Lexeme))
             return ExecutionResult.Success();
         target.Define(varStmt.Name.Lexeme, value);
-        if (varStmt.IsVar && target.Enclosing is null)
+        // The REPL retains its legacy initial publication; classic Interpret
+        // bindings were registered at instantiation and already wrote through.
+        if (varStmt.IsVar && target.Enclosing is null && !target.HasObjectBinding(varStmt.Name.Lexeme))
             GlobalThis.SetProperty(varStmt.Name.Lexeme, value);
         return ExecutionResult.Success();
     }

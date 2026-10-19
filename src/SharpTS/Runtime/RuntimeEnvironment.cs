@@ -23,6 +23,7 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     private string? _directBindingName;
     private RuntimeValue _directBindingValue;
     private bool _hasDirectBinding;
+    private Dictionary<string, (Func<RuntimeValue> Read, Action<RuntimeValue, bool> Write)>? _objectBindings;
     private SharpTSClass? _privateClass;
     private bool? _staticSuper;
     private bool _ownsNewTarget;
@@ -134,8 +135,25 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
             _uninitializedLexicalNames = null;
     }
 
-    private void SetLocalValue(string name, RuntimeValue value)
+    // Only explicitly registered classic-global vars use object-backed storage.
+    // The dictionary slot records ownership; the object remains authoritative.
+    internal void DefineObjectBinding(
+        string name, Func<RuntimeValue> read, Action<RuntimeValue, bool> write)
     {
+        if (HasObjectBinding(name)) return;
+        Values[name] = RuntimeValue.Undefined;
+        (_objectBindings ??= new(StringComparer.Ordinal))[name] = (read, write);
+    }
+
+    internal bool HasObjectBinding(string name) => _objectBindings?.ContainsKey(name) == true;
+
+    private void SetLocalValue(string name, RuntimeValue value, bool? strictMode = null)
+    {
+        if (_objectBindings?.TryGetValue(name, out var binding) == true)
+        {
+            binding.Write(value, strictMode ?? IsStrictMode);
+            return;
+        }
         if (_hasDirectBinding && name == _directBindingName)
         {
             _directBindingValue = value;
@@ -191,8 +209,16 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     }
 
     public void Assign(Token name, RuntimeValue value)
+        => AssignCore(name, value, IsStrictMode);
+
+    private void AssignCore(Token name, RuntimeValue value, bool strictMode)
     {
         EnsureInitialized(name.Lexeme);
+        if (_objectBindings?.TryGetValue(name.Lexeme, out var binding) == true)
+        {
+            binding.Write(value, strictMode);
+            return;
+        }
         if (_hasDirectBinding && name.Lexeme == _directBindingName)
         {
             _directBindingValue = value;
@@ -210,7 +236,7 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
 
         if (Enclosing != null)
         {
-            Enclosing.Assign(name, value);
+            Enclosing.AssignCore(name, value, strictMode);
             return;
         }
 
@@ -240,7 +266,7 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     {
         RuntimeEnvironment environment = Ancestor(distance);
         environment.EnsureInitialized(name.Lexeme);
-        environment.SetLocalValue(name.Lexeme, value);
+        environment.SetLocalValue(name.Lexeme, value, IsStrictMode);
     }
 
     /// <summary>
@@ -336,6 +362,11 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     private bool TryGetLocal(string name, out RuntimeValue value)
     {
         EnsureInitialized(name);
+        if (_objectBindings?.TryGetValue(name, out var binding) == true)
+        {
+            value = binding.Read();
+            return true;
+        }
         if (_hasDirectBinding && name == _directBindingName)
         {
             value = _directBindingValue;

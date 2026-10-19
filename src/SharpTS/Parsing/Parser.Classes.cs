@@ -400,16 +400,11 @@ public partial class Parser
                 // Validate: computed properties cannot have access modifiers in TypeScript
                 // Actually TypeScript does allow this, so we'll support it
 
-                // Validate: declare cannot be used with computed properties
-                if (isMemberDeclare)
-                {
-                    throw new Exception($"Parse Error at line {Peek().Line}: 'declare' modifier cannot be used with computed property names.");
-                }
-
                 // Computed-name method ([Symbol.iterator]() {}) or field ([expr]: T = v).
                 ParseComputedClassMember(
                     isStatic, isMemberAsync, isMemberGenerator, isOverride, isReadonly,
-                    access, memberDecorators, methods, fields, staticInitializers, isDeclare);
+                    access, memberDecorators, methods, fields, staticInitializers,
+                    isDeclare, isMemberDeclare);
             }
             else if ((Peek().Type == TokenType.IDENTIFIER || IsKeyword(Peek().Type)
                       || IsContextualKeyword(Peek().Type)
@@ -607,7 +602,7 @@ public partial class Parser
         bool isStatic, bool isMemberAsync, bool isMemberGenerator, bool isOverride, bool isReadonly,
         AccessModifier access, List<Decorator>? memberDecorators,
         List<Stmt.Function> methods, List<Stmt.Field> fields, List<Stmt> staticInitializers,
-        bool isDeclare = false)
+        bool isDeclare = false, bool isMemberDeclare = false)
     {
         Advance(); // consume '['
         Expr computedKey = Expression();
@@ -620,6 +615,11 @@ public partial class Parser
         // anything else is a computed-name field ([expr]: T = v).
         if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
         {
+            if (isMemberDeclare)
+            {
+                throw new Exception("Parse Error: 'declare' modifier is only valid on fields, not methods.");
+            }
+
             var func = (Stmt.Function)FunctionDeclaration(
                 "method", isMemberAsync, isMemberGenerator, isDeclare: isDeclare,
                 computedMethod: (syntheticName, computedKey));
@@ -648,6 +648,10 @@ public partial class Parser
         Expr? initializer = null;
         if (Match(TokenType.EQUAL))
         {
+            if (isMemberDeclare)
+            {
+                throw new Exception($"Parse Error at line {syntheticName.Line}: 'declare' fields cannot have an initializer.");
+            }
             initializer = Expression();
         }
 
@@ -655,7 +659,7 @@ public partial class Parser
             Match(TokenType.SEMICOLON);
         else
             ConsumeSemicolon("Expect ';' after computed property field declaration.");
-        var field = new Stmt.Field(syntheticName, typeAnnotation, initializer, isStatic, access, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, memberDecorators, IsPrivate: false, IsDeclare: isDeclare, ComputedKey: computedKey);
+        var field = new Stmt.Field(syntheticName, typeAnnotation, initializer, isStatic, access, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, memberDecorators, IsPrivate: false, IsDeclare: isDeclare || isMemberDeclare, ComputedKey: computedKey);
         AttachEditorSyntax(field, typeAnnotationNode);
         fields.Add(field);
         if (isStatic)
@@ -1094,11 +1098,7 @@ public partial class Parser
                     indexSignatures.Add(indexSig);
                     continue;
                 }
-                if (isMemberDeclare)
-                {
-                    throw new Exception($"Parse Error at line {Peek().Line}: 'declare' modifier cannot be used with computed property names.");
-                }
-                ParseComputedClassMember(isStatic, isMemberAsync, isMemberGenerator, isOverride, isReadonly, access, memberDecorators: null, methods, fields, staticInitializers);
+                ParseComputedClassMember(isStatic, isMemberAsync, isMemberGenerator, isOverride, isReadonly, access, memberDecorators: null, methods, fields, staticInitializers, isMemberDeclare: isMemberDeclare);
             }
             else
             {

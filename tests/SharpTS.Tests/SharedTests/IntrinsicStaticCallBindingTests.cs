@@ -173,9 +173,8 @@ public sealed class IntrinsicStaticCallBindingTests
         foreach (var row in Cases())
         {
             yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
-            // #2689: Number alias reads; #2690: captured/async shadowing;
-            // #2691: receiver retained across an awaited argument.
-            if ((string)row[0] is "issue" or "math-parameter-shadow" or
+            // #2690: captured/async shadowing; #2691: receiver retained across an awaited argument.
+            if ((string)row[0] is "issue" or "number-and-math-live-member-replacements" or "math-parameter-shadow" or
                 "getter-before-arguments-and-original-receiver" or "throwing-lookup-suppresses-arguments" or
                 "noncallable-lookup-retained-through-arguments" or "math-alias-and-explicit-reflect-receiver")
                 yield return [row[0], row[1], row[2], ExecutionMode.Compiled];

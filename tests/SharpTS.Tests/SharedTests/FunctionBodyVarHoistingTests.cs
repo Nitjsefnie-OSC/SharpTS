@@ -166,6 +166,26 @@ public sealed class FunctionBodyVarHoistingTests
             }
             run();
             """, "true\ntrue inner\nbody\n"];
+        yield return ["class-accessors-initialize-own-forward-var-storage", """
+            const value = "outside";
+            class Owner {
+                get current() {
+                    const read = () => value;
+                    console.log(read() === undefined);
+                    var value: any = "getter";
+                    return read();
+                }
+                set current(next: any) {
+                    const read = () => value;
+                    console.log(read() === undefined);
+                    var value: any = next;
+                    console.log(read());
+                }
+            }
+            const owner = new Owner();
+            console.log(owner.current);
+            owner.current = "setter";
+            """, "true\ngetter\ntrue\nsetter\n"];
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>

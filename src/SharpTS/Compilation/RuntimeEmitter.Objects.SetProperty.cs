@@ -164,14 +164,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, endLabel);
 
-        // Check if frozen: _frozenObjects.TryGetValue(obj, out _)
-        // If frozen, silently return (non-strict mode behavior)
-        il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloca, frozenCheckLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
-        il.Emit(OpCodes.Brtrue, endLabel); // Frozen - silently return
-
         // Honor any own descriptor before receiver-specific storage. This is
         // the common OrdinarySet path for CLR-backed JS objects (Date, Error,
         // RegExp, Promise, and other host carriers): accessors invoke their
@@ -188,6 +180,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, noExistingPdsSetterLabel);
         EmitInvokePdsSetterWithValueAndReturn(il, inputs.InvokeMethodValue, existingPdsSetterLocal);
         il.MarkLabel(noExistingPdsSetterLabel);
+
+        // Freeze preserves an existing accessor setter. Only data writes and
+        // property creation reach this frozen-receiver rejection.
+        il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, frozenCheckLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brtrue, endLabel); // Frozen - silently return
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
@@ -506,7 +506,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, endLabel);
 
-        // Check if frozen: _frozenObjects.TryGetValue(obj, out _)
+        // Honor own descriptors before receiver-specific storage. Generic
+        // Array mutators use this helper with Throw=true, so callable setters
+        // must run and getter-only/non-writable descriptors must reject the
+        // write even when the receiver is a compact IHasFields carrier.
+        var strictExistingDescriptorLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
+        var strictExistingSetterLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, strictExistingSetterLocal);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.TryGetSetter);
+        var noStrictExistingSetterLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, noStrictExistingSetterLabel);
+        EmitInvokePdsSetterWithValueAndReturn(il, inputs.InvokeMethodValue, strictExistingSetterLocal);
+        il.MarkLabel(noStrictExistingSetterLabel);
+
+        // Freeze preserves an existing accessor setter even in strict mode.
+        // Data writes and property creation keep their original refusal policy.
         il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloca, frozenCheckLocal);
@@ -522,21 +538,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret); // Silently return in non-strict mode
 
         il.MarkLabel(notFrozenLabel);
-
-        // Honor own descriptors before receiver-specific storage. Generic
-        // Array mutators use this helper with Throw=true, so callable setters
-        // must run and getter-only/non-writable descriptors must reject the
-        // write even when the receiver is a compact IHasFields carrier.
-        var strictExistingDescriptorLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
-        var strictExistingSetterLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloca, strictExistingSetterLocal);
-        il.Emit(OpCodes.Call, inputs.DescriptorStorage.TryGetSetter);
-        var noStrictExistingSetterLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, noStrictExistingSetterLabel);
-        EmitInvokePdsSetterWithValueAndReturn(il, inputs.InvokeMethodValue, strictExistingSetterLocal);
-        il.MarkLabel(noStrictExistingSetterLabel);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);

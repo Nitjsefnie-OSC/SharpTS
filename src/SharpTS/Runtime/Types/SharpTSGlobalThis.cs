@@ -47,6 +47,8 @@ public sealed class SharpTSGlobalThis : ISharpTSPropertyAccessor
     public bool HasUserProperty(string name)
         => _properties.HasProperty(name) || _properties.HasSetter(name);
 
+    internal bool IsDeletedProperty(string name) => _deletedProperties.Contains(name);
+
     internal bool TryGetUserAccessor(
         string name, out ISharpTSCallable? getter, out ISharpTSCallable? setter)
     {

@@ -98,6 +98,8 @@ public partial class AsyncGeneratorMoveNextEmitter : IteratorMoveNextEmitter
         }
 
         _ctx = ctx;
+        ctx.InitializedParameterInitializers = body.OfType<Stmt.Sequence>()
+            .Where(sequence => sequence.ParameterName != null).ToHashSet<Stmt.Sequence>(ReferenceEqualityComparer.Instance);
         _builder.AttachDebugSymbols(ctx);
         // Wire the runtime into the helper now that the context is bound, so MoveNext uses the
         // $Undefined sentinel and JS-spec coercion/comparison helpers rather than null/Convert (#600).

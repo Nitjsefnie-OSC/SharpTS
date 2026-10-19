@@ -39,6 +39,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         public List<Stmt>? FunctionBody { get; set; }
         public bool BodyVarDeclared { get; set; }
         public bool NeedsUndefinedCell { get; set; }
+        public bool ParameterPattern { get; set; }
     }
 
     private readonly List<Owner> _owners = [];
@@ -120,7 +121,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
         foreach (var binding in _declarations.Values)
         {
-            if (binding.ParameterBodyCopy || binding.NeedsUndefinedCell
+            if (binding.ParameterBodyCopy || binding.NeedsUndefinedCell || binding.ParameterPattern && binding.Captured
                 || binding.Eligible && binding.Captured && binding.ShadowOf is null)
                 _cells.Add(binding.Name);
             if (binding.NeedsUndefinedCell && !binding.ParameterBodyCopy && binding.FunctionBody is { } body)
@@ -314,6 +315,14 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     {
         var binding = VisibleBinding(name);
         if (binding is null) return;
+        if (binding.ParameterPattern)
+        {
+            if (ReferenceEquals(binding.Owner, _owners[^1])) return;
+            binding.Captured = true;
+            for (int index = _owners.Count - 1; index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
+                RecordCapture(_owners[index].Node, name, binding);
+            return;
+        }
         if (binding.FunctionBody != null)
         {
             // The binding exists from body entry, while its initializer still
@@ -526,13 +535,26 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             if (node is Stmt.Function or Expr.ArrowFunction { HasOwnThis: true })
                 Declare(new Token(TokenType.IDENTIFIER, "arguments", null, 0));
             foreach (var parameter in parameters) Declare(parameter.Name);
-            foreach (var parameter in parameters) if (parameter.DefaultValue is { } value) Visit(value);
-            EnterScope(body, allowCandidates: false, hoistVars: true);
+            var initializers = Runtime.ParameterBinder.ParameterInitializers(body);
+            foreach (var initializer in initializers?.Values.AsEnumerable() ?? [])
+                foreach (var name in LexicalDeclarationBindings.Collect(initializer.Statements))
+                {
+                    Declare(name);
+                    _declarations[name].ParameterPattern = synchronous && !directSuspension;
+                }
+            foreach (var parameter in parameters)
+            {
+                if (parameter.DefaultValue is { } value) Visit(value);
+                if (initializers?.TryGetValue(parameter.Name.Lexeme, out var initializer) == true)
+                    Visit(initializer);
+            }
+            var statements = Runtime.ParameterBinder.BodyStatements(body);
+            EnterScope(statements, allowCandidates: false, hoistVars: true);
             try
             {
                 if (synchronous && !directSuspension) PrepareFunctionBodyVars(parameters, body);
                 if (expressionBody is not null) Visit(expressionBody);
-                foreach (var statement in body) Visit(statement);
+                foreach (var statement in statements) Visit(statement);
             }
             finally { _scopes.Pop(); }
         }
@@ -546,7 +568,11 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         var functionNames = Runtime.ParameterBinder.BodyVarDeclarations(body)
             .Where(declaration => declaration.IsFunction)
             .Select(declaration => declaration.Name.Lexeme).ToHashSet(StringComparer.Ordinal);
-        var parameterNames = parameters.GroupBy(parameter => parameter.Name.Lexeme)
+        var initializers = Runtime.ParameterBinder.ParameterInitializers(body);
+        var parameterNames = parameters.Select(parameter => parameter.Name)
+            .Concat((initializers?.Values.AsEnumerable() ?? [])
+                .SelectMany(initializer => LexicalDeclarationBindings.Collect(initializer.Statements)))
+            .GroupBy(name => name.Lexeme)
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
         bool hasParameterExpressions = Runtime.ParameterBinder.HasParameterExpressions(parameters);
         var copies = new List<(Token Declaration, Token Parameter)>();
@@ -555,7 +581,16 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             string name = declarations.Key;
             if (functionNames.Contains(name)) continue;
             parameterNames.TryGetValue(name, out var parameter);
-            if (parameter != null && !hasParameterExpressions) continue;
+            if (parameter != null && !hasParameterExpressions)
+            {
+                if (_declarations[parameter].ParameterPattern)
+                {
+                    _scopes.Peek()[name] = _declarations[parameter];
+                    foreach (var declaration in declarations)
+                        _functionBodyVarDeclarations[declaration] = parameter;
+                }
+                continue;
+            }
             var binding = _declarations[declarations.First()];
             binding.FunctionBody = body;
             binding.ParameterBodyCopy = parameter != null;
@@ -564,7 +599,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             _scopes.Peek()[name] = binding;
             foreach (var declaration in declarations)
                 _functionBodyVarDeclarations[declaration] = binding.Name;
-            if (parameter != null) copies.Add((binding.Name, parameter.Name));
+            if (parameter != null) copies.Add((binding.Name, parameter));
         }
         if (copies.Count > 0) _parameterBodyCopies[body] = copies;
     }

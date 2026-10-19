@@ -1381,7 +1381,7 @@ internal sealed class NestedFunctionLifter
             case Stmt.Sequence s:
             {
                 var nb = ProcessBody(s.Statements, enclosingIsStateMachine, enclosingIsAsyncFunction, enclosingIsGeneratorClassMethod);
-                return ReferenceEquals(nb, s.Statements) ? s : new Stmt.Sequence(nb);
+                return ReferenceEquals(nb, s.Statements) ? s : s with { Statements = nb };
             }
             case Stmt.If i:
             {

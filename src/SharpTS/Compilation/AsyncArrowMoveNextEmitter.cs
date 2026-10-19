@@ -196,7 +196,7 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
         // is valid — unlike the sync-arrow path, no slot widening is needed.
         if (parameters != null)
         {
-            EmitDefaultParameters(parameters);
+            EmitDefaultParameters(parameters, body);
         }
 
         // Emit the body

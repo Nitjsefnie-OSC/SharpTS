@@ -884,8 +884,12 @@ public partial class ILCompiler
                 publishedArgsLeadingSkip);
         }
 
-        emitter.EmitDefaultParameters(parameters, argumentOffset, paramTypes);
+        emitter.EmitDefaultParameters(parameters, argumentOffset, paramTypes, body);
         ctx.InitializedParameterNames = parameters.Select(parameter => parameter.Name.Lexeme)
+            .Concat(body is null ? [] : body.OfType<Stmt.Sequence>()
+                .Where(sequence => sequence.ParameterName != null)
+                .SelectMany(sequence => LexicalDeclarationBindings.Collect(sequence.Statements))
+                .Select(name => name.Lexeme))
             .ToHashSet(StringComparer.Ordinal);
         // Body vars exist before their source initializer executes. Parameter
         // copies keep separate storage from closures created by defaults.

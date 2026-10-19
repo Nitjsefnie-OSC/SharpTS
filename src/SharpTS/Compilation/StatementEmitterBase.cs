@@ -332,6 +332,7 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
                 break;
 
             case Stmt.Sequence seq:
+                if (Ctx.InitializedParameterInitializers?.Contains(seq) == true) break;
                 foreach (var s in seq.Statements)
                     EmitStatement(s);
                 break;

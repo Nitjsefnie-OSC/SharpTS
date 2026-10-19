@@ -6,7 +6,7 @@ namespace SharpTS.Tests.CompilerTests;
 public partial class StandaloneDllTests
 {
     [Theory, MemberData(nameof(DestructuredParameterDefaultScopeTests.StandaloneCases), MemberType = typeof(DestructuredParameterDefaultScopeTests))]
-    public void Isolated_Issue2660DestructuredParameterDefaultScope_VerifyBeforeExecution(
+    public void Isolated_Issue2747DestructuredParameterDefaultScope_VerifyBeforeExecution(
         string name, string source, string expected)
     {
         Assert.NotEmpty(name);

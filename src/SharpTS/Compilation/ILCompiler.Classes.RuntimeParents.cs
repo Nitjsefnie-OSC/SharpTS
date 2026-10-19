@@ -247,22 +247,30 @@ public partial class ILCompiler
             }
             il.Emit(OpCodes.Stloc, local);
         }
+        var parameterInitializers = emitter.PrepareParameterBindingInitializers(constructor?.Body);
         foreach (var (parameter, index) in (constructor?.Parameters ?? []).Select((parameter, index) => (parameter, index)))
         {
-            if (parameter.DefaultValue == null) continue;
-            var local = ctx.Locals.GetLocal(parameter.Name.Lexeme)!;
-            var present = il.DefineLabel();
-            il.Emit(OpCodes.Ldloc, local); il.Emit(OpCodes.Isinst, _runtime.Sentinels.UndefinedType); il.Emit(OpCodes.Brfalse, present);
-            emitter.EmitDefaultParameterExpression(parameter.DefaultValue,
-                constructor!.Parameters.Skip(index).Select(parameter => parameter.Name.Lexeme));
-            emitter.EmitBoxIfNeeded(parameter.DefaultValue);
-            il.Emit(OpCodes.Stloc, local);
-            il.MarkLabel(present);
+            if (parameter.DefaultValue != null)
+            {
+                var local = ctx.Locals.GetLocal(parameter.Name.Lexeme)!;
+                var present = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, local); il.Emit(OpCodes.Isinst, _runtime.Sentinels.UndefinedType); il.Emit(OpCodes.Brfalse, present);
+                emitter.EmitDefaultParameterExpression(parameter.DefaultValue,
+                    ILEmitter.ParameterTdzNames(constructor!.Parameters.Skip(index), parameterInitializers));
+                emitter.EmitBoxIfNeeded(parameter.DefaultValue);
+                il.Emit(OpCodes.Stloc, local);
+                il.MarkLabel(present);
+            }
+            emitter.EmitParameterBindingInitializer(parameter, parameterInitializers,
+                ILEmitter.ParameterTdzNames(constructor!.Parameters.Skip(index + 1), parameterInitializers));
         }
         foreach (var parameter in constructor?.Parameters ?? [])
             SeedCapturedLocal(parameter.Name.Lexeme, ctx.Locals.GetLocal(parameter.Name.Lexeme)!);
         ctx.UseOwnedCapturedParameterStorage = true;
         ctx.InitializedParameterNames = constructor?.Parameters.Select(parameter => parameter.Name.Lexeme)
+            .Concat((parameterInitializers?.Values.AsEnumerable() ?? [])
+                .SelectMany(initializer => LexicalDeclarationBindings.Collect(initializer.Statements))
+                .Select(name => name.Lexeme))
             .ToHashSet(StringComparer.Ordinal);
         emitter.InitializeFunctionBodyVarBindings(constructor?.Body);
         emitter.InitializeCapturedLexicalTdzBindings(constructor?.Body ?? []);

@@ -147,6 +147,13 @@ public partial class AsyncGeneratorStateAnalyzer : AstVisitorBase
             _declaredVariables.Add(param.Name.Lexeme);
             _variablesDeclaredBeforeSuspension.Add(param.Name.Lexeme);
         }
+        foreach (var (declaration, name) in ParameterPatternBindings.Declarations(func.Body))
+        {
+            string storageName = StorageName(declaration, name.Lexeme);
+            parameters.Add(storageName);
+            _declaredVariables.Add(storageName);
+            _variablesDeclaredBeforeSuspension.Add(storageName);
+        }
 
         bool usesArguments = ArgumentsRefScanner.Contains(func.Parameters, func.Body,
             treatEvalReferenceAsUse: true);

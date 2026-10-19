@@ -46,6 +46,7 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
     // with the generator through this reference-typed display class — the same mechanism the sync
     // generator state machine uses (#674). Null when the async generator has no such write-capture.
     public FieldBuilder? FunctionDCField { get; private set; }
+    public IReadOnlyDictionary<object, string> BlockScopeRenames { get; private set; } = new Dictionary<object, string>();
 
     // Delegated async enumerator field for yield* expressions
     public FieldBuilder? DelegatedAsyncEnumeratorField { get; private set; }
@@ -119,6 +120,7 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
         bool hasDynamicThis = false)
     {
         _runtime = runtime;
+        BlockScopeRenames = analysis.BlockScopeRenames ?? new Dictionary<object, string>();
 
         // Build list of interfaces to implement
         var interfaces = new List<Type>

@@ -62,14 +62,20 @@ public partial class ILEmitter
     internal void EmitDefaultParameters(
         List<Stmt.Parameter> parameters,
         int argumentOffset,
-        Type[]? paramTypes = null)
+        Type[]? paramTypes = null,
+        List<Stmt>? body = null)
     {
         var builder = _ctx.ILBuilder;
+        var initializers = PrepareParameterBindingInitializers(body);
 
         for (int i = 0; i < parameters.Count; i++)
         {
             var param = parameters[i];
-            if (param.DefaultValue == null) continue;
+            if (param.DefaultValue == null || paramTypes != null && paramTypes[i].IsValueType)
+            {
+                EmitParameterBindingInitializer(param, initializers, ParameterTdzNames(parameters.Skip(i + 1), initializers));
+                continue;
+            }
 
             // Skip value-type parameters when we know the resolved types: `ldarg; brtrue`
             // is meaningless on a double/bool, which can't hold the `$Undefined` sentinel.
@@ -77,8 +83,6 @@ public partial class ILEmitter
             // WidenDefaultedParamsToObject / WidenValueTypeDefaultedMethodParams), so it does NOT
             // hit this guard — its default fires for direct AND $TSFunction.Invoke callers (#925).
             // This only defends a genuinely value-typed slot that reached here without that widening.
-            if (paramTypes != null && paramTypes[i].IsValueType) continue;
-
             int argIndex = i + argumentOffset;
 
             // JS spec: defaults fire only when the argument is `undefined` — missing
@@ -97,20 +101,88 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Br, skipDefault);
 
             builder.MarkLabel(fireDefault);
-            EmitDefaultParameterExpression(param.DefaultValue, parameters.Skip(i).Select(p => p.Name.Lexeme));
+            EmitDefaultParameterExpression(param.DefaultValue, ParameterTdzNames(parameters.Skip(i), initializers));
             EmitBoxIfNeeded(param.DefaultValue);
             IL.Emit(OpCodes.Starg, argIndex);
 
             builder.MarkLabel(skipDefault);
+            EmitParameterBindingInitializer(param, initializers, ParameterTdzNames(parameters.Skip(i + 1), initializers));
         }
     }
 
     internal void EmitDefaultParameterExpression(Expr expression, IEnumerable<string> tdzNames)
+        => EmitInParameterEnvironment(tdzNames, () => EmitExpression(expression));
+
+    internal Dictionary<Token, Stmt.Sequence>? PrepareParameterBindingInitializers(List<Stmt>? body)
+    {
+        if (body is null) return null;
+        Dictionary<Token, Stmt.Sequence>? initializers = null;
+        foreach (var statement in body)
+        {
+            if (statement is not Stmt.Sequence { ParameterName: { } parameter } initializer) continue;
+            (initializers ??= new(ReferenceEqualityComparer.Instance)).Add(parameter, initializer);
+            // Captured parameter bindings own their cells before any default can create a closure.
+            EnterLoopBodyCellScope(initializer.Statements, []);
+        }
+        return initializers;
+    }
+
+    internal static IEnumerable<string> ParameterTdzNames(IEnumerable<Stmt.Parameter> parameters,
+        IReadOnlyDictionary<Token, Stmt.Sequence>? initializers)
+    {
+        foreach (var parameter in parameters)
+        {
+            yield return parameter.Name.Lexeme;
+            if (initializers?.TryGetValue(parameter.Name, out var initializer) == true)
+                foreach (var name in LexicalDeclarationBindings.Collect(initializer.Statements))
+                    yield return name.Lexeme;
+        }
+    }
+
+    internal void EmitParameterBindingInitializer(Stmt.Parameter parameter,
+        IReadOnlyDictionary<Token, Stmt.Sequence>? initializers, IEnumerable<string> laterTdzNames)
+    {
+        if (initializers is null || !initializers.TryGetValue(parameter.Name, out var initializer)) return;
+        var tdzNames = laterTdzNames.Concat(LexicalDeclarationBindings.Collect(initializer.Statements)
+            .Select(name => name.Lexeme)).ToHashSet(StringComparer.Ordinal);
+        var capturedFunctionLocals = _ctx.CapturedFunctionLocals;
+        var capturedArrowLocals = _ctx.CapturedArrowLocals;
+        EmitInParameterEnvironment(tdzNames, () => EmitBindingStatements(initializer.Statements));
+        (_ctx.InitializedParameterInitializers ??= new(ReferenceEqualityComparer.Instance)).Add(initializer);
+
+        void EmitBindingStatements(IEnumerable<Stmt> statements)
+        {
+            foreach (var statement in statements)
+            {
+                if (statement is Stmt.Sequence sequence) EmitBindingStatements(sequence.Statements);
+                else
+                {
+                    string? name = statement switch
+                    {
+                        Stmt.Var variable => variable.Name.Lexeme,
+                        Stmt.Const constant => constant.Name.Lexeme,
+                        _ => null,
+                    };
+                    if (name is not null)
+                    {
+                        (_ctx.InitializedParameterBindingNames ??= new(StringComparer.Ordinal)).Add(name);
+                        if (capturedFunctionLocals?.Contains(name) == true) _ctx.CapturedFunctionLocals?.Add(name);
+                        if (capturedArrowLocals?.Contains(name) == true) _ctx.CapturedArrowLocals?.Add(name);
+                    }
+                    EmitStatement(statement);
+                    if (name is not null) tdzNames.Remove(name);
+                }
+            }
+        }
+    }
+
+    private void EmitInParameterEnvironment(IEnumerable<string> tdzNames, Action emit)
     {
         var capturedFunctionLocals = _ctx.CapturedFunctionLocals;
         var capturedArrowLocals = _ctx.CapturedArrowLocals;
         var parameterTdzNames = _ctx.DefaultParameterTdzNames;
-        _ctx.DefaultParameterTdzNames = tdzNames.ToHashSet(StringComparer.Ordinal);
+        _ctx.DefaultParameterTdzNames = tdzNames as IReadOnlySet<string>
+            ?? tdzNames.ToHashSet(StringComparer.Ordinal);
         try
         {
             // Defaults run outside this callable's body environment. Its
@@ -119,10 +191,14 @@ public partial class ILEmitter
             // bindings while evaluating a default. Keep inherited capture
             // paths and the incoming parameter slots available.
             if (_ctx.FunctionDisplayClassLocal != null)
-                _ctx.CapturedFunctionLocals = null;
+                _ctx.CapturedFunctionLocals = capturedFunctionLocals is null ? null
+                    : capturedFunctionLocals.Where(name => _ctx.InitializedParameterBindingNames?.Contains(name) == true)
+                        .ToHashSet(StringComparer.Ordinal);
             if (_ctx.ArrowScopeDisplayClassLocal != null)
-                _ctx.CapturedArrowLocals = null;
-            EmitExpression(expression);
+                _ctx.CapturedArrowLocals = capturedArrowLocals is null ? null
+                    : capturedArrowLocals.Where(name => _ctx.InitializedParameterBindingNames?.Contains(name) == true)
+                        .ToHashSet(StringComparer.Ordinal);
+            emit();
         }
         finally
         {
@@ -156,7 +232,8 @@ public partial class ILEmitter
         void CreateCell(Token declaration, Action emitValue)
         {
             string name = declaration.Lexeme;
-            if (_ctx.LoopBodyCellDeclarations.ContainsKey(name)) return;
+            if (_ctx.LoopBodyCellDeclarations.TryGetValue(name, out var existing)
+                && ReferenceEquals(existing, declaration)) return;
             emitValue();
             IL.Emit(OpCodes.Newobj, _ctx.Types.StrongBoxOfObjectCtor);
             var cell = IL.DeclareLocal(_ctx.Types.StrongBoxOfObject);

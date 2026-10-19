@@ -1137,11 +1137,17 @@ public class ClosureAnalyzer : AstVisitorBase
         // Defaults may create arrows that capture this call's arguments object.
         if (ArgumentsRefScanner.Contains(parameters, body, treatEvalReferenceAsUse: true))
             DeclareVariable("arguments");
+        var parameterInitializers = Runtime.ParameterBinder.ParameterInitializers(body);
+        foreach (var initializer in parameterInitializers?.Values.AsEnumerable() ?? [])
+            foreach (var name in LexicalDeclarationBindings.Collect(initializer.Statements))
+                DeclareVariable(name.Lexeme);
         foreach (var param in parameters)
         {
             DeclareVariable(param.Name.Lexeme);
             if (param.DefaultValue != null)
                 Visit(param.DefaultValue);
+            if (parameterInitializers?.TryGetValue(param.Name.Lexeme, out var initializer) == true)
+                Visit(initializer);
         }
 
         // Hoist sibling function declarations so forward references in one sibling's
@@ -1149,7 +1155,7 @@ public class ClosureAnalyzer : AstVisitorBase
         HoistFunctionDeclarations(body, hoistOwnedVars: true);
 
         // Analyze body
-        foreach (var stmt in body)
+        foreach (var stmt in Runtime.ParameterBinder.BodyStatements(body))
             Visit(stmt);
 
         ExitScope();
@@ -1214,12 +1220,19 @@ public class ClosureAnalyzer : AstVisitorBase
                 af.ExpressionBody, treatEvalReferenceAsUse: true))
             DeclareVariable("arguments");
 
+        var parameterInitializers = Runtime.ParameterBinder.ParameterInitializers(af.BlockBody);
+        foreach (var initializer in parameterInitializers?.Values.AsEnumerable() ?? [])
+            foreach (var name in LexicalDeclarationBindings.Collect(initializer.Statements))
+                DeclareVariable(name.Lexeme);
+
         // Declare parameters (may shadow function name if same identifier)
         foreach (var param in af.Parameters)
         {
             DeclareVariable(param.Name.Lexeme);
             if (param.DefaultValue != null)
                 Visit(param.DefaultValue);
+            if (parameterInitializers?.TryGetValue(param.Name.Lexeme, out var initializer) == true)
+                Visit(initializer);
         }
 
         // Analyze body
@@ -1228,7 +1241,7 @@ public class ClosureAnalyzer : AstVisitorBase
         else if (af.BlockBody != null)
         {
             HoistFunctionDeclarations(af.BlockBody, hoistOwnedVars: true);
-            foreach (var stmt in af.BlockBody)
+            foreach (var stmt in Runtime.ParameterBinder.BodyStatements(af.BlockBody))
                 Visit(stmt);
         }
 

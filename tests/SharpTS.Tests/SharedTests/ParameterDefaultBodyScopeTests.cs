@@ -168,8 +168,6 @@ public sealed class ParameterDefaultBodyScopeTests
                 "async-uninitialized-var-preserves-parameter" => false,
                 // #2663: compiled nested defaults lose enclosing local capture storage.
                 "enclosing-local-default-outer-binding" => false,
-                // #2747: compiled defaults run before earlier destructured parameter bindings.
-                "destructured-defaults-copy-and-order" => false,
                 _ => true
             })
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));

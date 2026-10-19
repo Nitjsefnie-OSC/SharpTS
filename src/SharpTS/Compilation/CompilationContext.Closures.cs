@@ -304,6 +304,11 @@ public partial class CompilationContext
     // including receiver adapters whose parameters live in locals rather than args.
     internal IReadOnlySet<string>? InitializedParameterNames { get; set; }
 
+    // Parameter destructuring executes during entry, before later defaults. Its original
+    // source sequence remains in the body AST and must not execute a second time there.
+    internal HashSet<Stmt.Sequence>? InitializedParameterInitializers { get; set; }
+    internal HashSet<string>? InitializedParameterBindingNames { get; set; }
+
     /// <summary>
     /// Fields in the current function's display class (variable name -> field).
     /// These are local variables that are captured by inner arrow functions.

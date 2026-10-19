@@ -1566,6 +1566,15 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(value);
         }
 
+        // Promise computed string writes share dot assignment's own descriptors,
+        // subclass setters and integrity checks. Coerce the evaluated key once.
+        if (obj is SharpTSPromise && ToPropertyKey(index) is string promiseKey)
+        {
+            var name = new Token(TokenType.IDENTIFIER, promiseKey, null, 0);
+            EvaluateSetOnObject(new Expr.Set(null!, name, null!), obj, value);
+            return RuntimeValue.FromBoxed(value);
+        }
+
         if (UsesMutableFunctionPrototype(obj))
         {
             SetOwnPropertyObjectValue(obj!, ToPropertyKey(index), value, strictMode);

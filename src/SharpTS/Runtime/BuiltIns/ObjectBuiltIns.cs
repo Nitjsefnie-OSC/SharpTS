@@ -546,6 +546,10 @@ public static partial class ObjectBuiltIns
                 prototype.FreezeOwnProperties();
                 PropertyDescriptorStore.Freeze(prototype);
                 return RuntimeValue.FromObject(prototype);
+            case SharpTSFunctionPrototype functionPrototype:
+                functionPrototype.FreezeOwnProperties();
+                PropertyDescriptorStore.Freeze(functionPrototype);
+                return RuntimeValue.FromObject(functionPrototype);
             case SharpTSObject obj:
                 obj.Freeze();
                 return RuntimeValue.FromObject(obj);
@@ -610,6 +614,10 @@ public static partial class ObjectBuiltIns
                 prototype.SealOwnProperties();
                 PropertyDescriptorStore.Seal(prototype);
                 return RuntimeValue.FromObject(prototype);
+            case SharpTSFunctionPrototype functionPrototype:
+                functionPrototype.SealOwnProperties();
+                PropertyDescriptorStore.Seal(functionPrototype);
+                return RuntimeValue.FromObject(functionPrototype);
             case SharpTSObject obj:
                 obj.Seal();
                 return RuntimeValue.FromObject(obj);

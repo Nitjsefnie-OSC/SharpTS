@@ -100,6 +100,10 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
     // never collides with the OuterFunctionDCField relay's use of ctx.FunctionDisplayClassFields.
     public Dictionary<string, FieldBuilder> FunctionDCFieldMap { get; } = [];
 
+    // Lowered declarations can capture a lexical binding before its initializer.
+    // These compiler-only paths retain its exact owner's authoritative DC field.
+    internal Dictionary<string, AsyncArrowStorageAccess> CapturedLiveStorage { get; } = [];
+
     // These are references to existing authoritative display classes, rather than value copies.
     internal Dictionary<string, (FieldBuilder Holder, FieldBuilder Field)> DebugCapturedBindings { get; } = [];
     private readonly List<(FieldBuilder Source, FieldBuilder Target)> _debugCaptureLinks = [];

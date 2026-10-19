@@ -1340,12 +1340,10 @@ public partial class ILCompiler
     private int _asyncArrowDCCounter;
 
     /// <summary>
-    /// Follow-up to #838: registers a function display class for each async arrow whose OWN local is
-    /// captured-and-written by a nested SYNC arrow, so that write shares verifiable reference storage on
-    /// the async arrow's state machine (the async-arrow analogue of free async functions / async methods).
+    /// Registers a function display class for an async arrow's own locals shared by nested SYNC
+    /// writes (#838) or hoisted async declarations. Both need the same live reference storage.
     /// Runs in Phase 5 before <see cref="PropagateFunctionDCRequirements"/>, which resolves the nested sync
-    /// arrow's DC source to this DC via <see cref="ClosureCompilationState.AsyncArrowDCKeys"/>. No-op for
-    /// async arrows with no such write-capture (the common case).
+    /// arrow's DC source to this DC via <see cref="ClosureCompilationState.AsyncArrowDCKeys"/>.
     /// </summary>
     private void RegisterAsyncArrowFunctionDisplayClasses()
     {
@@ -1354,6 +1352,9 @@ public partial class ILCompiler
             if (!arrow.IsAsync || arrow.IsGenerator) continue;
 
             var members = ComputeAsyncArrowSyncWriteCaptures(arrow);
+            var declarationLocals = GetAsyncDeclarationLiveLocals(
+                arrow, _collectedArrows.Select(entry => entry.Arrow));
+            members.UnionWith(declarationLocals);
             if (members.Count == 0) continue;
 
             string key = $"$asyncArrow${_asyncArrowDCCounter++}";
@@ -1361,9 +1362,12 @@ public partial class ILCompiler
             // #838 (additive): expands `members` with renamed storage keys for write-captured shadows AND
             // records ArrowFunctionDCFieldRenames[nestedSyncArrow] so the sync arrow's body resolves the
             // renamed field generically (main's CurrentArrowFunctionDCFieldRenames path).
-            ApplyWriteCaptureRenames(members, GeneratorBlockScopeRenamer.Compute(arrow,
+            var renames = GeneratorBlockScopeRenamer.Compute(arrow,
                 preserveDebugBindings: EmitDebugSymbols,
-                outerCaptureNames: _closures.Analyzer.GetLoopBodyCellCaptures(arrow)?.Keys));
+                outerCaptureNames: _closures.Analyzer.GetLoopBodyCellCaptures(arrow)?.Keys);
+            ApplyWriteCaptureRenames(members, renames);
+            ApplyReadCaptureRenames(declarationLocals, renames);
+            members.UnionWith(declarationLocals);
 
             RegisterFunctionDisplayClass(key, members, arrow);
             if (_closures.FunctionDisplayClasses.ContainsKey(key))

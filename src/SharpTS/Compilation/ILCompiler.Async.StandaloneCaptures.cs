@@ -41,6 +41,16 @@ public partial class ILCompiler
             if (_closures.Analyzer.TryGetLoopBodyCellCapture(arrow, name, out _)) continue;
             var source = _closures.Analyzer.GetCaptureSource(arrow, name);
             if (source is null) continue;
+            string storageName = _closures.ArrowFunctionDCFieldRenames.TryGetValue(arrow, out var renames)
+                && renames.TryGetValue(name, out var renamed) ? renamed : name;
+            if (source is Expr.ArrowFunction asyncOwner
+                && _closures.AsyncArrowDCKeys.TryGetValue(asyncOwner, out var asyncKey)
+                && _closures.FunctionDisplayClassFields.TryGetValue(asyncKey, out var asyncFields)
+                && asyncFields.TryGetValue(storageName, out var asyncField))
+            {
+                result[name] = asyncField;
+                continue;
+            }
             if (_closures.ArrowScopeDisplayClassFields.TryGetValue(source, out var scopeFields)
                 && scopeFields.TryGetValue(name, out var scopeField))
             {

@@ -509,6 +509,11 @@ public partial class ILCompiler
         // reference) is verifiable. Read-only captures stay on the SM field (the existing, working
         // load path).
         var promotedToFunctionDC = ComputeArrowWrittenCapturesToPromote(analysis.AsyncArrows);
+        // Lowered declarations are instantiated before the body's lexical initializers.
+        // Their read captures therefore need the owner's live environment even when the
+        // point-in-time async capture visitor has not seen the declaration yet.
+        promotedToFunctionDC.UnionWith(GetAsyncDeclarationLiveLocals(
+            funcStmt, analysis.AsyncArrows.Select(info => info.Arrow)));
         // A retained generator expression also needs a reference to live storage,
         // including when an intermediate async arrow only reads this binding.
         // Its iterator can then share the existing function DC instead of a
@@ -671,12 +676,101 @@ public partial class ILCompiler
     /// </summary>
     private void AttachAsyncArrowFunctionDC(AsyncArrowStateMachineBuilder builder, Expr.ArrowFunction arrow)
     {
+        if (builder.FunctionDCField != null) return;
         if (_closures.AsyncArrowDCKeys.TryGetValue(arrow, out var key) &&
             _closures.FunctionDisplayClasses.TryGetValue(key, out var dc) &&
             _closures.FunctionDisplayClassCtors.TryGetValue(key, out var ctor) &&
             _closures.FunctionDisplayClassFields.TryGetValue(key, out var dcFields))
         {
             builder.DefineFunctionDisplayClassField(dc, ctor, dcFields);
+        }
+    }
+
+    private static bool IsLoweredAsyncDeclaration(Expr.ArrowFunction arrow) =>
+        arrow.IsAsync && !arrow.IsGenerator && arrow.HasOwnThis
+        && arrow.Name == null && arrow.RuntimeName != null;
+
+    private HashSet<string> GetAsyncDeclarationLiveLocals(
+        object owner, IEnumerable<Expr.ArrowFunction> descendants)
+    {
+        var locals = _closures.Analyzer.GetCapturedLocals(owner);
+        HashSet<string> result = [];
+        foreach (var declaration in descendants)
+        {
+            if (!IsLoweredAsyncDeclaration(declaration)) continue;
+            foreach (var name in _closures.Analyzer.GetCaptures(declaration))
+                if (locals.Contains(name)
+                    && ReferenceEquals(_closures.Analyzer.GetCaptureSource(declaration, name), owner)
+                    && !_closures.Analyzer.TryGetLoopBodyCellCapture(declaration, name, out _))
+                    result.Add(name);
+        }
+        IEnumerable<Stmt.Parameter> parameters = owner switch
+        {
+            Stmt.Function function => function.Parameters,
+            Expr.ArrowFunction arrow => arrow.Parameters,
+            _ => []
+        };
+        result.ExceptWith(parameters.Select(parameter => parameter.Name.Lexeme));
+        result.ExceptWith(_closures.Analyzer.GetPerIterationLoopBindings(owner));
+        result.ExceptWith(_closures.Analyzer.GetCellOnlyCapturedLocalNames(owner));
+        return result;
+    }
+
+    private void BindAsyncDeclarationLiveCaptures(AsyncArrowStateMachineBuilder builder)
+    {
+        if (builder.IsStandalone) return;
+        bool loweredDeclaration = IsLoweredAsyncDeclaration(builder.Arrow);
+        foreach (var name in builder.Captures)
+        {
+            if (builder.ParameterFields.ContainsKey(name) || builder.LocalFields.ContainsKey(name)
+                || _closures.Analyzer.TryGetLoopBodyCellCapture(builder.Arrow, name, out _))
+                continue;
+            var source = _closures.Analyzer.GetCaptureSource(builder.Arrow, name);
+            // An async-arrow owner stores a newly promoted local only in its DC.
+            // Sibling async expressions reading that same binding must follow it
+            // rather than the owner's now-stale hoisted-field copy.
+            if (!loweredDeclaration
+                && (source is not Expr.ArrowFunction { IsAsync: true, IsGenerator: false } asyncOwner
+                    || !GetAsyncDeclarationLiveLocals(asyncOwner,
+                        _collectedArrows.Select(entry => entry.Arrow)).Contains(name)))
+                continue;
+            if (source != null && ResolveLiveStorage(builder, source, name) is { } storage)
+                builder.CapturedLiveStorage[name] = storage;
+        }
+
+        AsyncArrowStorageAccess? ResolveLiveStorage(
+            AsyncArrowStateMachineBuilder child, object source, string name)
+        {
+            string storageName = name;
+            if (_closures.ArrowFunctionDCFieldRenames.TryGetValue(builder.Arrow, out var renames)
+                && renames.TryGetValue(name, out var renamed))
+                storageName = renamed;
+
+            if (_async.ArrowParentBuilders.TryGetValue(child.Arrow, out var parent))
+            {
+                AttachAsyncArrowFunctionDC(parent, parent.Arrow);
+                AsyncArrowStorageAccess? parentStorage;
+                if (ReferenceEquals(parent.Arrow, source))
+                {
+                    parentStorage = parent.FunctionDCField is { } holder
+                        && parent.FunctionDCFieldMap.TryGetValue(storageName, out var field)
+                            ? AsyncArrowStorageAccess.OwnDisplayClassField(holder, field) : null;
+                }
+                else
+                    parentStorage = ResolveLiveStorage(parent, source, name);
+                return parentStorage?.ThroughOuterStateMachine(child);
+            }
+            if (_async.ArrowOuterBuilders.TryGetValue(child.Arrow, out var outer)
+                && outer.FunctionDCField is { } outerHolder)
+            {
+                foreach (var (key, function) in _closures.FunctionAstNodes)
+                    if (ReferenceEquals(function, source)
+                        && _closures.FunctionDisplayClassFields.TryGetValue(key, out var fields)
+                        && fields.TryGetValue(storageName, out var field)
+                        && field.DeclaringType == outerHolder.FieldType)
+                        return AsyncArrowStorageAccess.OuterDisplayClassField(child, outerHolder, field);
+            }
+            return null;
         }
     }
 
@@ -1421,6 +1515,9 @@ public partial class ILCompiler
 
     private void EmitAsyncArrowMoveNext(AsyncArrowStateMachineBuilder arrowBuilder, Expr.ArrowFunction arrow, CompilationContext parentCtx)
     {
+        // All declaration/reference display classes are known now, including an
+        // async-arrow owner's DC registered after the nested builders were defined.
+        BindAsyncDeclarationLiveCaptures(arrowBuilder);
         // Create IL generator for the arrow's MoveNext
         var il = arrowBuilder.MoveNextMethod.GetILGenerator();
 

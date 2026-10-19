@@ -168,6 +168,68 @@ public partial class ILCompiler
         return true;
     }
 
+    private bool EmitNominalAbstractConstructorGuard(ILGenerator il, TypeBuilder owner,
+        Stmt.Class declaration, Label nominalConstruction)
+    {
+        // A concrete CLR child preserves private storage in an unchanged abstract
+        // ancestry. Only choose that path when no derived constructor can change
+        // a later super selection before reaching it.
+        var links = new List<(TypeBuilder Owner, Type Parent)>();
+        bool hasAbstractAncestor = false;
+        var current = owner;
+        var source = declaration;
+        while (true)
+        {
+            hasAbstractAncestor |= source.IsAbstract;
+            // Original base constructors do not select an internal-prototype parent.
+            if (source.SuperclassExpr == null) break;
+            if (!HasStableNominalSuperSelection(source)) return false;
+            Type? parent = current.BaseType;
+            Type? definition = parent?.IsConstructedGenericType == true
+                ? parent.GetGenericTypeDefinition() : parent;
+            if (definition is not TypeBuilder parentBuilder
+                || GetNominalClassDeclaration(parentBuilder) is not { } parentSource)
+                return false;
+            links.Add((current, parent!));
+            current = parentBuilder;
+            source = parentSource;
+        }
+        if (!hasAbstractAncestor) return false;
+
+        var liveConstruction = il.DefineLabel();
+        foreach (var link in links)
+        {
+            EmitCanonicalClassConstructorValue(il, link.Owner);
+            il.Emit(OpCodes.Call, _runtime.ObjectPrototypes.GetPrototypeOf);
+            EmitCanonicalClassConstructorValue(il, link.Parent);
+            il.Emit(OpCodes.Bne_Un, liveConstruction);
+        }
+        il.Emit(OpCodes.Br, nominalConstruction);
+        il.MarkLabel(liveConstruction);
+        return true;
+    }
+
+    private static bool HasStableNominalSuperSelection(Stmt.Class declaration)
+    {
+        var constructor = declaration.Methods.FirstOrDefault(method =>
+            !method.IsStatic && method.Name.Lexeme == "constructor" && method.Body != null);
+        if (constructor == null) return true;
+        if (constructor.Parameters.Any(parameter => parameter.DefaultValue != null
+                || parameter.DestructuredProperties != null || parameter.HasBindingExpressions))
+            return false;
+        var first = constructor.Body!.FirstOrDefault(statement => statement is not Stmt.Expression { Expr: Expr.Literal });
+        if (first is not Stmt.Expression { Expr: Expr.Call { Callee: Expr.Super super } call }
+            || (super.Method != null && super.Method.Lexeme != "constructor"))
+            return false;
+        var parameters = constructor.Parameters.Select(parameter => parameter.Name.Lexeme).ToHashSet(StringComparer.Ordinal);
+        return call.Arguments.All(argument => ExpressionUnwrapper.Unwrap(argument) switch
+        {
+            Expr.Literal => true,
+            Expr.Variable variable => parameters.Contains(variable.Name.Lexeme),
+            _ => false
+        });
+    }
+
     private sealed class ConstructorReplacementVisitor : AstVisitorBase
     {
         public bool HasReplacement { get; private set; }

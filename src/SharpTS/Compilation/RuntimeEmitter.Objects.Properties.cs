@@ -3255,8 +3255,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notPromiseCtorLabel);
 
-        // Unknown promise property - return null
-        il.Emit(OpCodes.Ldnull);
+        // An absent Promise property reads as JavaScript undefined.
+        il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
         il.Emit(OpCodes.Ret);
         }
 

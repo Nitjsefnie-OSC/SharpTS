@@ -53,6 +53,17 @@ public class TypeMap
     private readonly HashSet<object> _undefinedReachableNumericLocals = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Stmt.Parameter> _undefinedReachableNumericParams = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _rawCallStorage = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<BindingSymbol> _assertedAssignmentStorage = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<BindingSymbol> _constBindings = new(ReferenceEqualityComparer.Instance);
+
+    // Written assertions can admit arbitrary values without changing the
+    // binding's checked TS type. Its physical CLR slot must retain those values.
+    internal void MarkAssertedAssignmentStorage(BindingSymbol binding) => _assertedAssignmentStorage.Add(binding);
+    internal bool IsAssertedAssignmentStorage(Token name) =>
+        GetValueBinding(name) is { } binding && _assertedAssignmentStorage.Contains(binding);
+    internal void MarkConstBinding(BindingSymbol binding) => _constBindings.Add(binding);
+    internal bool IsConstBinding(BindingSymbol binding) => _constBindings.Contains(binding);
+    internal bool IsConstBinding(Token name) => GetValueBinding(name) is { } binding && IsConstBinding(binding);
 
     // Stronger than conservative checker taint: an actual raw call flows into this exact
     // source slot. Optimizer exceptions must not erase this representation evidence.

@@ -237,6 +237,15 @@ public class ReplCompletionProviderTests
     }
 
     [Fact]
+    public void Members_OfContextualClassName_IncludeItsStaticMembers()
+    {
+        using var engine = Session("class type { static create() {} instanceMethod() {} }");
+        var names = Names(engine, "type.");
+        Assert.Contains("create", names);
+        Assert.DoesNotContain("instanceMethod", names);
+    }
+
+    [Fact]
     public void Members_OfClassesFromSeparateSubmissions_RetainInheritedMembers()
     {
         using var engine = Session(

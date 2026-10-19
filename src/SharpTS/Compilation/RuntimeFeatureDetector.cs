@@ -1037,6 +1037,20 @@ public sealed class RuntimeFeatureDetector
                 VisitExpr(g.Object);
                 break;
 
+            case Expr.SetSuper superSet:
+                // Super writes reuse receiver-aware OrdinarySet, even when the
+                // program does not mention Reflect or Proxy explicitly.
+                _set.UsesReflect = true;
+                // The receiver can gain an own method/property which shadows
+                // its class prototype; do not prove class dispatch stable.
+                _set.UsesClassPrototypeMutation = true;
+                VisitExpr(superSet.Value);
+                break;
+
+            case Expr.AssertedAssignment assignment:
+                VisitExpr(assignment.LoweredAssignment);
+                break;
+
             case Expr.Set s:
                 MarkMutationTarget(s.Object);
                 MarkGlobalPropertyMutation(s.Object, s.Name.Lexeme);
@@ -1640,6 +1654,10 @@ public sealed class RuntimeFeatureDetector
             case Expr.CompoundSetPrivate privateCompound:
                 VisitExpr(privateCompound.Object);
                 VisitExpr(privateCompound.Value);
+                break;
+            case Expr.LogicalSetPrivate privateLogical:
+                VisitExpr(privateLogical.Object);
+                VisitExpr(privateLogical.Value);
                 break;
             case Expr.CallPrivate cp:
                 VisitExpr(cp.Object);

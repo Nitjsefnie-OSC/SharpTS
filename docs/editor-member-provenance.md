@@ -78,8 +78,9 @@ tokens against resolved canonical identities and its entered source body. Same-s
 names in unrelated classes stay separate. Unvisited/recovered/unresolved source, nested class
 owners/subtrees and unsupported declaration shapes refuse the whole domain. The query supplies
 only exact selected tokens and the proven owner's private declarations for collision checks;
-it performs no checker lookup or spelling-based occurrence search. Private compound/logical
-assignment and prefix/postfix updates currently fail ordinary parsing and remain refusal cases.
+it performs no checker lookup or spelling-based occurrence search. Checked private compound and
+logical field assignments retain read/write operation evidence and participate in the domain.
+Private prefix/postfix updates currently fail ordinary parsing and remain refusal cases.
 
 The LSP private operation requires a known captured version and negotiated versioned document
 changes. Prepare covers the whole `#old` token with that placeholder; rename accepts bare or

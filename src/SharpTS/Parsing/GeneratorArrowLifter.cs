@@ -622,10 +622,21 @@ internal sealed class GeneratorArrowLifter
                 var v = RewriteExpr(a.Value);
                 return ReferenceEquals(v, a.Value) ? a : a with { Value = v };
             }
+            case Expr.AssertedAssignment assignment:
+            {
+                var lowered = RewriteExpr(assignment.LoweredAssignment);
+                return ReferenceEquals(lowered, assignment.LoweredAssignment)
+                    ? assignment : assignment with { LoweredAssignment = lowered };
+            }
             case Expr.Set s:
             {
                 var o = RewriteExpr(s.Object); var v = RewriteExpr(s.Value);
                 return ReferenceEquals(o, s.Object) && ReferenceEquals(v, s.Value) ? s : new Expr.Set(o, s.Name, v);
+            }
+            case Expr.SetSuper s:
+            {
+                var value = RewriteExpr(s.Value);
+                return ReferenceEquals(value, s.Value) ? s : s with { Value = value };
             }
             case Expr.SetIndex si:
             {
@@ -668,6 +679,12 @@ internal sealed class GeneratorArrowLifter
             {
                 var o = RewriteExpr(lset.Object); var v = RewriteExpr(lset.Value);
                 return ReferenceEquals(o, lset.Object) && ReferenceEquals(v, lset.Value) ? lset : new Expr.LogicalSet(o, lset.Name, lset.Operator, v);
+            }
+            case Expr.LogicalSetPrivate lset:
+            {
+                var o = RewriteExpr(lset.Object); var v = RewriteExpr(lset.Value);
+                return ReferenceEquals(o, lset.Object) && ReferenceEquals(v, lset.Value)
+                    ? lset : lset with { Object = o, Value = v };
             }
             case Expr.LogicalSetIndex lsi:
             {

@@ -1203,14 +1203,15 @@ public partial class Parser
 
     /// <summary>
     /// Determines if 'using' should be treated as a declaration keyword (contextual keyword).
-    /// Returns true if followed by identifier, '{' (object destructuring), or '[' (array destructuring).
+    /// A resource declaration starts with a binding name; bracket access on a value named
+    /// 'using' remains an expression. Resource declarations do not allow destructuring.
     /// </summary>
     private bool IsUsingDeclarationContext()
     {
         var nextType = PeekNext().Type;
-        return nextType == TokenType.IDENTIFIER ||
-               nextType == TokenType.LEFT_BRACE ||   // object destructuring: using { x } = expr
-               nextType == TokenType.LEFT_BRACKET;   // array destructuring: using [a, b] = expr
+        return Peek().Line == PeekNext().Line &&
+               (nextType == TokenType.IDENTIFIER || IsContextualKeyword(nextType)) &&
+               PeekAt(2).Type is TokenType.EQUAL or TokenType.COLON;
     }
 
     /// <summary>

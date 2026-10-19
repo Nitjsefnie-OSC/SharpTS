@@ -3184,12 +3184,14 @@ public partial class TypeChecker
 
     private static int? TryGetExprLine(Expr expr) => expr switch
     {
+        Expr.AssertedAssignment assignment => TryGetExprLine(assignment.LoweredAssignment),
         Expr.Grouping g => TryGetExprLine(g.Expression),
         Expr.Variable v => v.Name.Line,
         Expr.This t => t.Keyword.Line,
         Expr.NewTarget nt => nt.Keyword.Line,
         Expr.ImportMeta im => im.Keyword.Line,
         Expr.Set s => s.Name.Line,
+        Expr.SetSuper s => s.Target.Method?.Line ?? s.Target.Keyword.Line,
         Expr.Get g => g.Name.Line,
         Expr.PrivateIn presence => presence.Name.Line,
         Expr.Assign a => a.Name.Line,
@@ -3199,6 +3201,7 @@ public partial class TypeChecker
         Expr.CompoundAssign ca => ca.Name.Line,
         Expr.CompoundSet cs => cs.Name.Line,
         Expr.CompoundSetPrivate cs => cs.Operator.Line,
+        Expr.LogicalSetPrivate ls => ls.Operator.Line,
         Expr.Call c => TryGetExprLine(c.Callee),
         Expr.New n => TryGetExprLine(n.Callee),
         // Index forms carry no token of their own — attribute to their object's line so a write

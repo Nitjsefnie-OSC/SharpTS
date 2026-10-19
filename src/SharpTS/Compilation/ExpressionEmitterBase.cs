@@ -302,6 +302,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case Expr.Super s:
                 EmitSuper(s);
                 break;
+            case Expr.SetSuper s:
+                EmitSetSuper(s);
+                break;
             case Expr.CompoundAssign ca:
                 EmitCompoundAssign(ca);
                 break;
@@ -319,6 +322,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 break;
             case Expr.LogicalSet ls:
                 EmitLogicalSet(ls);
+                break;
+            case Expr.LogicalSetPrivate ls:
+                EmitLogicalSetPrivate(ls);
                 break;
             case Expr.LogicalSetIndex lsi:
                 EmitLogicalSetIndex(lsi);
@@ -347,6 +353,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 break;
             case Expr.TypeAssertion ta:
                 EmitTypeAssertion(ta);
+                break;
+            case Expr.AssertedAssignment assignment:
+                EmitAssertedAssignment(assignment);
                 break;
             case Expr.Satisfies sat:
                 EmitSatisfies(sat);

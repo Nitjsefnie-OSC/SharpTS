@@ -676,6 +676,8 @@ public partial class TypeChecker
     internal VoidResult VisitConst(Stmt.Const stmt)
     {
         RegisterValueDeclaration(stmt.Name);
+        if (Bindings.GetSymbol(stmt.Name) is { } constBinding)
+            _typeMap.MarkConstBinding(constBinding);
 
         TypeInfo constDeclaredType;
         TypeInfo? initializerFlowType = null;
@@ -857,6 +859,9 @@ public partial class TypeChecker
     /// </summary>
     private bool ValueMayBeUndefinedSentinel(Expr value, HashSet<string>? taintedLocals) => value switch
     {
+        // A written assertion can admit values outside the underlying slot's
+        // annotation. Reuse the raw-value storage hints, keeping TS types intact.
+        Expr.AssertedAssignment => true,
         Expr.Grouping g => ValueMayBeUndefinedSentinel(g.Expression, taintedLocals),
         Expr.TypeAssertion a => TypeAdmitsUndefinedSentinel(_typeMap.Get(a))
                              || ValueMayBeUndefinedSentinel(a.Expression, taintedLocals),

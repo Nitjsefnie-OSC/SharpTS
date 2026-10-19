@@ -164,11 +164,19 @@ public static class LoopAssignmentAnalyzer
                 CollectAssignedPathsFromExpr(assign.Value, paths);
                 break;
 
+            case Expr.AssertedAssignment assignment:
+                CollectAssignedPathsFromExpr(assignment.LoweredAssignment, paths);
+                break;
+
             case Expr.Set set:
                 if (NarrowingPathExtractor.TryExtract(set.Object) is { } setBasePath)
                     paths.Add(new NarrowingPath.PropertyAccess(setBasePath, set.Name.Lexeme));
                 CollectAssignedPathsFromExpr(set.Object, paths);
                 CollectAssignedPathsFromExpr(set.Value, paths);
+                break;
+
+            case Expr.SetSuper setSuper:
+                CollectAssignedPathsFromExpr(setSuper.Value, paths);
                 break;
 
             case Expr.SetIndex setIndex:
@@ -230,6 +238,11 @@ public static class LoopAssignmentAnalyzer
                     paths.Add(new NarrowingPath.PropertyAccess(logicalBasePath, logicalSet.Name.Lexeme));
                 CollectAssignedPathsFromExpr(logicalSet.Object, paths);
                 CollectAssignedPathsFromExpr(logicalSet.Value, paths);
+                break;
+
+            case Expr.LogicalSetPrivate logicalSetPrivate:
+                CollectAssignedPathsFromExpr(logicalSetPrivate.Object, paths);
+                CollectAssignedPathsFromExpr(logicalSetPrivate.Value, paths);
                 break;
 
             case Expr.LogicalSetIndex logicalSetIndex:

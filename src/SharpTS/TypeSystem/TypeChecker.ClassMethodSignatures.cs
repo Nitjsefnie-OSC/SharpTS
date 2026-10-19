@@ -91,4 +91,34 @@ public partial class TypeChecker
         CopyEditorPublicSignatures(declared, callable);
         return callable;
     }
+
+    private TypeInfo WidenInferredClassMemberReturn(IReadOnlyList<Stmt> body, TypeInfo inferred)
+    {
+        // A single fresh primitive return widens, but a literal union or an
+        // explicitly fixed literal remains part of the callable's signature.
+        // Use each checked expression's source provenance to distinguish
+        // `return 1` / a fresh const alias from `return 1 as const` / `const n: 1`.
+        TypeInfo? widened = inferred switch
+        {
+            TypeInfo.NumberLiteral => TypeInfo.Primitive.Number,
+            TypeInfo.StringLiteral => TypeInfo.String.Shared,
+            TypeInfo.BooleanLiteral => TypeInfo.Primitive.Boolean,
+            TypeInfo.BigIntLiteral => TypeInfo.BigInt.Shared,
+            _ => null
+        };
+        if (widened == null) return inferred;
+
+        List<Expr> returns = [];
+        var collector = new ClassMemberReturnCollector(returns);
+        foreach (var statement in body) collector.Visit(statement);
+        if (returns.Count == 0) return inferred;
+        foreach (var expression in returns)
+        {
+            if (_typeMap.Get(expression) is not { } expressionType ||
+                !TypeInfoEqualityComparer.Instance.Equals(
+                    WidenClassFieldInitializerType(expression, expressionType), widened))
+                return inferred;
+        }
+        return widened;
+    }
 }

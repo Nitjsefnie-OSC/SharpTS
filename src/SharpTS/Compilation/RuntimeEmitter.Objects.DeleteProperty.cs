@@ -189,9 +189,8 @@ public partial class RuntimeEmitter
     /// On a failed delete (frozen/sealed object, non-configurable property)
     /// the non-strict variant returns false; the strict variant throws a
     /// TypeError when strictMode is set, else returns false.
-    /// The strict variant's $TSFunction handler skips the frozen/sealed/PDS
-    /// configurability checks — preserved as-is from before the #1131 merge
-    /// (behavior-preserving refactor; see the epic notes for the drift list).
+    /// Strict callable deletion reuses ordinary deletion for storage cleanup
+    /// and applies strictness to its result.
     /// </summary>
     private void EmitDeletePropertyCore(
         TypeBuilder typeBuilder,
@@ -422,8 +421,7 @@ public partial class RuntimeEmitter
         if (strict)
         {
             // Reuse the ordinary bound [[Delete]] operation so both the PDS
-            // override and synthesized metadata are removed. The legacy
-            // strict TSFunction path below only records the deletion.
+            // override and synthesized metadata are removed.
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Call, objectDeletion.Property);
@@ -745,14 +743,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, trueLabel);
         if (strict)
         {
-            // Strict variant: record the deletion only — it intentionally skips
-            // the frozen/sealed/PDS configurability checks the non-strict
-            // handler performs (preserved pre-#1131 behavior).
+            // Ordinary deletion removes actual descriptor storage as well as
+            // synthesized metadata. Recording only a tombstone leaves a live
+            // configurable PDS property observable after successful deletion.
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Call, inputs.ObjectState.MarkBuiltinDeleted);
-            il.Emit(OpCodes.Ldc_I4_1);
-            il.Emit(OpCodes.Ret);
+            il.Emit(OpCodes.Call, objectDeletion.Property);
+            il.Emit(OpCodes.Brtrue, trueLabel);
+            EmitDeleteFail("' of function");
         }
         else
         {

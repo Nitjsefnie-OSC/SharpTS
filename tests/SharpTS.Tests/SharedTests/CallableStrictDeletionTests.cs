@@ -87,8 +87,6 @@ public sealed class CallableStrictDeletionTests
                 }
             }
             """, "0 false false\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse false true true true true\n0 false false\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse false true true true true\n0 false false\ntrue\ntrue\ntrue\ntrue\nprototype-result true\nprototype-result true\nfalse false true true true true\n1 false false\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse false true true true true\n1 false false\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse false true true true true\n1 false false\ntrue\ntrue\ntrue\ntrue\nprototype-result true\nprototype-result true\nfalse false true true true true\n"];
-        // #2776 owns strict dot cleanup; preserve the full original positive in
-        // artifacts/p2-goal/2415-configurable-dot-cleanup-preservation/ until restoration.
         yield return ["configurable-data-accessor-cleanup-recreation-and-absent-success", """
             function declaration() {}
             async function asyncDeclaration() {}
@@ -103,19 +101,31 @@ public sealed class CallableStrictDeletionTests
             for (const target of functions) {
                 Object.defineProperty(target, 'data', { value: 7, configurable: true });
                 Object.defineProperty(target, 'access', { get: getter, configurable: true });
-                console.log(indexed(target, 'data'), indexed(target, 'access'), Object.hasOwn(target, 'data'),
+                console.log(dataDot(target), indexed(target, 'access'), Object.hasOwn(target, 'data'),
                     Object.hasOwn(target, 'access'), Object.getOwnPropertyDescriptor(target, 'data') === undefined,
                     Object.getOwnPropertyDescriptor(target, 'access') === undefined, reads);
                 Object.defineProperty(target, 'data', { value: 9, configurable: true });
                 Object.defineProperty(target, 'access', { get: getter, configurable: true });
                 console.log(Object.getOwnPropertyDescriptor(target, 'data')!.value, indexed(target, 'data'),
-                    indexed(target, 'access'), Object.hasOwn(target, 'data'), Object.hasOwn(target, 'access'), reads);
+                    accessorDot(target), Object.hasOwn(target, 'data'), Object.hasOwn(target, 'access'), reads);
                 Object.preventExtensions(target);
-                console.log(indexed(target, 'data'), indexed(target, 'access'), Reflect.deleteProperty(target, 'data'),
+                console.log(dataDot(target), indexed(target, 'access'), Reflect.deleteProperty(target, 'data'),
                     Object.getOwnPropertyDescriptor(target, 'data') === undefined,
                     Object.getOwnPropertyDescriptor(target, 'access') === undefined, reads);
             }
             """, "true true false false true true 0\n9 true true false false 0\ntrue true true true true 0\ntrue true false false true true 0\n9 true true false false 0\ntrue true true true true 0\ntrue true false false true true 0\n9 true true false false 0\ntrue true true true true 0\ntrue true false false true true 0\n9 true true false false 0\ntrue true true true true 0\ntrue true false false true true 0\n9 true true false false 0\ntrue true true true true 0\ntrue true false false true true 0\n9 true true false false 0\ntrue true true true true 0\n"];
+        yield return ["strict-dot-configurable-data-and-accessor-cleanup-issue2776", """
+            function original() {}
+            const target: any = original;
+            Object.defineProperty(target, 'data', { value: 7, configurable: true });
+            Object.defineProperty(target, 'access', { get() { return 9; }, configurable: true });
+            function removeData() { 'use strict'; return delete target.data; }
+            function removeAccessor() { 'use strict'; return delete target.access; }
+            console.log(removeData(), Object.hasOwn(target, 'data'),
+                Object.getOwnPropertyDescriptor(target, 'data') === undefined);
+            console.log(removeAccessor(), Object.hasOwn(target, 'access'),
+                Object.getOwnPropertyDescriptor(target, 'access') === undefined);
+            """, "true false true\ntrue false true\n"];
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>

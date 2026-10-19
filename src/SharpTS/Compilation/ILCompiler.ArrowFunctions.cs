@@ -312,9 +312,11 @@ public partial class ILCompiler
                 // to this arrow. Use the same module scope as body emission.
                 var moduleCaptures = BuildCapturedTopLevelVarsForModule(
                     NormalizeToEmissionPath(_arrowToModule.GetValueOrDefault(arrow)));
+                bool IsModuleCapture(string name) => moduleCaptures?.Contains(name) == true
+                    && _closures.Analyzer.GetCaptureSource(arrow, name) is null;
                 // Determine if any captured vars are top-level captured vars
                 bool needsEntryPointDC = _closures.EntryPointDisplayClass != null &&
-                    captures.Any(c => moduleCaptures?.Contains(c) == true);
+                    captures.Any(IsModuleCapture);
 
                 // Check if this arrow needs function DC (either directly or to propagate to inner arrows)
                 bool needsFunctionDC = _arrowsNeedingFunctionDC.Contains(arrow);
@@ -401,7 +403,7 @@ public partial class ILCompiler
                     // shadows — the declared-more-than-once name is exactly what the #1201
                     // lift declined). Give the capture its own copy field so it snapshots
                     // the creating scope's local like any ordinary local capture.
-                    if (moduleCaptures?.Contains(capturedVar) == true &&
+                    if (IsModuleCapture(capturedVar) &&
                         !IsShadowedTopLevelBlockCapture(arrow, capturedVar))
                         continue;
 

@@ -49,6 +49,17 @@ public partial class AsyncArrowMoveNextEmitter
         // Create display class instance
         _il.Emit(OpCodes.Newobj, displayCtor);
 
+        // A closure created during defaults or in the body retains the same live module
+        // environment as closures in an ordinary async function. Its direct capture map
+        // omits these bindings because the generated Invoke reads through $entryPointDC.
+        if (_ctx.ArrowEntryPointDCFields?.TryGetValue(af, out var entryPointDCField) == true &&
+            _ctx.EntryPointDisplayClassStaticField != null)
+        {
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Ldsfld, _ctx.EntryPointDisplayClassStaticField);
+            _il.Emit(OpCodes.Stfld, entryPointDCField);
+        }
+
         // Follow-up to #838: if this sync arrow routes a captured write through THIS async arrow's own
         // function DC, share the reference: dc.$functionDC = this.<>__functionDC. The arrow body then
         // reads/writes that local through $functionDC (verifiable) instead of a by-value snapshot.

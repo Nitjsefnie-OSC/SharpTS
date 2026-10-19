@@ -177,6 +177,7 @@ public partial class ILCompiler
         ctx.AsyncArrowOuterBuilders = _async.ArrowOuterBuilders;
         ctx.AsyncArrowParentBuilders = _async.ArrowParentBuilders;
         ApplyCapturedTopLevelVariableAccess(ctx, memberBodyExports: true);
+        ctx.ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null;
         AttachLocalSymbols(ctx);
         return ctx;
     }
@@ -335,6 +336,7 @@ public partial class ILCompiler
             EntryPointDisplayClassFields = parentCtx.EntryPointDisplayClassFields,
             CapturedTopLevelVars = parentCtx.CapturedTopLevelVars,
             EntryPointDisplayClassStaticField = parentCtx.EntryPointDisplayClassStaticField,
+            ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
             TopLevelLexicalInitFields = parentCtx.TopLevelLexicalInitFields,
             // Captured locals promoted into the enclosing function's display class (#625): the
             // arrow reads/writes them through `outer.functionDC.field` rather than mutating the

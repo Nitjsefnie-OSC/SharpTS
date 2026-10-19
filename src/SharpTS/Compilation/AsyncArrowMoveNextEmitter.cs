@@ -265,6 +265,19 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
         if (BlockScopeRenames.TryGetValue(v, out var renamed))
             v = v with { Name = RenameToken(v.Name, renamed) };
 
+        // A declaration owns local storage even when the module has a binding with
+        // the same spelling. Unhoisted locals otherwise reach the global-store
+        // fallback before StoreVariable has had a chance to create their slot.
+        if (!_builder.ParameterFields.ContainsKey(v.Name.Lexeme)
+            && !_builder.LocalFields.ContainsKey(v.Name.Lexeme)
+            && !_builder.FunctionDCFieldMap.ContainsKey(v.Name.Lexeme)
+            && _resolver!.TryResolveLocal(v.Name.Lexeme) is null)
+        {
+            var storage = _resolver.GetOrCreateLocal(v.Name.Lexeme);
+            _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.Sentinels.UndefinedInstance);
+            storage.EmitStore(_il);
+        }
+
         if (v.Initializer != null)
         {
             EmitExpression(v.Initializer);

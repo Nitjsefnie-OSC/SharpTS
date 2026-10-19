@@ -76,12 +76,19 @@ public class AsyncArrowVariableResolver : IVariableResolver
     {
         if (name == "this" && _builder.LexicalThisStorage is { } lexicalThis)
             return lexicalThis;
+        if (TryResolveOwnHoisted(name) is { } own)
+            return own;
+        if (_builder.IsCaptured(name) && _builder.CapturedFieldMap.TryGetValue(name, out var captured))
+            return AsyncArrowStorageAccess.CapturedField(_builder, name, captured);
+        return null;
+    }
+
+    internal AsyncArrowStorageAccess? TryResolveOwnHoisted(string name)
+    {
         if (_builder.ParameterFields.TryGetValue(name, out var parameter))
             return AsyncArrowStorageAccess.StateMachineField(parameter);
         if (_builder.LocalFields.TryGetValue(name, out var local))
             return AsyncArrowStorageAccess.StateMachineField(local);
-        if (_builder.IsCaptured(name) && _builder.CapturedFieldMap.TryGetValue(name, out var captured))
-            return AsyncArrowStorageAccess.CapturedField(_builder, name, captured);
         return null;
     }
 

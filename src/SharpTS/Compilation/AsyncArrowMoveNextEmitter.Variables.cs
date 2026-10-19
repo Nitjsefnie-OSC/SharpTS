@@ -24,9 +24,9 @@ public partial class AsyncArrowMoveNextEmitter
         string name = v.Name.Lexeme;
 
         if (LexicalEnvironmentCellAccess.TryLoad(_il, Ctx, name)) { SetStackUnknown(); return; }
-        // Outer DC, then own DC, before the resolver: promoted captures may still have
-        // stale hoisted fields. Reads retain this order; writes put per-iteration cells first.
-        if (TryResolveDisplayClassStorage(name) is { } displayStorage)
+        // A declaration-owned IL local shadows surrounding captures. Display-class
+        // storage still precedes potentially stale hoisted copies of promoted captures.
+        if ((_resolver!.TryResolveLocal(name) ?? TryResolveDisplayClassStorage(name)) is { } displayStorage)
         {
             displayStorage.EmitLoad(_il);
             SetStackUnknown();
@@ -127,10 +127,12 @@ public partial class AsyncArrowMoveNextEmitter
         _il.Emit(OpCodes.Dup);
 
         if (LexicalEnvironmentCellAccess.TryStore(_il, Ctx, name)) { SetStackUnknown(); return; }
-        // Simple assignment keeps module storage ahead of the resolver fallback. Declaration
-        // and compound/increment stores below instead resolve hoisted/captured fields first.
+        // Assignments keep a previously declared local or parameter in its own
+        // storage; only unresolved names can fall through to module storage.
         var storage = _resolver!.TryResolveCell(name)
+            ?? _resolver.TryResolveLocal(name)
             ?? TryResolveDisplayClassStorage(name)
+            ?? _resolver.TryResolveOwnHoisted(name)
             ?? TryResolveShadowedTopLevelStorage(name);
         if (storage != null)
             storage.EmitStore(_il);
@@ -148,6 +150,7 @@ public partial class AsyncArrowMoveNextEmitter
         // Renaming happens at the AST boundary. Cells and live display classes win over any
         // hoisted copy; hoisted parameters/locals and outer captures win over module globals.
         var storage = _resolver!.TryResolveCell(name)
+            ?? _resolver.TryResolveLocal(name)
             ?? TryResolveDisplayClassStorage(name)
             ?? _resolver.TryResolveHoistedOrCaptured(name)
             ?? TryResolveShadowedTopLevelStorage(name);
@@ -185,11 +188,11 @@ public partial class AsyncArrowMoveNextEmitter
 
     private void LoadVariableForCapture(string name)
     {
-        // Capture population has its own order: parameters, hoisted locals, outer captures,
-        // IL locals, then standalone captures before globals. The capturing-arrow caller
+        // Capture population keeps declaration-owned locals ahead of outer captures,
+        // then checks standalone captures before globals. The capturing-arrow caller
         // separately shares cell/display-class references when live storage is required.
-        var storage = TryResolveDisplayClassStorage(name)
-            ?? _resolver!.TryResolveHoistedOrCaptured(name) ?? _resolver.TryResolveLocal(name);
+        var storage = _resolver!.TryResolveLocal(name) ?? TryResolveDisplayClassStorage(name)
+            ?? _resolver.TryResolveHoistedOrCaptured(name);
         if (storage == null && _builder.StandaloneCaptureFields.TryGetValue(name, out var standaloneField))
             storage = AsyncArrowStorageAccess.StateMachineField(standaloneField);
 

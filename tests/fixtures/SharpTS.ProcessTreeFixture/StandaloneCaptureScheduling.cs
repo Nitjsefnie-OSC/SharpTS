@@ -158,8 +158,8 @@ internal sealed class StandaloneCaptureScheduling
         }
         catch (Exception exception)
         {
-            Exception actual = exception is TargetInvocationException { InnerException: not null } invocation
-                ? invocation.InnerException : exception;
+            Exception actual = exception is TargetInvocationException { InnerException: Exception inner }
+                ? inner : exception;
             _error = actual.ToString();
             _diagnosticPath = actual.Data["StandaloneProcessDiagnosticPath"] as string;
             _outcome = "helper-failed";

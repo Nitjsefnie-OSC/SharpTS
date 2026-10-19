@@ -162,8 +162,6 @@ public sealed class ParameterDefaultBodyScopeTests
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Where(mode => mode == ExecutionMode.Interpreted || (string)row[0] switch
             {
-                // #2658: compiled defaults share a same-named body var's storage.
-                "parameter-var-copy-and-simple-sharing" => false,
                 // #2661: an async expression default captures future body var storage and rejects.
                 "async-and-generator-default-outer-binding" => false,
                 // #2659: a compiled forward body var read resolves the outer binding.

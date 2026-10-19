@@ -35,6 +35,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         public bool GeneratorEligible { get; set; } = lexical;
         public bool OrdinaryHandlerCandidate { get; } = ordinaryHandlerCandidate;
         public object? ModuleOwner { get; } = moduleOwner;
+        public bool ParameterBodyCopy { get; set; }
     }
 
     private readonly List<Owner> _owners = [];
@@ -46,6 +47,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     private readonly HashSet<Token> _cells = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<object, HashSet<string>> _cellOnlyCapturedNames = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _ordinaryBlockShadows = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<List<Stmt>, IReadOnlyList<(Token Declaration, Token Parameter)>> _parameterBodyCopies = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Token, Token> _parameterBodyDeclarations = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Token, Expr.ClassExpr> _classSelfDeclarations = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Expr.Variable, Expr.ClassExpr> _classSelfReferences = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.Variable> _transportedClassSelfReferences = new(ReferenceEqualityComparer.Instance);
@@ -57,6 +60,10 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     public IEnumerable<Token> CellDeclarations => _cells;
     public bool IsCellDeclaration(Token token) => _cells.Contains(token);
     public bool IsOrdinaryBlockShadowDeclaration(Token token) => _ordinaryBlockShadows.Contains(token);
+    public bool IsParameterBodyDeclaration(Token token) => _parameterBodyDeclarations.ContainsKey(token);
+    public Token? GetParameterBodyDeclaration(Token token) => _parameterBodyDeclarations.GetValueOrDefault(token);
+    public IReadOnlyList<(Token Declaration, Token Parameter)> GetParameterBodyCopies(List<Stmt> body) =>
+        _parameterBodyCopies.GetValueOrDefault(body) ?? [];
     public HashSet<string> GetCellOnlyCapturedNames(object owner) =>
         _cellOnlyCapturedNames.GetValueOrDefault(owner) ?? [];
     public bool TryGetClassSelfOwner(Expr.Variable reference, out Expr.ClassExpr owner) =>
@@ -77,6 +84,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         _classSelfDeclarations.Clear();
         _moduleRootBindings.Clear();
         _ordinaryBlockShadows.Clear();
+        _parameterBodyCopies.Clear();
+        _parameterBodyDeclarations.Clear();
         _cellOnlyCapturedNames.Clear();
         _classSelfReferences.Clear();
         _transportedClassSelfReferences.Clear();
@@ -96,7 +105,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         finally { _scopes.Pop(); _owners.Clear(); _currentModuleOwner = null; }
 
         foreach (var binding in _declarations.Values)
-            if (binding.Eligible && binding.Captured && binding.ShadowOf is null) _cells.Add(binding.Name);
+            if (binding.ParameterBodyCopy || binding.Eligible && binding.Captured && binding.ShadowOf is null)
+                _cells.Add(binding.Name);
         HashSet<Token> generatorCells = new(ReferenceEqualityComparer.Instance);
         foreach (var binding in _declarations.Values.Where(b => b.GeneratorCaptured))
         {
@@ -282,6 +292,14 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         var binding = VisibleBinding(name);
         if (binding is null || ReferenceEquals(binding.Owner, _owners[^1])) return;
         binding.Captured = true;
+        if (binding.ParameterBodyCopy)
+        {
+            // These cells implement separate parameter/body environments, even
+            // when the body value is captured through a method or declaration.
+            for (int index = _owners.Count - 1; index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
+                RecordCapture(_owners[index].Node, name, binding);
+            return;
+        }
         if (binding.Lexical)
         {
             bool generator = false;
@@ -471,6 +489,31 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             EnterScope(body, allowCandidates: false, hoistVars: true);
             try
             {
+                if (synchronous && !directSuspension && Runtime.ParameterBinder.HasParameterExpressions(parameters))
+                {
+                    var vars = new VarCollector();
+                    foreach (var statement in body) vars.Visit(statement);
+                    var functionNames = Runtime.ParameterBinder.BodyVarDeclarations(body)
+                        .Where(declaration => declaration.IsFunction)
+                        .Select(declaration => declaration.Name.Lexeme).ToHashSet(StringComparer.Ordinal);
+                    var copies = new List<(Token Declaration, Token Parameter)>();
+                    foreach (var parameter in parameters)
+                    {
+                        if (functionNames.Contains(parameter.Name.Lexeme)) continue;
+                        var declarations = vars.Names.Where(token => vars.OwnedNames.Contains(token)
+                            && token.Lexeme == parameter.Name.Lexeme).ToList();
+                        if (declarations.Count == 0) continue;
+                        var binding = _declarations[declarations[0]];
+                        binding.ParameterBodyCopy = true;
+                        // Every redeclaration and var-loop header uses this one
+                        // function-owned cell, regardless of its source token.
+                        _scopes.Peek()[parameter.Name.Lexeme] = binding;
+                        foreach (var declaration in declarations)
+                            _parameterBodyDeclarations[declaration] = binding.Name;
+                        copies.Add((binding.Name, parameter.Name));
+                    }
+                    if (copies.Count > 0) _parameterBodyCopies[body] = copies;
+                }
                 if (expressionBody is not null) Visit(expressionBody);
                 foreach (var statement in body) Visit(statement);
             }

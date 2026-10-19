@@ -300,6 +300,10 @@ public partial class CompilationContext
     // display class. Defaults still read the incoming argument slots beforehand.
     internal bool UseOwnedCapturedParameterStorage { get; set; }
 
+    // Synchronous parameter bindings survive initializer-free var redeclarations,
+    // including receiver adapters whose parameters live in locals rather than args.
+    internal IReadOnlySet<string>? InitializedParameterNames { get; set; }
+
     /// <summary>
     /// Fields in the current function's display class (variable name -> field).
     /// These are local variables that are captured by inner arrow functions.

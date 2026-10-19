@@ -437,6 +437,12 @@ public partial class ILCompiler
 
                 foreach (var capturedVar in captures)
                 {
+                    if (_closures.Analyzer.TryGetLoopBodyCellCapture(func, capturedVar, out _))
+                    {
+                        fieldMap[capturedVar] = displayClass.DefineField(
+                            capturedVar, _types.Object, FieldAttributes.Public);
+                        continue;
+                    }
                     // Skip top-level captured vars - accessed through $entryPointDC
                     if (_closures.CapturedTopLevelVars.Contains(capturedVar))
                         continue;
@@ -591,6 +597,8 @@ public partial class ILCompiler
                 }
                 else
                     ctx.CapturedFields = [];
+
+                ctx.LoopBodyCellCaptures = _closures.Analyzer.GetLoopBodyCellCaptures(func);
 
                 // Set $entryPointDC field
                 if (_innerFunctionEntryPointDCFields.TryGetValue(func, out var epDCField))
@@ -1150,6 +1158,7 @@ public partial class ILCompiler
                 if (!new ILEmitter(ctx).TryEmitOwnedClassDefinition())
                     throw new InvalidOperationException("Inner function has no lexical class evaluation owner.");
             }
+            else if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(il, ctx, funcStmt, capturedVar)) { }
             else if (ctx.TryGetParameter(capturedVar, out var argIndex))
             {
                 il.Emit(OpCodes.Ldarg, argIndex);

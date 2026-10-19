@@ -1871,7 +1871,8 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         if (Ctx.LoopBodyCellDeclarations.TryGetValue(name, out var declaration))
         {
             emitValue();
-            TryInitializeLexicalCell(declaration, fresh: true);
+            TryInitializeLexicalCell(declaration,
+                fresh: Ctx.ClosureAnalyzer?.IsParameterBodyDeclaration(declaration) != true);
             return;
         }
         var field = GetHoistedVariableField(name);

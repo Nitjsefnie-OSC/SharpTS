@@ -262,6 +262,9 @@ public partial class ILCompiler
         foreach (var parameter in constructor?.Parameters ?? [])
             SeedCapturedLocal(parameter.Name.Lexeme, ctx.Locals.GetLocal(parameter.Name.Lexeme)!);
         ctx.UseOwnedCapturedParameterStorage = true;
+        ctx.InitializedParameterNames = constructor?.Parameters.Select(parameter => parameter.Name.Lexeme)
+            .ToHashSet(StringComparer.Ordinal);
+        emitter.InitializeParameterBodyBindings(constructor?.Body);
         emitter.InitializeCapturedLexicalTdzBindings(constructor?.Body ?? []);
         bool implicitSuper = constructor == null && declaration.SuperclassExpr != null;
         if (implicitSuper)

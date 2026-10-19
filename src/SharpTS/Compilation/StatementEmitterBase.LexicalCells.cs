@@ -164,12 +164,21 @@ public abstract partial class StatementEmitterBase
 
     protected bool TryInitializeLoopBodyBinding(Stmt.Var declaration)
     {
-        string name = Ctx.LexicalCellStorageNames.GetValueOrDefault(declaration.Name) ?? declaration.Name.Lexeme;
+        var declarationToken = declaration.IsVar
+            ? Ctx.ClosureAnalyzer?.GetParameterBodyDeclaration(declaration.Name) ?? declaration.Name
+            : declaration.Name;
+        string name = Ctx.LexicalCellStorageNames.GetValueOrDefault(declarationToken) ?? declarationToken.Lexeme;
         bool cell = Ctx.LoopBodyCellDeclarations.TryGetValue(name, out var token)
-            && ReferenceEquals(token, declaration.Name);
+            && ReferenceEquals(token, declarationToken);
         bool shadow = Ctx.LoopBodyCellShadows.TryGetValue(name, out token)
-            && ReferenceEquals(token, declaration.Name);
+            && ReferenceEquals(token, declarationToken);
         if (!cell && !shadow) return false;
+
+        // The parameter/body environment prologue already copied this var's
+        // initial value. An initializer-free declaration must preserve it.
+        if (declaration.IsVar && declaration.Initializer is null
+            && Ctx.ClosureAnalyzer?.IsParameterBodyDeclaration(declaration.Name) == true)
+            return true;
 
         if (declaration.Initializer is { } initializer)
         {
@@ -182,7 +191,7 @@ public abstract partial class StatementEmitterBase
         if (cell)
         {
             IL.Emit(OpCodes.Ldloc, value);
-            TryInitializeLexicalCell(declaration.Name);
+            TryInitializeLexicalCell(declarationToken);
         }
         else
         {

@@ -133,6 +133,30 @@ public partial class ILEmitter
     }
 
     /// <summary>
+    /// Copies overlapping parameter bindings into fresh function-body var cells.
+    /// Default-created closures retain the parameter environment's existing slots.
+    /// </summary>
+    internal void InitializeParameterBodyBindings(List<Stmt>? body)
+    {
+        if (body is null || _ctx.ClosureAnalyzer is not { } analyzer) return;
+        foreach (var (declaration, parameter) in analyzer.GetParameterBodyCopies(body))
+        {
+            string name = declaration.Lexeme;
+            if (_ctx.LoopBodyCellDeclarations.ContainsKey(name)) continue;
+            var parameterType = _resolver.TryLoadVariable(parameter.Lexeme)
+                ?? throw new InvalidOperationException($"Parameter binding '{parameter.Lexeme}' is unavailable.");
+            SetStackType(parameterType);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Newobj, _ctx.Types.StrongBoxOfObjectCtor);
+            var cell = IL.DeclareLocal(_ctx.Types.StrongBoxOfObject);
+            IL.Emit(OpCodes.Stloc, cell);
+            _ctx.CellBindingLocals[name] = cell;
+            _ctx.LoopBodyCellDeclarations[name] = declaration;
+            _ctx.LexicalCellStorageNames[declaration] = name;
+        }
+    }
+
+    /// <summary>
     /// Routes the shared static-dispatch helpers' extra-arg boxing through
     /// EmitBoxIfNeeded so ILEmitter keeps its TypeMap/literal-aware boxing
     /// (the base seam defaults to stack-state-only EnsureBoxed).

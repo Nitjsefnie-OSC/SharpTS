@@ -146,6 +146,9 @@ public partial class ILEmitter
         }
 
         if (TryInitializeLoopBodyBinding(v)) return;
+        if (v.IsVar && v.Initializer is null
+            && _ctx.InitializedParameterNames?.Contains(v.Name.Lexeme) == true)
+            return;
 
         // Module-level storage (static field / entry-point display class) is only the right
         // target when this declaration IS a module-level binding: we are emitting the module

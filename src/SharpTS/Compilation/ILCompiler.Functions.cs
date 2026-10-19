@@ -612,7 +612,7 @@ public partial class ILCompiler
             for (int i = 0; i < funcStmt.Parameters.Count && i < currentFuncType.ParamTypes.Count; i++)
             {
                 string parameterName = funcStmt.Parameters[i].Name.Lexeme;
-                if (assignedParameters.Contains(parameterName) ||
+                if (ctx.HasLoopBodyBindingAccess(parameterName) || assignedParameters.Contains(parameterName) ||
                     !TryGetCompactRecordShape(currentFuncType.ParamTypes[i], out var parameterShape))
                     continue;
 
@@ -885,6 +885,11 @@ public partial class ILCompiler
         }
 
         emitter.EmitDefaultParameters(parameters, argumentOffset, paramTypes);
+        ctx.InitializedParameterNames = parameters.Select(parameter => parameter.Name.Lexeme)
+            .ToHashSet(StringComparer.Ordinal);
+        // With parameter expressions, a same-named body var starts with the
+        // final parameter value but owns storage independent of default closures.
+        emitter.InitializeParameterBodyBindings(body);
     }
 
     /// <summary>

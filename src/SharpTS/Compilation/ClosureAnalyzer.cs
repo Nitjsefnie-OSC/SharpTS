@@ -158,6 +158,10 @@ public class ClosureAnalyzer : AstVisitorBase
 
     internal bool IsLoopBodyCellDeclaration(Token declaration) => _bodyCells.IsCellDeclaration(declaration);
     internal bool IsOrdinaryBlockShadowDeclaration(Token declaration) => _bodyCells.IsOrdinaryBlockShadowDeclaration(declaration);
+    internal bool IsParameterBodyDeclaration(Token declaration) => _bodyCells.IsParameterBodyDeclaration(declaration);
+    internal Token? GetParameterBodyDeclaration(Token declaration) => _bodyCells.GetParameterBodyDeclaration(declaration);
+    internal IReadOnlyList<(Token Declaration, Token Parameter)> GetParameterBodyCopies(List<Stmt> body) =>
+        _bodyCells.GetParameterBodyCopies(body);
     internal HashSet<string> GetCellOnlyCapturedLocalNames(object owner) => _bodyCells.GetCellOnlyCapturedNames(owner);
     internal bool TryGetLoopBodyCellCapture(object closure, string name, out Token declaration) =>
         _bodyCells.TryGetCaptureDeclaration(closure, name, out declaration);

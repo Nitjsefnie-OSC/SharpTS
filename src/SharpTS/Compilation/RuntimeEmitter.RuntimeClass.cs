@@ -2664,7 +2664,11 @@ public partial class RuntimeEmitter
         EmitObjectRest(
             typeBuilder,
             runtime.ObjectConstruction,
-            new ObjectRestInputs(runtime.ObjectFields.FieldsGetter, runtime.ObjectFields.Interface)
+            new ObjectRestInputs(runtime.Booleans, runtime.ClassPrototypes,
+                runtime.DescriptorStorage, runtime.ObjectRead.Property,
+                runtime.ObjectFields.FieldsGetter, runtime.ObjectFields.Interface,
+                runtime.ObjectDescriptors, runtime.ObjectKeys, runtime.ObjectOwnProperties, runtime.Reflect,
+                runtime.Symbols, runtime.Sentinels.UndefinedType)
         );
         // #685: array binding-pattern source normalizer uses the declared iterator
         // collection helper and array storage constructor.

@@ -7,7 +7,19 @@ namespace SharpTS.Compilation;
 
 public partial class RuntimeEmitter
 {
-    private readonly record struct ObjectRestInputs(MethodInfo IHasFieldsFieldsGetter, Type IHasFieldsInterface);
+    private readonly record struct ObjectRestInputs(
+        EmittedBooleanRuntime Booleans,
+        EmittedClassPrototypeRuntime ClassPrototypes,
+        EmittedDescriptorStorageRuntime DescriptorStorage,
+        MethodBuilder GetProperty,
+        MethodInfo IHasFieldsFieldsGetter,
+        Type IHasFieldsInterface,
+        EmittedObjectDescriptorRuntime ObjectDescriptors,
+        EmittedObjectKeysRuntime ObjectKeys,
+        EmittedObjectOwnPropertiesRuntime ObjectOwnProperties,
+        EmittedReflectRuntime Reflect,
+        EmittedSymbolRuntime Symbols,
+        Type UndefinedType);
 
     private readonly record struct GetValuesInputs(
         EmittedArrayStorageRuntime ArrayStorage,
@@ -192,6 +204,15 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
+        // Prototype properties live in ordinary descriptor/Symbol storage, not
+        // in the CLR instance field dictionary used by the legacy path below.
+        var ordinarySource = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.ClassPrototypes.IsPrototype);
+        il.Emit(OpCodes.Brfalse, ordinarySource);
+        EmitClassPrototypeObjectRest(il, inputs);
+        il.MarkLabel(ordinarySource);
+
         var dictLabel = il.DefineLabel();
         var tsObjectLabel = il.DefineLabel();
         var emptyLabel = il.DefineLabel();
@@ -340,6 +361,139 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IDisposable, "Dispose"));
 
         il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitClassPrototypeObjectRest(ILGenerator il, ObjectRestInputs inputs)
+    {
+        var excluded = il.DeclareLocal(_types.HashSetOfObject);
+        var index = il.DeclareLocal(_types.Int32);
+        var keys = il.DeclareLocal(_types.ListOfObject);
+        var key = il.DeclareLocal(_types.Object);
+        var descriptor = il.DeclareLocal(_types.Object);
+        var copiedDescriptor = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
+        var value = il.DeclareLocal(_types.Object);
+        var result = il.DeclareLocal(_types.DictionaryStringObject);
+        var excludeLoop = il.DefineLabel();
+        var exclusionsReady = il.DefineLabel();
+        var keyLoop = il.DefineLabel();
+        var nextKey = il.DefineLabel();
+        var stringKey = il.DefineLabel();
+        var readAccessor = il.DefineLabel();
+        var valueReady = il.DefineLabel();
+        var done = il.DefineLabel();
+
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.HashSetOfObject));
+        il.Emit(OpCodes.Stloc, excluded);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, index);
+        il.MarkLabel(excludeLoop);
+        il.Emit(OpCodes.Ldloc, index);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, exclusionsReady);
+        il.Emit(OpCodes.Ldloc, excluded);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, index);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Call, inputs.Reflect.ToPropertyKey);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.HashSetOfObject, "Add", _types.Object));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, index);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, index);
+        il.Emit(OpCodes.Br, excludeLoop);
+
+        // Snapshot every own string and Symbol key before reading any value.
+        // Descriptor presence/enumerability remain live for each retained key.
+        il.MarkLabel(exclusionsReady);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.ObjectKeys.Ordinary);
+        il.Emit(OpCodes.Stloc, keys);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Stloc, result);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, index);
+        il.MarkLabel(keyLoop);
+        il.Emit(OpCodes.Ldloc, index);
+        il.Emit(OpCodes.Ldloc, keys);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, done);
+        il.Emit(OpCodes.Ldloc, keys);
+        il.Emit(OpCodes.Ldloc, index);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, key);
+        il.Emit(OpCodes.Ldloc, excluded);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.HashSetOfObject, "Contains", _types.Object));
+        il.Emit(OpCodes.Brtrue, nextKey);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Call, inputs.ObjectDescriptors.GetOwnPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descriptor);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Brfalse, nextKey);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, nextKey);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Ldstr, "enumerable");
+        il.Emit(OpCodes.Call, inputs.GetProperty);
+        il.Emit(OpCodes.Call, inputs.Booleans.IsTruthy);
+        il.Emit(OpCodes.Brfalse, nextKey);
+        // An ordinary own data descriptor supplies its current value directly,
+        // including undefined. Accessors perform [[Get]] with the source receiver.
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Call, inputs.ObjectOwnProperties.HasOwnProperty);
+        il.Emit(OpCodes.Brfalse, readAccessor);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Call, inputs.GetProperty);
+        il.Emit(OpCodes.Stloc, value);
+        il.Emit(OpCodes.Br, valueReady);
+        il.MarkLabel(readAccessor);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.Reflect.Get);
+        il.Emit(OpCodes.Stloc, value);
+        il.MarkLabel(valueReady);
+
+        // CreateDataProperty creates fresh writable/enumerable/configurable
+        // data slots, without invoking setters on the result's prototype.
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, stringKey);
+        // Raw Symbol values use intrinsic non-enumerable defaults. A copied
+        // property instead needs an explicit all-true data descriptor.
+        il.Emit(OpCodes.Newobj, inputs.DescriptorStorage.DescriptorConstructor);
+        il.Emit(OpCodes.Stloc, copiedDescriptor);
+        il.Emit(OpCodes.Ldloc, copiedDescriptor);
+        il.Emit(OpCodes.Ldloc, value);
+        il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, result);
+        il.Emit(OpCodes.Call, inputs.Symbols.GetStorage);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Ldloc, copiedDescriptor);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item", _types.Object, _types.Object));
+        il.Emit(OpCodes.Br, nextKey);
+        il.MarkLabel(stringKey);
+        il.Emit(OpCodes.Ldloc, result);
+        il.Emit(OpCodes.Ldloc, key);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldloc, value);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.DictionaryStringObject, "Item").GetSetMethod()!);
+
+        il.MarkLabel(nextKey);
+        il.Emit(OpCodes.Ldloc, index);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, index);
+        il.Emit(OpCodes.Br, keyLoop);
+        il.MarkLabel(done);
+        il.Emit(OpCodes.Ldloc, result);
         il.Emit(OpCodes.Ret);
     }
 

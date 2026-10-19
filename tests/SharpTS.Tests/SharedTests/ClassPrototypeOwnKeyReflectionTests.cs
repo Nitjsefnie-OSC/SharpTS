@@ -273,8 +273,6 @@ public sealed class ClassPrototypeOwnKeyReflectionTests
             {
                 // #2570: compiled prototype auto-accessor descriptors are absent.
                 "auto-accessor-own-inventory" => false,
-                // #2676: compiled Proxy values/entries omit class-prototype values.
-                "transparent-proxy-reflection" => false,
                 _ => true
             })
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));

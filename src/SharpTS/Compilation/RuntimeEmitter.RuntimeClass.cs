@@ -1870,6 +1870,22 @@ public partial class RuntimeEmitter
                 runtime.ObjectFields.Interface,
                 runtime.ObjectKeys,
                 runtime.ObjectStorage,
+                new ProxyDescriptorCallInputs(
+                    runtime.ReflectedMethods.InvokeUnwrapped,
+                    runtime.ObjectDescriptors.GetOwnPropertyDescriptor,
+                    runtime.ObjectState.IsExtensible,
+                    runtime.ObjectRead.Property
+                ),
+                new ProxyOwnKeysCallInputs(
+                    runtime.ObjectKeys.Ordinary,
+                    runtime.ObjectKeys.CreateProxyList,
+                    runtime.ObjectDescriptors.GetOwnPropertyDescriptor,
+                    runtime.ObjectState.IsExtensible,
+                    runtime.Symbols.IsSymbol,
+                    runtime.ObjectRead.Property,
+                    runtime.ReflectedMethods.InvokeUnwrapped
+                ),
+                runtime.Reflect,
                 runtime.FunctionValues.Type,
                 runtime.Sentinels.UndefinedType
             )
@@ -1887,6 +1903,22 @@ public partial class RuntimeEmitter
                 runtime.ObjectFields.Interface,
                 runtime.ObjectKeys,
                 runtime.ObjectStorage,
+                new ProxyDescriptorCallInputs(
+                    runtime.ReflectedMethods.InvokeUnwrapped,
+                    runtime.ObjectDescriptors.GetOwnPropertyDescriptor,
+                    runtime.ObjectState.IsExtensible,
+                    runtime.ObjectRead.Property
+                ),
+                new ProxyOwnKeysCallInputs(
+                    runtime.ObjectKeys.Ordinary,
+                    runtime.ObjectKeys.CreateProxyList,
+                    runtime.ObjectDescriptors.GetOwnPropertyDescriptor,
+                    runtime.ObjectState.IsExtensible,
+                    runtime.Symbols.IsSymbol,
+                    runtime.ObjectRead.Property,
+                    runtime.ReflectedMethods.InvokeUnwrapped
+                ),
+                runtime.Reflect,
                 runtime.FunctionValues.Type,
                 runtime.Sentinels.UndefinedType
             )

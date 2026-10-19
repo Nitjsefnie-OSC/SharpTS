@@ -31,6 +31,9 @@ public partial class RuntimeEmitter
         Type IHasFieldsInterface,
         EmittedObjectKeysRuntime ObjectKeys,
         EmittedObjectStorageRuntime ObjectStorage,
+        ProxyDescriptorCallInputs ProxyDescriptor,
+        ProxyOwnKeysCallInputs ProxyOwnKeys,
+        EmittedReflectRuntime Reflect,
         TypeBuilder TSFunctionType,
         Type UndefinedType
     );
@@ -45,6 +48,9 @@ public partial class RuntimeEmitter
         Type IHasFieldsInterface,
         EmittedObjectKeysRuntime ObjectKeys,
         EmittedObjectStorageRuntime ObjectStorage,
+        ProxyDescriptorCallInputs ProxyDescriptor,
+        ProxyOwnKeysCallInputs ProxyOwnKeys,
+        EmittedReflectRuntime Reflect,
         TypeBuilder TSFunctionType,
         Type UndefinedType
     );
@@ -535,7 +541,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, notProxyForValuesLabel);
         EmitProxyEnumerableOwnPropertiesCheck(
             il,
-            new ProxyEnumerableOwnPropertiesCheckInputs(inputs.Booleans, inputs.GetProperty, inputs.UndefinedType),
+            new ProxyEnumerableOwnPropertiesCheckInputs(inputs.Booleans, inputs.GetProperty,
+                inputs.ProxyDescriptor, inputs.ProxyOwnKeys, inputs.Reflect, inputs.UndefinedType),
             () => il.Emit(OpCodes.Ldarg_0),
             notProxyForValuesLabel,
             entries: false
@@ -1084,7 +1091,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, notProxyForEntriesLabel);
         EmitProxyEnumerableOwnPropertiesCheck(
             il,
-            new ProxyEnumerableOwnPropertiesCheckInputs(inputs.Booleans, inputs.GetProperty, inputs.UndefinedType),
+            new ProxyEnumerableOwnPropertiesCheckInputs(inputs.Booleans, inputs.GetProperty,
+                inputs.ProxyDescriptor, inputs.ProxyOwnKeys, inputs.Reflect, inputs.UndefinedType),
             () => il.Emit(OpCodes.Ldarg_0),
             notProxyForEntriesLabel,
             entries: true

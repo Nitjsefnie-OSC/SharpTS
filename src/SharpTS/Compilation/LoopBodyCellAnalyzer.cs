@@ -44,6 +44,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     private readonly object _singleSourceRootOwner = new();
     private readonly Dictionary<object, Dictionary<string, Binding>> _tentative = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _cells = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<object, HashSet<string>> _cellOnlyCapturedNames = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Token> _ordinaryBlockShadows = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Token, Expr.ClassExpr> _classSelfDeclarations = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Expr.Variable, Expr.ClassExpr> _classSelfReferences = new(ReferenceEqualityComparer.Instance);
@@ -56,6 +57,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     public IEnumerable<Token> CellDeclarations => _cells;
     public bool IsCellDeclaration(Token token) => _cells.Contains(token);
     public bool IsOrdinaryBlockShadowDeclaration(Token token) => _ordinaryBlockShadows.Contains(token);
+    public HashSet<string> GetCellOnlyCapturedNames(object owner) =>
+        _cellOnlyCapturedNames.GetValueOrDefault(owner) ?? [];
     public bool TryGetClassSelfOwner(Expr.Variable reference, out Expr.ClassExpr owner) =>
         _classSelfReferences.TryGetValue(reference, out owner!);
     public bool CanTransportClassSelf(Expr.Variable reference) => _transportedClassSelfReferences.Contains(reference);
@@ -74,6 +77,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         _classSelfDeclarations.Clear();
         _moduleRootBindings.Clear();
         _ordinaryBlockShadows.Clear();
+        _cellOnlyCapturedNames.Clear();
         _classSelfReferences.Clear();
         _transportedClassSelfReferences.Clear();
         _loopBodyDepth = 0;
@@ -118,6 +122,14 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
                 else if (binding.Captured && binding.Eligible) added |= _cells.Add(binding.Name);
             }
         } while (added);
+        foreach (var owner in _declarations.Values.Where(binding => binding.Captured)
+            .GroupBy(binding => binding.Owner.Node, ReferenceEqualityComparer.Instance))
+        {
+            var names = owner.GroupBy(binding => binding.Name.Lexeme, StringComparer.Ordinal)
+                .Where(bindings => bindings.All(binding => _cells.Contains(binding.Name)))
+                .Select(bindings => bindings.Key).ToHashSet(StringComparer.Ordinal);
+            if (names.Count > 0) _cellOnlyCapturedNames[owner.Key] = names;
+        }
         foreach (var (closure, captures) in _tentative)
             foreach (var (name, binding) in captures)
                 if (_cells.Contains(binding.Name))
@@ -227,7 +239,10 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             // A captured ordinary block shadow must own storage independently of
             // the outer parameter/local, even when that outer binding has no cell.
             // Existing loop candidates retain their broader forwarding policy.
-            bool blockCandidate = blockShadow && !loopCandidate && _owners[^1].CanOwnCells;
+            bool asyncFunctionBlock = _classDepth == 0 && _owners[^1].Node is
+                Stmt.Function { IsAsync: true, IsGenerator: false };
+            bool blockCandidate = blockShadow && !loopCandidate &&
+                (_owners[^1].CanOwnCells || asyncFunctionBlock);
             bool direct = handlerCandidate || loopCandidate || blockCandidate;
             var parent = !direct && allowCandidates && _owners[^1].CanOwnGeneratorCells
                 ? VisibleBinding(name.Lexeme) : null;
@@ -266,6 +281,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     {
         var binding = VisibleBinding(name);
         if (binding is null || ReferenceEquals(binding.Owner, _owners[^1])) return;
+        binding.Captured = true;
         if (binding.Lexical)
         {
             bool generator = false;
@@ -278,12 +294,10 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
                 if (!supported) binding.GeneratorEligible = false;
                 else RecordCapture(node, name, binding);
             }
-            binding.Captured = true;
             binding.GeneratorCaptured |= generator;
         }
         if (!binding.Candidate) return;
 
-        binding.Captured = true;
         for (int index = _owners.Count - 1; index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
         {
             var owner = _owners[index];

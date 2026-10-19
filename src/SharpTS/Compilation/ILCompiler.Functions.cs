@@ -384,6 +384,17 @@ public partial class ILCompiler
         if (capturedLocals.Count == 0)
             return;
 
+        // Declaration-owned lexical cells already provide the authoritative storage.
+        // A redundant name-keyed field would mask an outer binding after the block exits.
+        var cellOnlyNames = _closures.Analyzer.GetCellOnlyCapturedLocalNames(funcStmt);
+        if (cellOnlyNames.Count > 0)
+        {
+            capturedLocals = new HashSet<string>(capturedLocals);
+            capturedLocals.ExceptWith(cellOnlyNames);
+            if (capturedLocals.Count == 0)
+                return;
+        }
+
         // Per-iteration `for (let/const …)` loop bindings must NOT share the function
         // display class (a single instance per call): each iteration gets its own
         // binding (ECMA-262 13.7.4), so closures created in different iterations must

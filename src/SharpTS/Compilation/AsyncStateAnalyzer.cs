@@ -69,6 +69,7 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
     private readonly List<AwaitPoint> _awaitPoints = [];
     private readonly HashSet<string> _declaredVariables = [];
     private readonly HashSet<string> _variablesUsedAfterAwait = [];
+    private ClosureAnalyzer? _closureAnalyzer;
     private readonly List<AsyncArrowInfo> _asyncArrows = [];
     private readonly List<TryBlockInfo> _tryBlocks = [];
     private int _awaitCounter = 0;
@@ -116,9 +117,11 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
     public AsyncFunctionAnalysis Analyze(
         Stmt.Function func,
         IReadOnlySet<Expr.Await>? nonSuspendingAwaits = null,
-        bool preserveDebugBindings = false)
+        bool preserveDebugBindings = false,
+        ClosureAnalyzer? closureAnalyzer = null)
     {
         Reset();
+        _closureAnalyzer = closureAnalyzer;
         _nonSuspendingAwaits = nonSuspendingAwaits;
 
         // Disambiguate block-scoped let/const declarations that shadow an enclosing binding so the

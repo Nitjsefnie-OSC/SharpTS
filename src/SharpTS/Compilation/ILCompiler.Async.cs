@@ -22,7 +22,8 @@ public partial class ILCompiler
     private void DefineAsyncFunction(Stmt.Function funcStmt)
     {
         // Analyze the async function for await points and hoisted variables
-        var analysis = _async.Analyzer.Analyze(funcStmt, preserveDebugBindings: EmitDebugSymbols);
+        var analysis = _async.Analyzer.Analyze(funcStmt, preserveDebugBindings: EmitDebugSymbols,
+            closureAnalyzer: _closures.Analyzer);
 
         // Module-qualify the stub/registry keys (#418) so two modules that each declare a
         // same-named async function don't clobber each other. Single-file compilation returns
@@ -35,7 +36,8 @@ public partial class ILCompiler
             funcStmt, ctx, analysis);
         if (suspensionFreeAwaits.Count > 0)
         {
-            analysis = _async.Analyzer.Analyze(funcStmt, suspensionFreeAwaits, EmitDebugSymbols);
+            analysis = _async.Analyzer.Analyze(funcStmt, suspensionFreeAwaits, EmitDebugSymbols,
+                _closures.Analyzer);
             _async.SuspensionFreeAwaits[qualifiedFunctionName] = suspensionFreeAwaits;
         }
 

@@ -2357,17 +2357,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.Symbols.IsSymbol);
         il.Emit(OpCodes.Brtrue, symbolKeyLabel);
 
-        // Function-like runtime wrappers — `delete fn.name` / `delete
-        // fn.length` records the
-        // deletion in the per-instance set so HasOwnPropertyHelper /
-        // GetFunctionMethod / ObjectGetOwnPropertyDescriptor stop reporting
-        // the synthetic value. ECMA-262 §17 declares these as configurable;
-        // pre-fix this fell through to trueLabel without recording, so
-        // verifyProperty's isConfigurable (delete + re-check hasOwn) failed.
+        // User function wrappers share the complete named-property deletion
+        // checks, including absent keys and synthesized own metadata.
+        var tsFunctionNamedDeleteIdxLabel = il.DefineLabel();
         var tsFunctionDeleteIdxLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
-        il.Emit(OpCodes.Brtrue, tsFunctionDeleteIdxLabel);
+        il.Emit(OpCodes.Brtrue, tsFunctionNamedDeleteIdxLabel);
         if (inputs.Promise is not null)
         {
             il.Emit(OpCodes.Ldarg_0);
@@ -2435,10 +2431,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, objectDeletion.Property);
         il.Emit(OpCodes.Ret);
 
-        // $TSFunction handler: honor frozen/sealed + PDS configurability before
-        // recording the deletion. Mirrors DeleteProperty's $TSFunction path so
-        // bracket-form delete on a sealed function (verifyProperty's
-        // isConfigurable check) returns false instead of silently removing.
+        // Keep the existing callable string coercion and strict-refusal policy.
+        // Property owns complete own-descriptor checks and actual PDS removal;
+        // the legacy indexed callable path returns false rather than throwing.
+        il.MarkLabel(tsFunctionNamedDeleteIdxLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Call, objectDeletion.Property);
+        il.Emit(OpCodes.Ret);
+
+        // Promise callback wrappers retain their existing PDS/metadata path.
         il.MarkLabel(tsFunctionDeleteIdxLabel);
         {
             var tsFnIdxKeyStr = il.DeclareLocal(_types.String);

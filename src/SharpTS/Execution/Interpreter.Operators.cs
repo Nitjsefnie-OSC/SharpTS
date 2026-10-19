@@ -1128,8 +1128,10 @@ public partial class Interpreter
             SharpTSBuiltInConstructor constructor =>
                 DeleteBuiltInConstructorProperty(constructor, name),
             IBuiltInFunctionMetadata builtInFn => builtInFn.DeleteMetadataProperty(name),
-            SharpTSFunction function => function.DeleteProperty(name),
-            SharpTSArrowFunction arrow => arrow.DeleteProperty(name),
+            SharpTSFunction function => function.GetOwnPropertyDescriptor(name) is null
+                || function.DeleteProperty(name),
+            SharpTSArrowFunction arrow => arrow.GetOwnPropertyDescriptor(name) is null
+                || arrow.DeleteProperty(name),
             Dictionary<string, object?> dict => dict.Remove(name),
             _ => true // Deleting non-existent property on primitive returns true
         };

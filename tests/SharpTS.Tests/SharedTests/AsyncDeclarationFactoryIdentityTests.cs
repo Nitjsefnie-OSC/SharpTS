@@ -109,8 +109,8 @@ public sealed class AsyncDeclarationFactoryIdentityTests
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
-    // #2680 owns restoring the complete sealed/frozen absent-deletion fixture's saved execution.
-    public static IEnumerable<object[]> SavedCases() => Cases();
+    public static IEnumerable<object[]> SavedCases() => Cases().Concat(
+        AsyncCallableOwnPropertyDeletionTests.Cases().Where(row => (string)row[0] == "absent-and-integrity-deletion"));
 
     [Theory, MemberData(nameof(ModeCases))]
     public void AsyncDeclarationEvaluationCreatesFreshOwnStatePerActivation(

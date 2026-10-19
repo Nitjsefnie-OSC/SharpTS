@@ -735,6 +735,14 @@ public partial class RuntimeEmitter
 
         // $TSFunction delete handler.
         il.MarkLabel(tsFunctionDelLabel);
+        // Integrity levels only restrict deletion of existing own properties.
+        // The complete descriptor includes synthesized metadata and PDS overrides;
+        // an inherited or previously deleted key is absent even when frozen/sealed.
+        il.Emit(OpCodes.Ldloc, ordinaryDeleteDescriptorLocal);
+        il.Emit(OpCodes.Brfalse, trueLabel);
+        il.Emit(OpCodes.Ldloc, ordinaryDeleteDescriptorLocal);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, trueLabel);
         if (strict)
         {
             // Strict variant: record the deletion only — it intentionally skips

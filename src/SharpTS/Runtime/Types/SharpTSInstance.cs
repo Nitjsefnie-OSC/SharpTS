@@ -424,6 +424,9 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         }
         if (UsesDynamicPrototypeChain)
             return GetOwnPropertyDescriptor(name) is not null || _interpreter!.HasProperty(Prototype, name);
+        // Get resolves live inherited accessor descriptors before its nominal
+        // cache. Presence must agree so callers retain that getter's result.
+        if (_klass.HasInstanceAccessorDeclaration(name)) return true;
         if (!_lookupCache.TryGetValue(name, out PropertyResolution? resolution))
         {
             resolution = ResolveProperty(name);

@@ -2193,7 +2193,8 @@ public partial class Interpreter
             // Evaluate every computed key exactly once, in source order, before
             // applying static values or symbol-keyed methods and accessors.
             var computedMemberKeys = new Dictionary<Expr, object?>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
-            foreach (var key in Compilation.ClassDefinitionExpressions.MemberKeys(classExpr.Fields, classExpr.Methods, classExpr.Accessors))
+            foreach (var key in Compilation.ClassDefinitionExpressions.MemberKeys(
+                classExpr.Fields.Where(field => !field.IsDeclare), classExpr.Methods, classExpr.Accessors))
             {
                 object? value = (await ctx.EvaluateExprAsync(key)).ToObject();
                 computedMemberKeys[key] = ToPropertyKey(value);
@@ -2201,6 +2202,7 @@ public partial class Interpreter
 
             foreach (Stmt.Field field in classExpr.Fields)
             {
+                if (field.IsDeclare) continue;
                 if (field.IsPrivate)
                 {
                     if (!field.IsStatic) instancePrivateFields.Add(field);
@@ -2408,7 +2410,7 @@ public partial class Interpreter
 
             klass.BindPrivateMemberOwners();
             klass.InitializerEnvironment = classEnv;
-            klass.OrderedInstanceFields = classExpr.Fields.Where(field => !field.IsStatic)
+            klass.OrderedInstanceFields = classExpr.Fields.Where(field => !field.IsStatic && !field.IsDeclare)
                 .SelectMany(field => (field.IsPrivate ? instancePrivateFields : instanceFields)
                     .Where(captured => captured.Name == field.Name)).ToList();
             InitializeClassInstanceKeyOrder(klass, memberDefinitions, classExpr.AutoAccessors);
@@ -2445,7 +2447,7 @@ public partial class Interpreter
                     {
                         switch (initializer)
                         {
-                            case Stmt.Field field when field.IsStatic:
+                            case Stmt.Field field when field.IsStatic && !field.IsDeclare:
                                 object? fieldValue = field.Initializer != null
                                     ? Evaluate(field.Initializer)
                                     : SharpTSUndefined.Instance;

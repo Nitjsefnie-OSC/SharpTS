@@ -174,9 +174,7 @@ public sealed class DeletedStaticAncestorLookupTests
     {
         foreach (var row in Cases())
         {
-            // Interpreter class-constructor internal prototype replacement remains unsupported (#2443).
-            if ((string)row[0] != "live-and-null-prototype")
-                yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
+            yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
     }

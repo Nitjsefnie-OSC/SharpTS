@@ -302,7 +302,7 @@ public sealed class ExplicitSuperReplacementReceiverTests
             (string)row[0] != "native-error-and-promise-parents-returning-records"))
             yield return row;
 
-        // Interpreter prototype auto-accessor projection is tracked by #2293.
+        // The descriptor/brand control is also selected for the interpreter below.
         yield return ["selected-auto-accessor-backing-and-brand", """
             const replacement: any = {};
             class Base { constructor() { return replacement; } }
@@ -345,6 +345,7 @@ public sealed class ExplicitSuperReplacementReceiverTests
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases()
+        .Concat(CompiledCases().Where(row => (string)row[0] == "selected-auto-accessor-backing-and-brand"))
         .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted })
         .Concat(CompiledCases().Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Compiled }));
 
@@ -396,10 +397,9 @@ public sealed class ExplicitSuperReplacementReceiverTests
             TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void CompiledDefinePropertyPreservesProxySymbolKey()
+    [Theory, ModeData]
+    public void DefinePropertyPreservesProxySymbolKey(ExecutionMode mode)
     {
-        // The interpreter's ordinary defineProperty Symbol-key identity is a separate boundary.
         const string source = """
             const symbol: unique symbol = Symbol("direct");
             const target: any = {};
@@ -412,7 +412,7 @@ public sealed class ExplicitSuperReplacementReceiverTests
                 { value: 4, writable: true, enumerable: true, configurable: true }) === proxy,
                 target[symbol], Object.hasOwn(target, symbol));
             """;
-        Assert.Equal("true 4 true true true\ntrue 4 true\n", TestHarness.Run(source, ExecutionMode.Compiled));
+        Assert.Equal("true 4 true true true\ntrue 4 true\n", TestHarness.Run(source, mode));
     }
 
     [Fact]

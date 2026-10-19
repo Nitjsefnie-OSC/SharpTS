@@ -123,7 +123,7 @@ public sealed class ClassNameReflectionTests
             Object.getOwnPropertyDescriptor(child, "name") === undefined,
             Object.getOwnPropertyNames(child).includes("name"), child.name, Reflect.get(child, "name"));
         """, "seal false false false false false false\nfalse false false false true true\nfreeze false false false false false false\nfalse false false false true true\ndelete true false Parent Parent\nrecreate false true false Parent Parent\n"];
-        
+
     }
 
     // Compiler gaps: #2716 writable name assignment, #2719 computed declaration

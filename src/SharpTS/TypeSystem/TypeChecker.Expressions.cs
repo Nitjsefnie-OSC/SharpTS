@@ -2560,7 +2560,34 @@ public partial class TypeChecker
                 // the superclass so that `super(...)` calls inside this
                 // class body type-check as `any` instead of erroring with
                 // "does not have a superclass".
-                superclass = new TypeInfo.MutableClass("$AnySuperclass") { IsDynamicSuperclass = true };
+                bool isNativeFallback = !_hasDefaultLibraries &&
+                    classExpr.SuperclassExpr is Expr.Variable nativeBase &&
+                    nativeBase.Name.Lexeme is "Array" or "Promise" &&
+                    _environment.Get(nativeBase.Name.Lexeme) is null &&
+                    _currentMergedNamespace?.Values.ContainsKey(nativeBase.Name.Lexeme) != true;
+                var placeholder = new TypeInfo.MutableClass(isNativeFallback
+                    ? ((Expr.Variable)classExpr.SuperclassExpr).Name.Lexeme
+                    : "$AnySuperclass") { IsDynamicSuperclass = true };
+                if (isNativeFallback)
+                {
+                    // Match native-fallback declaration heritage without changing
+                    // the constructor policy of other Any-typed expression bases.
+                    using (new EnvironmentScope(this, classTypeEnv))
+                    {
+                        List<TypeInfo> arguments = classExpr.SuperclassTypeArgs is null ? []
+                            : classExpr.SuperclassTypeArgs.Select((_, index) => ResolveTypeArg(
+                                classExpr.SuperclassTypeArgs, classExpr.SuperclassTypeArgNodes, index)).ToList();
+                        placeholder.Methods["constructor"] = new TypeInfo.Function(
+                            [TypeInfo.Any.Shared], TypeInfo.Void.Shared, RequiredParams: 0, HasRestParam: true);
+                        if (placeholder.Name == "Array")
+                        {
+                            TypeInfo element = arguments.Count > 0 ? arguments[0] : TypeInfo.Any.Shared;
+                            placeholder.Methods["@@iterator"] = new TypeInfo.Function(
+                                [], new TypeInfo.Iterator(element), RequiredParams: 0, HasRestParam: false);
+                        }
+                    }
+                }
+                superclass = placeholder;
             }
             else
                 throw new TypeCheckException("Superclass must be a class", tsCode: "TS2507");

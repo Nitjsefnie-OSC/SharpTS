@@ -1198,41 +1198,52 @@ public partial class RuntimeEmitter
         Label endLabel
     )
     {
-        // No descriptor - check if it's an array first
+        // Stored descriptors and the live Array length were handled earlier.
+        // An actual Array must use its sparse surface before the List base.
         var notListLabel = il.DefineLabel();
-        var notTSArrayLabel = il.DefineLabel();
-        var isListLabel = il.DefineLabel();
-        var handleArrayLabel = il.DefineLabel();
+        var checkListLabel = il.DefineLabel();
+        var elementDescriptorLabel = il.DefineLabel();
         var listLocal = il.DeclareLocal(_types.ListOfObject);
         var indexLocal = il.DeclareLocal(_types.Int32);
-        var descriptorReceiverIsTSArray = il.DeclareLocal(_types.Boolean);
+        var arrayIndexLocal = il.DeclareLocal(_types.UInt32);
+        var elementValueLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, arrayStorage.Type);
+        il.Emit(OpCodes.Brfalse, checkListLabel);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldloca, arrayIndexLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.UInt32, "TryParse", _types.String, _types.UInt32.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldloca, arrayIndexLocal);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.UInt32, "ToString"));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+        il.Emit(OpCodes.Ldloc, arrayIndexLocal);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Conv_U4);
+        il.Emit(OpCodes.Beq, returnNullLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, arrayStorage.Type);
+        il.Emit(OpCodes.Ldloc, arrayIndexLocal);
+        il.Emit(OpCodes.Conv_U8);
+        il.Emit(OpCodes.Callvirt, arrayStorage.HasIndex);
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, arrayStorage.Type);
+        il.Emit(OpCodes.Ldloc, arrayIndexLocal);
+        il.Emit(OpCodes.Conv_U8);
+        il.Emit(OpCodes.Callvirt, arrayStorage.GetLong);
+        il.Emit(OpCodes.Stloc, elementValueLocal);
+        il.Emit(OpCodes.Br, elementDescriptorLabel);
 
-        // Check for List<object?>
+        il.MarkLabel(checkListLabel);
+        // Arguments and legacy List carriers retain their dense semantics.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Stloc, listLocal);
         il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Brtrue, isListLabel);
-
-        // Check for $Array (SharpTSArray)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, arrayStorage.Type);
-        il.Emit(OpCodes.Brfalse, notTSArrayLabel);
-
-        // It's $Array - get Elements list
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, arrayStorage.Type);
-        il.Emit(OpCodes.Callvirt, arrayStorage.ElementsGetter);
-        il.Emit(OpCodes.Stloc, listLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Stloc, descriptorReceiverIsTSArray);
-        il.Emit(OpCodes.Br, handleArrayLabel);
-
-        il.MarkLabel(isListLabel);
-        // listLocal already has the list
-
-        il.MarkLabel(handleArrayLabel);
-        // Handle array property - check if propName is "length" or numeric index
+        il.Emit(OpCodes.Brfalse, notListLabel);
 
         // Check for "length" property
         var notLengthLabel = il.DefineLabel();
@@ -1286,7 +1297,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
         il.Emit(OpCodes.Brfalse, notNumericIndexLabel);
 
-        // Array and arguments carriers reach indexed storage only when the
+        // Arguments and legacy Lists reach indexed storage only when the
         // property key uses its canonical decimal spelling.
         il.Emit(OpCodes.Ldloc, propNameLocal);
         il.Emit(OpCodes.Ldloca, indexLocal);
@@ -1299,20 +1310,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Blt, returnNullLabel);
-
-        // $TSArray length can include holes. A deleted index is not an own
-        // property even though it remains below Elements.Count; raw List
-        // receivers retain their dense in-bounds semantics.
-        var descriptorArrayIndexPresent = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, descriptorReceiverIsTSArray);
-        il.Emit(OpCodes.Brfalse, descriptorArrayIndexPresent);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, arrayStorage.Type);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Conv_I8);
-        il.Emit(OpCodes.Callvirt, arrayStorage.HasIndex);
-        il.Emit(OpCodes.Brfalse, returnNullLabel);
-        il.MarkLabel(descriptorArrayIndexPresent);
 
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldloc, listLocal);
@@ -1327,16 +1324,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, arrayStorage.HoleType);
         il.Emit(OpCodes.Brtrue, returnNullLabel);
 
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Stloc, elementValueLocal);
+        il.MarkLabel(elementDescriptorLabel);
         // Return element descriptor: { value: element, writable: true, enumerable: true, configurable: true }
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultDictLocal);
 
-        // value = list[index]
+        // The value is read from storage, never by invoking an accessor.
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "value");
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
+        il.Emit(OpCodes.Ldloc, elementValueLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
 
         // writable = true
@@ -1364,10 +1364,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, endLabel);
 
         il.MarkLabel(notNumericIndexLabel);
-        // Not length or numeric index on array - return null
+        // Not length or a numeric index on a List - return null.
         il.Emit(OpCodes.Br, returnNullLabel);
 
-        il.MarkLabel(notTSArrayLabel);
+        il.MarkLabel(notListLabel);
     }
 
     // Requires an empty entry stack. Unhandled receivers fall through empty; matches

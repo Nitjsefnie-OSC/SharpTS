@@ -427,31 +427,45 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "length");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brtrue, trueLabel);
-        var listIdxLocal = il.DeclareLocal(_types.Int32);
-        il.Emit(OpCodes.Ldloc, nameLocal);
-        il.Emit(OpCodes.Ldloca, listIdxLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
         var listNotIndexLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, listNotIndexLabel);
-        il.Emit(OpCodes.Ldloc, listIdxLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Blt, listNotIndexLabel);
-        // $TSArray inherits List<object>, but its logical length may contain
-        // holes. Consult HasIndex before the dense List range check; if the
-        // slot is an accessor-only index, the PDS fallback below still reports
-        // it as own.
         var listReceiverIsPlain = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.ArrayStorage.Type);
         il.Emit(OpCodes.Brfalse, listReceiverIsPlain);
+
+        // Actual arrays have sparse uint32-indexed storage, independently of
+        // their List base. Ordinary List/Arguments keep the Int32 path below.
+        var arrayIdxLocal = il.DeclareLocal(_types.UInt32);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldloca, arrayIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.UInt32, "TryParse", _types.String, _types.UInt32.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, listNotIndexLabel);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldloca, arrayIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.UInt32, "ToString"));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, listNotIndexLabel);
+        il.Emit(OpCodes.Ldloc, arrayIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Conv_U4);
+        il.Emit(OpCodes.Beq, listNotIndexLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, inputs.ArrayStorage.Type);
-        il.Emit(OpCodes.Ldloc, listIdxLocal);
-        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Ldloc, arrayIdxLocal);
+        il.Emit(OpCodes.Conv_U8);
         il.Emit(OpCodes.Callvirt, inputs.ArrayStorage.HasIndex);
         il.Emit(OpCodes.Brtrue, trueLabel);
         il.Emit(OpCodes.Br, listNotIndexLabel);
+
         il.MarkLabel(listReceiverIsPlain);
+        var listIdxLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldloca, listIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "TryParse", _types.String, _types.Int32.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, listNotIndexLabel);
+        il.Emit(OpCodes.Ldloc, listIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, listNotIndexLabel);
         il.Emit(OpCodes.Ldloc, listIdxLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.ListOfObject);

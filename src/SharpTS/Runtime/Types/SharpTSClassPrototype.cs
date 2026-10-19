@@ -70,6 +70,13 @@ public sealed class SharpTSClassPrototype : ISharpTSMutableBuiltIn
     public bool DefineExtraProperty(string name, SharpTSPropertyDescriptor descriptor)
     {
         bool existed = HasOwnProperty(name);
+        // Declared string methods (and constructor) remain virtual until an
+        // override is needed. Seed their complete descriptor so ordinary
+        // partial-descriptor merging retains omitted values and attributes.
+        if (existed && _overlay.GetOwnPropertyDescriptor(name) == null
+            && TryGetOwnMember(name, out var member))
+            _overlay.DefineProperty(name, new SharpTSPropertyDescriptor(
+                member, writable: true, enumerable: false, configurable: true));
         if (!_overlay.DefineProperty(name, descriptor)) return false;
         RecordWrittenKey(name, existed);
         return true;

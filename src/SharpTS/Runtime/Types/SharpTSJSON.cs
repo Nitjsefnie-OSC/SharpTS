@@ -68,6 +68,7 @@ public class SharpTSJSON : ISharpTSSymbolPropertyBag
         return true;
     }
     internal IEnumerable<string> OwnEnumerableKeys() => _extras.OwnEnumerableKeys();
+    internal IEnumerable<string> OwnStringKeys() => _extras.OwnVisibleStringKeys();
 
     internal bool DefineProperty(SharpTSSymbol symbol, SharpTSPropertyDescriptor descriptor)
         => _extras.DefineProperty(symbol, descriptor);

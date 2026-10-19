@@ -93,6 +93,7 @@ public class SharpTSMath
         return deleted || BuiltIns.MathBuiltIns.IsMember(name);
     }
     internal IEnumerable<string> OwnEnumerableKeys() => _extras.OwnEnumerableKeys();
+    internal IEnumerable<string> OwnStringKeys() => _extras.OwnVisibleStringKeys();
 
     internal IEnumerable<SharpTSSymbol> GetSymbolPropertyNames()
         => _extras.GetSymbolPropertyNames();

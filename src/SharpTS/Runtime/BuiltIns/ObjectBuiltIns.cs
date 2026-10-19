@@ -1495,16 +1495,24 @@ public static partial class ObjectBuiltIns
             return target;
         }
 
-        // ECMA-262 §19.1.2.3 ObjectDefineProperties: snapshot own enumerable
-        // keys and convert each descriptor before reading the next one. The
+        // ECMA-262 §19.1.2.3 ObjectDefineProperties: snapshot own keys, then
+        // check each live descriptor before reading and converting its value. The
         // carrier may be any object kind (function, array/arguments, Math,
         // Date, RegExp, JSON, …), and accessor reads bind `this` to that carrier.
-        var entries = OwnEnumerableKeysForDefineProperties(interpreter, props)
-            .ToList()
-            .Select(key => new KeyValuePair<string, object?>(
-                key, ConvertDefinePropertiesDescriptor(interpreter,
-                    ReadDefinePropertiesValue(interpreter, props, key))))
-            .ToList();
+        var sourceKeys = OwnStringKeysForDefineProperties(interpreter, props).ToList();
+        List<KeyValuePair<string, object?>> entries = [];
+        foreach (string key in sourceKeys)
+        {
+            // Interface-backed dictionaries expose ordinary enumerable data
+            // entries; concrete Dictionary also has canonical PDS attributes.
+            bool enumerable = props is IDictionary<string, object?> dictionary
+                && props is not Dictionary<string, object?>
+                ? dictionary.ContainsKey(key)
+                : OwnPropertyDescriptorOf(interpreter, props, key)?.Enumerable == true;
+            if (!enumerable) continue;
+            entries.Add(new(key, ConvertDefinePropertiesDescriptor(interpreter,
+                ReadDefinePropertiesValue(interpreter, props, key))));
+        }
 
         foreach (var entry in entries)
         {
@@ -1541,22 +1549,22 @@ public static partial class ObjectBuiltIns
         return result;
     }
 
-    private static IEnumerable<string> OwnEnumerableKeysForDefineProperties(Interpreter interpreter, object props)
+    private static IEnumerable<string> OwnStringKeysForDefineProperties(Interpreter interpreter, object props)
         => props switch
         {
-            ISharpTSOwnPropertyObject carrier => carrier.OwnProperties.OwnEnumerableKeys().ToList(),
-            SharpTSObject obj => OwnEnumerablePropertyKeys(obj),
-            SharpTSArray array => array.OwnEnumerableKeys(),
-            SharpTSInstance instance => instance.OwnEnumerableKeys(),
+            ISharpTSOwnPropertyObject carrier => carrier.OwnProperties.OwnVisibleStringKeys(),
+            SharpTSObject obj => obj.OwnVisibleStringKeys(),
+            SharpTSArray array => array.OwnStringKeys(),
+            SharpTSInstance instance => instance.GetFieldNames(),
             IDictionary<string, object?> dict => dict.Keys,
-            SharpTSMath math => math.OwnEnumerableKeys(),
-            SharpTSJSON json => json.OwnEnumerableKeys(),
-            SharpTSDate date => date.OwnEnumerableKeys(),
-            SharpTSRegExp regex => regex.OwnEnumerableKeys(),
-            SharpTSError error => error.OwnEnumerableKeys(),
-            SharpTSFunction function => function.PropertyKeys,
-            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, interpreter).OwnEnumerableKeys(),
-            SharpTSArrowFunction arrow => arrow.PropertyKeys,
+            SharpTSMath math => math.OwnStringKeys(),
+            SharpTSJSON json => json.OwnStringKeys(),
+            SharpTSDate date => date.OwnStringKeys(),
+            SharpTSRegExp regex => regex.OwnStringKeys(),
+            SharpTSError error => error.OwnStringKeys(),
+            SharpTSFunction function => function.OwnPropertyStorage.OwnVisibleStringKeys(),
+            ISharpTSFunctionObject function => FunctionObjectProperties.GetProperties(function, interpreter).OwnVisibleStringKeys(),
+            SharpTSArrowFunction arrow => arrow.OwnPropertyStorage.OwnVisibleStringKeys(),
             ISharpTSCallable => [],
             _ => throw new ThrowException(new SharpTSTypeError(
                 "Property descriptions must be an object")),
@@ -1593,17 +1601,6 @@ public static partial class ObjectBuiltIns
 
         return interpreter.GetProperty(carrier, key);
     }
-
-    /// <summary>
-    /// Own enumerable string-keyed property names of <paramref name="obj"/> —
-    /// enumerable data fields plus enumerable accessor (getter/setter)
-    /// properties — excluding the internal slots that back boxed primitive
-    /// wrappers (<c>new String/Number/Boolean</c>), which must stay invisible to
-    /// enumeration per ECMA-262. Accessor names are stored disjointly from data
-    /// fields (see <see cref="SharpTSObject.AccessorPropertyNames"/>).
-    /// </summary>
-    private static IEnumerable<string> OwnEnumerablePropertyKeys(SharpTSObject obj)
-        => obj.OwnEnumerableKeys();
 
     /// <summary>
     /// Object.getOwnPropertyDescriptors(obj) - returns all own property descriptors.

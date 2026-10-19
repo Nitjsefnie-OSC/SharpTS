@@ -433,6 +433,11 @@ public partial class Interpreter
                     ctx, tryCatch, pendingResult.Value, fromHostException: false);
             }
         }
+        catch (GeneratorReturnException grex)
+        {
+            // An injected generator return bypasses catch, but still runs finally.
+            pendingResult = ExecutionResult.Return(RuntimeValue.FromBoxed(grex.Value));
+        }
         catch (Runtime.Exceptions.WorkerTerminatedException)
         {
             // worker.terminate() abort — not catchable by guest code; re-throw ahead of the
@@ -501,6 +506,11 @@ public partial class Interpreter
                         }
                     }
                     return (true, ExecutionResult.Success());
+                }
+                catch (GeneratorReturnException grex)
+                {
+                    // A return injected at a yield in catch must also run finally.
+                    return (true, ExecutionResult.Return(RuntimeValue.FromBoxed(grex.Value)));
                 }
                 catch (Runtime.Exceptions.WorkerTerminatedException)
                 {

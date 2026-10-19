@@ -136,7 +136,17 @@ public partial class RuntimeEmitter
         il = definitions.ReadSuper.GetILGenerator();
         var instanceSuper = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_3); il.Emit(OpCodes.Brfalse, instanceSuper);
-        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, definitions.GetParent); il.Emit(OpCodes.Ldarg_2);
+        // The home constructor is lexical, while its internal prototype is
+        // live. The separately supplied receiver remains the getter's this.
+        var staticSuperBase = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, runtime.ObjectPrototypes.GetPrototypeOf);
+        il.Emit(OpCodes.Stloc, staticSuperBase);
+        var hasStaticSuperBase = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, staticSuperBase); il.Emit(OpCodes.Brtrue, hasStaticSuperBase);
+        GuestErrorEmitter.ThrowError(il, runtime.Errors.CreateException, runtime.Errors.TypeErrorConstructor,
+            "Cannot read properties of null super prototype");
+        il.MarkLabel(hasStaticSuperBase);
+        il.Emit(OpCodes.Ldloc, staticSuperBase); il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Call, runtime.Reflect.Get); il.Emit(OpCodes.Ret);
         il.MarkLabel(instanceSuper);
         var superBase = il.DeclareLocal(_types.Object);

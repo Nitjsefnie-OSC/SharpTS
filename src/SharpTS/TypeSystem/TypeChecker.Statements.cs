@@ -1414,6 +1414,7 @@ public partial class TypeChecker
 
     internal VoidResult VisitFor(Stmt.For stmt)
     {
+        using var lexicalScope = EnterForLexicalScope(stmt);
         if (stmt.Initializer != null)
             CheckStmt(stmt.Initializer);
 

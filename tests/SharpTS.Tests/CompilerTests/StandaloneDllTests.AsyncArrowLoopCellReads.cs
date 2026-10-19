@@ -14,14 +14,13 @@ public partial class StandaloneDllTests
             };
             run();
             """, "0,1,2\n"];
-        // #2772: restore the sync reader's inferred return type after post-loop binding inference is fixed.
         yield return ["loop-cell-shadows-private-async-expression-name", """
             const run: any = async function i(): Promise<void> {
                 const identity = i, callbacks: any[] = [];
                 for (let i = 0; i < 3; i++) { i = i + 10; callbacks.push(() => i); i = i - 10; }
                 console.log(callbacks.map((read: any) => read()).join(','));
                 console.log(i === identity);
-                const read = (): any => i, readAsync = async () => i;
+                const read = () => i, readAsync = async () => i;
                 console.log(read() === identity);
                 console.log((await readAsync()) === identity);
             };

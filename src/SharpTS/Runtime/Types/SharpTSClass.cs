@@ -466,26 +466,33 @@ public partial class SharpTSClass(
 
     internal void InitializeStaticProperty(string name, object? value)
     {
-        // Ordered field initialization is a definition: rejected own creation
-        // throws even though the shared storage path retains its existing policy.
-        if (!HasOwnStaticMember(name) && !Compilation.PropertyDescriptorStore.IsExtensible(this))
-            throw StrictModeErrors.TypeError($"Cannot define property '{name}' on a non-extensible object");
-        SetStaticProperty(name, value);
+        // Field definitions replace configurable intrinsic metadata instead of
+        // assigning through its read-only data descriptor.
+        if (!DefineStaticProperty(name, new SharpTSPropertyDescriptor(value,
+                writable: true, enumerable: true, configurable: true) { HasValue = true }))
+            throw StrictModeErrors.TypeError($"Cannot define property '{name}' on class constructor");
     }
 
     internal SharpTSPropertyDescriptor? GetOwnStaticPropertyDescriptor(string name)
     {
         MaterializeStaticAccessors();
-        return name == "prototype"
-            ? new SharpTSPropertyDescriptor(Prototype, writable: false, enumerable: false, configurable: false)
-                { HasValue = true }
-            : _staticPropertyObject?.GetOwnPropertyDescriptor(name)
-            ?? (_staticProperties.TryGetValue(name, out var value)
-                ? new SharpTSPropertyDescriptor(value, writable: true, enumerable: true, configurable: true)
-                    { HasValue = true }
-                : !_deletedStaticMethods.Contains(name) && _staticMethods.TryGetValue(name, out var method)
-                    ? SharpTSPropertyDescriptor.ForMethod(method)
-                    : null);
+        if (name == "prototype")
+            return new SharpTSPropertyDescriptor(Prototype, writable: false, enumerable: false, configurable: false)
+                { HasValue = true };
+        if (_staticPropertyObject?.GetOwnPropertyDescriptor(name) is { } descriptor)
+            return descriptor;
+        if (_staticProperties.TryGetValue(name, out var value))
+            return new SharpTSPropertyDescriptor(value, writable: true, enumerable: true, configurable: true)
+                { HasValue = true };
+        if (_deletedStaticMethods.Contains(name)) return null;
+        if (_staticMethods.TryGetValue(name, out var method))
+            return SharpTSPropertyDescriptor.ForMethod(method);
+        // Keep intrinsic metadata virtual until a definition or integrity
+        // operation needs ordinary storage. Tombstones prevent resurrection.
+        return name is "name" or "length" && !_staticAutoAccessorStorage.ContainsKey(name)
+            ? new SharpTSPropertyDescriptor(name == "name" ? Name : (object)(double)Arity(),
+                writable: false, enumerable: false, configurable: true) { HasValue = true }
+            : null;
     }
 
     internal SharpTSPropertyDescriptor? FindStaticPropertyDescriptor(string name)
@@ -497,6 +504,7 @@ public partial class SharpTSClass(
 
     internal bool HasOwnStaticMember(string name)
         => name == "prototype"
+            || name is "name" or "length" && !_deletedStaticMethods.Contains(name)
             || _staticProperties.ContainsKey(name)
             || _staticPropertyObject?.GetOwnPropertyDescriptor(name) is not null
             || !_deletedStaticMethods.Contains(name) && _staticMethods.ContainsKey(name)
@@ -510,7 +518,7 @@ public partial class SharpTSClass(
         if (_staticPropertyObject is not null && !_staticPropertyObject.DeleteProperty(name))
             return false;
         _staticProperties.Remove(name);
-        if (_staticMethods.ContainsKey(name))
+        if (_staticMethods.ContainsKey(name) || name is "name" or "length")
             _deletedStaticMethods.Add(name);
         _staticMethodCache.TryRemove(name, out _);
         _ownStaticPropertyOrder.Remove(name);
@@ -528,9 +536,7 @@ public partial class SharpTSClass(
                 && !(descriptor.HasConfigurable && descriptor.Configurable)
                 && (!descriptor.HasValue || PropertySemantics.SameValue(descriptor.Value, Prototype));
         MaterializeStaticAccessors();
-        // Intrinsic name/length still live in callable metadata rather than this bag.
-        if (!HasOwnStaticMember(name) && name is not ("name" or "length")
-            && !Compilation.PropertyDescriptorStore.IsExtensible(this))
+        if (!HasOwnStaticMember(name) && !Compilation.PropertyDescriptorStore.IsExtensible(this))
             return false;
         if (!MaterializeOwnStaticProperty(name).DefineProperty(name, descriptor))
             return false;

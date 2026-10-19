@@ -68,8 +68,8 @@ public sealed class ReflectClassStaticPropertyTests
     {
         foreach (var row in Cases())
         {
-            // Interpreter constructor prototype mutation (#2443) and name metadata (#2562) remain separate gaps.
-            if ((string)row[0] is not ("prototype-overrides" or "name-metadata"))
+            // Interpreter constructor prototype mutation (#2443) remains separate.
+            if ((string)row[0] is not "prototype-overrides")
                 yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }

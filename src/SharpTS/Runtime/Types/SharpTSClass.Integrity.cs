@@ -20,6 +20,8 @@ public partial class SharpTSClass
     {
         MaterializeStaticAccessors();
         _staticPropertyObject ??= new SharpTSObject(_staticProperties);
+        MaterializeOwnStaticProperty("name");
+        MaterializeOwnStaticProperty("length");
         foreach (var name in _staticMethods.Keys) MaterializeOwnStaticProperty(name);
 
         // Even an empty store must become nonextensible: later definitions

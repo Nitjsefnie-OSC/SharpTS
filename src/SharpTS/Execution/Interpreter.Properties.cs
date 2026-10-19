@@ -614,8 +614,6 @@ public partial class Interpreter
                 if (TryReadDescriptor(klass.GetOwnStaticPropertyDescriptor(name), receiver, out var classValue))
                     return classValue;
                 if (klass.HasOwnStaticAutoAccessor(name)) return klass.GetStaticAutoAccessorValue(name);
-                if (name == "name") return klass.Name;
-                if (name == "length") return (double)klass.Arity();
                 // The native Promise bridge exposes its statics outside the class
                 // descriptor tables. Only its actual position in the live chain
                 // supplies those inherited methods.
@@ -989,7 +987,7 @@ public partial class Interpreter
             }
             if (obj is SharpTSClass klass)
             {
-                if (klass.HasOwnStaticMember(name) || name is "name" or "length") return true;
+                if (klass.HasOwnStaticMember(name)) return true;
                 if (ReferenceEquals(klass, SharpTSPromiseClass.PromiseBase)
                     && PromiseBuiltIns.GetStaticMethod(name, SharpTSPromiseClass.PromiseBase) is not null)
                     return true;

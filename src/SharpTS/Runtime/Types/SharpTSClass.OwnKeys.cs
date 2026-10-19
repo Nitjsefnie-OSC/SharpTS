@@ -39,7 +39,7 @@ public partial class SharpTSClass
         List<string> names = [];
         foreach (var name in _ownStaticPropertyOrder.OfType<string>())
         {
-            if (name is not ("name" or "length") && !HasOwnStaticMember(name)) continue;
+            if (!HasOwnStaticMember(name)) continue;
             if (PropertySemantics.TryGetArrayIndex(name, out uint index)) indices.Add((index, name));
             else names.Add(name);
         }

@@ -208,6 +208,12 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Br, notTSFunction);
         }
         il.MarkLabel(functionOwnPropertyCheck);
+        // A current own descriptor can recreate a deleted property. As for
+        // constructor/global carriers, it takes precedence over deletion history.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+        il.Emit(OpCodes.Brtrue, trueLabel);
         // If `name` or `length` was deleted on this instance, the property is
         // no longer own — report false. Per ECMA-262 §17, both are configurable.
         il.Emit(OpCodes.Ldarg_0);
@@ -241,11 +247,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, inputs.UndefinedType);
         il.Emit(OpCodes.Brfalse, trueLabel);
         il.MarkLabel(notFunctionPrototype);
-        // Otherwise check PDS for own descriptor
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, nameLocal);
-        il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
-        il.Emit(OpCodes.Brtrue, trueLabel);
         il.Emit(OpCodes.Br, falseLabel);
         il.MarkLabel(notTSFunction);
 

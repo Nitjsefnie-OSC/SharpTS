@@ -126,11 +126,8 @@ public sealed class ClassNameReflectionTests
 
     }
 
-    // #2720 tracks compiled sealed/frozen name configurability.
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
-        ((string)row[0] is "metadata-integrity"
-            ? new[] { ExecutionMode.Interpreted }
-            : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]

@@ -1971,10 +1971,13 @@ public partial class RuntimeEmitter
             )
         );
         EmitObjectFreeze(typeBuilder, runtime.ObjectState,
-            new ObjectIntegrityInputs(runtime.ArrayStorage, runtime.DescriptorStorage, runtime.ObjectStorage),
+            new ObjectIntegrityInputs(runtime.ArrayStorage, runtime.DescriptorStorage, runtime.ObjectStorage,
+                runtime.ObjectDescriptors.GetOwnPropertyDescriptor, runtime.ObjectFields.Interface),
             new GeneratorIntegrityInputs(runtime.FunctionValues.Type, runtime.FunctionValues.GetMethodInfo,
                 runtime.GeneratorPrototypes.Kind, runtime.GeneratorPrototypes.EnsureOwnPrototype));
-        EmitObjectSeal(typeBuilder, runtime.ObjectState, new ObjectIntegrityInputs(runtime.ArrayStorage, runtime.DescriptorStorage, runtime.ObjectStorage));
+        EmitObjectSeal(typeBuilder, runtime.ObjectState,
+            new ObjectIntegrityInputs(runtime.ArrayStorage, runtime.DescriptorStorage, runtime.ObjectStorage,
+                runtime.ObjectDescriptors.GetOwnPropertyDescriptor, runtime.ObjectFields.Interface));
         EmitObjectIsFrozen(typeBuilder, runtime.ObjectState);
         EmitObjectIsSealed(typeBuilder, runtime.ObjectState);
         EmitObjectDefineProperty(

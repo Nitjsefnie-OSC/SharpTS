@@ -2615,7 +2615,8 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Stloc, savedReceiver);
             EmitExpression(value);
             bool nativeValue = (_stackType == StackType.Double && _ctx.Types.IsDouble(guestField.NativeType)) ||
-                (_stackType == StackType.Boolean && _ctx.Types.IsBoolean(guestField.NativeType));
+                (_stackType == StackType.Boolean && _ctx.Types.IsBoolean(guestField.NativeType)) ||
+                (_stackType == StackType.String && _ctx.Types.IsString(guestField.NativeType));
             bool nativeStore = nativeValue && _ctx.ClassRegistry.CanUseNativePrimitiveField(guestField);
             StackType valueStack = nativeValue ? _stackType : StackType.Unknown;
             if (!nativeValue) EnsureBoxed();
@@ -2636,7 +2637,8 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldloc, savedReceiver);
             IL.Emit(OpCodes.Castclass, nativeStore ? nativeCast : guestCast);
             IL.Emit(OpCodes.Ldloc, savedValue);
-            if (nativeValue && !nativeStore) IL.Emit(OpCodes.Box, guestField.NativeType);
+            if (nativeValue && !nativeStore && guestField.NativeType.IsValueType)
+                IL.Emit(OpCodes.Box, guestField.NativeType);
             IL.Emit(OpCodes.Callvirt, nativeStore ? nativeSetter : guestSetter);
             IL.MarkLabel(done);
             IL.Emit(OpCodes.Ldloc, savedValue);

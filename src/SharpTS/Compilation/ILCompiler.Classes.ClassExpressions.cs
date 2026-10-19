@@ -305,7 +305,7 @@ public partial class ILCompiler
         setterIL.Emit(OpCodes.Ldarg_0);
         setterIL.Emit(OpCodes.Ldarg_1);
         setterIL.Emit(OpCodes.Stfld, backingField);
-        if (propertyType == _types.Double || propertyType == _types.Boolean)
+        if (propertyType == _types.Double || propertyType == _types.Boolean || propertyType == _types.String)
             EmitClearGuestFieldOverride(setterIL, _classes.InstanceFieldsField[_classExprs.Names[classExpr]], fieldName);
         setterIL.Emit(OpCodes.Ret);
         DefineGuestDataField(typeBuilder, field, propertyType, backingField, getter, setter);

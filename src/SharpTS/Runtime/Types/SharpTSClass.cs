@@ -44,6 +44,12 @@ public partial class SharpTSClass(
     public TypeCategory RuntimeCategory => TypeCategory.Class;
 
     public string Name { get; } = name;
+    private string? _inferredName;
+
+    // Named evaluation changes the intrinsic guest metadata, not the class's
+    // internal identity or any declared static member named "name".
+    internal void SetInferredName(string? inferredName) => _inferredName = inferredName;
+
     public SharpTSClass? Superclass { get; } = superclass;
     internal bool HasExplicitPrototype { get; private set; }
     internal object? ExplicitPrototype { get; private set; }
@@ -490,7 +496,7 @@ public partial class SharpTSClass(
         // Keep intrinsic metadata virtual until a definition or integrity
         // operation needs ordinary storage. Tombstones prevent resurrection.
         return name is "name" or "length" && !_staticAutoAccessorStorage.ContainsKey(name)
-            ? new SharpTSPropertyDescriptor(name == "name" ? Name : (object)(double)Arity(),
+            ? new SharpTSPropertyDescriptor(name == "name" ? _inferredName ?? Name : (object)(double)Arity(),
                 writable: false, enumerable: false, configurable: true) { HasValue = true }
             : null;
     }

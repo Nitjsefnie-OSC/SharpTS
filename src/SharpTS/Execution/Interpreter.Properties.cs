@@ -3411,7 +3411,9 @@ public partial class Interpreter
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/variable-declarations.html">TypeScript Variable Declarations</seealso>
     private RuntimeValue EvaluateAssign(Expr.Assign assign)
     {
-        RuntimeValue value = EvaluateRV(assign.Value);
+        RuntimeValue value = assign.IsVarRedeclaration
+            ? EvaluateVariableInitializerCore(_syncContext, assign.Value, assign.Name).GetAwaiter().GetResult()
+            : EvaluateRV(assign.Value);
 
         if (_locals.TryGetValue(assign, out int distance))
         {

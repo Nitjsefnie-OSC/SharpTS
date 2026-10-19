@@ -2138,6 +2138,25 @@ public partial class Interpreter
     // Counter for generating unique anonymous class expression names
     private int _classExprCounter = 0;
 
+    private ValueTask<RuntimeValue> EvaluateVariableInitializerCore(
+        IEvaluationContext ctx, Expr initializer, Token name)
+    {
+        // Destructuring lowering also uses variable statements, but its temporary
+        // tokens do not denote source bindings that participate in named evaluation.
+        if (name.Start < 0)
+            return ctx.EvaluateExprAsync(initializer);
+
+        Expr expression = initializer;
+        while (expression is Expr.Grouping grouping)
+            expression = grouping.Expression;
+
+        // Named evaluation belongs to this initializer only. Passing it explicitly
+        // keeps nested class expressions in heritage, keys and static fields independent.
+        return expression is Expr.ClassExpr { Name: null } classExpr
+            ? EvaluateClassExpressionCore(ctx, classExpr, name.Lexeme)
+            : ctx.EvaluateExprAsync(initializer);
+    }
+
     /// <summary>
     /// Evaluates a class expression and returns the SharpTSClass object.
     /// Unlike class declarations, the class is not added to the environment.
@@ -2145,7 +2164,8 @@ public partial class Interpreter
     private RuntimeValue EvaluateClassExpression(Expr.ClassExpr classExpr) =>
         EvaluateClassExpressionCore(_syncContext, classExpr).GetAwaiter().GetResult();
 
-    private async ValueTask<RuntimeValue> EvaluateClassExpressionCore(IEvaluationContext ctx, Expr.ClassExpr classExpr)
+    private async ValueTask<RuntimeValue> EvaluateClassExpressionCore(
+        IEvaluationContext ctx, Expr.ClassExpr classExpr, string? inferredName = null)
     {
         // Generate name for anonymous classes
         string className = classExpr.Name?.Lexeme ?? $"$ClassExpr_{++_classExprCounter}";
@@ -2426,6 +2446,9 @@ public partial class Interpreter
                     staticGetters: staticGetters.Count > 0 ? staticGetters : null,
                     staticSetters: staticSetters.Count > 0 ? staticSetters : null, instancePrivateFields: instancePrivateFields, privateMethods: privateMethods, staticPrivateFields: staticPrivateFields, staticPrivateMethods: staticPrivateMethods);
 
+            // Public name inference is available before static initialization,
+            // while className remains the unique internal identity.
+            klass.SetInferredName(inferredName);
             klass.BindPrivateMemberOwners();
             klass.InitializerEnvironment = classEnv;
             klass.OrderedInstanceFields = classExpr.Fields.Where(field => !field.IsStatic && !field.IsDeclare)

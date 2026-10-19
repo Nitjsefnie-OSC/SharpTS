@@ -2031,7 +2031,8 @@ public partial class Interpreter
         object? value = SharpTSUndefined.Instance;
         if (varStmt.Initializer != null)
         {
-            value = Evaluate(varStmt.Initializer);
+            value = EvaluateVariableInitializerCore(_syncContext, varStmt.Initializer, varStmt.Name)
+                .GetAwaiter().GetResult().ToObject();
         }
         var target = varStmt.IsVar ? _environment.VarDeclarationTarget ?? _environment : _environment;
         if (varStmt.IsVar && varStmt.Initializer is null && target.IsDefinedLocally(varStmt.Name.Lexeme))
@@ -2047,7 +2048,8 @@ public partial class Interpreter
     internal ExecutionResult VisitConst(Stmt.Const constStmt)
     {
         // Const declarations always have an initializer (enforced by parser)
-        object? constValue = Evaluate(constStmt.Initializer);
+        object? constValue = EvaluateVariableInitializerCore(_syncContext, constStmt.Initializer, constStmt.Name)
+            .GetAwaiter().GetResult().ToObject();
         _environment.Define(constStmt.Name.Lexeme, constValue);
         return ExecutionResult.Success();
     }

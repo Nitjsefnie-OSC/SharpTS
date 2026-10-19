@@ -639,7 +639,7 @@ public partial class Interpreter
         object? value = SharpTSUndefined.Instance;
         if (varStmt.Initializer != null)
         {
-            value = (await EvaluateAsync(varStmt.Initializer)).ToObject();
+            value = (await EvaluateVariableInitializerCore(_asyncContext, varStmt.Initializer, varStmt.Name)).ToObject();
         }
         var target = varStmt.IsVar ? _environment.VarDeclarationTarget ?? _environment : _environment;
         if (varStmt.IsVar && varStmt.Initializer is null && target.IsDefinedLocally(varStmt.Name.Lexeme))
@@ -650,7 +650,7 @@ public partial class Interpreter
 
     internal async ValueTask<ExecutionResult> ExecuteConstAsyncVT(Stmt.Const constStmt)
     {
-        object? constValue = (await EvaluateAsync(constStmt.Initializer)).ToObject();
+        object? constValue = (await EvaluateVariableInitializerCore(_asyncContext, constStmt.Initializer, constStmt.Name)).ToObject();
         _environment.Define(constStmt.Name.Lexeme, constValue);
         return ExecutionResult.Success();
     }
@@ -737,7 +737,9 @@ public partial class Interpreter
 
     private async ValueTask<RuntimeValue> EvaluateAssignAsync(Expr.Assign assign)
     {
-        var rv = await EvaluateAsync(assign.Value);
+        var rv = assign.IsVarRedeclaration
+            ? await EvaluateVariableInitializerCore(_asyncContext, assign.Value, assign.Name)
+            : await EvaluateAsync(assign.Value);
         object? value = rv.ToObject();
 
         if (_locals.TryGetValue(assign, out int distance))

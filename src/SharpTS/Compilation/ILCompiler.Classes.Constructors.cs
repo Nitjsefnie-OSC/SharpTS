@@ -483,22 +483,6 @@ public partial class ILCompiler
                 }
             }
 
-            // Initialize instance declare fields (without initializers) to null in _extras dictionary
-            // TypeScript semantics: uninitialized fields return null/undefined, not CLR defaults
-            var instanceDeclareFields = classStmt.Fields.Where(f =>
-                !f.IsStatic && !f.IsPrivate && f.IsDeclare && f.Initializer == null && f.ComputedKey == null).ToList();
-            foreach (var field in instanceDeclareFields)
-            {
-                string fieldName = field.Name.Lexeme;
-                // Store null in _extras dictionary
-                il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Call, EmitterTypeHelpers.SelfMethodReference(ensureFields));
-                il.Emit(OpCodes.Ldstr, fieldName);
-                il.Emit(OpCodes.Ldnull);
-                il.Emit(OpCodes.Callvirt, _types.DictionaryStringObjectSetItem);
-            }
-
-
         }
     }
 

@@ -164,7 +164,7 @@ public partial class ILCompiler
             {
                 switch (initializer)
                 {
-                    case Stmt.Field field when field.IsStatic:
+                    case Stmt.Field field when field.IsStatic && !field.IsDeclare:
                         if (field.ComputedKey != null)
                         {
                             _classes.DeferredDefinitions.TryGetFieldKey(field, out var computedKey);

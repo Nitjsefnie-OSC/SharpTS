@@ -114,12 +114,10 @@ public sealed class ComputedDeclareFieldErasureTests
             """, "actual-key\nbefore,actual-value,after,before,actual-value,after\nfalse false true true true 1 3\n"];
     }
 
-    // #2707 owns compiled static declare-field materialization on class declarations.
     // #2812 owns compiled computed-instance-field enumeration order.
-    // Preserve both full original sources interpreted-only; their companions remain dual-mode/saved.
+    // Preserve the full original source interpreted-only; its companion remains dual-mode/saved.
     public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] is not "static-readonly-computed-declarations-erase-in-both-class-forms"
-            and not "ordinary-computed-key-and-field-initializer-order-survive-erasure");
+        (string)row[0] != "ordinary-computed-key-and-field-initializer-order-survive-erasure");
 
     public static IEnumerable<object[]> ModeCases()
     {

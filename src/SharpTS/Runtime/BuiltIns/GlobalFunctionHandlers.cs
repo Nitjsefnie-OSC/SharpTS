@@ -162,9 +162,11 @@ internal static class GlobalFunctionHandlers
         var radixRV = arguments.Count > 1
             ? await evaluateArg(arguments[1])
             : RuntimeValue.Undefined;
+        for (int i = 2; i < arguments.Count; i++)
+            await evaluateArg(arguments[i]);
 
-        // Evaluate the supplied radix before converting either value. Input
-        // string conversion still precedes radix number conversion.
+        // Complete the argument list before converting either retained value.
+        // Ignored extra values are never coerced by the builtin.
         var str = strRV.IsString
             ? strRV.AsString()
             : interpreter.ToStringForBuiltInArgument(strRV.ToObject());

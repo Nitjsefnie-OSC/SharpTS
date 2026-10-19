@@ -234,8 +234,25 @@ public class GlobalFunctionHandler : ICallHandler
             return true;
         }
 
-        if (call.Arguments.Count > 0) { emitter.EmitExpression(call.Arguments[0]); emitter.EmitBoxIfNeeded(call.Arguments[0]); } else { il.Emit(System.Reflection.Emit.OpCodes.Ldnull); }
-        if (call.Arguments.Count > 1) { emitter.EmitExpression(call.Arguments[1]); emitter.EmitBoxIfNeeded(call.Arguments[1]); } else { il.Emit(System.Reflection.Emit.OpCodes.Ldc_I4, 10); il.Emit(System.Reflection.Emit.OpCodes.Box, ctx.Types.Int32); }
+        // Complete every argument expression before the builtin starts coercion.
+        // Persist the used values when a later argument can suspend.
+        var input = call.Arguments.Count > 0 ? emitter.SpillBoxedArg(call.Arguments[0]) : null;
+        var radixValue = call.Arguments.Count > 1 ? emitter.SpillBoxedArg(call.Arguments[1]) : null;
+        for (int i = 2; i < call.Arguments.Count; i++)
+        {
+            emitter.EmitExpression(call.Arguments[i]);
+            emitter.EmitBoxIfNeeded(call.Arguments[i]);
+            il.Emit(System.Reflection.Emit.OpCodes.Pop);
+        }
+
+        if (input != null) il.Emit(System.Reflection.Emit.OpCodes.Ldloc, input);
+        else il.Emit(System.Reflection.Emit.OpCodes.Ldnull);
+        if (radixValue != null) il.Emit(System.Reflection.Emit.OpCodes.Ldloc, radixValue);
+        else
+        {
+            il.Emit(System.Reflection.Emit.OpCodes.Ldc_I4, 10);
+            il.Emit(System.Reflection.Emit.OpCodes.Box, ctx.Types.Int32);
+        }
         il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.Numbers.ParseInt);
         emitter.SetStackType(StackType.Double);
         return true;

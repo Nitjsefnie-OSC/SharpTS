@@ -12,6 +12,42 @@ public partial class ILCompiler
     private readonly Dictionary<TypeBuilder, MethodBuilder> _receiverInitializers = new(ReferenceEqualityComparer.Instance);
     private bool _usesRuntimeParents;
 
+    private bool UsesLiveSuperConstruction(Stmt.Class declaration) =>
+        _features?.UsesClassPrototypeMutation == true && declaration.SuperclassExpr != null
+        && SupportsReceiverInitialization(declaration)
+        && Expr.GetSuperclassLeafName(declaration.SuperclassExpr) is not
+            ("Promise" or "Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer")
+        && !Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(Expr.GetSuperclassLeafName(declaration.SuperclassExpr) ?? "");
+
+    private void RegisterLiveSuperConstruction(Stmt.Class declaration, TypeSystem.TypeInfo? type)
+    {
+        if (!UsesLiveSuperConstruction(declaration)) return;
+        _usesRuntimeParents = true;
+        var visited = new HashSet<TypeSystem.TypeInfo>(ReferenceEqualityComparer.Instance);
+        while (type != null && visited.Add(type))
+        {
+            if (type is TypeSystem.TypeInfo.Instance instance)
+            {
+                type = instance.ResolvedClassType;
+                continue;
+            }
+            if (type is TypeSystem.TypeInfo.InstantiatedGeneric generic)
+            {
+                type = generic.GenericDefinition;
+                continue;
+            }
+            var (id, parent) = type switch
+            {
+                TypeSystem.TypeInfo.Class c => (c.Core.DeclarationId, c.Core.Superclass),
+                TypeSystem.TypeInfo.GenericClass c => (c.Core.DeclarationId, c.Core.Superclass),
+                TypeSystem.TypeInfo.MutableClass c => (c.DeclarationId, c.Superclass),
+                _ => (0, (TypeSystem.TypeInfo?)null)
+            };
+            _typeMapper.RegisterDynamicClassInstance(id);
+            type = parent;
+        }
+    }
+
     private void PrepareRepeatingClassDeclarations(IEnumerable<Stmt> statements)
     {
         var collector = new ClassDeclarationCollector();
@@ -170,8 +206,10 @@ public partial class ILCompiler
         ctx.NewTargetParameterIndex = 3;
         ctx.DefineParameter("__this", 0, _types.Object);
         ApplyCapturedTopLevelVariableAccess(ctx);
-        var emitter = new ILEmitter(ctx);
         var constructor = declaration.Methods.FirstOrDefault(source => source.Body != null && source.Name.Lexeme == "constructor" && !source.IsStatic);
+        if (constructor != null)
+            SetupSyncMethodFunctionDisplayClass(ctx, il, constructor);
+        var emitter = new ILEmitter(ctx);
         ctx.CurrentMethodReturnType = _types.Void;
         ctx.IsRuntimeReceiverInitializer = true;
         ConfigureClassConstructorReturns(ctx, constructor, declaration.SuperclassExpr != null, forceReceiver: true);
@@ -186,6 +224,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Newobj, _runtime.Arguments.EnumerableCtor);
             il.Emit(OpCodes.Stloc, arguments);
+            SeedCapturedLocal("arguments", arguments);
         }
         foreach (var (parameter, index) in (constructor?.Parameters ?? []).Select((parameter, index) => (parameter, index)))
         {
@@ -208,38 +247,64 @@ public partial class ILCompiler
             }
             il.Emit(OpCodes.Stloc, local);
         }
-        foreach (var parameter in (constructor?.Parameters ?? []).Where(parameter => parameter.DefaultValue != null))
+        foreach (var (parameter, index) in (constructor?.Parameters ?? []).Select((parameter, index) => (parameter, index)))
         {
+            if (parameter.DefaultValue == null) continue;
             var local = ctx.Locals.GetLocal(parameter.Name.Lexeme)!;
             var present = il.DefineLabel();
             il.Emit(OpCodes.Ldloc, local); il.Emit(OpCodes.Isinst, _runtime.Sentinels.UndefinedType); il.Emit(OpCodes.Brfalse, present);
-            emitter.EmitExpression(parameter.DefaultValue!); emitter.EmitBoxIfNeeded(parameter.DefaultValue!); il.Emit(OpCodes.Stloc, local);
+            emitter.EmitDefaultParameterExpression(parameter.DefaultValue,
+                constructor!.Parameters.Skip(index).Select(parameter => parameter.Name.Lexeme));
+            emitter.EmitBoxIfNeeded(parameter.DefaultValue);
+            il.Emit(OpCodes.Stloc, local);
             il.MarkLabel(present);
         }
-        bool explicitSuper = constructor?.Body?.Any(ContainsSuperCall) == true;
-        if (!explicitSuper && declaration.SuperclassExpr != null)
+        foreach (var parameter in constructor?.Parameters ?? [])
+            SeedCapturedLocal(parameter.Name.Lexeme, ctx.Locals.GetLocal(parameter.Name.Lexeme)!);
+        ctx.UseOwnedCapturedParameterStorage = true;
+        emitter.InitializeCapturedLexicalTdzBindings(constructor?.Body ?? []);
+        bool implicitSuper = constructor == null && declaration.SuperclassExpr != null;
+        if (implicitSuper)
         {
+            // Without observable constructor mutation the existing allocation
+            // can be initialized in place. Otherwise the selected parent owns
+            // allocation and can return an unrelated ordinary/Array object.
+            bool liveParent = _features?.UsesClassPrototypeMutation != false;
             il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Call, _runtime.ClassDefinitions.GetParent);
-            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, liveParent
+                ? _runtime.ObjectPrototypes.GetPrototypeOf : _runtime.ClassDefinitions.GetParent);
+            if (!liveParent) il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldarg_3);
-            il.Emit(OpCodes.Call, _runtime.ClassDefinitions.InitializeReceiver);
+            il.Emit(OpCodes.Call, liveParent
+                ? _runtime.DynamicConstruction.ConstructWithNewTarget : _runtime.ClassDefinitions.InitializeReceiver);
             il.Emit(OpCodes.Stloc, ctx.ClassConstructorReceiver!);
             SetReceiverCell();
         }
-        else if (!explicitSuper)
+        else if (declaration.SuperclassExpr == null)
         {
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Stloc, ctx.ClassConstructorReceiver!);
             SetReceiverCell();
         }
-        if (!explicitSuper) ctx.EmitConstructorOwnElements!();
+        if (implicitSuper || declaration.SuperclassExpr == null) ctx.EmitConstructorOwnElements!();
         foreach (var statement in constructor?.Body ?? [])
             emitter.EmitStatement(statement);
         emitter.EmitClassConstructorFallthrough();
         il.Emit(OpCodes.Ret);
         emitter.FinalizeReturns();
+
+        void SeedCapturedLocal(string name, LocalBuilder local)
+        {
+            if (ctx.FunctionDisplayClassLocal == null
+                || ctx.CapturedFunctionLocals?.Contains(name) != true
+                || ctx.FunctionDisplayClassFields is not { } displayFields
+                || !displayFields.TryGetValue(name, out var field)) return;
+            il.Emit(OpCodes.Ldloc, ctx.FunctionDisplayClassLocal);
+            il.Emit(OpCodes.Ldloc, local);
+            EmitBoxedFieldConversion(il, field.FieldType);
+            il.Emit(OpCodes.Stfld, field);
+        }
 
         void SetReceiverCell()
         {

@@ -14,6 +14,12 @@ public partial class ILEmitter
 {
     protected override void EmitNew(Expr.New n)
     {
+        if (_ctx.RuntimeFeatures?.UsesClassPrototypeMutation == true
+            && _ctx.TypeMapper.IsDynamicClassInstance(_ctx.TypeMap?.Get(n)))
+        {
+            EmitDynamicConstruction(n);
+            return;
+        }
         if (_ctx.TypeMapper.HeldClassConstructions?.RequiresValueConstruction(n) == true)
         {
             EmitDynamicConstruction(n);

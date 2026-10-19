@@ -1724,6 +1724,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitNew(Expr.New n)
     {
+        if (Ctx.RuntimeFeatures?.UsesClassPrototypeMutation == true
+            && Ctx.TypeMapper.IsDynamicClassInstance(Ctx.TypeMap?.Get(n)))
+        {
+            EmitDynamicConstruction(n);
+            return;
+        }
         if (Ctx.TypeMapper.HeldClassConstructions?.RequiresValueConstruction(n) == true)
         {
             EmitDynamicConstruction(n);

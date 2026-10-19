@@ -46,6 +46,7 @@ public partial class ILCompiler
     private void DefineClass(Stmt.Class classStmt)
     {
         _classes.Declarations.Add(classStmt);
+        RegisterLiveSuperConstruction(classStmt, _typeMap.GetClassType(classStmt));
         if (ClassConstructorMayReplace(classStmt.Methods) && _typeMap.GetClassType(classStmt) is { } replacementClass)
             _typeMapper.RegisterDynamicClassInstance(replacementClass.Core.DeclarationId);
         if (TryDefineRuntimeClassDeclaration(classStmt)) return;

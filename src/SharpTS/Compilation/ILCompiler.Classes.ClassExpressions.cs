@@ -28,6 +28,7 @@ public partial class ILCompiler
     private void DefineClassExpression(Expr.ClassExpr classExpr)
     {
         if (_classExprs.Builders.ContainsKey(classExpr)) return;
+        RegisterLiveSuperConstruction(ClassExpressionDeclaration(classExpr), _typeMap.GetClassExprType(classExpr));
         if (ClassConstructorMayReplace(classExpr.Methods) && _typeMap.GetClassExprType(classExpr) is { } replacementClass)
             _typeMapper.RegisterDynamicClassInstance(replacementClass.Core.DeclarationId);
         if (ResolveClassExpressionParent(classExpr) is { } parent && !ReferenceEquals(parent, classExpr))
@@ -577,7 +578,7 @@ public partial class ILCompiler
         string className = _classExprs.Names[classExpr];
         var fieldsField = _classes.InstanceFieldsField[className];
         if (_usesRuntimeParents && !typeBuilder.IsGenericTypeDefinition && !_classes.ErrorSubclasses.Contains(className)
-            && typeBuilder.BaseType is not { Name: "$Array" or "$Promise" }
+            && typeBuilder.BaseType is not { Name: "$Promise" }
             && SupportsReceiverInitialization(ClassExpressionDeclaration(classExpr)))
             EmitReceiverInitializer(typeBuilder, ClassExpressionDeclaration(classExpr), classExpr);
 

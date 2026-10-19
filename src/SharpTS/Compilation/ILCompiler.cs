@@ -664,6 +664,10 @@ public partial class ILCompiler
 
     private void AnalyzeClosuresAndPromotions(List<Stmt> statements, IReadOnlyList<ParsedModule>? modules = null)
     {
+        foreach (var (declaration, type) in _typeMap.ClassDeclarations)
+            RegisterLiveSuperConstruction(declaration, type);
+        foreach (var (expression, type) in _typeMap.ClassExpressions)
+            RegisterLiveSuperConstruction(ClassExpressionDeclaration(expression), type);
         PrepareRepeatingClassDeclarations(statements);
         Phase2_AnalyzeClosures(statements, modules);
         _closures.ConstArrowBindings = ConstArrowBindingAnalyzer.Collect(statements);

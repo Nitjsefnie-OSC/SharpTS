@@ -117,10 +117,6 @@ public sealed class ClassConstructorLiveSuperTests
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Where(mode => mode == ExecutionMode.Interpreted || (string)row[0] switch
             {
-                // #2649: compiled super construction retains the original parent/allocation.
-                "explicit-live-parent-and-restoration" or "implicit-expression-live-parent"
-                    or "derived-nonconstructor-parent-and-base-kind" or "array-leaf-to-ordinary-parent"
-                    or "ordinary-leaf-to-array-parent" or "function-and-proxy-parent" => false,
                 // #2651: compiled static super reads retain the original lexical superclass.
                 "static-super-live-home-and-borrowed-receiver" => false,
                 _ => true

@@ -31,6 +31,21 @@ public partial class ILCompiler
         var il = factory.GetILGenerator();
         var ctx = CreateModuleMemberContext(il, factory);
         var emitter = new ILEmitter(ctx);
+        if (UsesLiveSuperConstruction(declaration) && !owner.IsGenericTypeDefinition
+            && !_classes.ErrorSubclasses.Contains(GetQualifiedClassDeclarationName(declaration))
+            && !_classes.PromiseSubclasses.Contains(GetQualifiedClassDeclarationName(declaration)))
+        {
+            // The adapter's completion key is independent of the receiver
+            // returned by the dynamically selected superclass.
+            il.Emit(OpCodes.Ldtoken, owner);
+            il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+            il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, _runtime.ClassDefinitions.InitializeReceiver);
+            il.Emit(OpCodes.Ret);
+            return;
+        }
         bool publishesArguments = _functions.MethodsCapturingArguments.Contains(constructor);
         LocalBuilder? previousArguments = null;
         LocalBuilder? result = null;

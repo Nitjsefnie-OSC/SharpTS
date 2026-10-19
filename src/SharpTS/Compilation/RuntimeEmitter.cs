@@ -752,6 +752,10 @@ public partial class RuntimeEmitter
             new ConstructDynamicValueInputs(
                 runtime.ClassDefinitions,
                 runtime.DynamicConstruction,
+                runtime.ArrayStorage,
+                runtime.DescriptorStorage,
+                runtime.ObjectRead,
+                runtime.Operators,
                 runtime.BoxedPrimitives,
                 runtime.Booleans,
                 runtime.Errors,

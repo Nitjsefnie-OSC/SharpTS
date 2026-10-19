@@ -79,18 +79,57 @@ public sealed class ArrayBufferStaticMemberTests
             console.log(descriptor.get === undefined, descriptor.set === undefined);
             console.log(first(new Uint8Array(1)), second(new DataView(new ArrayBuffer(2))), reflected({}));
             """, "function true true true\ntrue true\ntrue false true\ntrue true\ntrue true false\n"];
+        yield return ["block-local-dot-bracket-dynamic-and-held-member-receivers", """
+            {
+                const ArrayBuffer: any = {
+                    tag: 'block', calls: 0,
+                    isView(this: any, value: any) { this.calls++; return this.tag + ':' + value; }
+                };
+                console.log(ArrayBuffer.isView(1), ArrayBuffer['isView'](2));
+                const key: any = 'isView';
+                console.log(ArrayBuffer[key](3));
+                const held: any = ArrayBuffer.isView;
+                console.log(held.call(ArrayBuffer, 4), held === ArrayBuffer['isView'], ArrayBuffer.calls);
+            }
+            """, "block:1 block:2\nblock:3\nblock:4 true 4\n"];
+        yield return ["parameter-getter-before-argument-and-original-call-receiver", """
+            function inspect(ArrayBuffer: any) {
+                console.log(ArrayBuffer.isView((ArrayBuffer.trace += 'argument,', 7)));
+                console.log(ArrayBuffer.trace, ArrayBuffer.gets, ArrayBuffer.calls);
+            }
+            const target: any = {
+                tag: 'parameter', trace: '', gets: 0, calls: 0,
+                get isView(): any {
+                    this.trace += 'getter,';
+                    this.gets++;
+                    return function(this: any, value: any) {
+                        this.trace += 'call,';
+                        this.calls++;
+                        return this.tag + ':' + value;
+                    };
+                }
+            };
+            inspect(target);
+            """, "parameter:7\ngetter,argument,call, 1 1\n"];
+        yield return ["unshadowed-direct-and-alias-classification-preservation", """
+            const owner: any = ArrayBuffer;
+            const buffer = new ArrayBuffer(8);
+            const view = new DataView(buffer, 2, 4);
+            const typed = new Uint8Array(buffer);
+            console.log(ArrayBuffer.isView(view), owner.isView(view), ArrayBuffer.isView(typed), owner.isView(typed));
+            console.log(owner.isView(buffer), ArrayBuffer.isView({}), owner.isView(null));
+            console.log(owner.isView === ArrayBuffer.isView, Reflect.get(owner, 'isView') === ArrayBuffer.isView);
+            console.log(buffer.byteLength, view.byteLength, typed.length);
+            """, "true true true true\nfalse false false\ntrue true\n8 4 8\n"];
     }
 
-    // #2730 owns compiled calls bypassing local ArrayBuffer bindings.
-    public static IEnumerable<object[]> CompiledCases() => Cases().Where(row =>
-        (string)row[0] != "parameter-and-block-shadows-use-their-own-member");
+    public static IEnumerable<object[]> CompiledCases() => Cases();
 
     // #2822 owns interpreted Object.hasOwn missing the present isView member;
     // preserve the full descriptor control in compiled and isolated saved execution.
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
         ((string)row[0] switch
         {
-            "parameter-and-block-shadows-use-their-own-member" => new[] { ExecutionMode.Interpreted },
             "repeated-member-cache-and-own-descriptor-identity" => new[] { ExecutionMode.Compiled },
             _ => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
         })

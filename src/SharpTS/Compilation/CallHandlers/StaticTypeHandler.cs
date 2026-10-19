@@ -45,6 +45,12 @@ public class StaticTypeHandler : ICallHandler
         {
             return false;
         }
+        if (staticVar.Name.Lexeme == "ArrayBuffer"
+            && (emitter.HasVariable("ArrayBuffer")
+                || ctx.HasVisibleValueBinding("ArrayBuffer")))
+        {
+            return false;
+        }
 
         var staticStrategy = ctx.TypeEmitterRegistry.GetStaticStrategy(staticVar.Name.Lexeme);
         if (staticStrategy == null)

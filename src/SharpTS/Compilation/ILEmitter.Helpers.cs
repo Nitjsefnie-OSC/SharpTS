@@ -97,12 +97,32 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Br, skipDefault);
 
             builder.MarkLabel(fireDefault);
+            var capturedFunctionLocals = _ctx.CapturedFunctionLocals;
+            var capturedArrowLocals = _ctx.CapturedArrowLocals;
+            var parameterTdzNames = _ctx.DefaultParameterTdzNames;
             _ctx.DefaultParameterTdzNames = parameters
                 .Skip(i)
                 .Select(p => p.Name.Lexeme)
                 .ToHashSet(StringComparer.Ordinal);
-            EmitExpression(param.DefaultValue);
-            _ctx.DefaultParameterTdzNames = null;
+            try
+            {
+                // Defaults run outside this callable's body environment. Its
+                // capture storage is allocated already so closures can retain
+                // the shared instance, but body bindings must not hide outer
+                // bindings while evaluating a default. Keep inherited capture
+                // paths and the incoming parameter slots available.
+                if (_ctx.FunctionDisplayClassLocal != null)
+                    _ctx.CapturedFunctionLocals = null;
+                if (_ctx.ArrowScopeDisplayClassLocal != null)
+                    _ctx.CapturedArrowLocals = null;
+                EmitExpression(param.DefaultValue);
+            }
+            finally
+            {
+                _ctx.CapturedFunctionLocals = capturedFunctionLocals;
+                _ctx.CapturedArrowLocals = capturedArrowLocals;
+                _ctx.DefaultParameterTdzNames = parameterTdzNames;
+            }
             EmitBoxIfNeeded(param.DefaultValue);
             IL.Emit(OpCodes.Starg, argIndex);
 

@@ -21,8 +21,18 @@ public sealed class BuiltInMethodOwnPropertyTests
             console.log(Reflect.deleteProperty(method, key), Object.hasOwn(method, key));
             console.log(delete method.marker, Object.hasOwn(method, "marker"), method(-4));
             """;
-        Assert.Equal("7 true 3 marker\ntrue 8\ntrue 9 8\n9 false true true\ntrue false\ntrue false 4\n",
-            TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("7 true 3 marker\ntrue 8\ntrue 9 8\n9 false true true\ntrue false\ntrue false 4\n", output);
     }
 
     [Theory, ModeData]
@@ -41,7 +51,18 @@ public sealed class BuiltInMethodOwnPropertyTests
             console.log(Reflect.defineProperty(method, "extra", { value: 1 }), Reflect.deleteProperty(method, "value"));
             console.log(method(3.8));
             """;
-        Assert.Equal("12 true 7 2\nfalse true true 8\nfalse false\n3\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("12 true 7 2\nfalse true true 8\nfalse false\n3\n", output);
     }
 
     [Fact]
@@ -82,7 +103,18 @@ public sealed class BuiltInMethodOwnPropertyTests
             catch (error) { console.log(error instanceof TypeError); }
             console.log(method(3, 4));
             """;
-        Assert.Equal("5 6 2 6 1\ntrue 2 count,extra\ntrue false\ntrue\ntrue\n4\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("5 6 2 6 1\ntrue 2 count,extra\ntrue false\ntrue\ntrue\n4\n", output);
     }
 
     [Fact]
@@ -125,7 +157,18 @@ public sealed class BuiltInMethodOwnPropertyTests
             console.log(Reflect.get(new Proxy(prototype, handler), "next") === next,
                 Reflect.get(new Proxy(iteratorPrototype, handler), Symbol.iterator) === iterator);
             """;
-        Assert.Equal("true true\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true true\n", output);
     }
 
     [Theory, ModeData]
@@ -140,7 +183,18 @@ public sealed class BuiltInMethodOwnPropertyTests
             console.log(delete method.bigint, method.bigint === undefined, owner.hrtime.bigint === undefined);
             console.log(typeof child());
             """;
-        Assert.Equal("true true\n7 bigint\ntrue true true\nbigint\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true true\n7 bigint\ntrue true true\nbigint\n", output);
     }
 
     [Theory, ModeData]
@@ -154,6 +208,17 @@ public sealed class BuiltInMethodOwnPropertyTests
                     method === Object.getOwnPropertyDescriptor(owner, name).value);
             }
             """;
-        Assert.Equal(string.Concat(Enumerable.Repeat("true true\n", 4)), TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal(string.Concat(Enumerable.Repeat("true true\n", 4)), output);
     }
 }

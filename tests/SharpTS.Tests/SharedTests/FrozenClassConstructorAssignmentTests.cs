@@ -22,7 +22,18 @@ public sealed class FrozenClassConstructorAssignmentTests
             try { write(frozen, 'value', 2); } catch (error) { console.log(error instanceof TypeError); }
             console.log(Object.isFrozen(frozen), frozen.value);
             """;
-        Assert.Equal("true\nfalse false\ntrue\ntrue 1\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true\nfalse false\ntrue\ntrue 1\n", output);
     }
 
     [Fact]
@@ -59,6 +70,17 @@ public sealed class FrozenClassConstructorAssignmentTests
             write(Derived, 'own', 8);
             console.log(calls, Object.hasOwn(Derived, 'inherited'));
             """;
-        Assert.Equal("true 7\ntrue 8\n2 false\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true 7\ntrue 8\n2 false\n", output);
     }
 }

@@ -141,7 +141,18 @@ public class GroupByTests
             });
             console.log(result.size, result.get(1).join(','), result.get(0).join(','), events.join('|'));
             """;
-        Assert.Equal("2 1,3 2 1:0|2:1|3:2\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("2 1,3 2 1:0|2:1|3:2\n", output);
     }
 
     // #2572 tracks compiled Set iterable admission.
@@ -188,7 +199,18 @@ public class GroupByTests
             function key(value: number) { 'use strict'; console.log(this === undefined); return value; }
             console.log(map.groupBy([1], key).size);
             """;
-        Assert.Equal("true 0\ntrue\n1\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true 0\ntrue\n1\n", output);
     }
 
     [Theory, ModeData]

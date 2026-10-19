@@ -28,7 +28,18 @@ public class IteratorProtocolTests
             iterator.index = 0;
             console.log(Array.from(source).join(','), state.receivers, state.gets);
             """;
-        Assert.Equal("true\n0 true 2\n0 true 3\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true\n0 true 2\n0 true 3\n", output);
     }
 
     [Theory, ModeData]
@@ -47,7 +58,18 @@ public class IteratorProtocolTests
             const source: any = build.call(owner);
             console.log(Array.from(source).join(','), state.valid);
             """;
-        Assert.Equal("0 true\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("0 true\n", output);
     }
 
     #region Sync Iterator Protocol (Symbol.iterator)

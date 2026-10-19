@@ -27,7 +27,18 @@ public sealed class ClassInstanceSymbolDescriptorTests
             catch (error) { console.log(error instanceof TypeError); }
             console.log(instance[key], Object.hasOwn(instance, key));
             """;
-        Assert.Equal("1 false true false\n1 false 1\ntrue\ntrue\ntrue\n1 true\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("1 false true false\n1 false 1\ntrue\ntrue\ntrue\n1 true\n", output);
     }
 
     [Theory, ModeData]
@@ -50,9 +61,20 @@ public sealed class ClassInstanceSymbolDescriptorTests
                     Object.hasOwn(instance, missing), delete instance[key]);
             }
             """;
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
         Assert.Equal("1 true true true\n1 false true false false false\n" +
             "1 true true true\n2 true true false false false\n" +
-            "1 true true true\n2 true true true false true\n", TestHarness.Run(source, mode));
+            "1 true true true\n2 true true true false true\n", output);
     }
 
     [Theory, ModeData]
@@ -77,6 +99,17 @@ public sealed class ClassInstanceSymbolDescriptorTests
                 Object.hasOwn(descriptor, 'get'));
             console.log(delete instance[key], instance[key] === undefined);
             """;
-        Assert.Equal("true\ntrue\n7\n8 false true true false\ntrue true\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true\ntrue\n7\n8 false true true false\ntrue true\n", output);
     }
 }

@@ -51,8 +51,18 @@ public class AsyncCallApplyBindTests
             }
             run();
             """;
-        Assert.Equal("async:ordinary\nasync:ordinary\nasync:ordinary\nasync:copied\nasync:explicit\nlexical\n",
-            TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("async:ordinary\nasync:ordinary\nasync:ordinary\nasync:copied\nasync:explicit\nlexical\n", output);
     }
 
     [Theory, ModeData]

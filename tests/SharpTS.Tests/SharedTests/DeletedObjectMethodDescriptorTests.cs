@@ -137,6 +137,17 @@ public sealed class DeletedObjectMethodDescriptorTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
-        Assert.Equal(expected, TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled && (name == "reflect-own-expando-2318"))
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal(expected, output);
     }
 }

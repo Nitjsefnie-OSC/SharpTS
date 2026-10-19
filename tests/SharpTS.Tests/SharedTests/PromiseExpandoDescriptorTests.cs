@@ -31,8 +31,18 @@ public sealed class PromiseExpandoDescriptorTests
             console.log(delete promise.open, Object.hasOwn(promise, 'open'),
                 Object.getOwnPropertyDescriptor(promise, 'open') === undefined);
             """;
-        Assert.Equal("3 true true true\n1 false false false\n1 false true\ntrue\ntrue\ntrue\ntrue false true\n",
-            TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("3 true true true\n1 false false false\n1 false true\ntrue\ntrue\ntrue\ntrue false true\n", output);
     }
 
     [Theory, ModeData]
@@ -56,8 +66,18 @@ public sealed class PromiseExpandoDescriptorTests
             console.log(promise.slot, updated.writable, updated.enumerable, updated.configurable);
             console.log(Reflect.deleteProperty(promise, 'slot'), Object.hasOwn(promise, 'slot'));
             """;
-        Assert.Equal("true 7\ntrue\n5\n10 true true true false\n10 true false true\ntrue false\n",
-            TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true 7\ntrue\n5\n10 true true true false\n10 true false true\ntrue false\n", output);
     }
 
     [Theory, ModeData]
@@ -84,7 +104,17 @@ public sealed class PromiseExpandoDescriptorTests
             console.log(frozen.value, frozen.writable, frozen.enumerable, frozen.configurable,
                 Object.hasOwn(promise, 'missing'));
             """;
-        Assert.Equal("2 true false true\n3 true false false false\n3 false false false false\n",
-            TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("2 true false true\n3 true false false false\n3 false false false false\n", output);
     }
 }

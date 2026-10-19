@@ -23,7 +23,18 @@ public class ReflectApiTests
             const target: any = { value: 1 };
             console.log(Reflect.deleteProperty(target, 'value'), Object.hasOwn(target, 'value'));
             """;
-        Assert.Equal(string.Concat(Enumerable.Repeat("true\n", 7)) + "0\ntrue false\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal(string.Concat(Enumerable.Repeat("true\n", 7)) + "0\ntrue false\n", output);
     }
 
     [Theory, ModeData]

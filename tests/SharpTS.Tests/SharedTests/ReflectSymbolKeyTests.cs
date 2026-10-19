@@ -340,6 +340,17 @@ public sealed class ReflectSymbolKeyTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
-        Assert.Equal(expected, TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled && (name == "coercion-proxy-receiver"))
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal(expected, output);
     }
 }

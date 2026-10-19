@@ -17,7 +17,18 @@ public sealed class ClassInstanceReflectSetTests
             console.log(descriptor.value, descriptor.writable, descriptor.enumerable, descriptor.configurable);
             console.log(Reflect.set(instance, 'extra', 8), instance.extra);
             """;
-        Assert.Equal("true 7\ntrue 9\n9 true true true\ntrue 8\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true 7\ntrue 9\n9 true true true\ntrue 8\n", output);
     }
 
     [Theory, ModeData]
@@ -34,7 +45,18 @@ public sealed class ClassInstanceReflectSetTests
             Object.freeze(instance);
             console.log(Reflect.set(instance, 'value', 5), instance.value);
             """;
-        Assert.Equal("true true\n3 true true false\nfalse\nfalse 3\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true true\n3 true true false\nfalse\nfalse 3\n", output);
     }
 
     [Theory, ModeData]
@@ -54,7 +76,18 @@ public sealed class ClassInstanceReflectSetTests
             const accessor: any = Object.getOwnPropertyDescriptor(instance, 'accessor');
             console.log(instance.accessor, typeof accessor.get, accessor.enumerable, Object.hasOwn(accessor, 'value'));
             """;
-        Assert.Equal("true true false true\ntrue true 7\n8 function true false\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true true false true\ntrue true 7\n8 function true false\n", output);
     }
 
     [Fact]

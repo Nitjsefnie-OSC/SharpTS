@@ -69,7 +69,18 @@ public sealed class ObjectConstructorIntegrityTests
             catch (error) { console.log(error instanceof TypeError); }
             console.log(typeof O.create, Object.hasOwn(O, 'create'), delete O.create);
             """;
-        Assert.Equal("undefined false\ntrue\ntrue\nundefined false true\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("undefined false\ntrue\ntrue\nundefined false true\n", output);
     }
 
     [Theory, ModeData]
@@ -88,6 +99,17 @@ public sealed class ObjectConstructorIntegrityTests
             const descriptor: any = Object.getOwnPropertyDescriptor(O, 'value');
             console.log(O.value, typeof descriptor.get, typeof descriptor.set, descriptor.configurable, delete O.value);
             """;
-        Assert.Equal("true\n7 function function false false\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true\n7 function function false false\n", output);
     }
 }

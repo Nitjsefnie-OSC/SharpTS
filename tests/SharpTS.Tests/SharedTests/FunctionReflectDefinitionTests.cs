@@ -47,8 +47,18 @@ public sealed class FunctionReflectDefinitionTests
                     Reflect.defineProperty(target, 'newProperty', { value: 1 }));
             }
             """;
-        Assert.Equal(string.Concat(Enumerable.Repeat("true\ntrue\n7 true true true\nfalse 7 false\n", 5)),
-            TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal(string.Concat(Enumerable.Repeat("true\ntrue\n7 true true true\nfalse 7 false\n", 5)), output);
     }
 
     [Theory, ModeData]
@@ -61,6 +71,17 @@ public sealed class FunctionReflectDefinitionTests
             const descriptor: any = { get value() { state.events += 'v'; return 7; } };
             console.log(Reflect.defineProperty(target, name, descriptor), (target as any)[key], state.events);
             """;
-        Assert.Equal("true 7 kv\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true 7 kv\n", output);
     }
 }

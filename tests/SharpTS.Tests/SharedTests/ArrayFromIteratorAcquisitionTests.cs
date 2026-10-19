@@ -143,7 +143,18 @@ public sealed class ArrayFromIteratorAcquisitionTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
-        Assert.Equal(expected, TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled && (name is "array-like-length-getter" or "array-like-inherited-accessors" or "array-like-accessor-errors" or "nullish-data-iterator"))
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal(expected, output);
     }
 
     // Compiled required iteration accepts ordinary undefined iterator slots (#2574).

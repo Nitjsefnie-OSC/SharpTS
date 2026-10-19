@@ -310,6 +310,17 @@ public sealed class BlockGeneratorExpressionTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
-        Assert.Equal(expected, TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled && (name == "evaluation-identity-async"))
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal(expected, output);
     }
 }

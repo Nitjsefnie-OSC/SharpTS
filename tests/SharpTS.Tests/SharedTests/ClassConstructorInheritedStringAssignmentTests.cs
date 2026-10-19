@@ -30,8 +30,18 @@ public sealed class ClassConstructorInheritedStringAssignmentTests
                 delete functions[key];
             }
             """;
-        Assert.Equal(string.Concat(Enumerable.Repeat("true\nfalse 1 1\n1 true false\n", 2)),
-            TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal(string.Concat(Enumerable.Repeat("true\nfalse 1 1\n1 true false\n", 2)), output);
     }
 
     [Theory, ModeData]
@@ -52,6 +62,17 @@ public sealed class ClassConstructorInheritedStringAssignmentTests
             delete functions[key];
             delete objects[key];
             """;
-        Assert.Equal("true\nfalse 1 true\n4 3 1\n", TestHarness.Run(source, mode));
+        string output;
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, compiledOutput) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            output = compiledOutput;
+        }
+        else
+        {
+            output = TestHarness.Run(source, mode);
+        }
+        Assert.Equal("true\nfalse 1 true\n4 3 1\n", output);
     }
 }

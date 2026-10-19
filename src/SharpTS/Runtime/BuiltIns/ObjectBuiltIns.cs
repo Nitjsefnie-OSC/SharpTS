@@ -1456,9 +1456,10 @@ public static partial class ObjectBuiltIns
                     ? ownSource.OwnProperties.GetOwnPropertyDescriptor(symbol)
                     : ownSource.OwnProperties.GetOwnPropertyDescriptor((string)key);
                 if (descriptor?.Enumerable != true) continue;
-                ownEntries.Add(new(key, key is SharpTSSymbol symbolKey
+                var value = key is SharpTSSymbol symbolKey
                     ? interpreter.GetSymbolPropertyValue(ownSource, symbolKey)
-                    : interpreter.GetPropertyValue(ownSource, (string)key)));
+                    : interpreter.GetPropertyValue(ownSource, (string)key);
+                ownEntries.Add(new(key, ConvertDefinePropertiesDescriptor(interpreter, value)));
             }
             foreach (var entry in ownEntries)
                 DefineProperty(interpreter, [target, entry.Key, entry.Value]);
@@ -1474,9 +1475,7 @@ public static partial class ObjectBuiltIns
                 var value = key is SharpTSSymbol symbol
                     ? interpreter.GetSymbolPropertyValue(prototypeSource, symbol)
                     : interpreter.GetPropertyValue(prototypeSource, (string)key);
-                if (!RuntimeValue.FromBoxed(value).IsObject)
-                    throw new ThrowException(new SharpTSTypeError("Property description must be an object"));
-                prototypeEntries.Add(new(key, ToPartialDescriptorObject(ToPropertyDescriptor(interpreter, value!))));
+                prototypeEntries.Add(new(key, ConvertDefinePropertiesDescriptor(interpreter, value)));
             }
             foreach (var entry in prototypeEntries)
                 DefineProperty(interpreter, [target, entry.Key, entry.Value]);
@@ -1484,12 +1483,14 @@ public static partial class ObjectBuiltIns
         }
 
         // ECMA-262 §19.1.2.3 ObjectDefineProperties: snapshot own enumerable
-        // keys and read every descriptor through Get before applying it. The
+        // keys and convert each descriptor before reading the next one. The
         // carrier may be any object kind (function, array/arguments, Math,
         // Date, RegExp, JSON, …), and accessor reads bind `this` to that carrier.
         var entries = OwnEnumerableKeysForDefineProperties(interpreter, props)
+            .ToList()
             .Select(key => new KeyValuePair<string, object?>(
-                key, ReadDefinePropertiesValue(interpreter, props, key)))
+                key, ConvertDefinePropertiesDescriptor(interpreter,
+                    ReadDefinePropertiesValue(interpreter, props, key))))
             .ToList();
 
         foreach (var entry in entries)
@@ -1498,6 +1499,13 @@ public static partial class ObjectBuiltIns
         }
 
         return target;
+    }
+
+    private static SharpTSObject ConvertDefinePropertiesDescriptor(Interpreter interpreter, object? value)
+    {
+        if (!RuntimeValue.FromBoxed(value).IsObject)
+            throw new ThrowException(new SharpTSTypeError("Property description must be an object"));
+        return ToPartialDescriptorObject(ToPropertyDescriptor(interpreter, value!));
     }
 
     // DefineProperties converts each descriptor before reading the next key,

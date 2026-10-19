@@ -2763,9 +2763,6 @@ public partial class ILEmitter
         else if (_ctx.Types.IsBoolean(setterParamType)
                  && _ctx.TypeMap?.Get(value) is TypeInfo.Primitive { Type: TokenType.TYPE_BOOLEAN })
             resultStackType = StackType.Boolean;
-        else if (_ctx.Types.IsString(setterParamType)
-                 && _ctx.TypeMap?.Get(value) is TypeInfo.String)
-            resultStackType = StackType.String;
         else
             return false;
 
@@ -2774,7 +2771,6 @@ public partial class ILEmitter
         {
             case StackType.Double: EnsureDouble(); break;
             case StackType.Boolean: EnsureBoolean(); break;
-            case StackType.String: EnsureString(); break;
         }
 
         var valueTemp = IL.DeclareLocal(setterParamType);

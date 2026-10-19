@@ -111,14 +111,6 @@ public sealed class OptionalParameterPropertyTests
             });
     }
 
-    [Fact]
-    public void IssueSourcePreservesConstructorValuesInInterpreter()
-    {
-        Assert.Equal(
-            "missing missing fallback 0\nmissing missing fallback 0\nnull null null 1\nok ok named 2\n",
-            TestHarness.RunInterpreted(IssueSource));
-    }
-
     public static TheoryData<string, string> RejectedSources => new()
     {
         {

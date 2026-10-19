@@ -98,6 +98,8 @@ public sealed class PrimitiveStringAccessorReceiverTests
             yield return row;
         yield return PrimitiveStringLiveMethodTests.Cases().Single(row =>
             (string)row[0] == "getter-receiver-and-lookup-before-arguments");
+        yield return PrimitiveStringLiveMethodTests.Cases().Single(row =>
+            (string)row[0] == "mask-delete-and-inherited-fallback");
     }
 
     public static IEnumerable<object[]> ModeCases()

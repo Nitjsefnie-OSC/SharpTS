@@ -169,9 +169,8 @@ public sealed class PrimitiveStringLiveMethodTests
         foreach (var row in Cases())
         {
             yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
-            // Compiler gaps: awaited argument verification (#2700) and inherited fallback (#2701).
-            if ((string)row[0] is not ("async-includes-getter-with-awaited-argument" or
-                "mask-delete-and-inherited-fallback"))
+            // Compiler gap: awaited argument verification (#2700).
+            if ((string)row[0] != "async-includes-getter-with-awaited-argument")
                 yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
     }

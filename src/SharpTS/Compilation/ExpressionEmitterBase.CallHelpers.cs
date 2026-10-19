@@ -635,7 +635,7 @@ public abstract partial class ExpressionEmitterBase
         SetStackUnknown();
     }
 
-    private void EmitGetPropertyAndInvoke(LocalBuilder objLocal, string methodName, List<Expr> arguments, LocalBuilder[]? argLocals = null)
+    protected void EmitGetPropertyAndInvoke(LocalBuilder objLocal, string methodName, List<Expr> arguments, LocalBuilder[]? argLocals = null)
     {
         // ECMA-262 §13.3.2.1: evaluating the member-access callee `recv.method`
         // performs RequireObjectCoercible(recv), so an undefined receiver throws
@@ -2643,8 +2643,7 @@ public abstract partial class ExpressionEmitterBase
     {
         EmitExpression(obj);
         EnsureBoxed();
-        var objLocal = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, objLocal);
+        var objLocal = _helpers.SpillStoreObject();
 
         var isStringLabel = IL.DefineLabel();
         var isListLabel = IL.DefineLabel();
@@ -2673,11 +2672,21 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Box, typeof(bool));
                 break;
             case "indexOf":
-                // ECMA-262 §22.1.3.8 step 3: searchString = ? ToString(searchString).
-                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); IL.Emit(OpCodes.Call, Ctx.Runtime!.StringCoercion.ToJsString); }
-                else { IL.Emit(OpCodes.Ldstr, "undefined"); }
-                IL.Emit(OpCodes.Call, Ctx.Runtime!.Strings.IndexOf);
-                IL.Emit(OpCodes.Box, typeof(double));
+                if (Ctx.RuntimeFeatures?.UsesStringPrototypeMutation != false)
+                {
+                    // Discard the temporary cast receiver. Resolve the live chain
+                    // with the original primitive before evaluating arguments.
+                    IL.Emit(OpCodes.Pop);
+                    EmitGetPropertyAndInvoke(objLocal, methodName, arguments);
+                }
+                else
+                {
+                    // ECMA-262 §22.1.3.8 step 3: searchString = ? ToString(searchString).
+                    if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); IL.Emit(OpCodes.Call, Ctx.Runtime!.StringCoercion.ToJsString); }
+                    else { IL.Emit(OpCodes.Ldstr, "undefined"); }
+                    IL.Emit(OpCodes.Call, Ctx.Runtime!.Strings.IndexOf);
+                    IL.Emit(OpCodes.Box, typeof(double));
+                }
                 break;
             case "lastIndexOf":
                 if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); IL.Emit(OpCodes.Call, Ctx.Runtime!.StringCoercion.ToJsString); }

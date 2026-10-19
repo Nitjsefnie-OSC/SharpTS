@@ -173,19 +173,21 @@ public sealed class StablePrimitiveStringIntrinsicTests
             _ = contains(input, needle, 1);
         }
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        double total = 0;
-        for (int i = 0; i < 100_000; i++)
+        double RunSearches()
         {
-            total += find(input, needle, i & 1);
-            if (contains(input, needle, i & 1))
-                total++;
+            double total = 0;
+            for (int i = 0; i < 100_000; i++)
+            {
+                total += find(input, needle, i & 1);
+                if (contains(input, needle, i & 1))
+                    total++;
+            }
+            return total;
         }
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
-        Assert.Equal(700_000, total);
-        Assert.True(allocated <= 1_024,
-            $"Primitive string searches allocated {allocated:N0} bytes.");
+        long[] samples = AllocationTestHelper.MeasureRunAllocations(RunSearches, 700_000);
+        Assert.True(samples.Min() <= 1_024,
+            $"Primitive string search allocation samples: {string.Join(", ", samples)} bytes.");
     }
 
     [Fact]

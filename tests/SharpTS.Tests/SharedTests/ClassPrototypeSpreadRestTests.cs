@@ -55,13 +55,13 @@ public sealed class ClassPrototypeSpreadRestTests
             Object.defineProperty(source, 'hidden', { value: 4, enumerable: false });
             Object.defineProperty(source, hidden, { value: 5, enumerable: false });
             const copy: any = { ...source };
-            const { beta, ...rest } = source;
+            const { beta, [own]: symbolValue, ...rest } = source;
             console.log(Object.keys(copy).join(','), copy[own], Object.getOwnPropertySymbols(copy)[0] === own);
-            console.log(beta, Object.keys(rest).join(','), rest[own], Object.getOwnPropertySymbols(rest)[0] === own);
+            console.log(beta, symbolValue, Object.keys(rest).join(','), Object.getOwnPropertySymbols(rest).length);
             console.log(Object.hasOwn(copy, 'constructor'), Object.hasOwn(copy, 'method'),
                 Object.hasOwn(copy, 'inherited'), Object.hasOwn(copy, inherited),
                 Object.hasOwn(copy, 'hidden'), Object.hasOwn(copy, hidden));
-            """, "2,10,beta,alpha 7 true\n2 2,10,alpha 7 true\nfalse false false false false false\n"];
+            """, "2,10,beta,alpha 7 true\n2 7 2,10,alpha 0\nfalse false false false false false\n"];
         yield return ["getter-receivers-and-fresh-data-descriptors", """
             const symbol = Symbol('access'), state = { gets: 0, wrong: 0 };
             class Owner {}
@@ -109,8 +109,8 @@ public sealed class ClassPrototypeSpreadRestTests
             Object.defineProperty(source, 'skip', { enumerable: true, get() { return 1; } });
             Object.defineProperty(source, 'keep', { enumerable: true, get() { state.kept++; return 2; } });
             Object.defineProperty(source, symbol, { enumerable: true, get() { return 3; } });
-            const { skip, ...rest } = source;
-            console.log(skip, rest[symbol], rest.keep, state.kept,
+            const { skip, [symbol]: taken, ...rest } = source;
+            console.log(skip, taken, rest.keep, state.kept,
                 Object.hasOwn(rest, 'skip'), Object.hasOwn(rest, symbol));
             class Broken {}
             const broken: any = Broken.prototype, marker = {};
@@ -118,7 +118,7 @@ public sealed class ClassPrototypeSpreadRestTests
             Object.defineProperty(broken, 'later', { enumerable: true, get() { state.later++; return 9; } });
             try { const copy = { ...broken }; } catch (error) { console.log(error === marker, state.later); }
             try { const { ...copy } = broken; } catch (error) { console.log(error === marker, state.later); }
-            """, "1 3 2 1 false true\ntrue 0\ntrue 0\n"];
+            """, "1 3 2 1 false false\ntrue 0\ntrue 0\n"];
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>

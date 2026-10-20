@@ -61,7 +61,10 @@ public enum TokenType
     BIGINT_LITERAL,  // 123n literal (stores BigInteger value)
     REGEX,  // Regex literal /pattern/flags
 
-    EOF
+    EOF,
+
+    // Parser-only lowering operation; never produced by the lexer.
+    INTERNAL_TO_PROPERTY_KEY
 }
 
 /// <summary>

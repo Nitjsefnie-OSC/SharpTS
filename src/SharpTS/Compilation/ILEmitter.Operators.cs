@@ -561,6 +561,12 @@ public partial class ILEmitter
 
     protected override void EmitUnary(Expr.Unary u)
     {
+        if (u.Operator.Type == TokenType.INTERNAL_TO_PROPERTY_KEY)
+        {
+            base.EmitUnary(u);
+            return;
+        }
+
         // Try constant folding first
         if (ConstantFolder.TryFoldUnary(u, out var result))
         {

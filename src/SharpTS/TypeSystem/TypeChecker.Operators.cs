@@ -1105,6 +1105,16 @@ public partial class TypeChecker
         return TypeInfo.Primitive.Boolean;
     }
 
+    private static TypeInfo ComputedBindingKeyType(TypeInfo type) => type switch
+    {
+        TypeInfo.String or TypeInfo.StringLiteral or TypeInfo.TemplateLiteralType
+            or TypeInfo.Symbol or TypeInfo.UniqueSymbol or TypeInfo.Any or TypeInfo.Never => type,
+        TypeInfo.NumberLiteral number => new TypeInfo.StringLiteral(
+            Runtime.PropertyKeyConverter.ToPropertyKeyString(number.Value)),
+        TypeInfo.Union union => new TypeInfo.Union(union.Types.Select(ComputedBindingKeyType).ToList()),
+        _ => new TypeInfo.Union([TypeInfo.String.Shared, TypeInfo.Symbol.Shared])
+    };
+
     private TypeInfo CheckUnary(Expr.Unary unary)
     {
         // typeof never throws on undeclared variables - it returns "undefined"
@@ -1125,6 +1135,8 @@ public partial class TypeChecker
             return TypeInfo.String.Shared;
         }
         TypeInfo right = CheckExpr(unary.Right);
+        if (unary.Operator.Type == TokenType.INTERNAL_TO_PROPERTY_KEY)
+            return ComputedBindingKeyType(right);
         if (DotNetTypeSynthesizer.TryResolveUnaryOperator(
                 right, unary.Operator.Type, out var clrResult))
         {

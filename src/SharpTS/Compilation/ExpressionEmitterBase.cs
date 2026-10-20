@@ -2828,6 +2828,25 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitUnary(Expr.Unary u)
     {
+        if (u.Operator.Type == TokenType.INTERNAL_TO_PROPERTY_KEY)
+        {
+            EmitExpression(u.Right);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.Reflect.ToPropertyKey);
+            if (Ctx.TypeMap?.Get(u) is TypeSystem.TypeInfo.String or TypeSystem.TypeInfo.StringLiteral
+                or TypeSystem.TypeInfo.TemplateLiteralType
+                or TypeSystem.TypeInfo.Primitive { Type: TokenType.TYPE_STRING })
+            {
+                IL.Emit(OpCodes.Castclass, Types.String);
+                SetStackType(StackType.String);
+            }
+            else
+            {
+                SetStackUnknown();
+            }
+            return;
+        }
+
         if (u.Operator.Type == TokenType.MINUS && u.Right is Expr.Literal { Value: System.Numerics.BigInteger value })
         {
             EmitBigIntConstant(-value);

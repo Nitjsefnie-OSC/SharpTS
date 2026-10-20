@@ -523,6 +523,9 @@ public partial class Interpreter
     /// </summary>
     private RuntimeValue EvaluateUnaryOperationRV(Token op, RuntimeValue rv)
     {
+        if (op.Type == TokenType.INTERNAL_TO_PROPERTY_KEY)
+            return RuntimeValue.FromBoxed(ToPropertyKey(rv.ToObject()));
+
         if (rv.ToObject() is DotNet.DotNetInstance instance)
         {
             var methods = DotNet.DotNetOperatorResolver.GetUnaryCandidates(

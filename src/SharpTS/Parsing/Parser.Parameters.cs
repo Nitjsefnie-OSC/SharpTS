@@ -190,7 +190,8 @@ public partial class Parser
         Expr? defaultValue = Match(TokenType.EQUAL) ? Expression() : null;
 
         List<Stmt.DestructuredParameterProperty>? destructuredProperties = pattern is ObjectPattern objectPattern
-            ? objectPattern.Properties.Select(property => property.Value switch
+            ? objectPattern.Properties.Where(property => property.ComputedKey is null)
+                .Select(property => property.Value switch
                 {
                     IdentifierPattern identifier => new Stmt.DestructuredParameterProperty(
                         property.Key, identifier.Name, property.DefaultValue ?? identifier.DefaultValue,
@@ -224,8 +225,8 @@ public partial class Parser
         IdentifierPattern identifier => identifier.DefaultValue != null,
         ArrayPattern array => array.Elements.Any(element => element.Pattern != null
             && ContainsBindingExpressions(element.Pattern)),
-        ObjectPattern objectPattern => objectPattern.Properties.Any(property => property.DefaultValue != null
-            || ContainsBindingExpressions(property.Value)),
+        ObjectPattern objectPattern => objectPattern.Properties.Any(property => property.ComputedKey != null
+            || property.DefaultValue != null || ContainsBindingExpressions(property.Value)),
         RestPattern => false,
         _ => false
     };

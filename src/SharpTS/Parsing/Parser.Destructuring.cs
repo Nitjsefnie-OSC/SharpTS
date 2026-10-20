@@ -64,8 +64,20 @@ public partial class Parser
                 break;
             }
 
-            // Property-key position accepts any keyword (JS semantics).
-            Token key = ConsumePropertyName("Expect property name.");
+            // A computed binding key must be followed by a binding target.
+            Expr? computedKey = null;
+            Token key;
+            if (Match(TokenType.LEFT_BRACKET))
+            {
+                key = Previous();
+                computedKey = Expression();
+                Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed binding key.");
+            }
+            else
+            {
+                // Property-key position accepts any keyword (JS semantics).
+                key = ConsumePropertyName("Expect property name.");
+            }
             DestructurePattern value;
             Expr? defaultValue = null;
 
@@ -88,6 +100,8 @@ public partial class Parser
             }
             else
             {
+                if (computedKey is not null)
+                    throw new Exception("Expect ':' after computed binding key.");
                 // Shorthand: { x } or { x = default }
                 if (Match(TokenType.EQUAL))
                     defaultValue = Expression();
@@ -97,7 +111,7 @@ public partial class Parser
                 value = new IdentifierPattern(bindingName, defaultValue);
             }
 
-            properties.Add(new ObjectPatternProperty(key, value, defaultValue));
+            properties.Add(new ObjectPatternProperty(key, value, defaultValue, computedKey));
 
             if (!Check(TokenType.RIGHT_BRACE))
             {
@@ -232,7 +246,7 @@ public partial class Parser
     private Stmt DesugarObjectPattern(ObjectPattern pattern, Expr initializer, bool underDefault = false, bool isVar = false)
     {
         List<Stmt> statements = [];
-        List<string> usedKeys = [];
+        List<Expr> usedKeys = [];
 
         // const _dest0 = initializer;
         Token temp = GenerateTempVar(pattern.Line);
@@ -245,9 +259,7 @@ public partial class Parser
             if (prop.Value is RestPattern rest)
             {
                 // Generate: const rest = __objectRest(_dest0, ["x", "y", ...usedKeys]);
-                var excludeKeysExpr = new Expr.ArrayLiteral(
-                    usedKeys.Select(k => new Expr.Literal(k) as Expr).ToList()
-                );
+                var excludeKeysExpr = new Expr.ArrayLiteral(usedKeys);
                 var restCall = new Expr.Call(
                     new Expr.Variable(new Token(TokenType.IDENTIFIER, "__objectRest", null, pattern.Line)),
                     new Token(TokenType.RIGHT_PAREN, ")", null, pattern.Line),
@@ -258,14 +270,29 @@ public partial class Parser
                 break; // Rest must be last
             }
 
-            usedKeys.Add(prop.Key.Lexeme);
-
             // This read is tolerant if an enclosing pattern is defaulted, or this property itself
             // carries a default (its read may be missing on the source — the default covers it). #796
             bool propDefaulted = underDefault || prop.DefaultValue != null;
 
-            // Access expression: _dest0.key
-            Expr accessExpr = new Expr.Get(new Expr.Variable(temp), prop.Key, Defaulted: propDefaulted);
+            Expr accessExpr;
+            if (prop.ComputedKey is { } computedKey)
+            {
+                // Convert once, before reading the value. Both extraction and rest exclusion
+                // reuse this same primitive string/Symbol, including object-key coercion hooks.
+                Token keyTemp = GenerateTempVar(pattern.Line);
+                var normalizedKey = new Expr.Unary(
+                    new Token(TokenType.INTERNAL_TO_PROPERTY_KEY, "<property-key>", null, prop.Key.Line),
+                    computedKey);
+                statements.Add(new Stmt.Const(keyTemp, null, normalizedKey));
+                var keyReference = new Expr.Variable(keyTemp);
+                usedKeys.Add(keyReference);
+                accessExpr = new Expr.GetIndex(new Expr.Variable(temp), keyReference);
+            }
+            else
+            {
+                usedKeys.Add(new Expr.Literal(prop.Key.Lexeme));
+                accessExpr = new Expr.Get(new Expr.Variable(temp), prop.Key, Defaulted: propDefaulted);
+            }
 
             // Apply the property's undefined-only default before entering either
             // a simple binding or a nested pattern, evaluating the source once.

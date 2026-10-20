@@ -62,19 +62,15 @@ public sealed class ClassicForLexicalScopeTests
             }
             run(true);
             """, "OUTER 42\n"];
-        // #2774 tracks typeof-property narrowing; its stronger source is preserved in
-        // artifacts/p2-goal/2772-property-narrowing-controls/loop-and-write.ts.
         yield return ["property-narrowing-restoration-keeps-unrelated-property-writes", """
-            function run(holder: { value: string | null }, other: { value: string | number }) {
-                if (holder.value !== null) {
+            function run(holder: { value: string | number }, other: { value: string | number }) {
+                if (typeof holder.value === 'string' && typeof other.value === 'string') {
                     for (let holder = 0, unused = (other.value = 42); holder < 1; holder++) {}
-                    const text: string = holder.value;
-                    const number: number = other.value;
-                    console.log(text.toUpperCase(), number.toFixed(0));
+                    console.log(holder.value.toUpperCase(), other.value.toFixed(0));
                 }
             }
             run({ value: 'property' }, { value: 'before' });
-            """, "PROPERTY 42\n"];
+            """ + "\r\n", "PROPERTY 42\n"];
         yield return ["nested-same-name-lexical-loops-restore-each-owning-binding", """
             const named = () => 7;
             let turns = 0;

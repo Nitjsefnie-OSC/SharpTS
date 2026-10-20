@@ -32,6 +32,16 @@ public partial class TypeChecker
 
     private TypeInfo CheckGetIndex(Expr.GetIndex getIndex)
     {
+        // Validate the ordinary indexed read before applying a stable path refinement.
+        TypeInfo result = CheckGetIndexCore(getIndex);
+        var path = Narrowing.NarrowingPathExtractor.TryExtract(getIndex);
+        return path is not null && Narrowing.NarrowingPathExtractor.IsWithinDepthLimit(path)
+            ? GetNarrowing(path) ?? result
+            : result;
+    }
+
+    private TypeInfo CheckGetIndexCore(Expr.GetIndex getIndex)
+    {
         if (getIndex.Object is Expr.Super { Method: null } super)
             return CheckComputedSuperIndex(super, getIndex.Index);
 

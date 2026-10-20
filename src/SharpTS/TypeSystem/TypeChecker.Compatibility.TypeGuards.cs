@@ -334,15 +334,21 @@ public partial class TypeChecker
     {
         var currentType = _environment.Get(varName);
         if (currentType == null) return (null, null, null);
+        var (narrowedType, excludedType) = AnalyzeTypeofGuard(currentType, typeStr, negated);
+        return (varName, narrowedType, excludedType);
+    }
 
+    private (TypeInfo? NarrowedType, TypeInfo? ExcludedType) AnalyzeTypeofGuard(
+        TypeInfo currentType, string typeStr, bool negated)
+    {
         // Handle unknown type narrowing - typeof checks narrow unknown to specific types
         if (currentType is TypeInfo.Unknown)
         {
             TypeInfo? narrowedType = TypeofStringToType(typeStr);
             // Excluded type remains unknown (we don't know what else it could be)
             if (negated)
-                return (varName, TypeInfo.Unknown.Shared, narrowedType);
-            return (varName, narrowedType, TypeInfo.Unknown.Shared);
+                return (TypeInfo.Unknown.Shared, narrowedType);
+            return (narrowedType, TypeInfo.Unknown.Shared);
         }
 
         // Handle any type narrowing
@@ -350,8 +356,8 @@ public partial class TypeChecker
         {
             TypeInfo? narrowedType = TypeofStringToType(typeStr);
             if (negated)
-                return (varName, TypeInfo.Any.Shared, narrowedType);
-            return (varName, narrowedType, TypeInfo.Any.Shared);
+                return (TypeInfo.Any.Shared, narrowedType);
+            return (narrowedType, TypeInfo.Any.Shared);
         }
 
         if (currentType is TypeInfo.Union union)
@@ -366,8 +372,8 @@ public partial class TypeChecker
                 nonMatching.Count == 1 ? nonMatching[0] : new TypeInfo.Union(nonMatching);
 
             if (negated)
-                return (varName, excludedType, narrowedType);
-            return (varName, narrowedType, excludedType);
+                return (excludedType, narrowedType);
+            return (narrowedType, excludedType);
         }
 
         // Non-union type: check if current type matches typeof
@@ -375,15 +381,15 @@ public partial class TypeChecker
         {
             // Current type matches - narrowed stays same, excluded is never
             if (negated)
-                return (varName, TypeInfo.Never.Shared, currentType);
-            return (varName, currentType, TypeInfo.Never.Shared);
+                return (TypeInfo.Never.Shared, currentType);
+            return (currentType, TypeInfo.Never.Shared);
         }
         else
         {
             // Current type doesn't match - narrowed is never, excluded stays same
             if (negated)
-                return (varName, currentType, TypeInfo.Never.Shared);
-            return (varName, TypeInfo.Never.Shared, currentType);
+                return (currentType, TypeInfo.Never.Shared);
+            return (TypeInfo.Never.Shared, currentType);
         }
     }
 
@@ -684,6 +690,27 @@ public partial class TypeChecker
     /// </remarks>
     private (Narrowing.NarrowingPath? Path, TypeInfo? NarrowedType, TypeInfo? ExcludedType) AnalyzePathTypeGuard(Expr condition)
     {
+        if (condition is Expr.Binary comparison && comparison.Operator.Type is
+            TokenType.EQUAL_EQUAL or TokenType.EQUAL_EQUAL_EQUAL or TokenType.BANG_EQUAL or TokenType.BANG_EQUAL_EQUAL)
+        {
+            (Expr? operand, string? typeName) = (comparison.Left, comparison.Right) switch
+            {
+                (Expr.Unary { Operator.Type: TokenType.TYPEOF, Right: var expression }, Expr.Literal { Value: string name })
+                    => (expression, name),
+                (Expr.Literal { Value: string name }, Expr.Unary { Operator.Type: TokenType.TYPEOF, Right: var expression })
+                    => (expression, name),
+                _ => (null, null)
+            };
+            if (operand is not null && typeName is not null &&
+                Narrowing.NarrowingPathExtractor.TryExtract(operand) is { } path &&
+                path is not Narrowing.NarrowingPath.Variable && Narrowing.NarrowingPathExtractor.IsWithinDepthLimit(path))
+            {
+                bool negated = comparison.Operator.Type is TokenType.BANG_EQUAL or TokenType.BANG_EQUAL_EQUAL;
+                var (narrowedType, excludedType) = AnalyzeTypeofGuard(CheckExpr(operand), typeName, negated);
+                return (path, narrowedType, excludedType);
+            }
+        }
+
         // Pattern: path !== null or path != null. A LOOSE `!=` against EITHER null or undefined
         // narrows away BOTH (JS: `null == undefined`); STRICT `!==` narrows away just the one compared.
         if (condition is Expr.Binary bin &&

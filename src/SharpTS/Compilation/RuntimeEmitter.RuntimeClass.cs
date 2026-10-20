@@ -1998,6 +1998,7 @@ public partial class RuntimeEmitter
             new ObjectDefinePropertyInputs(
                 runtime.ArrayOperations,
                 runtime.ArrayStorage,
+                runtime.Arguments,
                 runtime.Booleans,
                 runtime.FunctionBindings.AnyType,
                 runtime.DescriptorStorage,
@@ -2043,6 +2044,7 @@ public partial class RuntimeEmitter
             runtime.ObjectDescriptors,
             new ObjectGetOwnPropertyDescriptorInputs(
                 runtime.ArrayStorage,
+                runtime.Arguments,
                 runtime.Dates,
                 runtime.DescriptorStorage,
                 runtime.ObjectOperations.Entries,

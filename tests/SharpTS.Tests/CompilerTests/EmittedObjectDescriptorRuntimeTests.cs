@@ -106,8 +106,13 @@ public sealed class EmittedObjectDescriptorRuntimeTests
             typeof(object), [typeof(object), typeof(string)]);
         var il = getProperty.GetILGenerator(); il.Emit(OpCodes.Ldstr, "supplied value"); il.Emit(OpCodes.Ret);
         var helper = typeof(RuntimeEmitter).GetMethod("EmitGetOwnDescriptorFunctionReceiver", Members)!;
-        var inputs = Activator.CreateInstance(helper.GetParameters()[1].ParameterType,
-            getProperty, runtime.ObjectState, promise, runtime.FunctionValues.Type, runtime.Sentinels.UndefinedType)!;
+        var inputType = helper.GetParameters()[1].ParameterType;
+        var ownPrototypeType = inputType.GetProperty("OwnPrototype")!.PropertyType;
+        var ownPrototype = Activator.CreateInstance(ownPrototypeType,
+            runtime.FunctionValues, runtime.FunctionAttributes, runtime.GeneratorPrototypes.Kind)!;
+        var inputs = Activator.CreateInstance(inputType,
+            getProperty, runtime.ObjectState, promise, runtime.FunctionValues.Type, runtime.Sentinels.UndefinedType,
+            ownPrototype)!;
         EmitReceiverProbe(emitter, probe, helper, inputs); probe.CreateType();
         var loaded = SaveVerifyLoad(builder); var savedProbe = loaded.GetType(probe.FullName!)!;
         foreach (var receiverType in new[] { resolve, reject })

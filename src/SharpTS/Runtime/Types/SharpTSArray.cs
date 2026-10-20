@@ -1309,7 +1309,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     /// </summary>
     internal bool HasOwnProperty(string name)
     {
-        if (name == "length") return true;
+        if (name == "length" && this is not SharpTSArguments) return true;
         if (PropertySemantics.TryGetArrayIndex(name, out uint index))
             return HasIndex(index)
                 || (_indexAccessors?.ContainsKey(index) ?? false)
@@ -1325,7 +1325,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     {
         foreach (string key in OwnStringKeys())
         {
-            if (key == "length") continue;
+            if (key == "length" && this is not SharpTSArguments) continue;
             if (_descriptors?.TryGetValue(key, out var flags) != true || flags.Enumerable)
                 yield return key;
         }
@@ -1367,13 +1367,14 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
                     System.Globalization.CultureInfo.InvariantCulture);
         }
 
-        yield return "length";
+        if (this is not SharpTSArguments)
+            yield return "length";
         foreach (string key in NamedPropertyNames)
             yield return key;
     }
 
     internal bool IsPropertyEnumerable(string name)
-        => name != "length" && HasOwnProperty(name)
+        => (name != "length" || this is SharpTSArguments) && HasOwnProperty(name)
             && (_descriptors?.TryGetValue(name, out var flags) != true || flags.Enumerable);
 
     /// <summary>
@@ -1451,7 +1452,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         // ArraySetLength (ECMA-262 §10.4.2.4). The length property is a
         // non-enumerable, non-configurable data property whose value controls
         // the array's indexed storage rather than an ordinary named expando.
-        if (name == "length")
+        if (name == "length" && this is not SharpTSArguments)
         {
             if (descriptor.HasGet || descriptor.HasSet
                 || (descriptor.HasEnumerable && descriptor.Enumerable)
@@ -1687,7 +1688,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     /// </summary>
     public SharpTSPropertyDescriptor? GetOwnPropertyDescriptor(string name)
     {
-        if (name == "length")
+        if (name == "length" && this is not SharpTSArguments)
         {
             return new SharpTSPropertyDescriptor
             {

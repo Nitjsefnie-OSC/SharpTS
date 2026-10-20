@@ -43,6 +43,7 @@ public partial class RuntimeEmitter
     private readonly record struct ObjectDefinePropertyInputs(
         EmittedArrayOperationsRuntime ArrayOperations,
         EmittedArrayStorageRuntime ArrayStorage,
+        EmittedArgumentsRuntime Arguments,
         EmittedBooleanRuntime Booleans,
         TypeBuilder BoundAnyFunctionType,
         EmittedDescriptorStorageRuntime DescriptorStorage,
@@ -70,6 +71,7 @@ public partial class RuntimeEmitter
     );
 
     private readonly record struct DefinePropertyArrayLengthCoercionInputs(
+        Type ArgumentsType,
         EmittedArrayOperationsRuntime ArrayOperations,
         EmittedErrorRuntime Errors,
         MethodBuilder GetProperty,
@@ -115,6 +117,7 @@ public partial class RuntimeEmitter
 
     private readonly record struct ObjectGetOwnPropertyDescriptorInputs(
         EmittedArrayStorageRuntime ArrayStorage,
+        EmittedArgumentsRuntime Arguments,
         EmittedDateRuntime Dates,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         MethodBuilder GetEntries,
@@ -634,6 +637,7 @@ public partial class RuntimeEmitter
             EmitDefinePropertyArrayLengthCoercion(
                 il,
                 new DefinePropertyArrayLengthCoercionInputs(
+                    inputs.Arguments.Type,
                     inputs.ArrayOperations,
                     inputs.Errors,
                     inputs.GetProperty,
@@ -713,6 +717,7 @@ public partial class RuntimeEmitter
             il,
             new DefinePropertyExistingDescriptorInputs(
                 inputs.ArrayStorage,
+                inputs.Arguments,
                 inputs.DescriptorStorage,
                 descriptors.GetOwnPropertyDescriptor,
                 inputs.GetProperty,
@@ -841,6 +846,10 @@ public partial class RuntimeEmitter
         var skipArrayLenCheck = il.DefineLabel();
         var lenWasCoercedLocal = il.DeclareLocal(_types.Boolean);
         var coercedLenLocal = il.DeclareLocal(_types.Object);
+        // Arguments length is an ordinary property and must not be array-coerced.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.ArgumentsType);
+        il.Emit(OpCodes.Brtrue, skipArrayLenCheck);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brfalse, skipArrayLenCheck);
@@ -1734,6 +1743,7 @@ public partial class RuntimeEmitter
         EmitGetOwnDescriptorIndexedReceiver(
             il,
             inputs.ArrayStorage,
+            inputs.Arguments,
             propNameLocal,
             resultDictLocal,
             returnNullLabel,

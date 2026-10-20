@@ -103,6 +103,7 @@ public partial class ILEmitter
         // Catches direct uses inside the function body — the most common
         // pattern in test262's "applied to Arguments object" cluster.
         if (g.Name.Lexeme == "length"
+            && _ctx.RuntimeFeatures?.UsesDynamicPropertyDescriptors != true
             && g.Object is Expr.Variable argsVar
             && argsVar.Name.Lexeme == "arguments"
             && _ctx.Runtime?.Arguments.Type != null

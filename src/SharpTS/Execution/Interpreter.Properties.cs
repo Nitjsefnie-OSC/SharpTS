@@ -1228,6 +1228,8 @@ public partial class Interpreter
         // them before namespace/category/built-in dispatch while retaining the
         // existing record helper's accessor, prototype, and callable rules.
         string directMemberName = get.Name.Lexeme;
+        if (obj is SharpTSArguments && directMemberName == "length")
+            return RuntimeValue.FromBoxed(GetPropertyValue(obj, directMemberName));
         if (obj is SharpTSArray directArray
             && directMemberName == "length")
         {
@@ -1674,6 +1676,8 @@ public partial class Interpreter
         if (obj is SharpTSArraySubclassInstance subclassArray)
             return RuntimeValue.FromBoxed(GetPropertyValue(subclassArray, memberName));
 
+        if (obj is SharpTSArguments && memberName == "length")
+            return RuntimeValue.FromBoxed(GetPropertyValue(obj, memberName));
         if (obj is SharpTSArray lengthArray && memberName == "length")
             return RuntimeValue.FromNumber(lengthArray.LongLength);
 
@@ -3071,6 +3075,11 @@ public partial class Interpreter
             case TypeCategory.Array when obj is SharpTSArray array:
                 if (memberName == "length")
                 {
+                    if (array is SharpTSArguments)
+                    {
+                        SetArrayNamedProperty(array, memberName, value, strictMode);
+                        return value;
+                    }
                     if (strictMode && (array.IsFrozen || !array.IsLengthWritable))
                     {
                         throw new ThrowException(new SharpTSTypeError(
@@ -3169,7 +3178,7 @@ public partial class Interpreter
         // Bracket assignment (`array["length"] = value`) reaches the named-key
         // path, but length is still the array exotic's special own data
         // property. Keep it on the same ArraySetLength path as dot assignment.
-        if (name == "length")
+        if (name == "length" && array is not SharpTSArguments)
         {
             if (strictMode && (array.IsFrozen || !array.IsLengthWritable))
             {

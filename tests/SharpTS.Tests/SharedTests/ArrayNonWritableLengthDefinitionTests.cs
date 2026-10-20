@@ -89,19 +89,17 @@ public sealed class ArrayNonWritableLengthDefinitionTests
                     Object.hasOwn(values, '1'), Object.getOwnPropertyDescriptor(values, '1') === undefined);
             }
             """, "true 1 0 7 true 1 false true false\ntrue 1 0 7 1 false true\n"];
-        // #2781 owns arguments length behavior; preserve only numeric own creation here.
-        // The full source/length transcripts remain in artifacts/p2-goal/2779-arguments-preservation/.
         yield return ["non-array-arguments-and-record-own-creation-ignore-readonly-length", """
             function checkArguments(value: number) {
                 const args: any = arguments;
                 Object.defineProperty(args, 'length', { writable: false });
-                console.log(Reflect.set(args, '1', 7), Object.hasOwn(args, '1'), args[1]);
+                console.log(Reflect.set(args, '1', 7), args.length, Object.hasOwn(args, '1'), args[1]);
             }
             checkArguments(1);
             const ordinary: any = { length: 1 };
             Object.defineProperty(ordinary, 'length', { writable: false });
-            console.log(Reflect.set(ordinary, '1', 7), Object.hasOwn(ordinary, '1'), ordinary[1]);
-            """, "true true 7\ntrue true 7\n"];
+            console.log(Reflect.set(ordinary, '1', 7), ordinary.length, Object.hasOwn(ordinary, '1'), ordinary[1]);
+            """, "true 1 true 7\ntrue 1 true 7\n"];
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>

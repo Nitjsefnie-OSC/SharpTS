@@ -1194,6 +1194,7 @@ public partial class RuntimeEmitter
     private void EmitGetOwnDescriptorIndexedReceiver(
         ILGenerator il,
         EmittedArrayStorageRuntime arrayStorage,
+        EmittedArgumentsRuntime arguments,
         LocalBuilder propNameLocal,
         LocalBuilder resultDictLocal,
         Label returnNullLabel,
@@ -1240,6 +1241,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, elementDescriptorLabel);
 
         il.MarkLabel(checkListLabel);
+        var notArgumentsLength = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, arguments.Type);
+        il.Emit(OpCodes.Brfalse, notArgumentsLength);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notArgumentsLength);
+        EmitBuiltinDataDescriptor(il, resultDictLocal, endLabel, () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, arguments.Type);
+            il.Emit(OpCodes.Ldfld, arguments.LengthField);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+        }, writable: true, configurable: true);
+        il.MarkLabel(notArgumentsLength);
+
         // Arguments and legacy List carriers retain their dense semantics.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);

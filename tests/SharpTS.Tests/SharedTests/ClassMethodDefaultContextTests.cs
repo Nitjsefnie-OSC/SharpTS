@@ -25,7 +25,6 @@ public sealed class ClassMethodDefaultContextTests
             }
             console.log(new Owner().make());
             """, "7\n"];
-        // #2755 tracks static this/private emission when instance-private state also exists.
         yield return ["instance-and-static-default-class-contexts", """
             class Parent {
                 read() { return 1; }
@@ -35,7 +34,7 @@ public sealed class ClassMethodDefaultContextTests
                 #instanceSecret = 7;
                 static #staticSecret = 8;
                 make(read: any = () => this.#instanceSecret + super.read()) { return read(); }
-                static make(read: any = () => Owner.#staticSecret + super.read()) { return read(); }
+                static make(read: any = () => this.#staticSecret + super.read()) { return read(); }
             }
             console.log(new Owner().make(), Owner.make());
             """, "8 10\n"];
@@ -71,7 +70,6 @@ public sealed class ClassMethodDefaultContextTests
             console.log(new Owner().make(), Owner.make());
             console.log(new Owner().make(20), Owner.make(30), new After().make(), outside());
             """, "6 8\n20 30 9 11\n"];
-        // The explicit static owner preserves checker coverage while #2755 is pending.
         yield return ["public-pattern-default-private-and-super-contexts", """
             class Parent {
                 read() { return 1; }
@@ -81,7 +79,7 @@ public sealed class ClassMethodDefaultContextTests
                 #instanceSecret = 7;
                 static #staticSecret = 8;
                 make({ read = () => this.#instanceSecret + super.read() }: any = {}) { return read(); }
-                static make({ read = () => Owner.#staticSecret + super.read() }: any = {}) { return read(); }
+                static make({ read = () => this.#staticSecret + super.read() }: any = {}) { return read(); }
             }
             console.log(new Owner().make(), Owner.make());
             console.log(new Owner().make({ read: () => 20 }), Owner.make({ read: () => 30 }));

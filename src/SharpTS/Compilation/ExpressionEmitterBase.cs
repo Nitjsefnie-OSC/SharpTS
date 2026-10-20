@@ -2312,6 +2312,16 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return true;
         }
 
+        // Match the synchronous emitter's last-resort constructor value lookup.
+        // Real bindings and built-in Type tokens above keep their precedence.
+        if (name is "Object" or "Function" or "Number" or "String" or "Boolean")
+        {
+            IL.Emit(OpCodes.Ldstr, name);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GlobalObject.GetProperty);
+            SetStackUnknown();
+            return true;
+        }
+
         return false;
     }
 

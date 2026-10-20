@@ -1765,22 +1765,28 @@ public static partial class ObjectBuiltIns
             return prototypeRest;
         }
 
-        if (source is not ISharpTSOwnPropertyObject carrier)
+        var properties = source switch
+        {
+            ISharpTSOwnPropertyObject carrier => carrier.OwnProperties,
+            SharpTSObject ordinary => ordinary,
+            _ => null
+        };
+        if (properties is null)
             return ObjectRest(source, excludeKeys);
 
         var excluded = excludeKeys.Select(interpreter.ToPropertyKey).ToHashSet();
         var result = new SharpTSObject([]);
-        var keys = carrier.OwnProperties.OwnVisibleStringKeys().Cast<object>()
-            .Concat(carrier.OwnProperties.GetSymbolPropertyNames()).ToList();
+        var keys = properties.OwnVisibleStringKeys().Cast<object>()
+            .Concat(properties.GetSymbolPropertyNames()).ToList();
         foreach (var key in keys)
         {
             if (excluded.Contains(key)) continue;
             if (key is SharpTSSymbol symbol)
             {
-                if (carrier.OwnProperties.GetOwnPropertyDescriptor(symbol) is { Enumerable: true })
-                    result.SetBySymbol(symbol, interpreter.GetSymbolPropertyValue(source, symbol));
+                if (properties.GetOwnPropertyDescriptor(symbol) is { Enumerable: true })
+                    result.SetBySymbol(symbol, interpreter.GetSymbolPropertyValue(source!, symbol));
             }
-            else if (carrier.OwnProperties.GetOwnPropertyDescriptor((string)key) is { Enumerable: true })
+            else if (properties.GetOwnPropertyDescriptor((string)key) is { Enumerable: true })
                 result.SetProperty((string)key, interpreter.GetPropertyValue(source, (string)key));
         }
         return result;

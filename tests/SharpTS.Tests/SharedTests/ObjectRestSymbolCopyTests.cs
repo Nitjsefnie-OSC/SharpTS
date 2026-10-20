@@ -59,14 +59,24 @@ public sealed class ObjectRestSymbolCopyTests
         yield return ["full-generator-iterator-rest-symbol-row", generator[1], generator[2]];
     }
 
-    // #2834 owns the ordinary interpreter copy path; these checks exercise compilation.
-    [Theory, MemberData(nameof(Cases))]
-    public void CopiesEnumerableOwnSymbols(string name, string source, string expected)
+    public static IEnumerable<object[]> ModeCases() => Cases()
+        .SelectMany(row => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            .Select(mode => new object[] { row[0], row[1], row[2], mode }));
+
+    [Theory, MemberData(nameof(ModeCases))]
+    public void CopiesEnumerableOwnSymbols(string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
         new TypeChecker(TypeCheckerOptions.Strict).Check(TestHarness.ParseOrThrow(source));
-        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
-        Assert.Empty(errors);
-        Assert.Equal(expected, output);
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            Assert.Equal(expected, output);
+        }
+        else
+        {
+            Assert.Equal(expected, TestHarness.RunInterpreted(source));
+        }
     }
 }

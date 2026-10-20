@@ -12,9 +12,9 @@ public partial class AsyncGeneratorMoveNextEmitter
     // adds the generator-specific pieces below: its own protected-region depth, throw routing
     // (<>pendingException), the yield/await-aware try/catch body, and the return/throw terminals.
     //
-    // At an ordinary yield, an external return consumes __returnRequested and enters the same
-    // pending-exit routing as a source return, preserving its value across cleanup suspensions.
-    // Delegation retains its separate legacy return path until yield* can forward that completion.
+    // An external return enters the same pending-exit routing as a source return,
+    // preserving its value across cleanup suspensions. A yield* first gives its
+    // delegate the opportunity to handle that completion.
 
     protected override FieldBuilder DefineStateMachineField(string name, Type type) =>
         _builder.StateMachineType.DefineField(_builder.DebugScaffoldingName(name), type, FieldAttributes.Private);
@@ -416,21 +416,6 @@ public partial class AsyncGeneratorMoveNextEmitter
             // A real exception arising in the finally body itself was already routed out by
             // EmitHandlerBodyWithCapture (superseding any pending exit / external return), so the
             // mechanisms below run only on the finally's normal completion.
-
-            // A return at an ordinary yield already consumed its flag and uses the dispatch below.
-            // Keep the legacy force-close behavior for an unconsumed delegated return; yield* does
-            // not yet forward injected completions (#2788) and the builder retains that separate path.
-            var noReturnRequestedLabel = _il.DefineLabel();
-            _il.Emit(OpCodes.Ldarg_0);
-            _il.Emit(OpCodes.Ldfld, _builder.ReturnRequestedField);
-            _il.Emit(OpCodes.Brfalse, noReturnRequestedLabel);
-
-            _il.Emit(OpCodes.Ldarg_0);
-            _il.Emit(OpCodes.Ldc_I4, -2);
-            _il.Emit(OpCodes.Stfld, _builder.StateField);
-            EmitReturnValueTaskBool(false);
-
-            _il.MarkLabel(noReturnRequestedLabel);
 
             // Dispatch either a source exit or an injected return that routed through here.
             EmitFinallyDispatch(frame!);

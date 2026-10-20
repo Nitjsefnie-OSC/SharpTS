@@ -630,16 +630,9 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Stfld, CurrentField);
 
-        // An ordinary yield consumes the request and routes it like a source return. Use the same
-        // result builder as next()/throw(): cleanup may yield, await, or replace the completion value.
-        // Delegation still lacks return forwarding (#2788); retain its existing force-close path below.
-        var delegatedReturnLabel = il.DefineLabel();
-        if (DelegatedAsyncEnumeratorField is not null)
-        {
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldfld, DelegatedAsyncEnumeratorField);
-            il.Emit(OpCodes.Brtrue, delegatedReturnLabel);
-        }
+        // Both ordinary yield and yield* consume the request inside the body.
+        // Use the same result builder as next()/throw(): delegated or enclosing
+        // cleanup may yield, await, or replace the completion value.
         var resultLocal = il.DeclareLocal(_types.TaskOfObject);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, _driveOnceMethod);
@@ -649,43 +642,6 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
         il.Emit(OpCodes.Stfld, PendingTailField);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(delegatedReturnLabel);
-
-        // Drive MoveNextAsync to run the finally blocks, with the executing flag set so a re-entrant
-        // call from inside a finally hits the guard (#542). The try/finally clears it even if a finally
-        // throws.
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Stfld, ExecutingField);
-        il.BeginExceptionBlock();
-
-        // Call MoveNextAsync() to resume the generator and trigger finally blocks
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, MoveNextAsyncMethod);
-
-        // Await the ValueTask<bool>: .AsTask().GetAwaiter().GetResult()
-        var vtLocal = il.DeclareLocal(_types.ValueTaskOfBool);
-        il.Emit(OpCodes.Stloc, vtLocal);
-        il.Emit(OpCodes.Ldloca, vtLocal);
-        var asTask = _types.GetMethodNoParams(_types.ValueTaskOfBool, "AsTask");
-        il.Emit(OpCodes.Call, asTask);
-        var taskBoolType = typeof(Task<bool>);
-        var getAwaiter = _types.GetMethodNoParams(taskBoolType, "GetAwaiter");
-        il.Emit(OpCodes.Call, getAwaiter);
-        var awaiterType = typeof(TaskAwaiter<bool>);
-        var getResult = _types.GetMethodNoParams(awaiterType, "GetResult");
-        var awaiterLocal = il.DeclareLocal(awaiterType);
-        il.Emit(OpCodes.Stloc, awaiterLocal);
-        il.Emit(OpCodes.Ldloca, awaiterLocal);
-        il.Emit(OpCodes.Call, getResult);
-        il.Emit(OpCodes.Pop); // Discard result
-
-        il.BeginFinallyBlock();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stfld, ExecutingField);
-        il.EndExceptionBlock();
 
         il.MarkLabel(simpleReturnLabel);
 

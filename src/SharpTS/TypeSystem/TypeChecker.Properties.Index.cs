@@ -397,6 +397,15 @@ public partial class TypeChecker
             return WithUncheckedUndefined(domainIndex);
         }
 
+        // Numeric string literal keys use String's number index signature.
+        if ((objType is TypeInfo.String or TypeInfo.StringLiteral) &&
+            (indexType is TypeInfo.StringLiteral && IsNumericConstructorIndex(indexType) ||
+             indexType is TypeInfo.Union numericStringKeyUnion &&
+                numericStringKeyUnion.FlattenedTypes.Count > 0 &&
+                numericStringKeyUnion.FlattenedTypes.All(key =>
+                    key is TypeInfo.StringLiteral && IsNumericConstructorIndex(key))))
+            return WithUncheckedUndefined(TypeInfo.String.Shared);
+
         // Canonical numeric string literals address Array elements with the same read type.
         if (objType is TypeInfo.Array stringIndexedArray &&
             TryGetStringLiteralKeys(indexType, out var arrayStringKeys) &&
@@ -1387,6 +1396,15 @@ public partial class TypeChecker
                     TryGetExprLine(getIndex.Object) ?? _currentStatementLine ?? 0));
             return WithUncheckedUndefined(domainIndex);
         }
+
+        // Numeric string literal keys use String's number index signature.
+        if ((objType is TypeInfo.String or TypeInfo.StringLiteral) &&
+            (indexType is TypeInfo.StringLiteral && IsNumericConstructorIndex(indexType) ||
+             indexType is TypeInfo.Union numericStringKeyUnion &&
+                numericStringKeyUnion.FlattenedTypes.Count > 0 &&
+                numericStringKeyUnion.FlattenedTypes.All(key =>
+                    key is TypeInfo.StringLiteral && IsNumericConstructorIndex(key))))
+            return WithUncheckedUndefined(TypeInfo.String.Shared);
 
         // Canonical numeric string literals address Array elements with the same read type.
         if (objType is TypeInfo.Array stringIndexedArray &&

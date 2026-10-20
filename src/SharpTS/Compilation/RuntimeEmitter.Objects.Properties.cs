@@ -1539,12 +1539,9 @@ public partial class RuntimeEmitter
         // replicating the dispatch in every object-specific branch. Without
         // this, `{}.__proto__` returns undefined and breaks spec idioms.
         //
-        // CAVEAT: ECMA-262 also allows defining an own "__proto__" data
-        // property that shadows the inherited accessor. JSON.parse creates
-        // such own data properties (CreateDataProperty). For Dict receivers,
-        // check ContainsKey first and fall through to the regular dict path
-        // when the key is present — preserves JSON.parse semantics for the
-        // `{"__proto__":...}` corner.
+        // Dictionary entries retain their ordinary live-value/accessor dispatch.
+        // Other actual own descriptors shadow the inherited accessor, including
+        // undefined data values and accessors without getters.
         var notProtoNameTopLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldstr, "__proto__");
@@ -1563,6 +1560,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
         il.Emit(OpCodes.Brtrue, notProtoNameTopLabel);
         il.MarkLabel(noOwnProtoLabel);
+        var ownProtoDescriptor = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
+        var noOwnProtoDescriptor = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, ownProtoDescriptor);
+        il.Emit(OpCodes.Ldloc, ownProtoDescriptor);
+        il.Emit(OpCodes.Brfalse, noOwnProtoDescriptor);
+        EmitDescriptorReadAndReturn(il, inputs.DescriptorStorage, ownProtoDescriptor,
+            () => il.Emit(OpCodes.Ldarg_0), inputs.InvokeMethodValue, inputs.UndefinedInstance, inputs.UndefinedType);
+        il.MarkLabel(noOwnProtoDescriptor);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, inputs.ObjectPrototypes.GetPrototypeOf);
         il.Emit(OpCodes.Ret);

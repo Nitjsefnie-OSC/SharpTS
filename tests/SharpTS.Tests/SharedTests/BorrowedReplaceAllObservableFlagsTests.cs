@@ -1,8 +1,11 @@
 using SharpTS.Execution;
+using SharpTS.Tests.Infrastructure;
+using SharpTS.TypeSystem;
 using Xunit;
 
 namespace SharpTS.Tests.SharedTests;
 
+[Collection("CompilationService")]
 public sealed class BorrowedReplaceAllObservableFlagsTests
 {
     public static IEnumerable<object[]> Cases()
@@ -96,16 +99,29 @@ public sealed class BorrowedReplaceAllObservableFlagsTests
             """, "xbx flags-get,flags-string,replace-get,receiver-string,search-string,replacement-string\nxbx flags-get,flags-string,replace-get,receiver-string,search-string,callback:0:a:aba,callback:2:a:aba\nxbx flags-get,flags-string,replace-get,receiver-string,search-string,replacement-string\nxbx flags-get,flags-string,replace-get,receiver-string,search-string,callback:0:a:aba,callback:2:a:aba\n"];
     }
 
-    // #2800 owns the independently verified compiled observable-flags failures.
-    // Preserve every full source for dual-mode and isolated saved restoration under that owner.
-    [Theory, MemberData(nameof(Cases))]
+    public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            .Select(mode => new object[] { row[0], row[1], row[2], mode }));
+
+    [Theory, MemberData(nameof(ModeCases))]
     public void BorrowedReplaceAllValidatesObservableFlagsBeforeProtocolOrReceiverConversion(
-        string name, string source, string expected)
+        string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
-        var result = SourceExecutionService.Interpret(source);
-        Assert.True(result.Success, string.Join("\n", result.Errors) + result.Output);
-        Assert.Empty(result.Errors);
-        Assert.Equal(expected, result.Output.Replace("\r\n", "\n"));
+        Assert.Empty(new TypeChecker(TypeCheckerOptions.Strict)
+            .CheckWithRecovery(TestHarness.ParseOrThrow(source)).Diagnostics);
+        if (mode == ExecutionMode.Compiled)
+        {
+            var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+            Assert.Empty(errors);
+            Assert.Equal(expected, output);
+        }
+        else
+        {
+            var result = SourceExecutionService.Interpret(source);
+            Assert.True(result.Success, string.Join("\n", result.Errors) + result.Output);
+            Assert.Empty(result.Errors);
+            Assert.Equal(expected, result.Output.Replace("\r\n", "\n"));
+        }
     }
 }

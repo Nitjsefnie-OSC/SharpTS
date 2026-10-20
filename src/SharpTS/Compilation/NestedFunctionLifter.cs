@@ -147,8 +147,9 @@ internal sealed class NestedFunctionLifter
             // name when it recurses) become leading parameters of the relocated top-level declaration,
             // forwarded by an in-place arrow that closes over them. The arrow may sit inside a generator/
             // async body, which now binds captured display instances correctly (see
-            // GeneratorMoveNextEmitter.EmitArrowFunction). Declines (leaves nested — a clean failure) for
-            // bodies using this/arguments or rest/default params, which the forwarding arrow can't carry.
+            // GeneratorMoveNextEmitter.EmitArrowFunction). Plain async declarations instead use
+            // MakeLiveFunctionClosure, preserving their receiver, arguments and parameter prologue.
+            // Other forwarding shapes still decline this/arguments and rest/default parameters.
             if (!IsNonCapturing(externalCaptures))
             {
                 if (!isModuleBlock && TryComputeFunctionCaptureForward(analyzer, f, externalCaptures, out var fnForwarded))
@@ -335,24 +336,28 @@ internal sealed class NestedFunctionLifter
     /// The inside-function analogue of <see cref="TryComputeLambdaForward"/> (#583 §1): produces the
     /// ordered list of captures to forward as leading parameters when relocating a nested declaration
     /// that captures an enclosing FUNCTION scope. The forwarded set is every free variable resolving to
-    /// such a scope — including the function's own name when it recurses, so the relocated body's
-    /// self-calls resolve to the forwarded arrow (which closes over its own <c>let</c> binding). Declines
-    /// (returns false → stays nested, a clean failure) on rest/default parameters or a body using
-    /// <c>this</c>/<c>arguments</c>, exactly as the module-block path does.
+    /// such a scope. Recursive capturing candidates retain the existing refusal below.
+    /// Plain async declarations retain a live function expression instead of forwarding parameters,
+    /// so their own receiver, arguments, defaults and rest parameter remain on the async call path.
+    /// Other declarations decline rest/default parameters and <c>this</c>/<c>arguments</c>, exactly as
+    /// the module-block forwarding path does.
     /// </summary>
     private static bool TryComputeFunctionCaptureForward(
         ClosureAnalyzer analyzer, Stmt.Function f, IReadOnlySet<string> externalCaptures, out List<string> forwarded)
     {
         forwarded = [];
 
-        foreach (var p in f.Parameters)
-            if (p.IsRest || p.DefaultValue != null)
+        if (!f.IsAsync || f.IsGenerator)
+        {
+            foreach (var p in f.Parameters)
+                if (p.IsRest || p.DefaultValue != null)
+                    return false;
+
+            if (DeclinesForThisOrArguments(f))
                 return false;
+        }
 
-        if (DeclinesForThisOrArguments(f))
-            return false;
-
-        // Self-recursion can't be lambda-lifted here: the relocated body's self-calls must resolve to the
+        // Preserve the existing recursion refusal. In the scalar-forwarding path, self-calls resolve to the
         // forwarding arrow, but a compiled arrow snapshots its captures by value — and the arrow's own
         // `let` binding is still in its temporal dead zone when the arrow is created, so it would capture
         // an unassigned (null) self and crash on the first recursive call. Leave such a declaration nested

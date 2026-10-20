@@ -457,10 +457,11 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
             paramTypes.Add(_types.Object); // Capture array or named-self envelope: one target slot.
         }
 
-        // Add arrow parameters
-        foreach (var _ in ParameterOrder)
+        // Indirect invocation recognizes a trailing List<object> slot as rest
+        // and packs the caller's remaining arguments before entering the stub.
+        foreach (var parameter in Arrow.Parameters)
         {
-            paramTypes.Add(_types.Object); // All arrow params are object
+            paramTypes.Add(parameter.IsRest ? _types.ListOfObject : _types.Object);
         }
 
         StubMethod = programType.DefineMethod(

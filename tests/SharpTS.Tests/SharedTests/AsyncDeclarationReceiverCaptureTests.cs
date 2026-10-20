@@ -104,15 +104,66 @@ public sealed class AsyncDeclarationReceiverCaptureTests
             }
             run().catch(error => console.log(String(error)));
             """, "17\n17\n7\n"];
+        yield return ["exact-captured-nested-async-own-this-await", """
+            function make(captured: number) {
+                async function answer(this: any): Promise<number> {
+                    await Promise.resolve(0);
+                    return captured + this.offset;
+                }
+                return { offset: 1, answer };
+            }
+            make(46).answer().then(value => console.log(value));
+            """, "47\n"];
+        yield return ["own-arguments-default-rest-and-receivers-across-await", """
+            function make(captured: number) {
+                async function read(this: any, first: number = captured, ...rest: number[]): Promise<string> {
+                    const own = arguments;
+                    const before = arguments.length;
+                    await Promise.resolve(0);
+                    return this.tag + ':' + first + ':' + rest.join(',') + ':' + before + ':' + arguments.length + ':' + (own === arguments) + ':' + captured;
+                }
+                return { tag: 'owner', read };
+            }
+            async function run() {
+                const owner = make(7);
+                console.log(await owner.read());
+                console.log(await owner.read.call({ tag: 'call' }, 2, 3, 4));
+                const bound: any = owner.read.bind({ tag: 'bound' }, 5);
+                console.log(await bound(6));
+            }
+            run().catch(error => console.log(String(error)));
+            """, "owner:7::0:0:true:7\ncall:2:3,4:3:3:true:7\nbound:5:6:2:2:true:7\n"];
+        yield return ["equivalent-async-function-expression", """
+            function make(captured: number) {
+                const read = async function(this: any, first: number = captured, ...rest: number[]): Promise<string> {
+                    const own = arguments;
+                    const before = arguments.length;
+                    await Promise.resolve(0);
+                    return this.tag + ':' + first + ':' + rest.join(',') + ':' + before + ':' + arguments.length + ':' + (own === arguments) + ':' + captured;
+                };
+                return { tag: 'owner', read };
+            }
+            async function run() {
+                const owner = make(7);
+                console.log(await owner.read());
+                console.log(await owner.read.call({ tag: 'call' }, 2, 3, 4));
+                const bound: any = owner.read.bind({ tag: 'bound' }, 5);
+                console.log(await bound(6));
+            }
+            run().catch(error => console.log(String(error), error.stack));
+            """, "owner:7::0:0:true:7\ncall:2:3,4:3:3:true:7\nbound:5:6:2:2:true:7\n"];
     }
 
-    public static IEnumerable<object[]> ModeCases() => Cases()
-        .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted })
-        // Capturing nested async declarations with receiver reads hit compiler issue #2738;
-        // retain those cases in resolved and raw interpretation and through the CLI.
-        .Concat(Cases().Where(row => (string)row[0] is not
-                ("member-defaults-await-and-explicit-receivers" or "captured-writes-and-independent-closures"))
-            .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Compiled }));
+    public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
+            .Select(mode => new object[] { row[0], row[1], row[2], mode }));
+
+    public static IEnumerable<object[]> SavedCases() => Cases().Where(row => (string)row[0] is
+        "exact-captured-nested-async-own-this-await" or
+        "own-arguments-default-rest-and-receivers-across-await" or
+        "member-defaults-await-and-explicit-receivers" or
+        "captured-writes-and-independent-closures" or
+        "equivalent-async-function-expression");
 
     [Theory, MemberData(nameof(ModeCases))]
     public void MemberReceiversPreserveResolvedDeclarationCaptures(

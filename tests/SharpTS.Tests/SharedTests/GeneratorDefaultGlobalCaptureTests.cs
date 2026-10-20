@@ -30,14 +30,14 @@ public sealed class GeneratorDefaultGlobalCaptureTests
                 const tag = "retained";
                 const make = function*(read: any = () => value) {
                     var value = "expression";
-                    yield [read, value, tag];
+                    yield [read, () => value, tag];
                 };
                 const iterator = make();
                 value = "changed";
                 const pair: any = iterator.next().value;
-                console.log(pair[0](), pair[1], pair[2]);
+                console.log(pair[0](), pair[1](), pair[2]);
                 value = "later";
-                console.log(pair[0](), pair[1], pair[2]);
+                console.log(pair[0](), pair[1](), pair[2]);
             }
             class Owner {
                 *make(read: any = () => value) { var value = "instance"; yield [read, () => value]; }
@@ -60,7 +60,7 @@ public sealed class GeneratorDefaultGlobalCaptureTests
                 const expression = async function*(read: any = () => value) {
                     var value = "expression";
                     await Promise.resolve();
-                    yield [read, value, tag];
+                    yield [read, () => value, tag];
                 };
                 declaration().next().then(first => {
                     const pair: any = first.value;
@@ -68,7 +68,7 @@ public sealed class GeneratorDefaultGlobalCaptureTests
                     return expression().next();
                 }).then(second => {
                     const pair: any = second.value;
-                    console.log("expression", pair[0](), pair[1], pair[2]);
+                    console.log("expression", pair[0](), pair[1](), pair[2]);
                 }).then(undefined, (error: any) => console.log("rejected", error.name, error.message));
             }
             """, "declaration outside declaration\nexpression outside expression retained\n"];

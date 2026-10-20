@@ -2074,6 +2074,18 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             else IL.Emit(OpCodes.Pop);
         }
 
+        // Iterator expressions keep their per-invocation arrow scope in the state machine's
+        // function-DC slot. A body closure must retain that same scope, not snapshot its values.
+        if (Ctx.ArrowScopeDCFields?.TryGetValue(af, out var arrowScopeDCField) == true &&
+            GetFunctionDCField() is FieldBuilder stateMachineArrowScope &&
+            stateMachineArrowScope.FieldType == arrowScopeDCField.FieldType)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, stateMachineArrowScope);
+            IL.Emit(OpCodes.Stfld, arrowScopeDCField);
+        }
+
         if (Ctx.DisplayClassFields?.TryGetValue(af, out var fieldMap) == true)
         {
             foreach (var (capturedVar, field) in fieldMap)

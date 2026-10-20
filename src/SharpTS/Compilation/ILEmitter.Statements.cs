@@ -943,16 +943,20 @@ public partial class ILEmitter
     {
         var savedStringSnapshots = _stringScanSnapshots;
         _stringScanSnapshots = new(savedStringSnapshots);
-        // Analyze the loop to see if we can use an unboxed counter
+        Stmt[] header = f.Initializer is { } initializer ? [initializer] : [];
+        bool needsHeaderScope = NeedsLexicalCellScope(header, ordinaryHandler: true);
+        List<LoopBodyCellScopeEntry> headerCells = [];
+        bool enteredLoopScope = false;
+        // A masked header uses its own object/cell storage, not the outer capture's slot.
         var analysis = ForLoopAnalyzer.Analyze(f, _ctx.ClosureAnalyzer);
 
-        if (analysis.CanUseUnboxedCounter && analysis.VariableName != null)
+        if (!needsHeaderScope && analysis.CanUseUnboxedCounter && analysis.VariableName != null)
             _optimizedLoopCounterName = analysis.VariableName;
 
         // Integer loop-counter prototype (#928): when gated on, back a provably-integer monotonic
         // counter with a native Int64 slot. Save/restore the field so nested loops don't clobber it.
         var savedIntCounterName = _integerLoopCounterName;
-        string? activeIntCounter = ForLoopAnalyzer.IntegerCounterEnabled
+        string? activeIntCounter = !needsHeaderScope && ForLoopAnalyzer.IntegerCounterEnabled
             ? ForLoopAnalyzer.AnalyzeIntegerCounter(
                 f, _ctx.ClosureAnalyzer, _ctx.IntegerCounterLocals)
             : null;
@@ -980,6 +984,8 @@ public partial class ILEmitter
             // Inline base.EmitFor to insert array hoist preamble between
             // initializer and loop start.
             _ctx.Locals.EnterScope();
+            enteredLoopScope = true;
+            EnterLoopBodyCellScope(header, headerCells, ordinaryHandler: true, preserveActiveDeclarations: true);
 
             // Emit initializer (declares loop variable in current scope)
             if (f.Initializer != null)
@@ -1082,10 +1088,14 @@ public partial class ILEmitter
             if (promotedFillComplete.HasValue)
                 builder.MarkLabel(promotedFillComplete.Value);
 
-            _ctx.Locals.ExitScope();
         }
         finally
         {
+            if (enteredLoopScope)
+            {
+                ExitLoopBodyCellScope(headerCells);
+                _ctx.Locals.ExitScope();
+            }
             _optimizedLoopCounterName = null;
             // The counter's Int64 slot/membership is loop-scoped: drop it so any later same-named
             // local in an enclosing scope is not mistaken for an integer counter.

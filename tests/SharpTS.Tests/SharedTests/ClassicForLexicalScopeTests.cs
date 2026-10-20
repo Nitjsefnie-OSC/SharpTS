@@ -135,17 +135,11 @@ public sealed class ClassicForLexicalScopeTests
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.TsCode == code && diagnostic.Line == line);
     }
 
-    // #2773: a compiled lexical loop overwrites an ordinary named expression's private self cell.
-    // Keep its unchanged semantic source interpreted until the independent compiler repair.
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
-        ((string)row[0] == "ordinary-named-expression-private-binding-after-loop"
-            ? new[] { ExecutionMode.Interpreted }
-            : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
-    // Restore this saved case with #2773; its checker-negative counterpart remains active above.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] != "ordinary-named-expression-private-binding-after-loop");
+    public static IEnumerable<object[]> SavedCases() => Cases();
 
     [Theory, MemberData(nameof(ModeCases))]
     public void ClassicForLexicalBindingsPreserveOuterTypesAfterLoopExit(

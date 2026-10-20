@@ -464,7 +464,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
     protected override void VisitFor(Stmt.For stmt)
     {
-        EnterScope(stmt.Initializer is null ? [] : [stmt.Initializer], allowCandidates: false, unsupportedShadows: true, generatorLexicals: true);
+        EnterScope(stmt.Initializer is null ? [] : [stmt.Initializer], allowCandidates: false,
+            unsupportedShadows: true, generatorLexicals: true, ordinaryBlock: _owners[^1].CanOwnCells);
         try
         {
             // Header bindings keep the separate copy-forward cell policy (#650).

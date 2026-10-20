@@ -10,10 +10,16 @@ public abstract partial class StatementEmitterBase
     protected virtual FieldBuilder? DefineLexicalCellField(string name) => null;
 
     protected void EnterLoopBodyCellScope(IEnumerable<Stmt> statements, List<LoopBodyCellScopeEntry> prior,
-        bool ordinaryHandler = false)
+        bool ordinaryHandler = false, bool preserveActiveDeclarations = false)
     {
         foreach (var (declaration, token) in DirectLexicalDeclarations(statements))
+        {
+            if (preserveActiveDeclarations && Ctx.LexicalCellStorageNames.TryGetValue(token, out var storage)
+                && (ReferenceEquals(Ctx.LoopBodyCellDeclarations.GetValueOrDefault(storage), token)
+                    || ReferenceEquals(Ctx.LoopBodyCellShadows.GetValueOrDefault(storage), token)))
+                continue;
             EnterLexicalCellBinding(declaration, token, prior, ordinaryHandler);
+        }
     }
 
     private protected void EnterOrdinaryBlockCellScope(IEnumerable<Stmt> statements, List<LoopBodyCellScopeEntry> prior)
@@ -32,16 +38,27 @@ public abstract partial class StatementEmitterBase
         }
     }
 
+    protected bool NeedsLexicalCellScope(IEnumerable<Stmt> statements, bool ordinaryHandler = false) =>
+        DirectLexicalDeclarations(statements).Any(binding =>
+            NeedsLexicalCellBinding(binding.Declaration, binding.Token, ordinaryHandler));
+
+    private bool NeedsLexicalCellBinding(object declaration, Token token, bool ordinaryHandler)
+    {
+        string name = GetBindingStorageName(declaration, token.Lexeme);
+        return Ctx.ClosureAnalyzer?.IsLoopBodyCellDeclaration(token) == true
+            || Ctx.CellBindingLocals.ContainsKey(name)
+            || Ctx.LoopBodyCellFields.ContainsKey(name)
+            || Ctx.LoopBodyCellShadows.ContainsKey(name)
+            || Ctx.LoopBodyCellCaptures?.ContainsKey(name) == true
+            || ordinaryHandler && HasActiveCapturedBinding(name);
+    }
+
     protected void EnterLexicalCellBinding(object declaration, Token token, List<LoopBodyCellScopeEntry> prior,
         bool ordinaryHandler = false)
     {
             string name = GetBindingStorageName(declaration, token.Lexeme);
             bool selected = Ctx.ClosureAnalyzer?.IsLoopBodyCellDeclaration(token) == true;
-            if (!selected && !Ctx.CellBindingLocals.ContainsKey(name)
-                && !Ctx.LoopBodyCellFields.ContainsKey(name)
-                && !Ctx.LoopBodyCellShadows.ContainsKey(name)
-                && Ctx.LoopBodyCellCaptures?.ContainsKey(name) != true
-                && !(ordinaryHandler && HasActiveCapturedBinding(name)))
+            if (!NeedsLexicalCellBinding(declaration, token, ordinaryHandler))
                 return;
 
             prior.Add(new(name, token, Ctx.CellBindingLocals.GetValueOrDefault(name), Ctx.LoopBodyCellFields.GetValueOrDefault(name),

@@ -1686,6 +1686,10 @@ public partial class TypeChecker
         int requiredParams = 0;
         bool seenDefault = false;
         TypeInfo returnType;
+        bool hasRest = arrow.Parameters.Any(p => p.IsRest);
+        List<string> paramNames = arrow.Parameters.Select(p => p.Name.Lexeme).ToList();
+        TypeInfo funcType;
+        TypeEnvironment? completedDefaultSelfEditorEnvironment = null;
 
         using (new EnvironmentScope(this, typeParamEnv))
         {
@@ -1700,16 +1704,8 @@ public partial class TypeChecker
             {
                 thisType = _pendingObjectThisType ?? TypeInfo.Any.Shared;
             }
-            // A default value may reference any PRECEDING parameter (`(a, b = a * 2)`), so each
-            // parameter is progressively defined in a dedicated scope and later defaults are checked
-            // against it. Each parameter is defined AFTER its own default is checked, so a
-            // self-reference resolves to an outer binding or errors. Mirrors BuildFunctionSignature,
-            // which the function-declaration/method path already uses (#698).
-            var paramScope = new TypeEnvironment(_environment);
-            RegisterEditorParameterScope(arrow, paramScope);
-            using var bindingScope = new ParameterBindingCheckScope(this, arrow, validate: true);
-
-            // Build parameter types and check defaults
+            // Complete the callable signature before checking defaults, so the private
+            // name of a function expression has its actual generic/parameter/return types.
             for (int i = 0; i < arrow.Parameters.Count; i++)
             {
                 var param = arrow.Parameters[i];
@@ -1731,12 +1727,54 @@ public partial class TypeChecker
                     paramType = TypeInfo.Any.Shared;
                 }
                 paramTypes.Add(paramType);
+                if (!param.IsRest && param.DefaultValue is null && !param.IsOptional)
+                    requiredParams++;
+            }
+
+            if (arrow.ReturnType != null)
+            {
+                returnType = ResolveAnnotation(arrow.ReturnType, arrow.ReturnTypeNode, arrow, EditorAnnotationSlot.Return)!;
+            }
+            else if (expectedFuncType != null && useContextualReturnType)
+            {
+                returnType = expectedFuncType.ReturnType;
+            }
+            else
+            {
+                returnType = TypeInfo.Inferred.Shared;
+            }
+
+            funcType = (typeParams != null && typeParams.Count > 0)
+                ? new TypeInfo.GenericFunction(typeParams, paramTypes, returnType, requiredParams, hasRest, thisType, paramNames)
+                : new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, thisType, paramNames);
+
+            TypeEnvironment defaultParent = _environment;
+            if (arrow.Name is { } privateName)
+            {
+                defaultParent = new TypeEnvironment(defaultParent);
+                RegisterEditorScope(arrow, defaultParent, EditorScopeKind.ParameterList, EditorSyntaxRole.Whole);
+                DeclareValue(defaultParent, privateName, funcType);
+                defaultParent.MarkAsConst(privateName.Lexeme);
+            }
+            // Earlier parameters become visible progressively. A same-name parameter
+            // masks the private name even before initialization, including pattern bindings.
+            var paramScope = new TypeEnvironment(defaultParent);
+            RegisterEditorParameterScope(arrow, paramScope);
+            var namedDefaults = arrow.Name is not null
+                ? new NamedExpressionParameterDefaults(this, arrow, paramScope, paramTypes) : null;
+            using var bindingScope = new ParameterBindingCheckScope(this, arrow, validate: true);
+
+            for (int i = 0; i < arrow.Parameters.Count; i++)
+            {
+                var param = arrow.Parameters[i];
+                TypeInfo paramType = paramTypes[i];
 
                 // Rest parameters are not counted toward required params
                 if (param.IsRest)
                 {
                     DeclareValue(paramScope, param.Name, paramType);
                     bindingScope.Initialize(param, paramScope, paramType);
+                    namedDefaults?.Initialize(param, i);
                     continue;
                 }
 
@@ -1750,6 +1788,7 @@ public partial class TypeChecker
                             ? CheckExpr(param.DefaultValue)
                             : CheckDeferredClassDefault(param.DefaultValue);
                     }
+                    namedDefaults?.Check(param.DefaultValue, i);
                     if (!IsCompatible(paramType, defaultType))
                     {
                         throw new TypeCheckException($" Default value type '{defaultType}' is not assignable to parameter type '{paramType}'.", tsCode: "TS2322");
@@ -1765,34 +1804,19 @@ public partial class TypeChecker
                     {
                         throw new TypeCheckException($" Required parameter cannot follow optional parameter.", tsCode: "TS1016");
                     }
-                    requiredParams++;
                 }
 
                 DeclareValue(paramScope, param.Name, paramType);
                 bindingScope.Initialize(param, paramScope, paramType);
+                namedDefaults?.Initialize(param, i);
             }
 
-            // Determine return type (use expected type if available and no explicit annotation)
-            if (arrow.ReturnType != null)
-            {
-                returnType = ResolveAnnotation(arrow.ReturnType, arrow.ReturnTypeNode, arrow, EditorAnnotationSlot.Return)!;
-            }
-            else if (expectedFuncType != null && useContextualReturnType)
-            {
-                returnType = expectedFuncType.ReturnType;
-            }
-            else
-            {
-                returnType = TypeInfo.Inferred.Shared;
-            }
+            // A real same-name parameter owns this shared editor scope slot.
+            if (ShouldCaptureEditorFacts && arrow.Name is { } defaultName &&
+                ReferenceEquals(paramScope.GetValueBinding(defaultName.Lexeme), Bindings.GetSymbol(defaultName)))
+                completedDefaultSelfEditorEnvironment = defaultParent;
         }
 
-        // Build the function type (needed for named function expressions self-reference)
-        bool hasRest = arrow.Parameters.Any(p => p.IsRest);
-        List<string> paramNames = arrow.Parameters.Select(p => p.Name.Lexeme).ToList();
-        TypeInfo funcType = (typeParams != null && typeParams.Count > 0)
-            ? new TypeInfo.GenericFunction(typeParams, paramTypes, returnType, requiredParams, hasRest, thisType, paramNames)
-            : new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, thisType, paramNames);
         _newTargetSourceTypes[arrow] = funcType;
 
         // Create new environment for function body
@@ -2013,7 +2037,14 @@ public partial class TypeChecker
             ? new TypeInfo.GenericFunction(typeParams, paramTypes, returnType, requiredParams, hasRest, thisType, paramNames)
             : new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, thisType, paramNames);
         RecordEditorExpressionType(arrow, completedType);
-        if (arrow.Name is { } sourceName) RegisterEditorSignature(completedType, arrow, sourceName);
+        if (arrow.Name is { } sourceName)
+        {
+            RegisterEditorSignature(completedType, arrow, sourceName);
+            if (completedDefaultSelfEditorEnvironment is { } defaultSelfEditorEnvironment &&
+                Bindings.GetSymbol(sourceName) is { } self)
+                RecordEditorBinding(defaultSelfEditorEnvironment, sourceName, self,
+                    BindingNamespace.Value, completedType, EditorFactAvailability.Available);
+        }
         else RegisterEditorAnonymousSignature(completedType, arrow);
         return completedType;
     }

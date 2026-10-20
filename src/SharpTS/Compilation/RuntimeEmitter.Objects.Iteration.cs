@@ -14,6 +14,8 @@ public partial class RuntimeEmitter
         MethodBuilder GetProperty,
         MethodInfo IHasFieldsFieldsGetter,
         Type IHasFieldsInterface,
+        Type GeneratorInterface,
+        Type? AsyncGeneratorInterface,
         EmittedObjectDescriptorRuntime ObjectDescriptors,
         EmittedObjectKeysRuntime ObjectKeys,
         EmittedObjectOwnPropertiesRuntime ObjectOwnProperties,
@@ -199,7 +201,6 @@ public partial class RuntimeEmitter
         ObjectRestInputs inputs
     )
     {
-        // Accept object instead of Dictionary to support both object literals and class instances
         var method = typeBuilder.DefineMethod(
             "ObjectRest",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -209,168 +210,36 @@ public partial class RuntimeEmitter
         objectConstruction.Rest = method;
 
         var il = method.GetILGenerator();
+        var copySource = il.DefineLabel();
 
-        // Prototype properties live in ordinary descriptor/Symbol storage, not
-        // in the CLR instance field dictionary used by the legacy path below.
-        var ordinarySource = il.DefineLabel();
+        // All admitted objects share the descriptor-aware string/Symbol copy.
+        // Keep unsupported/primitive sources on the existing empty-result path.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, inputs.ClassPrototypes.IsPrototype);
-        il.Emit(OpCodes.Brfalse, ordinarySource);
-        EmitClassPrototypeObjectRest(il, inputs);
-        il.MarkLabel(ordinarySource);
-
-        var dictLabel = il.DefineLabel();
-        var tsObjectLabel = il.DefineLabel();
-        var emptyLabel = il.DefineLabel();
-        var processLabel = il.DefineLabel();
-
-        var sourceDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
-
-        // Check if arg0 is Dictionary<string, object>
+        il.Emit(OpCodes.Brtrue, copySource);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Brtrue, dictLabel);
-
-        // Check if arg0 is $IHasFields (covers $Object and class instances)
+        il.Emit(OpCodes.Brtrue, copySource);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.IHasFieldsInterface);
-        il.Emit(OpCodes.Brtrue, tsObjectLabel);
-
-        // Primitive wrappers other than String have no enumerable own properties, so their
-        // CopyDataProperties result is a fresh empty object. The prior host exception for Number
-        // and Symbol violated ToObject and leaked an implementation detail into destructuring.
-        // (String sources are represented through the ordinary indexed-object paths before here.)
-        il.Emit(OpCodes.Br, emptyLabel);
-
-        // Dictionary path: cast arg0 directly
-        il.MarkLabel(dictLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Stloc, sourceDictLocal);
-        il.Emit(OpCodes.Br, processLabel);
-
-        // $IHasFields path: use Fields getter
-        il.MarkLabel(tsObjectLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, inputs.IHasFieldsInterface);
-        il.Emit(OpCodes.Callvirt, inputs.IHasFieldsFieldsGetter);
-        il.Emit(OpCodes.Stloc, sourceDictLocal);
-        il.Emit(OpCodes.Br, processLabel);
-
-        // Empty result fallback
-        il.MarkLabel(emptyLabel);
+        il.Emit(OpCodes.Brtrue, copySource);
+        // Iterator state machines keep guest own slots in descriptor/Symbol
+        // sidecars rather than the IHasFields storage used by ordinary records.
+        foreach (var generatorInterface in new[] { inputs.GeneratorInterface, inputs.AsyncGeneratorInterface })
+        {
+            if (generatorInterface is null) continue;
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, generatorInterface);
+            il.Emit(OpCodes.Brtrue, copySource);
+        }
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         il.Emit(OpCodes.Ret);
 
-        // Process the source dictionary (now in sourceDictLocal)
-        il.MarkLabel(processLabel);
-
-        // Create result dictionary
-        var resultLocal = il.DeclareLocal(_types.DictionaryStringObject);
-        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
-        il.Emit(OpCodes.Stloc, resultLocal);
-
-        // Create HashSet<string> from excludeKeys
-        var excludeSetLocal = il.DeclareLocal(_types.HashSetOfString);
-        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.HashSetOfString));
-        il.Emit(OpCodes.Stloc, excludeSetLocal);
-
-        // Add each exclude key to the set
-        var excludeIndexLocal = il.DeclareLocal(_types.Int32);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, excludeIndexLocal);
-
-        var excludeLoopStart = il.DefineLabel();
-        var excludeLoopEnd = il.DefineLabel();
-
-        il.MarkLabel(excludeLoopStart);
-        il.Emit(OpCodes.Ldloc, excludeIndexLocal);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, excludeLoopEnd);
-
-        // Get excludeKeys[i] and add to set if not null
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloc, excludeIndexLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        var keyLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, keyLocal);
-
-        var skipAdd = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Brfalse, skipAdd);
-
-        il.Emit(OpCodes.Ldloc, excludeSetLocal);
-        il.Emit(OpCodes.Ldloc, keyLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.HashSetOfString, "Add", _types.String));
-        il.Emit(OpCodes.Pop); // discard bool return
-
-        il.MarkLabel(skipAdd);
-        il.Emit(OpCodes.Ldloc, excludeIndexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, excludeIndexLocal);
-        il.Emit(OpCodes.Br, excludeLoopStart);
-
-        il.MarkLabel(excludeLoopEnd);
-
-        // Iterate over source dictionary keys using sourceDictLocal
-        // We need the KeyCollection.Enumerator
-        var keyCollectionType = typeof(Dictionary<string, object>.KeyCollection);
-        var keysEnumType = typeof(Dictionary<string, object>.KeyCollection.Enumerator);
-
-        var keysEnumLocal = il.DeclareLocal(keysEnumType);
-        il.Emit(OpCodes.Ldloc, sourceDictLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.DictionaryStringObject, "Keys")!.GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(keyCollectionType, "GetEnumerator"));
-        il.Emit(OpCodes.Stloc, keysEnumLocal);
-
-        var dictLoopStart = il.DefineLabel();
-        var dictLoopEnd = il.DefineLabel();
-
-        il.MarkLabel(dictLoopStart);
-        // MoveNext
-        il.Emit(OpCodes.Ldloca, keysEnumLocal);
-        il.Emit(OpCodes.Call, _types.GetMethodNoParams(keysEnumType, "MoveNext"));
-        il.Emit(OpCodes.Brfalse, dictLoopEnd);
-
-        // Get Current key
-        il.Emit(OpCodes.Ldloca, keysEnumLocal);
-        il.Emit(OpCodes.Call, _types.GetProperty(keysEnumType, "Current")!.GetGetMethod()!);
-        var currentKeyLocal = il.DeclareLocal(_types.String);
-        il.Emit(OpCodes.Stloc, currentKeyLocal);
-
-        // Check if key is in excludeSet
-        il.Emit(OpCodes.Ldloc, excludeSetLocal);
-        il.Emit(OpCodes.Ldloc, currentKeyLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.HashSetOfString, "Contains", _types.String));
-        var skipKey = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, skipKey);
-
-        // Add to result: result[key] = sourceDict[key]
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldloc, currentKeyLocal);
-        il.Emit(OpCodes.Ldloc, sourceDictLocal);
-        il.Emit(OpCodes.Ldloc, currentKeyLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.DictionaryStringObject, "Item")!.GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.DictionaryStringObject, "Item")!.GetSetMethod()!);
-
-        il.MarkLabel(skipKey);
-        il.Emit(OpCodes.Br, dictLoopStart);
-
-        il.MarkLabel(dictLoopEnd);
-
-        // Dispose enumerator
-        il.Emit(OpCodes.Ldloca, keysEnumLocal);
-        il.Emit(OpCodes.Constrained, keysEnumType);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IDisposable, "Dispose"));
-
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ret);
+        il.MarkLabel(copySource);
+        EmitOwnPropertyObjectRest(il, inputs);
     }
 
-    private void EmitClassPrototypeObjectRest(ILGenerator il, ObjectRestInputs inputs)
+    private void EmitOwnPropertyObjectRest(ILGenerator il, ObjectRestInputs inputs)
     {
         var excluded = il.DeclareLocal(_types.HashSetOfObject);
         var index = il.DeclareLocal(_types.Int32);

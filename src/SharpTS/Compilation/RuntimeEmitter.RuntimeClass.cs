@@ -2737,6 +2737,7 @@ public partial class RuntimeEmitter
             new ObjectRestInputs(runtime.Booleans, runtime.ClassPrototypes,
                 runtime.DescriptorStorage, runtime.ObjectRead.Property,
                 runtime.ObjectFields.FieldsGetter, runtime.ObjectFields.Interface,
+                runtime.Generators.Type, runtime.AsyncGenerators?.Type,
                 runtime.ObjectDescriptors, runtime.ObjectKeys, runtime.ObjectOwnProperties, runtime.Reflect,
                 runtime.Symbols, runtime.Sentinels.UndefinedType)
         );

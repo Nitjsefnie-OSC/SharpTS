@@ -2925,6 +2925,7 @@ public partial class RuntimeEmitter
                 runtime.Errors.TypeErrorConstructor,
                 runtime.Errors.RangeErrorConstructor,
                 runtime.NumericCoercion.ToNumber,
+                runtime.NumericCoercion.JsToInt32,
                 runtime.FunctionAttributes.PadUndefinedCtor));
         // Number.prototype populate body — must come AFTER EmitNumberMethods so
         // NumberToFixed/etc. MethodBuilders are non-null.

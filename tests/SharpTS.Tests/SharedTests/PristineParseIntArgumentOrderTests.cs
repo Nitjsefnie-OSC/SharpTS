@@ -61,9 +61,7 @@ public sealed class PristineParseIntArgumentOrderTests
             """, "true radix-expression,input-convert\n"];
     }
 
-    // Compiled/saved object-radix coercion for this full case remains #2469.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] != "expressions-before-input-and-radix-coercions-with-pristine-alias-controls");
+    public static IEnumerable<object[]> SavedCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases()
     {

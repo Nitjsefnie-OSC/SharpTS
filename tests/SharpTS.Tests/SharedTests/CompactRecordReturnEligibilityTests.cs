@@ -44,9 +44,7 @@ public sealed class CompactRecordReturnEligibilityTests
             """ + "\n", "7\n"];
     }
 
-    // Full CF093 compiled/saved radix-coercion behavior remains owned by #2469.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] != "expressions-before-input-and-radix-coercions-with-pristine-alias-controls");
+    public static IEnumerable<object[]> SavedCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases()
     {

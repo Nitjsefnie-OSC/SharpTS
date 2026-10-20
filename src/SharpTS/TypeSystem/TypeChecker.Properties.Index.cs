@@ -397,6 +397,12 @@ public partial class TypeChecker
             return WithUncheckedUndefined(domainIndex);
         }
 
+        // Canonical numeric string literals address Array elements with the same read type.
+        if (objType is TypeInfo.Array stringIndexedArray &&
+            TryGetStringLiteralKeys(indexType, out var arrayStringKeys) &&
+            arrayStringKeys.All(key => Runtime.Types.PropertySemantics.TryGetArrayIndex(key, out _)))
+            return WithUncheckedUndefined(stringIndexedArray.ElementType);
+
         // Handle string index on objects/interfaces
         if (IsString(indexType) || indexType is TypeInfo.StringLiteral)
         {
@@ -1381,6 +1387,12 @@ public partial class TypeChecker
                     TryGetExprLine(getIndex.Object) ?? _currentStatementLine ?? 0));
             return WithUncheckedUndefined(domainIndex);
         }
+
+        // Canonical numeric string literals address Array elements with the same read type.
+        if (objType is TypeInfo.Array stringIndexedArray &&
+            TryGetStringLiteralKeys(indexType, out var arrayStringKeys) &&
+            arrayStringKeys.All(key => Runtime.Types.PropertySemantics.TryGetArrayIndex(key, out _)))
+            return WithUncheckedUndefined(stringIndexedArray.ElementType);
 
         // Handle string index
         if (IsString(indexType) || indexType is TypeInfo.StringLiteral)

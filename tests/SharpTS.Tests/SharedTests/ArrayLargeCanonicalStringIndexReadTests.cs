@@ -23,13 +23,13 @@ public sealed class ArrayLargeCanonicalStringIndexReadTests
             values[2147483647] = 8;
             values[2147483648] = 4;
             values[4294967294] = 9;
-            const small: any = '0', boundary: any = '2147483647', large: any = '2147483648', upper: any = '4294967294';
+            const boundary: any = '2147483647', large: any = '2147483648', upper: any = '4294967294';
             const hole: any = '2147483649';
-            console.log(values[small], values[boundary], values[2147483647], values[large], values[2147483648],
+            console.log(values['0'], values[boundary], values[2147483647], values[large], values[2147483648],
                 values[upper], values[4294967294], values[hole], values[2147483649], values.length);
             console.log(Object.hasOwn(values, large), Object.hasOwn(values, upper),
                 Object.hasOwn(values, hole), Object.hasOwn(values, '1'));
-            """, "7 8 8 4 4 9 9 undefined undefined 4294967295\ntrue true false false\n"];
+            """ + "\r\n", "7 8 8 4 4 9 9 undefined undefined 4294967295\ntrue true false false\n"];
         yield return ["noncanonical-names-do-not-alias-stored-elements-and-remain-ordinary-properties", """
             const values: any[] = [];
             values[2147483648] = 4;

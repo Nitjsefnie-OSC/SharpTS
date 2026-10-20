@@ -2515,13 +2515,18 @@ public partial class Interpreter
 
     private void ExecuteClassStaticBlock(Stmt.StaticBlock block)
     {
-        // A static block owns its var heads independently of the surrounding
-        // class initializer environment and any sibling static block.
+        // Every static block owns its lexical scope, even without a var loop head.
+        // Reserve before creating closures so outer bindings cannot bypass its TDZ.
         bool ownsLoopVars = InterpreterVarDeclarations.CollectLoopHeads(block.Body).Count != 0;
-        using ScopedEnvironment? scope = ownsLoopVars ? PushScope(new RuntimeEnvironment(_environment)) : null;
+        using ScopedEnvironment scope = PushScope(new RuntimeEnvironment(_environment));
+        ReserveLexicalDeclarations(block.Body);
+        // Static bodies are not parser-hoisted. Give direct var/loop bindings
+        // their own initialized slots before closures can resolve a class self.
+        foreach (var (name, isFunction) in ParameterBinder.InterpreterBodyVarDeclarations(block.Body))
+            if (!isFunction && !_environment.IsDefinedLocally(name.Lexeme))
+                _environment.Define(name.Lexeme, RuntimeValue.Undefined);
         if (ownsLoopVars)
         {
-            ReserveLexicalDeclarations(block.Body);
             HoistFunctionDeclarations(block.Body);
             HoistLocalLoopVarDeclarations(block.Body);
         }

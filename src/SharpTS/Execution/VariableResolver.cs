@@ -460,18 +460,26 @@ public class VariableResolver : AstVisitorBase
 
     protected override void VisitStaticBlock(Stmt.StaticBlock stmt)
     {
-        if (InterpreterVarDeclarations.CollectLoopHeads(stmt.Body).Count == 0)
-        {
-            base.VisitStaticBlock(stmt);
-            return;
-        }
-
+        // Match the runtime's block environment independently of var loop heads.
         BeginScope();
-        PredeclareLoopVarBindings(stmt.Body);
-        PredeclareLexicalBindings(stmt.Body);
-        foreach (var statement in stmt.Body)
-            Visit(statement);
-        EndScope();
+        try
+        {
+            // Use the same direct var/loop declarations as runtime block entry;
+            // function declarations retain their existing handling.
+            foreach (var (name, isFunction) in ParameterBinder.InterpreterBodyVarDeclarations(stmt.Body))
+            {
+                if (isFunction) continue;
+                Declare(name.Lexeme);
+                Define(name.Lexeme);
+            }
+            PredeclareLexicalBindings(stmt.Body);
+            foreach (var statement in stmt.Body)
+                Visit(statement);
+        }
+        finally
+        {
+            EndScope();
+        }
     }
 
     #endregion
@@ -621,13 +629,11 @@ public class VariableResolver : AstVisitorBase
             }
         }
 
-        // Match the extra runtime owner only for static blocks with loop-head
-        // vars; the remaining class-expression initializer paths are unchanged.
+        // Every static block has its own runtime environment, including expressions.
         if (expr.StaticInitializers != null)
         {
             foreach (var block in expr.StaticInitializers.OfType<Stmt.StaticBlock>())
-                if (InterpreterVarDeclarations.CollectLoopHeads(block.Body).Count != 0)
-                    Visit(block);
+                Visit(block);
         }
 
         EndScope(); // 'this' scope

@@ -2306,6 +2306,7 @@ public partial class RuntimeEmitter
         var maxThrowLabel = il.DefineLabel();
         var notExtensibleReturnLabel = il.DefineLabel();
         var indexInRangeLabel = il.DefineLabel();
+        var lengthWritableLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, syncLength);
@@ -2326,6 +2327,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I8, TSArrayMaxWriteIndex);
         il.Emit(OpCodes.Bgt, maxThrowLabel);
 
+        // Extending an array requires its independent length descriptor to be writable.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, construction.Length);
+        il.Emit(OpCodes.Blt, lengthWritableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, runtime.DescriptorStorage.IsWritable);
+        il.Emit(OpCodes.Brfalse, frozenReturnLabel);
+        il.MarkLabel(lengthWritableLabel);
+
         // SetCoreWithExtend(index, value);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
@@ -2344,7 +2356,8 @@ public partial class RuntimeEmitter
     /// <summary>
     /// <c>public void SetStrict(long index, object? value, bool strictMode)</c> —
     /// like <see cref="EmitTSArraySetLong"/> but throws TypeError for writes to
-    /// frozen arrays in strict mode rather than silently no-op'ing.
+    /// frozen arrays or extension beyond a non-writable length in strict mode
+    /// rather than silently no-op'ing.
     /// </summary>
     private void EmitTSArraySetStrictLong(ArrayConstruction construction, TypeBuilder typeBuilder, EmittedRuntime runtime, MethodBuilder setCoreWithExtend, MethodBuilder syncLength)
     {
@@ -2358,6 +2371,7 @@ public partial class RuntimeEmitter
         var frozenReturnLabel = il.DefineLabel();
         var negThrowLabel = il.DefineLabel();
         var maxThrowLabel = il.DefineLabel();
+        var lengthWritableLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, syncLength);
@@ -2387,6 +2401,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldc_I8, TSArrayMaxWriteIndex);
         il.Emit(OpCodes.Bgt, maxThrowLabel);
+
+        // PutValue rejects length growth only after the caller has computed its value.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, construction.Length);
+        il.Emit(OpCodes.Blt, lengthWritableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "length");
+        il.Emit(OpCodes.Call, runtime.DescriptorStorage.IsWritable);
+        il.Emit(OpCodes.Brtrue, lengthWritableLabel);
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Brfalse, frozenReturnLabel);
+        EmitInlineThrowErrorInline(il, "TypeError: Cannot extend an array with a non-writable length", runtime.Errors.TypeErrorConstructor);
+        il.MarkLabel(lengthWritableLabel);
 
         // SetCoreWithExtend(index, value); return;
         il.Emit(OpCodes.Ldarg_0);

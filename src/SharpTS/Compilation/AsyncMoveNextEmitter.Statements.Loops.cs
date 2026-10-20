@@ -305,8 +305,10 @@ public partial class AsyncMoveNextEmitter
         _il.BeginCatchBlock(typeof(Exception));
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.Errors.WrapException);
         _il.Emit(OpCodes.Stloc, exLocal);
+        _il.Emit(OpCodes.Ldc_I4_1);
+        _il.Emit(OpCodes.Stloc, _currentTryCatchExceptionPresentLocal!);
         _il.EndExceptionBlock();
-        _il.Emit(OpCodes.Ldloc, exLocal);
+        _il.Emit(OpCodes.Ldloc, _currentTryCatchExceptionPresentLocal!);
         _il.Emit(OpCodes.Brtrue, _currentTryCatchSkipLabel.Value);
     }
 

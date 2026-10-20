@@ -61,11 +61,9 @@ public sealed class PristineParseIntArgumentOrderTests
             """, "true radix-expression,input-convert\n"];
     }
 
-    // Separate compiler boundaries are under audit: returned object-record casts and
-    // exceptional input conversion failing before its hook. Preserve both full sources interpreted-only.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row => (string)row[0] is not (
-        "expressions-before-input-and-radix-coercions-with-pristine-alias-controls" or
-        "throwing-input-conversion-follows-radix-expression-and-skips-radix-coercion"));
+    // Compiled/saved object-radix coercion for this full case remains #2469.
+    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
+        (string)row[0] != "expressions-before-input-and-radix-coercions-with-pristine-alias-controls");
 
     public static IEnumerable<object[]> ModeCases()
     {

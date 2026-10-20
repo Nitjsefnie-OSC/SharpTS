@@ -3023,7 +3023,7 @@ public partial class Interpreter
                 if (regex.TryGetAccessor(memberName, out _, out var userSetter)
                     && userSetter != null)
                 {
-                    userSetter.CallBoxed(this, [value]);
+                    FunctionBuiltIns.CallWithThis(this, userSetter, regex, [value]);
                     return value;
                 }
                 if (memberName == "lastIndex")

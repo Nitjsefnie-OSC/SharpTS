@@ -58,12 +58,15 @@ public partial class ILEmitter
     /// environment prologue. Unlike the compatibility overload, this directly
     /// describes the emitted signature and therefore also covers display-class
     /// and explicit-<c>this</c> prefixes without reconstructing their shape.
+    /// The synchronous environment prologue opts into incremental capture
+    /// publication; direct iterator callers retain their own transfer policy.
     /// </summary>
     internal void EmitDefaultParameters(
         List<Stmt.Parameter> parameters,
         int argumentOffset,
         Type[]? paramTypes = null,
-        List<Stmt>? body = null)
+        List<Stmt>? body = null,
+        bool publishCapturedParameters = false)
     {
         var builder = _ctx.ILBuilder;
         var initializers = PrepareParameterBindingInitializers(body);
@@ -74,6 +77,7 @@ public partial class ILEmitter
             if (param.DefaultValue == null || paramTypes != null && paramTypes[i].IsValueType)
             {
                 EmitParameterBindingInitializer(param, initializers, ParameterTdzNames(parameters.Skip(i + 1), initializers));
+                if (publishCapturedParameters) PublishCapturedParameter(param);
                 continue;
             }
 
@@ -107,7 +111,47 @@ public partial class ILEmitter
 
             builder.MarkLabel(skipDefault);
             EmitParameterBindingInitializer(param, initializers, ParameterTdzNames(parameters.Skip(i + 1), initializers));
+            if (publishCapturedParameters) PublishCapturedParameter(param);
         }
+    }
+
+    private void PublishCapturedParameter(Stmt.Parameter parameter)
+    {
+        string name = parameter.Name.Lexeme;
+        LocalBuilder? displayClass = null;
+        FieldBuilder? field = null;
+        if (_ctx.FunctionDisplayClassLocal is { } functionDisplayClass
+            && _ctx.CapturedFunctionLocals?.Contains(name) == true
+            && _ctx.FunctionDisplayClassFields?.TryGetValue(name, out var functionField) == true)
+        {
+            displayClass = functionDisplayClass;
+            field = functionField;
+        }
+        else if (_ctx.ArrowScopeDisplayClassLocal is { } scopeDisplayClass
+            && _ctx.CapturedArrowLocals?.Contains(name) == true
+            && _ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var scopeField) == true)
+        {
+            displayClass = scopeDisplayClass;
+            field = scopeField;
+        }
+        if (displayClass is null || field is null || !_ctx.TryGetParameter(name, out int argument)) return;
+
+        // A later default can invoke or mutate this binding through a closure.
+        // Publish once at initialization, rather than reseeding from a stale arg
+        // after all defaults have finished.
+        Type parameterType = _ctx.TryGetParameterType(name, out var type) ? type ?? _ctx.Types.Object : _ctx.Types.Object;
+        IL.Emit(OpCodes.Ldloc, displayClass);
+        IL.Emit(OpCodes.Ldarg, argument);
+        if (field.FieldType == _ctx.Types.Double && parameterType != _ctx.Types.Double)
+        {
+            if (parameterType.IsValueType) IL.Emit(OpCodes.Box, parameterType);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.NumericCoercion.ConvertToNumber);
+        }
+        else if (field.FieldType == _ctx.Types.Object && parameterType.IsValueType)
+            IL.Emit(OpCodes.Box, parameterType);
+        IL.Emit(OpCodes.Stfld, field);
+        (_ctx.PublishedCapturedParameterNames ??= new(StringComparer.Ordinal)).Add(name);
+        _ctx.UseOwnedCapturedParameterStorage = true;
     }
 
     internal void EmitDefaultParameterExpression(Expr expression, IEnumerable<string> tdzNames)
@@ -192,11 +236,13 @@ public partial class ILEmitter
             // paths and the incoming parameter slots available.
             if (_ctx.FunctionDisplayClassLocal != null)
                 _ctx.CapturedFunctionLocals = capturedFunctionLocals is null ? null
-                    : capturedFunctionLocals.Where(name => _ctx.InitializedParameterBindingNames?.Contains(name) == true)
+                    : capturedFunctionLocals.Where(name => _ctx.InitializedParameterBindingNames?.Contains(name) == true
+                        || _ctx.PublishedCapturedParameterNames?.Contains(name) == true)
                         .ToHashSet(StringComparer.Ordinal);
             if (_ctx.ArrowScopeDisplayClassLocal != null)
                 _ctx.CapturedArrowLocals = capturedArrowLocals is null ? null
-                    : capturedArrowLocals.Where(name => _ctx.InitializedParameterBindingNames?.Contains(name) == true)
+                    : capturedArrowLocals.Where(name => _ctx.InitializedParameterBindingNames?.Contains(name) == true
+                        || _ctx.PublishedCapturedParameterNames?.Contains(name) == true)
                         .ToHashSet(StringComparer.Ordinal);
             emit();
         }

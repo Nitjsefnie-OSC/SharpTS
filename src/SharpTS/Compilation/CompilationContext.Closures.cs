@@ -296,9 +296,11 @@ public partial class CompilationContext
     /// </summary>
     public LocalBuilder? FunctionDisplayClassLocal { get; set; }
 
-    // Enabled after parameters have been seeded into this callable's own function/scope
-    // display class. Defaults still read the incoming argument slots beforehand.
+    // Enabled as parameters are seeded into this callable's own function/scope
+    // display class. During defaults only already-published captures are visible.
     internal bool UseOwnedCapturedParameterStorage { get; set; }
+
+    internal HashSet<string>? PublishedCapturedParameterNames { get; set; }
 
     // Initialized parameter bindings survive initializer-free var redeclarations,
     // including receiver adapters whose parameters live in locals rather than args.

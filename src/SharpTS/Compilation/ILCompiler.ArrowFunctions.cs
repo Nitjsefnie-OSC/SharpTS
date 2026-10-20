@@ -2046,17 +2046,16 @@ public partial class ILCompiler
             }
         }
 
-        // Initialize captured parameters into the arrow scope display class.
-        // This mirrors the equivalent code in ILCompiler.Functions.cs.
-        // Without this, inner arrows that read parameters via $arrowDC get null.
-        // Runs AFTER EmitDefaultParameters (which writes defaults via Starg) so
-        // the DC fields see defaulted values, not the raw missing-arg padding.
+        // Keep fallback capture seeding, but never overwrite a parameter already
+        // published to closures during the left-to-right default prologue.
         if (ctx.ArrowScopeDisplayClassLocal != null)
         {
             _closures.ArrowParameterTypes.TryGetValue(arrow, out var capturedParamTypes);
             for (int i = 0; i < arrow.Parameters.Count; i++)
             {
                 var paramName = arrow.Parameters[i].Name.Lexeme;
+                if (ctx.PublishedCapturedParameterNames?.Contains(paramName) == true)
+                    continue;
                 if (ctx.CapturedArrowLocals!.Contains(paramName) &&
                     ctx.ArrowScopeDisplayClassFields!.TryGetValue(paramName, out var arrowDCField))
                 {

@@ -726,16 +726,16 @@ public partial class ILCompiler
                 environmentParamTypes,
                 argumentOffset: hasDisplayClass ? 1 : 0);
 
-            // Initialize captured parameters into the scope display class (mirrors
-            // EmitArrowBody). Runs AFTER EmitDefaultParameters (which writes defaults
-            // via Starg) so the DC fields see defaulted values. Later reassignments
-            // dual-write DC + arg slot via LocalVariableResolver store path 1b.
+            // Preserve values already published during defaults, including writes
+            // through closures whose owner's CLR argument slot is now stale.
             if (ctx.ArrowScopeDisplayClassLocal != null)
             {
                 int paramArgBase = hasDisplayClass ? 1 : 0;
                 for (int i = 0; i < func.Parameters.Count; i++)
                 {
                     var paramName = func.Parameters[i].Name.Lexeme;
+                    if (ctx.PublishedCapturedParameterNames?.Contains(paramName) == true)
+                        continue;
                     if (ctx.CapturedArrowLocals!.Contains(paramName) &&
                         ctx.ArrowScopeDisplayClassFields!.TryGetValue(paramName, out var scopeDCField))
                     {

@@ -76,6 +76,8 @@ public partial class ILCompiler
         for (int i = 0; i < method.Parameters.Count; i++)
         {
             string name = method.Parameters[i].Name.Lexeme;
+            if (ctx.PublishedCapturedParameterNames?.Contains(name) == true)
+                continue;
             if (!fields.TryGetValue(name, out var field))
                 continue;
 
@@ -633,14 +635,15 @@ public partial class ILCompiler
             }
         }
 
-        // Initialize captured parameters into the function display class. Runs
-        // AFTER EmitDefaultParameters (which writes defaults back via Starg) so
-        // closures see the defaulted value, not the missing-arg padding.
+        // The default prologue already published initialized captures. Retain
+        // the fallback for other entries without overwriting live closure writes.
         if (displayLocal != null && capturedLocals != null && _closures.FunctionDisplayClassFields.TryGetValue(qualifiedFunctionName, out var funcDCFieldMap))
         {
             for (int i = 0; i < funcStmt.Parameters.Count; i++)
             {
                 var paramName = funcStmt.Parameters[i].Name.Lexeme;
+                if (ctx.PublishedCapturedParameterNames?.Contains(paramName) == true)
+                    continue;
                 if (capturedLocals.Contains(paramName) && funcDCFieldMap.TryGetValue(paramName, out var field))
                 {
                     il.Emit(OpCodes.Ldloc, displayLocal);
@@ -884,7 +887,8 @@ public partial class ILCompiler
                 publishedArgsLeadingSkip);
         }
 
-        emitter.EmitDefaultParameters(parameters, argumentOffset, paramTypes, body);
+        emitter.EmitDefaultParameters(parameters, argumentOffset, paramTypes, body,
+            publishCapturedParameters: true);
         ctx.InitializedParameterNames = parameters.Select(parameter => parameter.Name.Lexeme)
             .Concat(body is null ? [] : body.OfType<Stmt.Sequence>()
                 .Where(sequence => sequence.ParameterName != null)

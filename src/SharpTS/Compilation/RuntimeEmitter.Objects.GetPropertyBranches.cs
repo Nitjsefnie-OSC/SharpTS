@@ -1005,12 +1005,18 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brfalse, noPdsDescLabel);
             // Accessor descriptor? Getter != null → invoke fn(thisArg=rx).
             var dataDescLabel = il.DefineLabel();
+            var noGetterLabel = il.DefineLabel();
+            var undefinedGetterLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldloc, pdsDescLocal);
             il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorGetter.GetGetMethod()!);
             var regexpGetterLocal = il.DeclareLocal(_types.Object);
             il.Emit(OpCodes.Stloc, regexpGetterLocal);
             il.Emit(OpCodes.Ldloc, regexpGetterLocal);
-            il.Emit(OpCodes.Brfalse, dataDescLabel);
+            il.Emit(OpCodes.Brfalse, noGetterLabel);
+            // An explicit undefined getter remains an accessor and masks native slots.
+            il.Emit(OpCodes.Ldloc, regexpGetterLocal);
+            il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
+            il.Emit(OpCodes.Beq, undefinedGetterLabel);
             // Cast getter to $TSFunction and InvokeWithThis(rx). If the
             // descriptor's getter slot isn't a $TSFunction (shouldn't
             // happen normally), fall through to the data path.
@@ -1025,8 +1031,16 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, EmitGenerics.MakeGenericMethod(_types.GetMethod(typeof(System.Array), "Empty"), _types.Object));
             il.Emit(OpCodes.Callvirt, inputs.TSFunctionInvokeWithThis);
             il.Emit(OpCodes.Ret);
+            il.MarkLabel(noGetterLabel);
+            // A setter-only descriptor has no data value; its own read is undefined.
+            il.Emit(OpCodes.Ldloc, pdsDescLocal);
+            il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorSetter.GetGetMethod()!);
+            il.Emit(OpCodes.Brfalse, dataDescLabel);
+            il.MarkLabel(undefinedGetterLabel);
+            il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
+            il.Emit(OpCodes.Ret);
             il.MarkLabel(dataDescLabel);
-            // Data descriptor — return descriptor.Value.
+            // Data descriptor — return descriptor.Value, including null or undefined.
             il.Emit(OpCodes.Ldloc, pdsDescLocal);
             il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetGetMethod()!);
             il.Emit(OpCodes.Ret);

@@ -105,8 +105,8 @@ public sealed class DestructuredParameterDefaultScopeTests
             }
             Object.setPrototypeOf(Derived, Alternate);
             class Owner {
-                #read(value: any, next = value) { return next; }
-                read() { return this.#read(3); }
+                #read([value]: any[], next = value) { return next; }
+                read() { return this.#read([3]); }
             }
             const ordinary = new Ordinary();
             const instance: any = new Derived();

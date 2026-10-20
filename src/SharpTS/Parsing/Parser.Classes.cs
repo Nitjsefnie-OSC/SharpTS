@@ -330,7 +330,8 @@ public partial class Parser
                     // Private method: #name() { }
                     List<TypeParam>? typeParams2 = ParseTypeParameters();
                     Token parametersOpen = Consume(TokenType.LEFT_PAREN, "Expect '(' after private method name.");
-                    List<Stmt.Parameter> parameters = ParseMethodParameters();
+                    var (parameters, destructuredParams, thisType, thisTypeNode) =
+                        ParseRuntimeParameters(allowParameterDecoratorsAndProperties: false);
                     Token parametersClose = Consume(TokenType.RIGHT_PAREN, "Expect ')' after parameters.");
 
                     string? returnType = null;
@@ -343,8 +344,10 @@ public partial class Parser
 
                     Token methodBodyOpen = Consume(TokenType.LEFT_BRACE, "Expect '{' before private method body.");
                     List<Stmt> body = Block();
+                    body = PrependDestructuringPrologue(destructuredParams, body);
 
-                    var func = new Stmt.Function(fieldName, typeParams2, null, parameters, body, returnType, isStatic, AccessModifier.Public, IsAbstract: false, IsOverride: isOverride, IsAsync: isMemberAsync, IsGenerator: isMemberGenerator, Decorators: null, IsPrivate: true);
+                    var func = new Stmt.Function(fieldName, typeParams2, thisType, parameters, body, returnType, isStatic, AccessModifier.Public, IsAbstract: false, IsOverride: isOverride, IsAsync: isMemberAsync, IsGenerator: isMemberGenerator, Decorators: null, IsPrivate: true, ThisTypeNode: thisTypeNode);
+                    AttachEditorSyntax(func, thisTypeNode);
                     AttachEditorSyntax(func, returnTypeNode);
                     RecordFunctionSyntax(func, fieldName.Start, parametersOpen, parametersClose,
                         methodBodyOpen.Start, new SourceSpan(methodBodyOpen.Start, ConsumedSourceEnd));
@@ -986,7 +989,8 @@ public partial class Parser
                     // Private method: #name() { }
                     List<TypeParam>? typeParams2 = ParseTypeParameters();
                     Token parametersOpen = Consume(TokenType.LEFT_PAREN, "Expect '(' after private method name.");
-                    List<Stmt.Parameter> parameters = ParseMethodParameters();
+                    var (parameters, destructuredParams, thisType, thisTypeNode) =
+                        ParseRuntimeParameters(allowParameterDecoratorsAndProperties: false);
                     Token parametersClose = Consume(TokenType.RIGHT_PAREN, "Expect ')' after parameters.");
 
                     string? returnType = null;
@@ -999,8 +1003,10 @@ public partial class Parser
 
                     Token methodBodyOpen = Consume(TokenType.LEFT_BRACE, "Expect '{' before private method body.");
                     List<Stmt> body = Block();
+                    body = PrependDestructuringPrologue(destructuredParams, body);
 
-                    var func = new Stmt.Function(fieldName, typeParams2, null, parameters, body, returnType, isStatic, AccessModifier.Public, IsAbstract: false, IsOverride: isOverride, IsAsync: isMemberAsync, IsGenerator: isMemberGenerator, Decorators: null, IsPrivate: true);
+                    var func = new Stmt.Function(fieldName, typeParams2, thisType, parameters, body, returnType, isStatic, AccessModifier.Public, IsAbstract: false, IsOverride: isOverride, IsAsync: isMemberAsync, IsGenerator: isMemberGenerator, Decorators: null, IsPrivate: true, ThisTypeNode: thisTypeNode);
+                    AttachEditorSyntax(func, thisTypeNode);
                     AttachEditorSyntax(func, returnTypeNode);
                     RecordFunctionSyntax(func, fieldName.Start, parametersOpen, parametersClose,
                         methodBodyOpen.Start, new SourceSpan(methodBodyOpen.Start, ConsumedSourceEnd));

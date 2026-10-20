@@ -45,6 +45,7 @@ public partial class RuntimeEmitter
             runtime.Dates.Implementation is not null ? runtime.Dates.RequireImplementation().Type : null,
             runtime.RegExps.Implementation is not null ? runtime.RegExps.RequireImplementation().Type : null,
             runtime.Reflect.Namespace is not null ? runtime.Reflect.RequireNamespace().SingletonField : null,
+            runtime.Reflect.Namespace is not null ? runtime.Reflect.RequireNamespace().SingletonPopulateMethod : null,
             _features.UsesBuffer ? runtime.RequireBuffer().Type : null,
             _features.UsesTextEncoding ? runtime.RequireTextEncoding().EncoderType : null,
             _features.UsesTextEncoding ? runtime.RequireTextEncoding().DecoderType : null,
@@ -70,7 +71,7 @@ public partial class RuntimeEmitter
     }
 
     private readonly record struct GlobalPropertyOptionalInputs(
-        Type? DateType, Type? RegExpType, FieldBuilder? ReflectSingleton,
+        Type? DateType, Type? RegExpType, FieldBuilder? ReflectSingleton, MethodBuilder? PopulateReflectSingleton,
         Type? BufferType, Type? EncoderType, Type? DecoderType,
         MethodBuilder? GetCryptoObject, MethodBuilder? FetchInvoke,
         MethodBuilder? GetAbortControllerConstructor);
@@ -442,13 +443,15 @@ public partial class RuntimeEmitter
         // Math / JSON are extensible singleton objects in the runtime — return the
         // real Dictionary singletons so `root.Math`/`root.JSON` are usable values
         // (un-degrades lodash's native Math bindings inside runInContext). #271.
-        void EmitSingletonBranch(string name, FieldBuilder field)
+        void EmitSingletonBranch(string name, FieldBuilder field, MethodBuilder? populate = null)
         {
             var notThisName = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldstr, name);
             il.Emit(OpCodes.Call, strEquals);
             il.Emit(OpCodes.Brfalse, notThisName);
+            if (populate is not null)
+                il.Emit(OpCodes.Call, populate);
             il.Emit(OpCodes.Ldsfld, field);
             il.Emit(OpCodes.Br, returnLabel);
             il.MarkLabel(notThisName);
@@ -456,7 +459,7 @@ public partial class RuntimeEmitter
         EmitSingletonBranch("Math", inputs.MathSingleton);
         EmitSingletonBranch("JSON", inputs.JsonSingleton);
         if (inputs.Optional.ReflectSingleton is not null)
-            EmitSingletonBranch("Reflect", inputs.Optional.ReflectSingleton);
+            EmitSingletonBranch("Reflect", inputs.Optional.ReflectSingleton, inputs.Optional.PopulateReflectSingleton);
 
         if (inputs.Optional.GetAbortControllerConstructor is not null)
         {
@@ -499,9 +502,9 @@ public partial class RuntimeEmitter
             il.MarkLabel(notCrypto);
         }
 
-        // console / Reflect have no value-form singleton representation; keep
-        // the historical null marker so syntactic dispatch (which fires before
-        // this value-form path) stays authoritative for them.
+        // Keep historical null markers for namespaces without an available
+        // value-form singleton. An emitted Reflect singleton returned above
+        // has already been populated.
         string[] nullMarkerNamespaces = ["console", "Reflect"];
         foreach (var ns in nullMarkerNamespaces)
         {

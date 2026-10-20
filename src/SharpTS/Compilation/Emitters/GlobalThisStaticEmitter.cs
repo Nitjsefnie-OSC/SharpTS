@@ -117,7 +117,7 @@ public sealed class GlobalThisStaticEmitter : IStaticTypeEmitterStrategy
         if (TryEmitBuiltInClassType(il, ctx, propertyName))
             return true;
 
-        if (propertyName == "Math")
+        if (propertyName is "Math" or "Reflect")
         {
             il.Emit(OpCodes.Ldstr, propertyName);
             il.Emit(OpCodes.Call, ctx.Runtime!.GlobalObject.GetProperty);
@@ -140,7 +140,6 @@ public sealed class GlobalThisStaticEmitter : IStaticTypeEmitterStrategy
             case "console":
             case "Object":
             case "Error":
-            case "Reflect":
                 // These are accessed through property access chains
                 il.Emit(OpCodes.Ldnull);
                 return true;

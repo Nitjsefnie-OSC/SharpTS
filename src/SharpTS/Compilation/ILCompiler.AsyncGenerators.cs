@@ -24,7 +24,8 @@ public partial class ILCompiler
         string qualifiedName = GetDefinitionContext().GetQualifiedFunctionName(funcName);
 
         // Analyze the async generator function for yield/await points and hoisted variables
-        var analysis = _asyncGenerators.Analyzer.Analyze(funcStmt, EmitDebugSymbols);
+        var analysis = _asyncGenerators.Analyzer.Analyze(funcStmt, EmitDebugSymbols,
+            closureAnalyzer: _closures.Analyzer);
 
         // #775: a free-function async generator binds its own dynamic `this`; when its body uses `this`
         // the stub captures the active dynamic receiver into <>4__this at creation time (see
@@ -152,7 +153,8 @@ public partial class ILCompiler
     /// </summary>
     private void EmitAsyncGeneratorMoveNextAsyncBody(AsyncGeneratorStateMachineBuilder smBuilder, Stmt.Function funcStmt, string qualifiedName)
     {
-        var analysis = _asyncGenerators.Analyzer.Analyze(funcStmt, EmitDebugSymbols);
+        var analysis = _asyncGenerators.Analyzer.Analyze(funcStmt, EmitDebugSymbols,
+            closureAnalyzer: _closures.Analyzer);
 
         // Create a compilation context for the state machine
         var il = smBuilder.MoveNextAsyncMethod.GetILGenerator();

@@ -897,13 +897,13 @@ public partial class Parser
         if (Match(TokenType.SUPER))
         {
             Token keyword = Previous();
-            // super() for constructor calls, super.method() for method calls
-            if (Check(TokenType.LEFT_PAREN))
+            // The postfix parser builds a computed read around this lexical-home
+            // marker; it must not evaluate the marker as a constructor call.
+            if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LEFT_BRACKET))
             {
-                // super() - constructor call, Method is null
                 return new Expr.Super(keyword, null);
             }
-            Token operation = Consume(TokenType.DOT, "Expect '.' or '(' after 'super'.");
+            Token operation = Consume(TokenType.DOT, "Expect '.', '[' or '(' after 'super'.");
             Token method;
             if (AtEditorRecoveryBoundary())
             {

@@ -595,6 +595,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitGetIndex(Expr.GetIndex gi)
     {
+        if (gi.Object is Expr.Super { Method: null })
+        {
+            EmitComputedSuperGet(gi);
+            return;
+        }
+
         // Stable primitive Promise.all result: the analyzer proved this local
         // cannot escape and is observed only through numeric index reads and
         // length, so PromiseAllPrimitive returns an internal List<double>.

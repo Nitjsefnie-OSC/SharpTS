@@ -516,6 +516,10 @@ public partial class Parser
     {
         if (ContainsOptionalAssignmentChain(Unwrap(target)))
             throw new Exception("Invalid assignment target: optional chaining is not allowed.");
+        // Computed super reads carry a lexical-home marker, not an ordinary
+        // receiver. Keep writes out of the ordinary indexed-assignment path.
+        if (Unwrap(target) is Expr.GetIndex { Object: Expr.Super { Method: null } })
+            throw new Exception("Computed super assignment targets are not supported.");
     }
 
     // Only the target's receiver chain matters. Index expressions and call

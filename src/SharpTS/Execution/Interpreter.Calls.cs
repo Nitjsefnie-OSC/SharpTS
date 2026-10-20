@@ -144,6 +144,15 @@ public partial class Interpreter
         }
         if (reference is Expr.GetIndex memberIndex)
         {
+            if (memberIndex.Object is Expr.Super { Method: null } super)
+            {
+                var environment = ctx.Environment;
+                environment.TryGetThis(out var thisValue);
+                object? superReceiver = thisValue.ToObject();
+                object? superKey = (await ctx.EvaluateExprAsync(memberIndex.Index)).ToObject();
+                callee = EvaluateComputedSuperProperty(super, environment, superKey, superReceiver).ToObject();
+                return BindSuperCallReceiver(callee, superReceiver);
+            }
             object? receiver = (await ctx.EvaluateExprAsync(memberIndex.Object)).ToObject();
             if (memberIndex.Optional && receiver is (null or SharpTSUndefined))
                 return SharpTSUndefined.Instance;
@@ -158,15 +167,17 @@ public partial class Interpreter
             // EvaluateSuper performs the live lexical-home Get. A descriptor's
             // returned function is raw, so this call Reference supplies this.
             callee = (await ctx.EvaluateExprAsync(expression)).ToObject();
-            return callee switch
-            {
-                SharpTSAsyncArrowFunction { HasOwnThis: true } function => function.Bind(receiver!),
-                SharpTSProxy proxy => new SuperProxyCall(proxy, receiver),
-                _ => BindMemberCallReceiver(callee, receiver)
-            };
+            return BindSuperCallReceiver(callee, receiver);
         }
         return (await ctx.EvaluateExprAsync(expression)).ToObject();
     }
+
+    private static object? BindSuperCallReceiver(object? callee, object? receiver) => callee switch
+    {
+        SharpTSAsyncArrowFunction { HasOwnThis: true } function => function.Bind(receiver!),
+        SharpTSProxy proxy => new SuperProxyCall(proxy, receiver),
+        _ => BindMemberCallReceiver(callee, receiver)
+    };
 
     private sealed class SuperProxyCall(SharpTSProxy proxy, object? receiver) : ISharpTSNonConstructorCallable
     {

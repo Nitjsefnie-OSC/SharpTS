@@ -82,7 +82,7 @@ public partial class RuntimeEmitter
                 _types.Object, [_types.Object, _types.Object, _types.String]) : null;
         var readSuper = _features.UsesUserClasses
             ? type.DefineMethod("ReadSuper", MethodAttributes.Public | MethodAttributes.Static,
-                _types.Object, [_types.Object, _types.Object, _types.String, _types.Boolean]) : null;
+                _types.Object, [_types.Object, _types.Object, _types.Object, _types.Boolean]) : null;
         definitions.Declare(new(type, instanceInterface, instanceInterface.GetMethod(getter.Name)!,
             constructor, template, factory, prototype, keys, parent, captures, privateMembers, create, construct, read, invoke,
             captureType, captureConstructor, captureOwner, captureField, readCapture, writeCapture, findEnvironment,

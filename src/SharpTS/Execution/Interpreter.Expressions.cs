@@ -1065,6 +1065,14 @@ public partial class Interpreter
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private RuntimeValue EvaluateGetIndex(Expr.GetIndex getIndex)
     {
+        if (getIndex.Object is Expr.Super { Method: null } super)
+        {
+            var environment = _environment;
+            environment.TryGetThis(out var receiver);
+            object? key = EvaluateRV(getIndex.Index).ToObject();
+            return EvaluateComputedSuperProperty(super, environment, key, receiver.ToObject());
+        }
+
         // Avoid an async state machine for synchronous indexed reads. This is
         // the inner path for record-array traversal such as back[i].value.
         RuntimeValue objectValue = EvaluateRV(getIndex.Object);
@@ -1102,6 +1110,14 @@ public partial class Interpreter
     /// </summary>
     private async ValueTask<RuntimeValue> EvaluateGetIndexCore(IEvaluationContext ctx, Expr.GetIndex getIndex)
     {
+        if (getIndex.Object is Expr.Super { Method: null } super)
+        {
+            var environment = ctx.Environment;
+            environment.TryGetThis(out var receiver);
+            object? key = (await ctx.EvaluateExprAsync(getIndex.Index)).ToObject();
+            return EvaluateComputedSuperProperty(super, environment, key, receiver.ToObject());
+        }
+
         RuntimeValue objectValue = await ctx.EvaluateExprAsync(getIndex.Object);
         object? obj = objectValue.ToObject();
 
@@ -1131,6 +1147,25 @@ public partial class Interpreter
             getIndex.Object,
             obj,
             indexValue.ToObject());
+    }
+
+    private RuntimeValue EvaluateComputedSuperProperty(
+        Expr.Super super, RuntimeEnvironment environment, object? key, object? receiver)
+    {
+        // Convert before reading the live home prototype: key conversion may
+        // run guest code, but must not replace the captured this receiver.
+        object propertyKey = ToPropertyKey(key);
+        var superclass = environment.Get(super.Keyword).AsObject<SharpTSClass>()!;
+        object? superBase = environment.StaticSuper
+            ? environment.PrivateClass is { } staticOwner
+                ? ObjectBuiltIns.PrototypeOf(this, staticOwner) : superclass
+            : environment.PrivateClass is { } owner
+                ? ObjectBuiltIns.PrototypeOf(this, owner.Prototype) : superclass.Prototype;
+        if (superBase is null)
+            ThrowCannotReadProperty(superBase, propertyKey.ToString()!);
+        return RuntimeValue.FromBoxed(propertyKey is SharpTSSymbol symbol
+            ? GetSymbolPropertyValue(superBase!, symbol, receiver!)
+            : GetPropertyValueFromChain(superBase, (string)propertyKey, receiver));
     }
 
     /// <summary>

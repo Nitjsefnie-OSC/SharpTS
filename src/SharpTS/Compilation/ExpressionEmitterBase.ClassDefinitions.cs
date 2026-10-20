@@ -181,18 +181,27 @@ public abstract partial class ExpressionEmitterBase
 
     protected bool TryEmitGuestSuperCall(Expr.Call call)
     {
-        if (Ctx.CurrentClassBuilder == null || Ctx.Runtime == null
-            || UnwrapSuperCallReference(call.Callee) is not Expr.Super { Method: not null } super
-            || (!Ctx.IsStaticSuperContext && super.Method.Lexeme == "constructor")) return false;
+        if (Ctx.CurrentClassBuilder == null || Ctx.Runtime == null) return false;
+        Expr reference = UnwrapSuperCallReference(call.Callee);
+        LocalBuilder receiver;
+        if (reference is Expr.GetIndex { Object: Expr.Super { Method: null } } computed)
+        {
+            receiver = EmitComputedSuperGet(computed);
+        }
+        else
+        {
+            if (reference is not Expr.Super { Method: not null } super
+                || (!Ctx.IsStaticSuperContext && super.Method.Lexeme == "constructor")) return false;
 
-        // An unchanged, fixed-signature parent can retain its proven direct
-        // dispatch. Every mutation-capable or variadic call resolves the live
-        // property first, including calls from arrows and state machines.
-        if (TryEmitSuperMethodCall(super.Method.Lexeme, call.Arguments))
-            return true;
+            // An unchanged, fixed-signature parent can retain its proven direct
+            // dispatch. Every mutation-capable or variadic call resolves the live
+            // property first, including calls from arrows and state machines.
+            if (TryEmitSuperMethodCall(super.Method.Lexeme, call.Arguments))
+                return true;
 
-        var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
-        EmitGuestSuperValue(super.Method.Lexeme, receiver);
+            receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
+            EmitGuestSuperValue(super.Method.Lexeme, receiver);
+        }
         if (call.Optional)
         {
             var callable = _helpers.SpillStoreObject();
@@ -258,6 +267,30 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Call, Ctx.Runtime!.ClassDefinitions.ReadSuper);
         SetStackUnknown();
         EmitUnchangedSuperMethodValue(name, receiver);
+    }
+
+    protected LocalBuilder EmitComputedSuperGet(Expr.GetIndex expression)
+    {
+        var receiver = SpillBoxed(new Expr.This(new Token(TokenType.THIS, "this", null, 0)));
+        var key = SpillBoxed(expression.Index);
+        IL.Emit(OpCodes.Ldloc, key);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.Reflect.ToPropertyKey);
+        IL.Emit(OpCodes.Stloc, key);
+        // Key conversion finishes before the helper reads the live lexical base.
+        if (Ctx.CurrentClassExpr != null && TryEmitOwnedClassDefinition()) { }
+        else
+        {
+            IL.Emit(OpCodes.Ldtoken, Ctx.CurrentClassBuilder!);
+            IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+        }
+        IL.Emit(OpCodes.Ldloc, receiver);
+        IL.Emit(OpCodes.Ldloc, key);
+        IL.Emit(Ctx.IsStaticSuperContext ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+        IL.Emit(OpCodes.Call, Ctx.Runtime.ClassDefinitions.ReadSuper);
+        SetStackUnknown();
+        if (expression.Index is Expr.Literal { Value: string name })
+            EmitUnchangedSuperMethodValue(name, receiver);
+        return receiver;
     }
 
     private void EmitUnchangedSuperMethodValue(string name, LocalBuilder receiver)

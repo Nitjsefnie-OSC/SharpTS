@@ -1148,6 +1148,12 @@ public partial class ILEmitter
 
     protected override void EmitGetIndex(Expr.GetIndex gi)
     {
+        if (gi.Object is Expr.Super { Method: null })
+        {
+            EmitComputedSuperGet(gi);
+            return;
+        }
+
         if (TryEmitStableArrayDestructureGet(gi))
             return;
 

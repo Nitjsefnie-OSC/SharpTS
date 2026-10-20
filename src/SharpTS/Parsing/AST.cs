@@ -191,7 +191,8 @@ public abstract record Expr
         bool IsShorthandDefault = false);
     public record GetIndex(Expr Object, Expr Index, bool Optional = false) : Expr;
     public record SetIndex(Expr Object, Expr Index, Expr Value) : Expr;
-    public record Super(Token Keyword, Token? Method) : Expr;  // Method is null for super() constructor calls
+    // Method is null for super() and for the lexical-home marker in GetIndex(super, key).
+    public record Super(Token Keyword, Token? Method) : Expr;
     public record SetSuper(Super Target, Expr Value) : Expr;
     // Compound assignment
     public record CompoundAssign(Token Name, Token Operator, Expr Value) : Expr;

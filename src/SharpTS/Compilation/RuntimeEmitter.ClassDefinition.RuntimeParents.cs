@@ -159,7 +159,15 @@ public partial class RuntimeEmitter
         GuestErrorEmitter.ThrowError(il, runtime.Errors.CreateException, runtime.Errors.TypeErrorConstructor,
             "Cannot read properties of null super prototype");
         il.MarkLabel(hasSuperBase);
+        var symbolSuper = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Isinst, _types.String); il.Emit(OpCodes.Brfalse, symbolSuper);
+        // String lookup retains the nominal prototype/instance-field boundary;
+        // Symbol keys use the existing receiver-aware ordinary Get protocol.
         il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldloc, superBase);
-        il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Call, definitions.ReadPrototypeProperty); il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Call, definitions.ReadPrototypeProperty); il.Emit(OpCodes.Ret);
+        il.MarkLabel(symbolSuper);
+        il.Emit(OpCodes.Ldloc, superBase); il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Call, runtime.Reflect.Get); il.Emit(OpCodes.Ret);
     }
 }

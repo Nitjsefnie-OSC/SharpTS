@@ -117,6 +117,7 @@ public abstract record Expr
     // missing property as `undefined` for such reads instead of reporting TS2339, since the
     // wrapping `=== undefined ? default : read` ternary (or an enclosing default) supplies the
     // value. A non-defaulted read stays strict (`const { a } = {}` is still an error). See #796.
+    // Numeric read specializations must preserve a missing value until that default test.
     public record Get(Expr Object, Token Name, bool Optional = false, bool Defaulted = false) : Expr;
     public record Set(Expr Object, Token Name, Expr Value) : Expr;
     /// <summary>Private field access: obj.#field</summary>
@@ -362,7 +363,14 @@ public abstract record Stmt
     /// inferred type is still kept). Set by the destructuring desugarer to carry the binding pattern's
     /// shape so a mixed array literal source infers as a tuple instead of an array (#783). Erased at
     /// runtime (interpreter and IL compiler ignore it).</param>
-    public record Var(Token Name, string? TypeAnnotation, Expr? Initializer, bool HasDefiniteAssignmentAssertion = false, bool IsVar = false, TypeNode? TypeAnnotationNode = null, Expr? HoistTypeInferenceInitializer = null, TypeNode? InitializerContext = null, bool IsDeclare = false, DestructuringSourceKind DestructuringSource = DestructuringSourceKind.None) : Stmt;
+    public record Var(Token Name, string? TypeAnnotation, Expr? Initializer, bool HasDefiniteAssignmentAssertion = false, bool IsVar = false, TypeNode? TypeAnnotationNode = null, Expr? HoistTypeInferenceInitializer = null, TypeNode? InitializerContext = null, bool IsDeclare = false, DestructuringSourceKind DestructuringSource = DestructuringSourceKind.None) : Stmt
+    {
+        /// <summary>
+        /// A synthetic matched-value spill awaiting an undefined-only destructuring default. Keep its
+        /// guest value in object storage even when the initializer is statically numeric (#2752).
+        /// </summary>
+        public bool PreserveRawInitializerValue { get; init; }
+    }
     /// <summary>
     /// Const variable declaration. Separate from Var for cleaner const-specific handling (e.g., unique symbol).
     /// Initializer is non-nullable since const always requires initialization.

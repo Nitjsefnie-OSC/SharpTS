@@ -28,19 +28,19 @@ public sealed class DestructuredParameterDefaultScopeTests
                 console.log(value, count, next, trace.join(","));
             }
             run();
-            function within([first = 1, next = first + 1]: any[] = [], later = next) {
+            function within([first = 1, next = first + 1]: number[] = [], later = next) {
                 console.log(first, next, later);
             }
             within();
             """, "2 3 5 value,count,next\n1 2 2\n"];
-        yield return ["supplied-later-argument-and-object-pattern-default", """
+        yield return ["supplied-later-argument-and-inferred-pattern-default", """
             const state = { defaults: 0 };
             function run([value]: number[], next: number = (state.defaults++, value)) {
                 console.log(value, next, state.defaults);
             }
             run([7], 20);
             run([8]);
-            function inferred([value]: number[], { next = value }: any = {}) { console.log(value, next); }
+            function inferred([value]: number[], { next = value } = {}) { console.log(value, next); }
             inferred([1]);
             """, "7 20 0\n8 8 1\n1 1\n"];
         yield return ["array-hole-and-rest-bindings", """

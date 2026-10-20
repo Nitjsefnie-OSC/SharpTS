@@ -495,7 +495,7 @@ public partial class Parser
         // (the ternary below supplies the default) rather than reporting TS2339. #796
         if (access is Expr.Get g && !g.Defaulted) access = g with { Defaulted = true };
         Token valueTemp = GenerateTempVar(line);
-        stmts.Add(new Stmt.Var(valueTemp, null, access));
+        stmts.Add(new Stmt.Var(valueTemp, null, access) { PreserveRawInitializerValue = true });
         Expr isUndefined = new Expr.Binary(
             new Expr.Variable(valueTemp),
             new Token(TokenType.EQUAL_EQUAL_EQUAL, "===", null, line),

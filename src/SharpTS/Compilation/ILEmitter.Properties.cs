@@ -462,7 +462,7 @@ public partial class ILEmitter
     private bool TryEmitTypedRecordNumberGet(Expr.Get g, JsonSerializationShape.Record? recordShape,
         bool requireMaterializationGuard = false)
     {
-        if (_ctx.ProgramType is null || _ctx.Runtime is not { } runtime ||
+        if (g.Defaulted || _ctx.ProgramType is null || _ctx.Runtime is not { } runtime ||
             recordShape is null)
         {
             return false;
@@ -623,7 +623,7 @@ public partial class ILEmitter
             }
 
             string fingerprint = JsonSerializationShapeAnalyzer.Fingerprint(recordShape);
-            if (scalarIndex >= 0 &&
+            if (!g.Defaulted && scalarIndex >= 0 &&
                 _ctx.Runtime!.Records.TypedScalarTypes.TryGetValue(
                     fingerprint, out var jsonExactType) &&
                 _ctx.Runtime.Records.TypedScalarValueFields.TryGetValue(

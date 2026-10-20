@@ -806,6 +806,9 @@ public partial class ILEmitter
     /// </summary>
     private bool CanUseUnboxedLocal(Stmt.Var v)
     {
+        // The undefined-only fallback must inspect the original matched value before ToNumber.
+        if (v.PreserveRawInitializerValue)
+            return false;
         if (_ctx.TypeMap?.IsAssertedAssignmentStorage(v.Name) == true)
             return false;
         if (_ctx.TypeMap?.IsRawCallStorage(v.Name) == true)

@@ -213,10 +213,13 @@ public partial class SharpTSClass(
             parent = SharpTSArrayClass.ArrayBase;
         if (reuseAllocation && parent is SharpTSBuiltInConstructor { Name: BuiltInNames.Promise })
             parent = SharpTSPromiseClass.PromiseBase;
-        if (!reuseAllocation) return interpreter.Construct(parent, arguments, newTarget);
-        return parent is SharpTSClass klass
-            ? klass.ExecuteConstructorLevel(interpreter, allocation, arguments, newTarget)
-            : interpreter.Construct(parent, arguments, newTarget);
+        // Super executes the selected class with the existing concrete newTarget;
+        // it does not directly instantiate an abstract superclass.
+        if (parent is SharpTSClass klass)
+            return reuseAllocation
+                ? klass.ExecuteConstructorLevel(interpreter, allocation, arguments, newTarget)
+                : klass.Construct(interpreter, arguments, newTarget);
+        return interpreter.Construct(parent, arguments, newTarget);
     }
 
     // Built-in-backed bridge roots initialize the existing native allocation;

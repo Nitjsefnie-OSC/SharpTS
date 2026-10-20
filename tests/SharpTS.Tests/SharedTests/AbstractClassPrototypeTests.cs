@@ -189,9 +189,7 @@ public sealed class AbstractClassPrototypeTests
         foreach (var row in Cases())
         {
             // https://github.com/nickna/SharpTS/issues/2423: interpreter inherited method replacement/deletion.
-            // #2761: interpreter rejects a different abstract constructor selected by super().
-            if ((string)row[0] is not ("live-computed-descriptor-held-owner"
-                    or "changed-abstract-superclass" or "abstract-superclass-selection-after-effects"))
+            if ((string)row[0] != "live-computed-descriptor-held-owner")
                 yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }

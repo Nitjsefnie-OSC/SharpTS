@@ -52,6 +52,13 @@ public class StaticTypeHandler : ICallHandler
             return false;
         }
 
+        if (staticVar.Name.Lexeme == "globalThis"
+            && (emitter.HasVariable("globalThis")
+                || ctx.HasVisibleValueBinding("globalThis")))
+        {
+            return false;
+        }
+
         var staticStrategy = ctx.TypeEmitterRegistry.GetStaticStrategy(staticVar.Name.Lexeme);
         if (staticStrategy == null)
             return false;

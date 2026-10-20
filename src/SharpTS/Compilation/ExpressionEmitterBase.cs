@@ -656,7 +656,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         }
 
         // globalThis[key] → GlobalThisGetProperty(key)
-        if (gi.Object is Expr.Variable gtGetIdx && gtGetIdx.Name.Lexeme == "globalThis")
+        if (gi.Object is Expr.Variable gtGetIdx && gtGetIdx.Name.Lexeme == "globalThis"
+            && CanUseStaticTypeStrategy(gtGetIdx.Name.Lexeme))
         {
             if (gi.Index is not Expr.Literal { Value: string key } || key == "eval")
                 Ctx.Runtime!.Deployment.Require("indirect eval");
@@ -3212,14 +3213,14 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
     /// <summary>
     /// Returns whether a bare built-in name may use its registry-backed static
-    /// property representation. Lexical Number/Math/ArrayBuffer bindings require ordinary member reads.
+    /// property representation. Lexical Number/Math/ArrayBuffer/globalThis bindings require ordinary member reads.
     /// Promise additionally checks mutation because primitive-await
     /// lowering must preserve a shadowed or mutated <c>Promise.resolve</c> call
     /// all the way through method materialization and receiver binding.
     /// </summary>
     protected bool CanUseStaticTypeStrategy(string name)
     {
-        if (name is "Number" or "Math" or "ArrayBuffer")
+        if (name is "Number" or "Math" or "ArrayBuffer" or "globalThis")
             return !Resolver.HasVariable(name) && !Ctx.HasVisibleValueBinding(name);
 
         return name != "Promise"

@@ -1175,7 +1175,7 @@ public partial class ILEmitter
         if (!gi.Optional
             && gi.Object is Expr.Variable staticIndexVar
             && gi.Index is Expr.Literal { Value: string staticIndexName }
-            && (staticIndexVar.Name.Lexeme is not ("Number" or "Math" or "ArrayBuffer")
+            && (staticIndexVar.Name.Lexeme is not ("Number" or "Math" or "ArrayBuffer" or "globalThis")
                 || CanUseStaticTypeStrategy(staticIndexVar.Name.Lexeme))
             && _ctx.TypeEmitterRegistry?.GetStaticStrategy(staticIndexVar.Name.Lexeme) is { } staticIndexStrategy
             && staticIndexStrategy.TryEmitStaticPropertyGet(this, staticIndexName))
@@ -1226,7 +1226,8 @@ public partial class ILEmitter
         }
 
         // globalThis[key] → GlobalThisGetProperty(key)
-        if (gi.Object is Expr.Variable gtGetIdx && gtGetIdx.Name.Lexeme == "globalThis")
+        if (gi.Object is Expr.Variable gtGetIdx && gtGetIdx.Name.Lexeme == "globalThis"
+            && CanUseStaticTypeStrategy(gtGetIdx.Name.Lexeme))
         {
             if (gi.Index is not Expr.Literal { Value: string key } || key == "eval")
                 _ctx.Runtime!.Deployment.Require("indirect eval");
@@ -2914,9 +2915,9 @@ public partial class ILEmitter
     /// Returns true if the expression statically resolves to globalThis.
     /// Handles Var("globalThis") and any chain of globalThis.globalThis.globalThis...
     /// </summary>
-    private static bool IsGlobalThisExpression(Expr expr) => expr switch
+    private bool IsGlobalThisExpression(Expr expr) => expr switch
     {
-        Expr.Variable v when v.Name.Lexeme == "globalThis" => true,
+        Expr.Variable v when v.Name.Lexeme == "globalThis" => CanUseStaticTypeStrategy(v.Name.Lexeme),
         Expr.Get g when g.Name.Lexeme == "globalThis" => IsGlobalThisExpression(g.Object),
         _ => false
     };

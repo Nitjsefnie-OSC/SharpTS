@@ -2008,7 +2008,7 @@ public partial class ILCompiler
                 arrow.Parameters,
                 arrowAnalysis.HoistedLocals,
                 GetStandaloneLiveCaptureFields(arrow, captures),
-                GetDebugStaticCaptureNames(arrow, captures),
+                GetStandaloneStaticCaptureNames(arrow, captures),
                 _closures.Analyzer.GetLoopBodyCellCaptures(arrow));
 
             // Define the stub method

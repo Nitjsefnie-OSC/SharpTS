@@ -291,7 +291,7 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
         List<Stmt.Parameter> arrowParameters,
         HashSet<string> hoistedLocals,
         IReadOnlyDictionary<string, FieldBuilder>? liveCaptures = null,
-        IReadOnlySet<string>? debugStaticCaptures = null,
+        IReadOnlySet<string>? staticCaptures = null,
         IReadOnlyDictionary<string, Token>? cellCaptures = null)
     {
         IsStandalone = true;
@@ -334,6 +334,20 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
             if (ParameterFields.ContainsKey(captureName) || LocalFields.ContainsKey(captureName))
                 continue;
 
+            // MoveNext resolves module bindings through their shared static storage.
+            // Capturing the environment must not read a lexical binding before its initializer.
+            if (staticCaptures?.Contains(captureName) == true
+                && cellCaptures?.ContainsKey(captureName) != true
+                && liveCaptures?.ContainsKey(captureName) != true)
+            {
+                // Preserve hidden debug scaffolding without reading the module binding
+                // or adding it to the function's creation-time capture payload.
+                if (DebugSymbols is not null)
+                    _stateMachineType.DefineField(DebugScaffoldingName($"<>captured_{captureName}"),
+                        _types.Object, FieldAttributes.Public);
+                continue;
+            }
+
             Type captureType = _types.Object;
             if (cellCaptures?.TryGetValue(captureName, out var declaration) == true)
             {
@@ -355,8 +369,6 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
                     fieldName = DebugDisplayClassName();
                     DebugSymbols.ImportCapturedField(sourceField);
                 }
-                else if (debugStaticCaptures?.Contains(captureName) == true)
-                    fieldName = DebugScaffoldingName(fieldName);
                 else
                     fieldName = captureName == "this" ? "<>4__this" : DebugSymbols.AddCapturedValueField(captureName);
             }

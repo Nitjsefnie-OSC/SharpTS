@@ -3784,14 +3784,6 @@ public partial class ILEmitter
         if (varName == "globalThis")
             return false;
 
-        // If the type checker resolved this expression as a function type, it's a method
-        if (_ctx.TypeMap != null)
-        {
-            var memberType = _ctx.TypeMap.Get(expr);
-            if (memberType is TypeSystem.TypeInfo.Function)
-                return true;
-        }
-
         var memberName = g.Name.Lexeme;
 
         // Check module namespace methods (util.format, readline.questionSync, etc.)
@@ -3808,7 +3800,10 @@ public partial class ILEmitter
         // Check static type methods (Math.floor, JSON.parse, etc.)
         // Exclude known static properties (Math.PI, Symbol.iterator, Number.MAX_VALUE, etc.)
         // which are not functions.
-        if (_ctx.TypeEmitterRegistry != null)
+        // A local/captured value with a native type's spelling is still an ordinary receiver.
+        // Keep the same strategy policy as property emission, after excluding real value bindings.
+        if (_ctx.TypeEmitterRegistry != null && CanUseStaticTypeStrategy(varName) &&
+            !Resolver.HasVariable(varName) && !_ctx.HasVisibleValueBinding(varName))
         {
             var staticStrategy = _ctx.TypeEmitterRegistry.GetStaticStrategy(varName);
             if (staticStrategy != null && !staticStrategy.HasStaticProperty(memberName))

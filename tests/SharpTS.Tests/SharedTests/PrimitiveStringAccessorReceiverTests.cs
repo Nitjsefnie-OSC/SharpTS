@@ -91,10 +91,7 @@ public sealed class PrimitiveStringAccessorReceiverTests
 
     public static IEnumerable<object[]> SavedCases()
     {
-        // Compiled boxed-string lookup loses the boxed instance; that untouched path has a separate owner audit.
-        // Preserve the full mixed primitive/boxed source and assertions interpreted-only.
-        foreach (var row in Cases().Where(row =>
-            (string)row[0] != "primitive-and-boxed-string-getters-keep-their-distinct-receivers"))
+        foreach (var row in Cases())
             yield return row;
         yield return PrimitiveStringLiveMethodTests.Cases().Single(row =>
             (string)row[0] == "getter-receiver-and-lookup-before-arguments");
@@ -107,9 +104,7 @@ public sealed class PrimitiveStringAccessorReceiverTests
         foreach (var row in Cases())
         {
             yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
-            // The full mixed source remains interpreted-only for the boxed lookup boundary documented above.
-            if ((string)row[0] != "primitive-and-boxed-string-getters-keep-their-distinct-receivers")
-                yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
+            yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
     }
 

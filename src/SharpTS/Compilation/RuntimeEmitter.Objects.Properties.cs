@@ -1618,7 +1618,7 @@ public partial class RuntimeEmitter
                 inputs.TSFunctionCtor,
                 inputs.UndefinedInstance
             ),
-            method,
+            inputs.Reflect.Get,
             notTSObjectLabel
         );
         il.MarkLabel(notTSObjectLabel);

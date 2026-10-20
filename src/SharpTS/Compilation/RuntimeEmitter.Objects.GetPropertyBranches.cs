@@ -803,10 +803,10 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// $Object arm: obj.GetProperty(name) (honouring getters), then an own PDS descriptor,
-    /// then a prototype-chain walk (recursing through <paramref name="method"/>), finally the
-    /// Object.prototype singleton. Falls through to <paramref name="notMatch"/> on a miss.
+    /// then a receiver-preserving prototype-chain walk through <paramref name="reflectGet"/>, finally
+    /// the Object.prototype singleton. Falls through to <paramref name="notMatch"/> on a miss.
     /// </summary>
-    private void EmitTSObjectGetBranch(ILGenerator il, TSObjectGetBranchInputs inputs, MethodBuilder method, Label notMatch)
+    private void EmitTSObjectGetBranch(ILGenerator il, TSObjectGetBranchInputs inputs, MethodBuilder reflectGet, Label notMatch)
     {
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.ObjectStorage.Type);
@@ -932,10 +932,11 @@ public partial class RuntimeEmitter
         var tsObjectNoProto = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, tsObjectProtoLocal);
         il.Emit(OpCodes.Brfalse, tsObjectNoProto);
-        // Recursively call GetProperty(prototype, name)
+        // Continue [[Get]] on the stored prototype with the original instance as Receiver.
         il.Emit(OpCodes.Ldloc, tsObjectProtoLocal);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, method);
+        il.Emit(OpCodes.Ldloc, tsObjectInstanceLocal);
+        il.Emit(OpCodes.Call, reflectGet);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(tsObjectNoProto);
         // An explicit null prototype is different from having no prototype

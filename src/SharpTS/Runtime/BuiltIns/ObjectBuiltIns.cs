@@ -1077,6 +1077,7 @@ public static partial class ObjectBuiltIns
             SharpTSInstance inst => inst.GetOwnPropertyDescriptor(propertyKey),
             SharpTSPromise promise => promise.GetOwnPropertyDescriptor(propertyKey),
             SharpTSArray arr => arr.GetOwnPropertyDescriptor(propertyKey),
+            SharpTSArrayPrototype arrayPrototype when !arrayPrototype.HasOwnProperty(propertyKey) => null,
             SharpTSArrayPrototype arrayPrototype => arrayPrototype.GetOwnPropertyDescriptor(propertyKey)
                 ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
             SharpTSMath math when math.IsBuiltInDeleted(propertyKey) => null,

@@ -75,6 +75,8 @@ public partial class Parser
                 if (Check(TokenType.LEFT_BRACE) || Check(TokenType.LEFT_BRACKET))
                 {
                     value = ParseDestructurePattern();
+                    if (Match(TokenType.EQUAL))
+                        defaultValue = Expression();
                 }
                 else
                 {
@@ -265,14 +267,16 @@ public partial class Parser
             // Access expression: _dest0.key
             Expr accessExpr = new Expr.Get(new Expr.Variable(temp), prop.Key, Defaulted: propDefaulted);
 
+            // Apply the property's undefined-only default before entering either
+            // a simple binding or a nested pattern, evaluating the source once.
+            Expr? defaultVal = prop.DefaultValue ?? (prop.Value as IdentifierPattern)?.DefaultValue;
+            if (defaultVal != null)
+            {
+                accessExpr = DefaultIfUndefined(accessExpr, defaultVal, statements, pattern.Line);
+            }
+
             if (prop.Value is IdentifierPattern id)
             {
-                // Apply default value if present (undefined-only, #784)
-                Expr? defaultVal = prop.DefaultValue ?? id.DefaultValue;
-                if (defaultVal != null)
-                {
-                    accessExpr = DefaultIfUndefined(accessExpr, defaultVal, statements, pattern.Line);
-                }
                 statements.Add(new Stmt.Var(id.Name, null, accessExpr, IsVar: isVar));
             }
             else if (prop.Value is ArrayPattern nestedArray)

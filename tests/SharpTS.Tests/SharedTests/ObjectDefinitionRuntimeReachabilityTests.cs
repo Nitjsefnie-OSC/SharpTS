@@ -51,12 +51,8 @@ public sealed class ObjectDefinitionRuntimeReachabilityTests
         yield return ["literal-accessors-retain-descriptor-storage-without-definition-api", LiteralAccessorSource, "2\n7 7 get,set:7,get\n"];
     }
 
-    // #2803 owns interpreter bare Reflect value lookup. Keep the full alias
-    // source compiled and saved until that independent binding defect is fixed.
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
-        ((string)row[0] == "held-destructured-and-aliased-object-reflect-mutators"
-            ? new[] { ExecutionMode.Compiled }
-            : new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]

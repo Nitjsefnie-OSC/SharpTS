@@ -287,8 +287,12 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(AdoptThenable(value!, thenFn)));
         }
 
-        // Await on non-Promise returns the value (TypeScript behavior)
-        return RuntimeValue.FromBoxed(value);
+        // Even an already available value resumes Await in a Promise job.
+        // Preserve the async frame's environment and generator state through
+        // the same suspension path as a genuinely pending guest promise.
+        var completion = new TaskCompletionSource<object?>();
+        EnqueuePromiseJob(() => completion.TrySetResult(value));
+        return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(completion.Task));
     }
 
     /// <summary>

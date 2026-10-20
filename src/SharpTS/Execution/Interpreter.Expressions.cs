@@ -1462,9 +1462,11 @@ public partial class Interpreter
             IndexTarget.GlobalThis t => ResolveGlobalThisRead(t.Target, t.Key),
             IndexTarget.BuiltInPrototypeString t => ReadBuiltInPrototypeIndex(t.Target, t.Key),
             IndexTarget.HeadersString t => (object?)t.Target.Get(t.Key) ?? SharpTSUndefined.Instance,
-            IndexTarget.StringChar t => (t.Index >= 0 && t.Index < t.Target.Length)
+            IndexTarget.StringChar t when t.Index >= 0 => t.Index < t.Target.Length
                 ? (object)t.Target[t.Index].ToString()
-                : SharpTSUndefined.Instance,
+                : GetPropertyValue(t.Target, t.Index.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture)),
+            IndexTarget.StringChar => SharpTSUndefined.Instance,
             IndexTarget.Unsupported => throw new InterpreterException("Index access not supported on this type."),
             _ => throw new InterpreterException("Index access not supported on this type.")
         });

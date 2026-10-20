@@ -1158,6 +1158,7 @@ public partial class RuntimeEmitter
         var intIdxLocal = il.DeclareLocal(_types.Int32);
         var doubleIdxLocal = il.DeclareLocal(_types.Double);
         var strOobLabel = il.DefineLabel();
+        var strAbsentCharacterLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Stloc, strLocal);
@@ -1210,14 +1211,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, strNamedPropertyLabel);
 
         il.MarkLabel(idxParseDoneLabel);
-        // Bounds check: if idx < 0 || idx >= length, return undefined (JS semantics)
+        // A present virtual own character wins. An absent canonical index
+        // continues through ordinary lookup with the original primitive receiver.
         il.Emit(OpCodes.Ldloc, intIdxLocal);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Blt, strOobLabel);
         il.Emit(OpCodes.Ldloc, intIdxLocal);
         il.Emit(OpCodes.Ldloc, strLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.String, "get_Length"));
-        il.Emit(OpCodes.Bge, strOobLabel);
+        il.Emit(OpCodes.Bge, strAbsentCharacterLabel);
         il.Emit(OpCodes.Ldloc, strLocal);
         il.Emit(OpCodes.Ldloc, intIdxLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
@@ -1225,6 +1227,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, charLocal);
         il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Char, "ToString"));
         il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(strAbsentCharacterLabel);
+        // Preserve the existing noncanonical-name behavior (#2799). TryParse
+        // also admits spellings such as "03" and "+3"; only the canonical
+        // decimal spelling gets this absent-character fallback.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, strNamedPropertyLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldloca, intIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(typeof(System.Globalization.CultureInfo), "InvariantCulture").GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "ToString", typeof(IFormatProvider)));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, strOobLabel);
 
         il.MarkLabel(strNamedPropertyLabel);
         il.Emit(OpCodes.Ldarg_0);

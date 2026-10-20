@@ -67,8 +67,6 @@ public sealed class CallableAbsentDeletionTests
                     Object.hasOwn(target, 'length'), Object.getOwnPropertyDescriptor(target, 'length') === undefined);
             }
             """, "true true\ntrue true true false true true\ntrue true true false true true true true false true\ntrue true\ntrue true true false true true\ntrue true true false true true true true false true\ntrue true\ntrue true true false true true\ntrue true true false true true true true false true\ntrue true\ntrue true true false true true\ntrue true true false true true true true false true\ntrue true\ntrue true true false true true\ntrue true true false true true true true false true\ntrue true\ntrue true true false true true\ntrue true true false true true true true false true\n"];
-        // #2359 tracks inherited `in` lookup on compiled function prototypes; its original
-        // assertion is preserved in artifacts/p2-goal/2680-function-in-owner-audit/.
         yield return ["inherited-nonconfigurable-accessor-is-not-an-own-delete", """
             function declaration() {}
             async function asyncDeclaration() {}
@@ -86,13 +84,13 @@ public sealed class CallableAbsentDeletionTests
                 Object.defineProperty(target, 'own', { value: 7, configurable: true });
                 Object.freeze(target);
                 console.log(removeDot(target), removeIndex(target), Reflect.deleteProperty(target, 'inherited'),
-                    Object.hasOwn(target, 'inherited'), Object.getPrototypeOf(target) === selectedPrototype,
+                    Object.hasOwn(target, 'inherited'), 'inherited' in target,
                     Object.getOwnPropertyDescriptor(target, 'inherited') === undefined);
                 console.log(delete target.own, delete target['own'], Reflect.deleteProperty(target, 'own'),
                     Object.hasOwn(target, 'own'), Object.getOwnPropertyDescriptor(target, 'own')!.value,
                     Object.getOwnPropertyDescriptor(selectedPrototype, 'inherited')!.get === getter, gets);
             }
-            """, "true true true false true true\nfalse false false true 7 true 0\ntrue true true false true true\nfalse false false true 7 true 0\ntrue true true false true true\nfalse false false true 7 true 0\ntrue true true false true true\nfalse false false true 7 true 0\ntrue true true false true true\nfalse false false true 7 true 0\ntrue true true false true true\nfalse false false true 7 true 0\n"];
+            """ + "\r\n", "true true true false true true\nfalse false false true 7 true 0\ntrue true true false true true\nfalse false false true 7 true 0\ntrue true true false true true\nfalse false false true 7 true 0\ntrue true true false true true\nfalse false false true 7 true 0\ntrue true true false true true\nfalse false false true 7 true 0\ntrue true true false true true\nfalse false false true 7 true 0\n"];
     }
 
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>

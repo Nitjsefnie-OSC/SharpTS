@@ -24,7 +24,8 @@ public partial class RuntimeEmitter
         EmittedSymbolAccessorRuntime SymbolAccessors,
         EmittedSymbolRuntime Symbols,
         TypeBuilder TSFunctionType,
-        Type UndefinedType
+        Type UndefinedType,
+        FunctionOwnPrototypeInputs OwnPrototype
     );
 
     private readonly record struct PropertyIsEnumerableHelperInputs(
@@ -241,6 +242,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
         il.Emit(OpCodes.Brfalse, notFunctionPrototype);
+        EmitFunctionOwnPrototypeGuard(il, () => il.Emit(OpCodes.Ldarg_0), inputs.OwnPrototype, notFunctionPrototype);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "prototype");
         il.Emit(OpCodes.Call, inputs.GetProperty);

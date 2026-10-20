@@ -881,7 +881,8 @@ public partial class RuntimeEmitter
                 runtime.SymbolAccessors,
                 runtime.Symbols,
                 runtime.FunctionValues.Type,
-                runtime.Sentinels.UndefinedType
+                runtime.Sentinels.UndefinedType,
+                new FunctionOwnPrototypeInputs(runtime.FunctionValues, runtime.FunctionAttributes, runtime.GeneratorPrototypes.Kind)
             )
         );
         // propertyIsEnumerable shares HasOwn's plumbing (PDS lookup + dict
@@ -1504,7 +1505,8 @@ public partial class RuntimeEmitter
                 runtime.StringCoercion,
                 runtime.Symbols,
                 runtime.ReflectedMethods.ToPascalCase,
-                runtime.Sentinels.UndefinedType
+                runtime.Sentinels.UndefinedType,
+                runtime.FunctionValues.Type
             )
         );
         // Array SetElement helpers - must come BEFORE GetIndex/SetIndex which reference them.
@@ -2018,7 +2020,8 @@ public partial class RuntimeEmitter
                 runtime.FunctionValues.Type,
                 runtime.Sentinels.UndefinedInstance,
                 runtime.Sentinels.UndefinedType,
-                runtime.FunctionPrototypes.Type
+                runtime.FunctionPrototypes.Type,
+                new FunctionOwnPrototypeInputs(runtime.FunctionValues, runtime.FunctionAttributes, runtime.GeneratorPrototypes.Kind)
             )
         );
         // Math.* adapters must precede gOPD so its Math singleton synth can
@@ -2072,7 +2075,8 @@ public partial class RuntimeEmitter
                 runtime.FunctionConstruction.GetOrCreate,
                 runtime.FunctionValues.Type,
                 runtime.Sentinels.UndefinedInstance,
-                runtime.Sentinels.UndefinedType
+                runtime.Sentinels.UndefinedType,
+                new FunctionOwnPrototypeInputs(runtime.FunctionValues, runtime.FunctionAttributes, runtime.GeneratorPrototypes.Kind)
             )
         );
         EmitObjectDefineProperties(

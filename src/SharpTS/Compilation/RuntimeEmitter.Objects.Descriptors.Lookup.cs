@@ -60,7 +60,8 @@ public partial class RuntimeEmitter
         EmittedObjectStateRuntime ObjectState,
         EmittedPromiseRuntime? Promise,
         TypeBuilder TSFunctionType,
-        Type UndefinedType
+        Type UndefinedType,
+        FunctionOwnPrototypeInputs OwnPrototype
     );
 
     private readonly record struct GetOwnDescriptorConstructorReceiverInputs(
@@ -481,6 +482,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(
             _types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, notFnPrototypeLabel);
+        EmitFunctionOwnPrototypeGuard(il, () => il.Emit(OpCodes.Ldarg_0), inputs.OwnPrototype, returnNullLabel);
         var functionPrototypeValueLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "prototype");

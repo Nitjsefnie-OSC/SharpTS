@@ -65,7 +65,8 @@ public partial class RuntimeEmitter
         TypeBuilder TSFunctionType,
         FieldInfo UndefinedInstance,
         Type UndefinedType,
-        Type FunctionPrototypeType
+        Type FunctionPrototypeType,
+        FunctionOwnPrototypeInputs OwnPrototype
     );
 
     private readonly record struct DefinePropertyArrayLengthCoercionInputs(
@@ -141,7 +142,8 @@ public partial class RuntimeEmitter
         MethodBuilder TSFunctionGetOrCreate,
         TypeBuilder TSFunctionType,
         FieldInfo UndefinedInstance,
-        Type UndefinedType
+        Type UndefinedType,
+        FunctionOwnPrototypeInputs OwnPrototype
     );
 
     private readonly record struct SymbolKeyDescriptorLookupInputs(
@@ -719,7 +721,8 @@ public partial class RuntimeEmitter
                 inputs.ObjectStorage,
                 inputs.RegExps,
                 inputs.TSFunctionType,
-                inputs.UndefinedType
+                inputs.UndefinedType,
+                inputs.OwnPrototype
             ),
             propNameLocal
         );
@@ -1690,7 +1693,8 @@ public partial class RuntimeEmitter
                 inputs.ObjectState,
                 inputs.Promise,
                 inputs.TSFunctionType,
-                inputs.UndefinedType
+                inputs.UndefinedType,
+                inputs.OwnPrototype
             ),
             propNameLocal,
             resultDictLocal,

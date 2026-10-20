@@ -20,7 +20,8 @@ public partial class RuntimeEmitter
         EmittedObjectStorageRuntime ObjectStorage,
         EmittedRegExpRuntime RegExps,
         TypeBuilder TSFunctionType,
-        Type UndefinedType
+        Type UndefinedType,
+        FunctionOwnPrototypeInputs OwnPrototype
     );
 
     private readonly record struct DefinePropertyExistingArrayLengthInputs(
@@ -44,7 +45,8 @@ public partial class RuntimeEmitter
         EmittedDescriptorStorageRuntime DescriptorStorage,
         MethodBuilder GetProperty,
         TypeBuilder TSFunctionType,
-        Type UndefinedType
+        Type UndefinedType,
+        FunctionOwnPrototypeInputs OwnPrototype
     );
 
     private readonly record struct DefinePropertyExistingRegExpLastIndexInputs(
@@ -175,7 +177,8 @@ public partial class RuntimeEmitter
                 inputs.DescriptorStorage,
                 inputs.GetProperty,
                 inputs.TSFunctionType,
-                inputs.UndefinedType
+                inputs.UndefinedType,
+                inputs.OwnPrototype
             ),
             propNameLocal,
             existingDescLocal,
@@ -429,6 +432,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(
             _types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, notIntrinsicFunctionPrototypeLabel);
+        EmitFunctionOwnPrototypeGuard(il, () => il.Emit(OpCodes.Ldarg_0), inputs.OwnPrototype, notIntrinsicFunctionPrototypeLabel);
         var intrinsicFunctionPrototypeValueLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "prototype");

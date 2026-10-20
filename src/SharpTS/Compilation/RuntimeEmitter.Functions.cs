@@ -807,6 +807,53 @@ public partial class RuntimeEmitter
         il.MarkLabel(ordinary);
     }
 
+    private readonly record struct FunctionOwnPrototypeInputs(
+        EmittedFunctionValueRuntime FunctionValues,
+        EmittedFunctionAttributesRuntime FunctionAttributes,
+        MethodInfo GeneratorKind);
+
+    // Empty entry/fallthrough stack; branch when the intrinsic own slot is absent.
+    // This is the existing lazy-prototype policy, independent of inherited reads.
+    private void EmitFunctionOwnPrototypeGuard(ILGenerator il, Action emitFunction,
+        FunctionOwnPrototypeInputs inputs, Label noOwnPrototype)
+    {
+        var function = il.DeclareLocal(inputs.FunctionValues.Type);
+        var method = il.DeclareLocal(_types.MethodInfo);
+        var declaringType = il.DeclareLocal(_types.Type);
+        var ownPrototype = il.DefineLabel();
+        emitFunction();
+        il.Emit(OpCodes.Isinst, inputs.FunctionValues.Type);
+        il.Emit(OpCodes.Stloc, function);
+        il.Emit(OpCodes.Ldloc, function);
+        il.Emit(OpCodes.Brfalse, noOwnPrototype);
+        il.Emit(OpCodes.Ldloc, function);
+        il.Emit(OpCodes.Callvirt, inputs.FunctionValues.GetMethodInfo);
+        il.Emit(OpCodes.Stloc, method);
+        il.Emit(OpCodes.Ldloc, method);
+        il.Emit(OpCodes.Brfalse, ownPrototype);
+        // Generator kickoff functions own a prototype despite being non-constructible.
+        il.Emit(OpCodes.Ldloc, method);
+        il.Emit(OpCodes.Call, inputs.GeneratorKind);
+        il.Emit(OpCodes.Brtrue, ownPrototype);
+        il.Emit(OpCodes.Ldloc, method);
+        il.Emit(OpCodes.Ldtoken, inputs.FunctionAttributes.NonConstructibleType);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "IsDefined", _types.Type, _types.Boolean));
+        il.Emit(OpCodes.Brtrue, noOwnPrototype);
+        il.Emit(OpCodes.Ldloc, method);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(MemberInfo), "DeclaringType").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, declaringType);
+        il.Emit(OpCodes.Ldloc, declaringType);
+        il.Emit(OpCodes.Brfalse, ownPrototype);
+        il.Emit(OpCodes.Ldloc, declaringType);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(MemberInfo), "Name").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "$Runtime");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, noOwnPrototype);
+        il.MarkLabel(ownPrototype);
+    }
+
     /// <summary>
     /// Emits the GetFunctionMethod helper that returns bind/call/apply wrappers.
     /// </summary>
@@ -947,6 +994,28 @@ public partial class RuntimeEmitter
         il.MarkLabel(ordinaryFunctionLookup);
         // Generator callables inherit through their own kind's intrinsic graph.
         EmitGeneratorFunctionGet(il, inputs);
+
+        // Inherited properties follow the actual internal prototype, even when
+        // only Function.prototype's own parent has changed. Preserve genuine own slots.
+        var defaultFunctionLookup = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.FunctionValues.Type);
+        il.Emit(OpCodes.Brfalse, defaultFunctionLookup);
+        foreach (string ownName in new[] { "name", "length" })
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, ownName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brtrue, defaultFunctionLookup);
+        }
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "prototype");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brfalse, inheritedFunctionProperty);
+        EmitFunctionOwnPrototypeGuard(il, () => il.Emit(OpCodes.Ldarg_0),
+            new FunctionOwnPrototypeInputs(inputs.FunctionValues, inputs.FunctionAttributes, inputs.GeneratorKind),
+            inheritedFunctionProperty);
+        il.MarkLabel(defaultFunctionLookup);
 
         // Check for "bind"
         il.Emit(OpCodes.Ldarg_1);

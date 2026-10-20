@@ -91,11 +91,10 @@ public partial class ILCompiler
     }
 
     /// <summary>
-    /// Lifts an async generator's captured-AND-mutated locals into a function-level display class so a
-    /// sync arrow/callback inside the body that writes such a variable shares storage with the generator
-    /// instead of snapshotting it by value (#725). The async-generator state machine is a reference type,
-    /// so the DC field persists across awaits and yields. No-op when there is no write-capture, leaving
-    /// fully-standalone output unchanged. Mirrors <see cref="DefineGeneratorFunctionDisplayClass"/>.
+    /// Lifts an async generator's captured locals that its body or a sync arrow writes into a shared
+    /// function display class, so read-only closures also observe owner writes across yields (#2751).
+    /// The async-generator state machine retains that DC across awaits and yields. Existing forwarded
+    /// captures use the same storage; unselected captures retain their by-value path.
     /// </summary>
     private void DefineAsyncGeneratorFunctionDisplayClass(
         Stmt.Function funcStmt, string qualifiedName, AsyncGeneratorStateMachineBuilder smBuilder)

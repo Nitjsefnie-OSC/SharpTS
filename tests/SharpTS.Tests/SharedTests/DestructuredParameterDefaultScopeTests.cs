@@ -184,6 +184,7 @@ public sealed class DestructuredParameterDefaultScopeTests
             console.log("expression", expressed.next().value, expressed.next().value);
             async function* asynchronous([value]: any[], read: any = () => value, next = value) {
                 yield next + ":" + read();
+                value = 2;
                 yield next + ":" + read();
             }
             const asyncIterator = asynchronous([1]);
@@ -191,7 +192,7 @@ public sealed class DestructuredParameterDefaultScopeTests
                 console.log("async first", first.value);
                 return asyncIterator.next();
             }).then(second => console.log("async second", second.value));
-            """, "declaration 1:1 1:2\nexpression 1:1 1:2\nasync first 1:1\nasync second 1:1\n"];
+            """, "declaration 1:1 1:2\nexpression 1:1 1:2\nasync first 1:1\nasync second 1:2\n"];
     }
 
     public static IEnumerable<object[]> StandaloneCases() => Cases().Concat(SuspendedCases()).Concat(

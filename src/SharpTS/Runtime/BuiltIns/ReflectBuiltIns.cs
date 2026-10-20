@@ -551,6 +551,8 @@ public static class ReflectBuiltIns
                             return RuntimeValue.FromBoolean(klass.DefineStaticProperty(propertyKey, descriptor));
                         case SharpTSClassPrototype prototype:
                             return RuntimeValue.FromBoolean(prototype.DefineExtraProperty(propertyKey, descriptor));
+                        case SharpTSGlobalThis globalThis:
+                            return RuntimeValue.FromBoolean(globalThis.DefineProperty(propertyKey, descriptor));
                         default:
                             return RuntimeValue.False;
                     }

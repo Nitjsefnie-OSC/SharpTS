@@ -14,12 +14,19 @@ public partial class RuntimeEmitter
         ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
         var jobType = EmitPromiseResolveThenableJob(moduleBuilder, runtime);
-        var method = runtime.RequirePromise().ResolveValueMethod;
-        var il = method.GetILGenerator();
+        var promise = runtime.RequirePromise();
+        var entryIl = promise.ResolveValueMethod.GetILGenerator();
+        entryIl.Emit(OpCodes.Ldarg_0);
+        entryIl.Emit(OpCodes.Ldnull);
+        entryIl.Emit(OpCodes.Call, promise.ResolveValueWithRootMethod);
+        entryIl.Emit(OpCodes.Ret);
+
+        var il = promise.ResolveValueWithRootMethod.GetILGenerator();
         var tcsType = _types.TaskCompletionSourceOfObject;
         var resultLocal = il.DeclareLocal(_types.TaskOfObject);
         var thenLocal = il.DeclareLocal(_types.Object);
         var tcsLocal = il.DeclareLocal(tcsType);
+        var rootLocal = il.DeclareLocal(_types.TaskOfObject);
         var jobLocal = il.DeclareLocal(jobType.Type);
         var exceptionLocal = il.DeclareLocal(_types.Exception);
         var wrapValueLabel = il.DefineLabel();
@@ -62,9 +69,23 @@ public partial class RuntimeEmitter
         // AwaitValueToTask also gives a pending guest await a reaction-job facade.
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(tcsType));
         il.Emit(OpCodes.Stloc, tcsLocal);
+
+        // Recursive jobs retain the public Promise.resolve task. A fresh entry
+        // owns its newly created task; each job still has a separate resolving pair.
+        var haveRootLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stloc, rootLocal);
+        il.Emit(OpCodes.Ldloc, rootLocal);
+        il.Emit(OpCodes.Brtrue, haveRootLabel);
+        il.Emit(OpCodes.Ldloc, tcsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(tcsType, "Task").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, rootLocal);
+        il.MarkLabel(haveRootLabel);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, thenLocal);
         il.Emit(OpCodes.Ldloc, tcsLocal);
+        il.Emit(OpCodes.Ldloc, rootLocal);
         il.Emit(OpCodes.Newobj, jobType.Constructor);
         il.Emit(OpCodes.Stloc, jobLocal);
 
@@ -114,7 +135,7 @@ public partial class RuntimeEmitter
         var ctor = typeBuilder.DefineConstructor(
             MethodAttributes.Public,
             CallingConventions.Standard,
-            [_types.Object, _types.Object, _types.TaskCompletionSourceOfObject]);
+            [_types.Object, _types.Object, _types.TaskCompletionSourceOfObject, _types.TaskOfObject]);
         {
             var il = ctor.GetILGenerator();
             var boxLocal = il.DeclareLocal(typeof(System.Runtime.CompilerServices.StrongBox<bool>));
@@ -132,7 +153,8 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_3);
             il.Emit(OpCodes.Ldloc, boxLocal);
-            il.Emit(OpCodes.Newobj, runtime.RequirePromise().ResolveCallbackCtor);
+            il.Emit(OpCodes.Ldarg_S, (byte)4);
+            il.Emit(OpCodes.Newobj, runtime.RequirePromise().ResolveCallbackWithRootCtor);
             il.Emit(OpCodes.Stfld, resolveField);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_3);

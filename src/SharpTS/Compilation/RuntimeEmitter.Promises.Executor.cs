@@ -1461,6 +1461,7 @@ public partial class RuntimeEmitter
         var tcsField = typeBuilder.DefineField("_tcs", typeof(TaskCompletionSource<object?>), FieldAttributes.Private);
         var lockField = typeBuilder.DefineField("_lock", _types.Object, FieldAttributes.Private);
         var settledField = typeBuilder.DefineField("_settled", typeof(bool), FieldAttributes.Private);
+        var rootField = typeBuilder.DefineField("_root", _types.TaskOfObject, FieldAttributes.Private);
         var sharedSettledType = typeof(System.Runtime.CompilerServices.StrongBox<bool>);
         var sharedSettledValue = sharedSettledType.GetField("Value")!;
 
@@ -1533,10 +1534,33 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_2);
             il.Emit(OpCodes.Stfld, lockField);
+            // Existing callers own the capability represented by tcs.Task.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.TaskCompletionSourceOfObject, "Task").GetGetMethod()!);
+            il.Emit(OpCodes.Stfld, rootField);
             // this._settled = false
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldc_I4_0);
             il.Emit(OpCodes.Stfld, settledField);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // Recursive thenable jobs keep the original public capability while
+        // retaining their own target TCS and once-only resolving pair.
+        var rootedCtor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.TaskCompletionSourceOfObject, _types.Object, _types.TaskOfObject]);
+        {
+            var il = rootedCtor.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Call, ctor);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_3);
+            il.Emit(OpCodes.Stfld, rootField);
             il.Emit(OpCodes.Ret);
         }
 
@@ -1553,6 +1577,7 @@ public partial class RuntimeEmitter
             var endLockLabel = il.DefineLabel();
             var notTaskLabel = il.DefineLabel();
             var endLabel = il.DefineLabel();
+            var selfResolutionLabel = il.DefineLabel();
 
             var valueLocal = il.DeclareLocal(_types.Object);
             var tcsLocal = il.DeclareLocal(typeof(TaskCompletionSource<object?>));
@@ -1610,6 +1635,14 @@ public partial class RuntimeEmitter
 
             il.MarkLabel(endLockLabel);
 
+            // Check the original public task before any observable `then` Get.
+            // Only exact task identity counts: a distinct wrapper or foreign
+            // promise retains its own resolving functions and ownership.
+            il.Emit(OpCodes.Ldloc, valueLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, rootField);
+            il.Emit(OpCodes.Beq, selfResolutionLabel);
+
             // ECMAScript Promise Resolve Functions only perform thenable
             // assimilation for Objects (callable functions included). Primitive
             // resolutions can fulfill the target capability directly. Routing a
@@ -1664,7 +1697,9 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Br, haveAdoptedTaskLabel);
             il.MarkLabel(resolveOrdinaryValueLabel);
             il.Emit(OpCodes.Ldloc, valueLocal);
-            il.Emit(OpCodes.Call, runtime.RequirePromise().ResolveValueMethod);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, rootField);
+            il.Emit(OpCodes.Call, runtime.RequirePromise().ResolveValueWithRootMethod);
             il.MarkLabel(haveAdoptedTaskLabel);
             il.Emit(OpCodes.Stloc, adoptedTaskLocal);
             // Resolving a promise with itself rejects with TypeError rather than
@@ -1674,6 +1709,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, tcsLocal);
             il.Emit(OpCodes.Callvirt, typeof(TaskCompletionSource<object?>).GetProperty("Task")!.GetGetMethod()!);
             il.Emit(OpCodes.Bne_Un, notSelfResolutionLabel);
+            il.MarkLabel(selfResolutionLabel);
             il.Emit(OpCodes.Ldloc, tcsLocal);
             il.Emit(OpCodes.Ldstr, "Chaining cycle detected for promise");
             il.Emit(OpCodes.Newobj, runtime.Errors.TypeErrorConstructor);
@@ -1723,6 +1759,7 @@ public partial class RuntimeEmitter
         typeBuilder.CreateType();
         runtime.RequirePromise().ResolveCallbackType = typeBuilder;
         runtime.RequirePromise().ResolveCallbackCtor = ctor;
+        runtime.RequirePromise().ResolveCallbackWithRootCtor = rootedCtor;
         runtime.RequirePromise().ResolveCallbackInvoke = invokeMethod;
         return typeBuilder;
     }

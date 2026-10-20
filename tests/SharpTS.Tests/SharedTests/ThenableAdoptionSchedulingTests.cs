@@ -101,11 +101,64 @@ public sealed class ThenableAdoptionSchedulingTests
             const observed = pending.catch((error: any) => console.log(error instanceof TypeError));
             setTimeout(() => console.log("timer"), 0);
             """, "true\ntimer\n"];
+        yield return ["deeper-cycle-with-stored-definition-result", """
+            const state = { reads: 0 };
+            const marker = {};
+            const value: any = { then(resolve: any) {
+                resolve({ then(again: any) {
+                    again({ then(last: any) { last(pending); } });
+                } });
+            } };
+            const pending: any = Promise.resolve(value);
+            const observed = pending.catch((error: any) => console.log(error instanceof TypeError, state.reads));
+            const configured = Object.defineProperty(pending, 'then', {
+                configurable: true,
+                get() { state.reads++; throw marker; }
+            });
+            setTimeout(() => console.log('timer', state.reads), 0);
+            """, "true 0\ntimer 0\n"];
+        yield return ["timer-released-nested-self-resolution", """
+            const state = { release: null as any };
+            const value: any = { then(resolve: any) {
+                resolve({ then(again: any) { state.release = again; } });
+            } };
+            const pending: any = Promise.resolve(value);
+            const observed = pending.catch((error: any) => console.log(error instanceof TypeError));
+            setTimeout(() => {
+                console.log('release');
+                state.release(pending);
+                setTimeout(() => console.log('done'), 0);
+            }, 0);
+            """, "release\ntrue\ndone\n"];
+        yield return ["first-settlement-and-independent-foreign-promise-adoption", """
+            const marker = {};
+            let first: any;
+            const stable: any = { then(resolve: any, reject: any) {
+                resolve(17);
+                resolve(first);
+                reject(marker);
+                throw marker;
+            } };
+            first = Promise.resolve(stable);
+            const firstObserved = first.then((value: any) => console.log('first', value));
+            function make(cycle: boolean, foreign: any) {
+                let pending: any;
+                const value: any = { then(resolve: any) {
+                    resolve({ then(again: any) { again(cycle ? pending : foreign); } });
+                } };
+                pending = Promise.resolve(value);
+                return pending;
+            }
+            const cycle = make(true, 0);
+            const foreign = Promise.resolve(23);
+            const adopted = make(false, foreign);
+            const cycleObserved = cycle.catch((error: any) => console.log('cycle', error instanceof TypeError));
+            const foreignObserved = adopted.then((value: any) => console.log('foreign', value, adopted !== foreign));
+            setTimeout(() => console.log('timer'), 0);
+            """, "first 17\ncycle true\nforeign 23 true\ntimer\n"];
     }
 
-    // #2741 independently owns compiled nested self-resolution.
-    public static IEnumerable<object[]> CompiledCases() => Cases()
-        .Where(row => (string)row[0] != "nested-self-resolution");
+    public static IEnumerable<object[]> CompiledCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases() => Cases()
         .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted })
@@ -115,7 +168,11 @@ public sealed class ThenableAdoptionSchedulingTests
     public static IEnumerable<object[]> SavedCases() => Cases()
         .Where(row => (string)row[0] is "original-nested-adoption" or
             "timer-before-nested-resolution-and-reactions" or
-            "captured-then-and-microtask-fifo" or "loop-inside-then-keeps-job-deferred")
+            "captured-then-and-microtask-fifo" or "loop-inside-then-keeps-job-deferred" or
+            "nested-self-resolution" or
+            "deeper-cycle-with-stored-definition-result" or
+            "timer-released-nested-self-resolution" or
+            "first-settlement-and-independent-foreign-promise-adoption")
         .Concat(SynchronousLoopMicrotaskTests.Cases()
             .Where(row => (string)row[0] == "thenable-and-due-timer"));
 

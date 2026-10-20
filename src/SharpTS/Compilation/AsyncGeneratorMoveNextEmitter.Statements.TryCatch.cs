@@ -145,6 +145,10 @@ public partial class AsyncGeneratorMoveNextEmitter
     private FieldBuilder GetPendingExceptionField() =>
         _pendingExceptionField ??= DefineStateMachineField("<>pendingException", typeof(object));
 
+    // Each catch-less try owns its exception state across suspending cleanup.
+    // Nested finally constructs must not overwrite an enclosing pending failure.
+    private int _finallyExceptionStateCount;
+
     // ---- Throw routing (generator-specific) -----------------------------------------------------
     // The loop-scope methods and break/continue (with their finally routing) are inherited from
     // StateMachineExitRoutingEmitter. An async generator additionally routes a `throw` escaping a
@@ -321,6 +325,15 @@ public partial class AsyncGeneratorMoveNextEmitter
         var afterTryBodyLabel = _il.DefineLabel();
         var afterTryCatchLabel = _il.DefineLabel();
 
+        FieldBuilder? finallyExceptionField = null;
+        FieldBuilder? finallyExceptionPresentField = null;
+        if (t.CatchBlock == null && t.FinallyBlock != null && AnyStmtContainsSuspension(t.FinallyBlock))
+        {
+            int id = _finallyExceptionStateCount++;
+            finallyExceptionField = DefineStateMachineField($"<>finallyException{id}", typeof(object));
+            finallyExceptionPresentField = DefineStateMachineField($"<>finallyExceptionPresent{id}", typeof(bool));
+        }
+
         // No exception captured yet.
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
@@ -407,11 +420,35 @@ public partial class AsyncGeneratorMoveNextEmitter
         // Finally: always runs — on normal completion, after a caught exception, or on a routed exit.
         if (t.FinallyBlock != null)
         {
+            // IL locals reset when cleanup yields or awaits. Preserve presence
+            // independently from the value so null/undefined failures survive too.
+            if (finallyExceptionField != null)
+            {
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                _il.Emit(OpCodes.Stfld, finallyExceptionField);
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldloc, exceptionPresentLocal);
+                _il.Emit(OpCodes.Stfld, finallyExceptionPresentField!);
+            }
+
             _inHandlerBody = true;
             _finallyBodyDepth++;
             EmitHandlerBodyWithCapture(t.FinallyBlock);
             _finallyBodyDepth--;
             _inHandlerBody = previousInHandler;
+
+            // Only normal cleanup reaches here; a replacement return/throw has
+            // already taken its existing abrupt-exit route.
+            if (finallyExceptionField != null)
+            {
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldfld, finallyExceptionField);
+                _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldfld, finallyExceptionPresentField!);
+                _il.Emit(OpCodes.Stloc, exceptionPresentLocal);
+            }
 
             // A real exception arising in the finally body itself was already routed out by
             // EmitHandlerBodyWithCapture (superseding any pending exit / external return), so the

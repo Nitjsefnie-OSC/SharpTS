@@ -12,6 +12,13 @@ public partial class TypeChecker
 {
     private Func<IndexedAccessTypeNode, TypeInfo, TypeInfo, TypeInfo?>? _classFieldIndexedAccessResolver;
 
+    private static bool IsClassFieldEntityName(Expr expression) => expression switch
+    {
+        Expr.Variable => true,
+        Expr.Get get => IsClassFieldEntityName(get.Object),
+        _ => false
+    };
+
     /// <summary>
     /// Maps a class computed method/accessor key expression to the canonical well-known-symbol member
     /// name the type system uses (<c>Symbol.iterator</c> → <c>@@iterator</c>,
@@ -346,10 +353,10 @@ public partial class TypeChecker
             }
             TypeInfo fieldType = ResolveFieldType(field);
 
-            // TS1166: a computed DATA-property name (a class field, unlike a method/accessor) must be a
-            // literal type or a 'unique symbol'. A plain, non-unique `symbol` — e.g. `[Symbol()]` —
-            // is not allowed; a well-known symbol (`[Symbol.iterator]`) is a unique symbol, so it's fine.
-            if (field.ComputedKey != null && CheckExpr(field.ComputedKey) is TypeInfo.Symbol)
+            // TS1166 permits entity-name keys independently of their symbol type.
+            // Other dynamic symbol expressions, such as `[Symbol()]`, remain invalid.
+            if (field.ComputedKey != null && CheckExpr(field.ComputedKey) is TypeInfo.Symbol &&
+                !IsClassFieldEntityName(field.ComputedKey))
             {
                 RecordTypeError(new TypeCheckException(
                     "A computed property name in a class property declaration must have a simple literal type or a 'unique symbol' type.",

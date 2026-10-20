@@ -60,6 +60,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     private readonly HashSet<Expr.Variable> _transportedClassSelfReferences = new(ReferenceEqualityComparer.Instance);
     private int _loopBodyDepth;
     private int _classDepth;
+    private int? _nominalStaticBlockClassDepth;
+    private IReadOnlyDictionary<Stmt.Class, Expr.ClassExpr>? _runtimeClassDeclarations;
     private object? _currentModuleOwner;
 
     public Dictionary<object, Dictionary<string, Token>> ClosureCaptures { get; } = new(ReferenceEqualityComparer.Instance);
@@ -101,7 +103,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         return false;
     }
 
-    public void Analyze(List<Stmt> statements, IReadOnlyDictionary<Stmt, object>? moduleOwners = null)
+    public void Analyze(List<Stmt> statements, IReadOnlyDictionary<Stmt, object>? moduleOwners = null,
+        IReadOnlyDictionary<Stmt.Class, Expr.ClassExpr>? runtimeClassDeclarations = null)
     {
         _owners.Clear(); _scopes.Clear(); _declarations.Clear(); _tentative.Clear(); _cells.Clear(); ClosureCaptures.Clear();
         _privateSelfCaptures.Clear();
@@ -117,6 +120,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         _transportedClassSelfReferences.Clear();
         _loopBodyDepth = 0;
         _classDepth = 0;
+        _nominalStaticBlockClassDepth = null;
+        _runtimeClassDeclarations = runtimeClassDeclarations;
         _currentModuleOwner = null;
         _owners.Add(new(new object(), !HasDirectSuspension(statements), false));
         EnterScope(statements, allowCandidates: false, hoistVars: true, moduleOwners: moduleOwners);
@@ -551,8 +556,9 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         int previousDepth = _loopBodyDepth;
         _loopBodyDepth = 0;
         bool directSuspension = HasDirectSuspension(body, expressionBody);
-        _owners.Add(new(node, synchronous && _classDepth == 0 && !directSuspension,
-            node is Expr.ArrowFunction { IsGenerator: false } && _classDepth == 0,
+        bool localCellScope = _classDepth == 0 || _nominalStaticBlockClassDepth == _classDepth;
+        _owners.Add(new(node, synchronous && localCellScope && !directSuspension,
+            node is Expr.ArrowFunction { IsGenerator: false } && localCellScope,
             canOwnGeneratorCells, canRelayClassSelf));
         EnterScope([], allowCandidates: false);
         try
@@ -639,7 +645,11 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             foreach (var method in stmt.Methods) VisitClassMethod(method);
             if (stmt.Accessors is { } accessors) foreach (var accessor in accessors) VisitAccessor(accessor);
             if (stmt.AutoAccessors is { } autoAccessors) foreach (var accessor in autoAccessors) VisitAutoAccessor(accessor);
-            if (stmt.StaticInitializers is { } initializers) foreach (var initializer in initializers) Visit(initializer);
+            if (stmt.StaticInitializers is { } initializers)
+                foreach (var initializer in initializers)
+                    if (initializer is Stmt.StaticBlock block && _runtimeClassDeclarations?.ContainsKey(stmt) != true)
+                        VisitNominalStaticBlock(block);
+                    else Visit(initializer);
         });
     }
 
@@ -670,6 +680,23 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         if (accessor.ComputedKey is { } key) Visit(key);
         VisitCallable(accessor, accessor.SetterParam is { } parameter ? [parameter] : [],
             accessor.Body, null, synchronous: true, self: null, canOwnGeneratorCells: false);
+    }
+
+    private void VisitNominalStaticBlock(Stmt.StaticBlock block)
+    {
+        // Reuse token-owned live lexical cells only for nominal static blocks.
+        // Nested class expressions and their var snapshot policy remain barriers.
+        var previousDepth = _nominalStaticBlockClassDepth;
+        _nominalStaticBlockClassDepth = _classDepth;
+        _owners.Add(new(block, true, false, canOwnGeneratorCells: false));
+        EnterScope(block.Body, allowCandidates: false, hoistVars: true, ordinaryHandler: true);
+        try { foreach (var statement in block.Body) Visit(statement); }
+        finally
+        {
+            _scopes.Pop();
+            _owners.RemoveAt(_owners.Count - 1);
+            _nominalStaticBlockClassDepth = previousDepth;
+        }
     }
 
     protected override void VisitStaticBlock(Stmt.StaticBlock block)

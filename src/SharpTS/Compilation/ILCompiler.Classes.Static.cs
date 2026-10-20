@@ -194,11 +194,9 @@ public partial class ILCompiler
                         break;
 
                     case Stmt.StaticBlock block:
-                        // Emit block body statements
-                        foreach (var stmt in block.Body)
-                        {
-                            emitter.EmitStatement(stmt);
-                        }
+                        // Enter the ordinary lexical scope/cell storage for this block;
+                        // closures retain its cells while sibling blocks stay independent.
+                        emitter.EmitStatement(new Stmt.Block(block.Body));
                         break;
                 }
             }

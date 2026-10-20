@@ -325,7 +325,7 @@ public class ClosureAnalyzer : AstVisitorBase
         // Resolve lexical declaration identities before ordinary capture discovery.
         // A named class expression's immutable self is carried by its evaluated
         // definition, independently of any same-spelled outer variable storage.
-        _bodyCells.Analyze(statements, moduleOwners);
+        _bodyCells.Analyze(statements, moduleOwners, _runtimeClassDeclarations);
         if (checkedTypes != null) _bodyCells.MarkUndefinedBodyVarReferences(checkedTypes);
         _checkedTypes = checkedTypes;
         _scopeStack.Push([]);
@@ -785,6 +785,10 @@ public class ClosureAnalyzer : AstVisitorBase
             .Concat((stmt.AutoAccessors ?? []).Where(accessor => accessor.Initializer != null)
                 .Select(accessor => (Stmt)new Stmt.Expression(accessor.Initializer!)))
             .ToList());
+        // Nominal static blocks are independent invocation scopes. Their arrows
+        // need both local capture discovery and the lexical class receiver.
+        foreach (var block in (stmt.StaticInitializers ?? []).OfType<Stmt.StaticBlock>())
+            AnalyzeFunctionBody(block, [], block.Body);
         foreach (var method in stmt.Methods)
         {
             // Skip overload signatures (no body)

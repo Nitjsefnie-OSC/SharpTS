@@ -32,14 +32,8 @@ public partial class ILCompiler
         var ctx = GetDefinitionContext();
         string qualifiedFunctionName = ctx.GetQualifiedFunctionName(funcStmt.Name.Lexeme);
 
-        HashSet<Expr.Await> suspensionFreeAwaits = FindSuspensionFreeAwaits(
-            funcStmt, ctx, analysis);
-        if (suspensionFreeAwaits.Count > 0)
-        {
-            analysis = _async.Analyzer.Analyze(funcStmt, suspensionFreeAwaits, EmitDebugSymbols,
-                _closures.Analyzer);
-            _async.SuspensionFreeAwaits[qualifiedFunctionName] = suspensionFreeAwaits;
-        }
+        // A fulfilled Promise still suspends an explicit await into a job.
+        // Only functions with no await points may use the primitive core.
 
         if (CanEmitSuspensionFreePrimitiveAsyncFunction(
                 funcStmt, qualifiedFunctionName, analysis))
@@ -49,6 +43,7 @@ public partial class ILCompiler
             return;
         }
 
+        var bodyAnalysis = analysis;
         analysis = AddAsyncReturnCompletionState(analysis);
 
         // Create state machine builder
@@ -106,7 +101,7 @@ public partial class ILCompiler
 
         // Create function-level display class for captured locals (same as sync functions).
         // This enables closure mutation sharing between the async state machine and sync inner arrows.
-        RegisterAsyncFunctionDisplayClass(funcStmt, qualifiedFunctionName, analysis);
+        RegisterAsyncFunctionDisplayClass(funcStmt, qualifiedFunctionName, bodyAnalysis);
 
         // If a function DC was created, add a field on the state machine to hold it
         if (_closures.FunctionDisplayClasses.TryGetValue(qualifiedFunctionName, out var funcDC))
@@ -383,8 +378,7 @@ public partial class ILCompiler
     /// A primitive async function with no suspension points does not need an
     /// <see cref="System.Runtime.CompilerServices.AsyncTaskMethodBuilder{TResult}"/> state
     /// machine. Keep the proof deliberately narrow: a free function with a final primitive
-    /// return, simple required parameters, no closure/dynamic-receiver machinery, and only awaits
-    /// already proven non-suspending (stable primitive cores or intrinsic primitive resolves). Its public
+    /// return, simple required parameters, no closure/dynamic-receiver machinery, and no awaits. Its public
     /// Task&lt;object?&gt; ABI remains identical to the ordinary async stub.
     /// </summary>
     private bool CanEmitSuspensionFreePrimitiveAsyncFunction(
@@ -478,9 +472,9 @@ public partial class ILCompiler
 
     /// <summary>
     /// Registers the function-level display class ($functionDC) for an async free function OR async
-    /// method, keyed by <paramref name="key"/>. Lifts the captured locals a nested SYNC arrow shares —
-    /// minus the ones an async arrow captures (those use the boxed-outer hoisted-field path), keeping the
-    /// async-arrow WRITES that require reference storage for verifiable mutation. Makes the DC
+    /// method, keyed by <paramref name="key"/>. Lifts captured locals shared with nested sync arrows
+    /// and async-arrow writes. Suspending owners also lift async-arrow reads so builder copies share
+    /// authoritative reference storage instead of reading a stale boxed state machine. Makes the DC
     /// rename-aware for captured shadows via <c>DefineFunctionDisplayClass</c>, preserving shared
     /// storage when the enclosing body mutates a binding read by a closure. Records the
     /// AST node so the arrow-collection (<see cref="PropagateFunctionDCRequirements"/>) can resolve a
@@ -492,8 +486,8 @@ public partial class ILCompiler
     {
         _closures.FunctionAstNodes[key] = funcStmt;
 
-        // Collect variables captured by async arrows. By default these can't use the function DC —
-        // they're read through the boxed outer state machine in the arrow's MoveNext.
+        // Collect variables captured by async arrows. A suspending owner must share reference
+        // storage with them because the async builder can resume a copy of its boxed state machine.
         var asyncCapturedVars = new HashSet<string>();
         foreach (var arrowInfo in analysis.AsyncArrows)
         {
@@ -506,8 +500,7 @@ public partial class ILCompiler
         // machine. A boxed struct cannot be mutated in place by verifiable IL — `unbox` yields a
         // readonly managed pointer, so `stfld` through it fails verification and can drop the write in
         // complex state machines (#625). Routing the write through `outer.functionDC.field` (a class
-        // reference) is verifiable. Read-only captures stay on the SM field (the existing, working
-        // load path).
+        // reference) is verifiable. Owners without suspension can retain read-only SM captures.
         var promotedToFunctionDC = ComputeArrowWrittenCapturesToPromote(analysis.AsyncArrows);
         // Lowered declarations are instantiated before the body's lexical initializers.
         // Their read captures therefore need the owner's live environment even when the
@@ -519,10 +512,10 @@ public partial class ILCompiler
         // Its iterator can then share the existing function DC instead of a
         // snapshot or a copy of the outer value-type state machine.
         promotedToFunctionDC.UnionWith(GetGeneratorExpressionAncestorCaptures(funcStmt));
-        if (EmitDebugSymbols)
+        if (EmitDebugSymbols || analysis.AwaitPointCount > 0)
         {
-            // Captures need a typed reference to their authoritative storage for managed expression
-            // evaluators. Reuse the existing reference-storage lowering for read captures as well.
+            // Read captures need authoritative reference storage across suspension, just as debug
+            // evaluators do. Reuse the existing rename-aware display-class lowering.
             promotedToFunctionDC.UnionWith(asyncCapturedVars);
             asyncCapturedVars.Clear();
         }

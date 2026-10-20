@@ -262,7 +262,7 @@ public partial class Interpreter
         // intrinsic Promise identity; subclass promises otherwise assimilate.
         if (value is SharpTSPromise promise)
         {
-            return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(NormalizePromiseForAwait(promise)));
+            return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(QueueNativeAwait(NormalizePromiseForAwait(promise))));
         }
 
         // Raw Task<object?> — returned by runtime methods (e.g., Web Streams
@@ -273,7 +273,7 @@ public partial class Interpreter
         // not unwrap).
         if (value is Task<object?> task)
         {
-            return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(task));
+            return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(QueueNativeAwait(task)));
         }
 
         // Thenable adoption (ECMA-262 await → PromiseResolve, §25.6.4.5 step 8 /
@@ -293,6 +293,23 @@ public partial class Interpreter
         var completion = new TaskCompletionSource<object?>();
         EnqueuePromiseJob(() => completion.TrySetResult(value));
         return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(completion.Task));
+    }
+
+    private Task<object?> QueueNativeAwait(Task<object?> task)
+    {
+        // A native Await reaction becomes eligible only when its input settles.
+        // Queue it behind existing jobs even when settlement happens inside a
+        // different Await job. Resume inline within this one queued reaction.
+        var completion = new TaskCompletionSource<object?>();
+        if (task.IsCompleted)
+            EnqueuePromiseJob(() => TransferCompletion(task, completion));
+        else
+            _ = task.ContinueWith(
+                settled => EnqueuePromiseJob(() => TransferCompletion(settled, completion)),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        return completion.Task;
     }
 
     /// <summary>

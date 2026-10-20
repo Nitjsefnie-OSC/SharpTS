@@ -16,6 +16,8 @@ public partial class RuntimeEmitter
         var intrinsicPromiseLabel = il.DefineLabel();
         var normalizedLabel = il.DefineLabel();
         var completedLabel = il.DefineLabel();
+        var queueContinuationLabel = il.DefineLabel();
+        var nativeInput = il.DeclareLocal(_types.Boolean);
         var taskLocal = il.DeclareLocal(_types.TaskOfObject);
 
         il.Emit(OpCodes.Ldarg_0);
@@ -32,6 +34,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, normalizedLabel);
 
         il.MarkLabel(nativePromiseLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, nativeInput);
         // Get constructor once, before choosing a fast path. A subclass may
         // override it with intrinsic Promise, and a base promise may replace it.
         // An abrupt constructor getter propagates from PromiseResolve itself.
@@ -59,8 +63,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, taskLocal);
         il.Emit(OpCodes.Ldloc, taskLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Task, "IsCompleted").GetGetMethod()!);
-        il.Emit(OpCodes.Brtrue, completedLabel);
+        il.Emit(OpCodes.Brfalse, queueContinuationLabel);
+        il.Emit(OpCodes.Ldloc, nativeInput);
+        il.Emit(OpCodes.Brfalse, completedLabel);
 
+        // A completed native Promise still resumes Await in a Promise job.
+        // Ordinary completed coercions retain their existing policy; pending
+        // tasks continue through the same single reaction facade as before.
+        il.MarkLabel(queueContinuationLabel);
         // A synchronous-capable adoption bridge may settle inside then(resolve).
         // Give a pending await its own Promise job so guest code cannot resume
         // before the thenable finishes. The intrinsic no-handler path forwards

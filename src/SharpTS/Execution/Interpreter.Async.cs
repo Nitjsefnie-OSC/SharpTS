@@ -385,7 +385,7 @@ public partial class Interpreter
             {
                 // Binding initialization/assignment is part of the loop body
                 // completion and must close a real async iterator on failure.
-                await CloseAsyncIteratorOnEarlyExit(asyncIterator);
+                await CloseAsyncIteratorOnEarlyExit(asyncIterator, preserveThrow: true);
                 throw;
             }
             var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
@@ -396,13 +396,14 @@ public partial class Interpreter
             // break/continue that targets this for-await loop rather than escaping it.
             if (shouldBreak)
             {
-                await CloseAsyncIteratorOnEarlyExit(asyncIterator);
+                await CloseAsyncIteratorOnEarlyExit(asyncIterator, preserveThrow: false);
                 return ExecutionResult.Success();
             }
             if (shouldContinue) continue;
             if (abruptResult.HasValue)
             {
-                await CloseAsyncIteratorOnEarlyExit(asyncIterator);
+                await CloseAsyncIteratorOnEarlyExit(asyncIterator,
+                    preserveThrow: abruptResult.Value.Type == ExecutionResult.ResultType.Throw);
                 return abruptResult.Value;
             }
 
@@ -414,36 +415,59 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Closes an async iterator when a <c>for await…of</c> exits early (break, or a return/throw out of
-    /// the loop body) — ECMA-262 AsyncIteratorClose. Calls <c>return()</c> if the iterator provides one
-    /// and awaits it, so a suspended async generator runs its <c>finally</c> blocks before the loop
-    /// leaves. Cleanup is best-effort: a missing <c>return()</c> is skipped, and a rejection from the
-    /// <c>return()</c> itself is swallowed so the loop's own completion (the break / return / throw that
-    /// triggered the close) takes precedence.
+    /// AsyncIteratorClose preserves an existing throw after attempting cleanup.
+    /// For other early exits, a failed return lookup/call/await or a nonobject
+    /// result replaces the loop completion.
     /// </summary>
-    private async Task CloseAsyncIteratorOnEarlyExit(object asyncIterator)
+    private async Task CloseAsyncIteratorOnEarlyExit(object asyncIterator, bool preserveThrow)
     {
-        object? result;
+        var saved = _environment;
+        var savedGen = CurrentAsyncGenerator;
         try
         {
-            result = CallMethodOnObject(asyncIterator, "return", []);
-        }
-        catch
-        {
-            // No return() method (or it threw synchronously) — nothing to close.
-            return;
-        }
+            // GetMethod distinguishes an absent method from a failed lookup or
+            // a present noncallable. Read once and retain the iterator receiver.
+            object? returnMethod = GetPropertyValue(asyncIterator, "return");
+            if (returnMethod is null or SharpTSUndefined)
+                return;
+            if (returnMethod is not ISharpTSCallable callable)
+                throw new ThrowException(new SharpTSTypeError(
+                    "Async iterator.return must be a function."));
 
-        try
-        {
+            object? result = FunctionBuiltIns.CallWithThis(this, callable, asyncIterator, []);
+
+            // A delegate may eagerly repoint the ambient frame while starting
+            // its cleanup. Await and its continuation belong to the loop owner.
+            _environment = saved;
+            CurrentAsyncGenerator = savedGen;
+            Task<object?> task;
             if (result is SharpTSPromise promise)
-                await AwaitPreservingEnvironment(NormalizePromiseForAwait(promise));
-            else if (result is Task<object?> task)
-                await AwaitPreservingEnvironment(task);
+                task = NormalizePromiseForAwait(promise);
+            else if (result is Task<object?> nativeTask)
+                task = nativeTask;
+            else
+            {
+                var completion = new TaskCompletionSource<object?>();
+                PromiseBuiltIns.ResolveThenableIntoCapability(this, completion, result);
+                task = completion.Task;
+            }
+            _environment = saved;
+            CurrentAsyncGenerator = savedGen;
+            result = await AwaitPreservingEnvironment(QueueNativeAwait(task));
+
+            // An original throw wins even over a primitive cleanup result.
+            if (!preserveThrow && !RuntimeValue.FromBoxed(result).IsObject)
+                throw new ThrowException(new SharpTSTypeError(
+                    "Async iterator.return must return an object."));
         }
-        catch
+        catch when (preserveThrow)
         {
-            // The iterator's return() rejected during cleanup; the loop's own completion wins.
+            // Preserve the original body throw, including null/falsy values.
+        }
+        finally
+        {
+            _environment = saved;
+            CurrentAsyncGenerator = savedGen;
         }
     }
 

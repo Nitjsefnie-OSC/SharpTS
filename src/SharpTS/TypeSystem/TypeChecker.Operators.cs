@@ -795,10 +795,8 @@ public partial class TypeChecker
 
         if (objType is TypeInfo.Array arrayType)
         {
-            // Preserve the existing += guard and apply it to every newly
-            // accepted canonical string-key write, including other operators.
-            if (arrayType.IsReadonly &&
-                (compound.Operator.Type == TokenType.PLUS_EQUAL || canonicalArrayStringIndex))
+            // Every compound assignment writes through the same readonly index signature.
+            if (arrayType.IsReadonly)
                 throw new TypeCheckException(
                     $" Index signature in type '{objType}' only permits reading.",
                     compound.Operator.Line > 0 ? compound.Operator.Line : null, tsCode: "TS2542");

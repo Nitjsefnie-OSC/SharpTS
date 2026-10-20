@@ -1073,7 +1073,15 @@ public partial class ILCompiler
                 if (!seenAwait)
                     declaredBeforeAwait.Add(ArrowStorageName(f, f.Variable.Lexeme));
                 AnalyzeArrowExprForAwaits(f.Iterable, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
+                if (f.IsAsync)
+                {
+                    // Match shared for-await emission: iterable, next(), body, return().
+                    awaitCount++;
+                    seenAwait = true;
+                }
                 AnalyzeArrowStmtForAwaits(f.Body, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
+                if (f.IsAsync)
+                    awaitCount++;
                 break;
             case Stmt.For forStmt:
                 if (forStmt.Initializer != null)
@@ -1083,6 +1091,9 @@ public partial class ILCompiler
                 if (forStmt.Increment != null)
                     AnalyzeArrowExprForAwaits(forStmt.Increment, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 AnalyzeArrowStmtForAwaits(forStmt.Body, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
+                break;
+            case Stmt.LabeledStatement labeled:
+                AnalyzeArrowStmtForAwaits(labeled.Statement, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
             case Stmt.Block b:
                 foreach (var s in b.Statements)

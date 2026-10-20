@@ -69,6 +69,7 @@ public class EmitterSyncTests
             //     emitters, which supply only the emitter-specific seams (exit label, state counter,
             //     resume-label marking, awaiter-field lookup) ---
             "EmitAwait",            // Core: suspend/resume the state machine on await
+            "EmitForAwaitOf",       // #2848: both async-function emitters suspend on iterator next()/return()
             // A synchronous for-of whose body awaits must retain its enumerator across MoveNext
             // calls; non-suspending loops still use the base implementation's local storage.
             "StoreForOfEnumerator",
@@ -104,7 +105,6 @@ public class EmitterSyncTests
             // (EmitReturn/EmitTryCatch are inherited from AsyncFunctionMoveNextEmitter; break/continue/
             //  loop-nav/EmitBranchToLabel from StateMachineExitRoutingEmitter — see those entries above.)
             "EmitForOf",            // for-await-of protocol dispatch
-            "EmitForAwaitOf",       // #631: override the shared base to SUSPEND on next()/return() (vs blocking GetResult)
             "EmitLabeledStatement", // Labeled continue for for loops (base doesn't handle correctly)
             // (EmitAwait is inherited from AsyncFunctionMoveNextEmitter since #1122 — see above.)
             "EmitArrowFunction",    // Display class in state machine context

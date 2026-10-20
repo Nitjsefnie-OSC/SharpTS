@@ -2645,6 +2645,26 @@ public abstract partial class ExpressionEmitterBase
         EnsureBoxed();
         var objLocal = _helpers.SpillStoreObject();
 
+        if (methodName == "indexOf" && AnyContainsSuspension(arguments))
+        {
+            // Mutually exclusive type branches must not emit the same source await twice.
+            // Select the method before arguments and retain both receiver and callable.
+            EmitThrowIfReceiverUndefined(objLocal, methodName);
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Ldstr, methodName);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Property);
+            var callee = _helpers.SpillStoreObject();
+            EmitArgsArrayWithSpread(arguments);
+            var argumentValues = IL.DeclareLocal(Types.ObjectArray);
+            IL.Emit(OpCodes.Stloc, argumentValues);
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Ldloc, callee);
+            IL.Emit(OpCodes.Ldloc, argumentValues);
+            IL.Emit(OpCodes.Call, Ctx.Runtime.Invocation.Method);
+            SetStackUnknown();
+            return;
+        }
+
         var isStringLabel = IL.DefineLabel();
         var isListLabel = IL.DefineLabel();
         var doneLabel = IL.DefineLabel();

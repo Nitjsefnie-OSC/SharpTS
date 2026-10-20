@@ -30,6 +30,23 @@ public sealed class GlobalThisStaticEmitter : IStaticTypeEmitterStrategy
         {
             case "parseInt":
             {
+                if (ctx.RuntimeFeatures?.UsesGlobalParseIntMutation == true)
+                {
+                    // Qualified calls keep the live property and global receiver. Resolve
+                    // before arguments, with a persistent spill while later arguments await.
+                    ExpressionEmitterBase.EmitGlobalParseIntRead(il, ctx, allowMissing: true);
+                    var callee = emitter.SpillStackToObjectLocal();
+                    emitter.EmitArgsArrayWithSpread(arguments);
+                    var argumentValues = il.DeclareLocal(ctx.Types.ObjectArray);
+                    il.Emit(OpCodes.Stloc, argumentValues);
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime!.GlobalObject.SingletonField);
+                    il.Emit(OpCodes.Ldloc, callee);
+                    il.Emit(OpCodes.Ldloc, argumentValues);
+                    il.Emit(OpCodes.Call, ctx.Runtime.Invocation.Method);
+                    emitter.SetStackUnknown();
+                    return true;
+                }
+
                 // Finish every argument before builtin coercion, retaining the first two
                 // values in await-safe spills while ignored expressions may throw or suspend.
                 var input = arguments.Count > 0 ? emitter.SpillBoxedArg(arguments[0]) : null;

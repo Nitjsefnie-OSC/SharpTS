@@ -304,7 +304,7 @@ public sealed class GlobalParseIntBindingTests
     }
 
     public static IEnumerable<object[]> SavedCases() => Cases().Where(row => (string)row[0] is
-        "defineproperty-data-write-and-identity" or "accessor-callee-read-before-arguments" or
+        "issue" or "defineproperty-data-write-and-identity" or "accessor-callee-read-before-arguments" or
         "async-accessor-callee-read-before-awaited-argument" or "throwing-accessor-suppresses-arguments" or
         "dot-bracket-writes-and-captured-values" or "local-parameter-let-and-captured-shadows" or
         "pending-argument-keeps-descriptor-callee-snapshot" or
@@ -318,9 +318,7 @@ public sealed class GlobalParseIntBindingTests
         foreach (var row in Cases())
         {
             yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
-            // The qualified compiled call in the original issue source is #2539.
-            if ((string)row[0] != "issue")
-                yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
+            yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
     }
 

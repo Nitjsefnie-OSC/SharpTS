@@ -1158,7 +1158,6 @@ public partial class RuntimeEmitter
         var intIdxLocal = il.DeclareLocal(_types.Int32);
         var doubleIdxLocal = il.DeclareLocal(_types.Double);
         var strOobLabel = il.DefineLabel();
-        var strAbsentCharacterLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.String);
         il.Emit(OpCodes.Stloc, strLocal);
@@ -1170,6 +1169,7 @@ public partial class RuntimeEmitter
         var idxFromStringLabel = il.DefineLabel();
         var idxParseDoneLabel = il.DefineLabel();
         var strNamedPropertyLabel = il.DefineLabel();
+        var strPrototypePropertyLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.Double);
         il.Emit(OpCodes.Brtrue, idxFromDoubleLabel);
@@ -1209,6 +1209,15 @@ public partial class RuntimeEmitter
         // A non-canonical/non-integer string is a named property (for example
         // "charAt"), so let String.prototype participate in the lookup.
         il.Emit(OpCodes.Brfalse, strNamedPropertyLabel);
+        // Integer-like property names are virtual own characters only when
+        // their exact spelling is canonical. Keep "-0", "01" and "+1" as names.
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ldloca, intIdxLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(typeof(System.Globalization.CultureInfo), "InvariantCulture").GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "ToString", typeof(IFormatProvider)));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, strPrototypePropertyLabel);
 
         il.MarkLabel(idxParseDoneLabel);
         // A present virtual own character wins. An absent canonical index
@@ -1219,7 +1228,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, intIdxLocal);
         il.Emit(OpCodes.Ldloc, strLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.String, "get_Length"));
-        il.Emit(OpCodes.Bge, strAbsentCharacterLabel);
+        il.Emit(OpCodes.Bge, strNamedPropertyLabel);
         il.Emit(OpCodes.Ldloc, strLocal);
         il.Emit(OpCodes.Ldloc, intIdxLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "get_Chars", _types.Int32));
@@ -1228,20 +1237,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Char, "ToString"));
         il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(strAbsentCharacterLabel);
-        // Preserve the existing noncanonical-name behavior (#2799). TryParse
-        // also admits spellings such as "03" and "+3"; only the canonical
-        // decimal spelling gets this absent-character fallback.
+        il.MarkLabel(strPrototypePropertyLabel);
+        // These names cannot be virtual own characters. Do not pass them to
+        // GetProperty's character parser again; retain the key and receiver.
+        il.Emit(OpCodes.Call, inputs.Strings.PrototypePopulateMethod);
+        il.Emit(OpCodes.Ldsfld, inputs.Strings.PrototypeField);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brfalse, strNamedPropertyLabel);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, _types.String);
-        il.Emit(OpCodes.Ldloca, intIdxLocal);
-        il.Emit(OpCodes.Call, _types.GetProperty(typeof(System.Globalization.CultureInfo), "InvariantCulture").GetGetMethod()!);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Int32, "ToString", typeof(IFormatProvider)));
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brfalse, strOobLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, inputs.ReflectGet);
+        il.Emit(OpCodes.Ret);
 
         il.MarkLabel(strNamedPropertyLabel);
         il.Emit(OpCodes.Ldarg_0);

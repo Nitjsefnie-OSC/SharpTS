@@ -89,10 +89,9 @@ public sealed class DeletedFunctionDefaultMetadataTests
 
     public static IEnumerable<object[]> ModeCases()
     {
-        // #2768: interpreter dot reads resurrect deleted ordinary length and named-expression name.
-        // Keep complete #2677 compiler sources; indexed deletion's passing forms remain interpreted below.
         foreach (var row in Cases())
-            yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
+            foreach (var mode in new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled })
+                yield return [row[0], row[1], row[2], mode];
         yield return ["passing-sync-and-async-indexed-metadata-deletion", InterpretedPositiveSource,
             string.Concat(Enumerable.Repeat("2 true true\ntrue true true 0 true 0\nfalse true false false\n", 5)),
             ExecutionMode.Interpreted];

@@ -2381,6 +2381,14 @@ public partial class Interpreter
 
     private bool NeedsLiveFunctionPrototypeRead(object? target, string name)
     {
+        // Absent synchronous metadata inherits from the default realm prototype too;
+        // the callable's arity/name fallback must not recreate its deleted own slot.
+        if ((target is SharpTSFunction or SharpTSArrowFunction) &&
+            name is "name" or "length" &&
+            FunctionObjectProperties.TryGetStorage(target, this, out var ownMetadata) &&
+            ownMetadata.GetOwnPropertyDescriptor(name) is null)
+            return true;
+
         if (target is not ISharpTSCallable || !GetFunctionPrototype().HasExplicitPrototype) return false;
         if (name is not ("name" or "length")) return true;
         if (target is SharpTSFunctionPrototype prototype) return !prototype.HasOwnProperty(name);

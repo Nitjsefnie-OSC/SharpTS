@@ -674,21 +674,28 @@ internal sealed class NestedFunctionLifter
     }
 
     /// <summary>Returns <paramref name="current"/> extended with the names declared directly in
-    /// <paramref name="blockStmts"/> (a new set only when something is added).</summary>
+    /// <paramref name="blockStmts"/> (a new set only when something is added).
+    /// Sequences are scope-transparent; real blocks and function bodies remain boundaries.</summary>
     private static HashSet<string> WithBlockBindings(HashSet<string> current, List<Stmt> blockStmts)
     {
         HashSet<string>? added = null;
-        foreach (var s in blockStmts)
+        void AddDeclaration(Stmt statement)
         {
-            var name = DeclaredName(s);
+            if (statement is Stmt.Sequence sequence)
+            {
+                foreach (var child in sequence.Statements) AddDeclaration(child);
+                return;
+            }
+            var name = DeclaredName(statement);
             if (name != null && !current.Contains(name))
                 (added ??= new HashSet<string>(current)).Add(name);
         }
+        foreach (var statement in blockStmts) AddDeclaration(statement);
         return added ?? current;
     }
 
     private static HashSet<string> WithDeclaration(HashSet<string> current, Stmt? decl)
-        => decl == null ? current : WithName(current, DeclaredName(decl));
+        => decl == null ? current : WithBlockBindings(current, [decl]);
 
     private static HashSet<string> WithName(HashSet<string> current, string? name)
         => name == null || current.Contains(name) ? current : new HashSet<string>(current) { name };

@@ -128,7 +128,6 @@ public partial class RuntimeEmitter
         FieldBuilder GlobalThisSingletonField,
         MethodInfo IHasFieldsFieldsGetter,
         Type IHasFieldsInterface,
-        EmittedJsonRuntime Json,
         MethodBuilder LookupBuiltInStaticMember,
         EmittedMathRuntime Math,
         MethodBuilder ObjectAssign,
@@ -1752,21 +1751,7 @@ public partial class RuntimeEmitter
 
         EmitGetOwnDescriptorMathReceiver(
             il,
-            new GetOwnDescriptorMathReceiverInputs(
-                inputs.Math,
-                inputs.ObjectState,
-                inputs.TSFunctionGetOrCreate,
-                inputs.UndefinedInstance
-            ),
-            propNameLocal,
-            resultDictLocal,
-            returnNullLabel,
-            endLabel
-        );
-
-        EmitGetOwnDescriptorJsonReceiver(
-            il,
-            new GetOwnDescriptorJsonReceiverInputs(inputs.Json, inputs.ObjectState),
+            new GetOwnDescriptorMathReceiverInputs(inputs.Math, inputs.ObjectState),
             propNameLocal,
             resultDictLocal,
             returnNullLabel,

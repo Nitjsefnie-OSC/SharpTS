@@ -865,7 +865,6 @@ public partial class RuntimeEmitter
                 runtime.GlobalObject.SingletonField,
                 runtime.ObjectFields.HasProperty,
                 runtime.ObjectFields.Interface,
-                runtime.Json,
                 runtime.BuiltInStatics.Lookup,
                 runtime.Math,
                 runtime.ObjectState,
@@ -2025,20 +2024,13 @@ public partial class RuntimeEmitter
                 new FunctionOwnPrototypeInputs(runtime.FunctionValues, runtime.FunctionAttributes, runtime.GeneratorPrototypes.Kind)
             )
         );
-        // Math.* adapters must precede gOPD so its Math singleton synth can
-        // reach the adapter MethodBuilders to produce identity-stable
-        // `desc.value === Math.X` for built-in methods. Moved up from the
-        // original site at the end of the runtime emit. Dep: runtime.ToNumber
-        // (emitted at line 580, before this site).
+        // Declare the Math adapters before the later singleton population installs
+        // their identity-stable dictionary/PDS values and native descriptors.
         EmitMathAdapters(typeBuilder, runtime.Math, runtime.NumericCoercion.ToNumber, runtime.NumericCoercion.JsToInt32);
         // Error.isError is a small standalone type-brand helper. Emit it before
         // gOPD so built-in static descriptor synthesis can reference it.
         EmitErrorIsError(typeBuilder, runtime.Errors);
-        // EmitRandom moved here from the original late-site so gOPD's Math
-        // singleton synth can reach runtime.Math.Random and produce an identity-
-        // stable `desc.value === Math.random` descriptor. The Random method
-        // builder only needs randomField (defined at line 215) — both
-        // available now.
+        // The later Math singleton population also consumes the Random handle.
         EmitRandom(typeBuilder, runtime.Math, randomField);
         EmitObjectGetOwnPropertyDescriptor(
             runtime.ObjectDescriptors,
@@ -2055,7 +2047,6 @@ public partial class RuntimeEmitter
                 runtime.GlobalObject.SingletonField,
                 runtime.ObjectFields.FieldsGetter,
                 runtime.ObjectFields.Interface,
-                runtime.Json,
                 runtime.BuiltInStatics.Lookup,
                 runtime.Math,
                 runtime.ObjectOperations.Assign,

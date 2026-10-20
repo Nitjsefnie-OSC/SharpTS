@@ -13,7 +13,6 @@ public partial class RuntimeEmitter
         FieldBuilder GlobalThisSingletonField,
         MethodInfo IHasFieldsHasProperty,
         Type IHasFieldsInterface,
-        EmittedJsonRuntime Json,
         MethodBuilder LookupBuiltInStaticMember,
         EmittedMathRuntime Math,
         EmittedObjectStateRuntime ObjectState,
@@ -367,18 +366,7 @@ public partial class RuntimeEmitter
             DictNameEq(m);
         il.MarkLabel(notMathForHasOwnLabel);
 
-        // JSON singleton — same pattern.
-        var notJsonForHasOwnLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldsfld, inputs.Json.SingletonField);
-        il.Emit(OpCodes.Bne_Un, notJsonForHasOwnLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, nameLocal);
-        il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
-        il.Emit(OpCodes.Brtrue, falseLabel);
-        DictNameEq("parse"); DictNameEq("stringify"); DictNameEq("isRawJSON"); DictNameEq("rawJSON");
-        il.MarkLabel(notJsonForHasOwnLabel);
-
+        // JSON methods, like other dictionary properties, use their current materialized slots.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldloc, nameLocal);

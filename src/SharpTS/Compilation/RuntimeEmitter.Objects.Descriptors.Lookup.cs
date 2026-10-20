@@ -123,12 +123,8 @@ public partial class RuntimeEmitter
 
     private readonly record struct GetOwnDescriptorMathReceiverInputs(
         EmittedMathRuntime Math,
-        EmittedObjectStateRuntime ObjectState,
-        MethodBuilder TSFunctionGetOrCreate,
-        FieldInfo UndefinedInstance
+        EmittedObjectStateRuntime ObjectState
     );
-
-    private readonly record struct GetOwnDescriptorJsonReceiverInputs(EmittedJsonRuntime Json, EmittedObjectStateRuntime ObjectState);
 
     private readonly record struct GetOwnDescriptorLiteralAccessorInputs(
         EmittedDescriptorStorageRuntime DescriptorStorage,
@@ -1403,174 +1399,46 @@ public partial class RuntimeEmitter
         Label endLabel
     )
     {
-        // Math singleton dict — synthesize spec descriptors for its known
-        // methods (W:T,E:F,C:T) and constants (W:F,E:F,C:F). The singleton
-        // is otherwise empty; static dispatch handles Math.abs() etc., but
-        // gOPD(Math, "abs") needs to report the spec descriptor. Skip the
-        // synth if the (Math, name) pair was deleted (IsBuiltinDeleted).
+        // Math methods have real dictionary/PDS descriptors installed by singleton population.
+        // Only constants need synthesis; absent methods must fall through to current storage.
         var notMathSingletonLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldsfld, inputs.Math.SingletonField);
         il.Emit(OpCodes.Bne_Un, notMathSingletonLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, propNameLocal);
-        il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
-        il.Emit(OpCodes.Brtrue, returnNullLabel);
-        void EmitMathNameDesc(string n, bool isMethod, double? constValue = null,
-            MethodBuilder? methodTarget = null, int methodArity = 1)
+        void EmitMathConstantDescriptor(string name, double value)
         {
             var skipLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldloc, propNameLocal);
-            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Ldstr, name);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
             il.Emit(OpCodes.Brfalse, skipLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, propNameLocal);
+            il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
+            il.Emit(OpCodes.Brtrue, returnNullLabel);
             il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
             il.Emit(OpCodes.Stloc, resultDictLocal);
             il.Emit(OpCodes.Ldloc, resultDictLocal);
             il.Emit(OpCodes.Ldstr, "value");
-            if (constValue.HasValue)
-            {
-                il.Emit(OpCodes.Ldc_R8, constValue.Value);
-                il.Emit(OpCodes.Box, _types.Double);
-            }
-            else if (methodTarget != null)
-            {
-                // $TSFunction.GetOrCreate(adapter MethodInfo, name, length)
-                // returns the SAME instance as the static dispatch path
-                // (MathStaticEmitter uses TSFunctionGetOrCreate too), so
-                // `desc.value === Math.X` holds in user code.
-                _types.EmitLoadMethodInfo(il, methodTarget);
-                il.Emit(OpCodes.Ldstr, n);
-                il.Emit(OpCodes.Ldc_I4, methodArity);
-                il.Emit(OpCodes.Call, inputs.TSFunctionGetOrCreate);
-            }
-            else
-            {
-                il.Emit(OpCodes.Ldsfld, inputs.UndefinedInstance);
-            }
+            il.Emit(OpCodes.Ldc_R8, value);
+            il.Emit(OpCodes.Box, _types.Double);
             il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
-            EmitDescriptorBoolField(il, resultDictLocal, "writable", isMethod);
+            EmitDescriptorBoolField(il, resultDictLocal, "writable", false);
             EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
-            EmitDescriptorBoolField(il, resultDictLocal, "configurable", isMethod);
+            EmitDescriptorBoolField(il, resultDictLocal, "configurable", false);
             il.Emit(OpCodes.Ldloc, resultDictLocal);
             il.Emit(OpCodes.Br, endLabel);
             il.MarkLabel(skipLabel);
         }
-        // Methods (W:T, E:F, C:T) with identity-stable value (Math.X === Math.X).
-        // Spec lengths per ECMA-262 §21.3.2 — same as MathStaticEmitter.
-        (string n, MethodBuilder? m, int len)[] mathMethods =
-        {
-            ("abs",    inputs.Math.AbsAdapter,    1),
-            ("acos",   inputs.Math.AcosAdapter,   1),
-            ("acosh",  inputs.Math.AcoshAdapter,  1),
-            ("asin",   inputs.Math.AsinAdapter,   1),
-            ("asinh",  inputs.Math.AsinhAdapter,  1),
-            ("atan",   inputs.Math.AtanAdapter,   1),
-            ("atan2",  inputs.Math.Atan2Adapter,  2),
-            ("atanh",  inputs.Math.AtanhAdapter,  1),
-            ("cbrt",   inputs.Math.CbrtAdapter,   1),
-            ("ceil",   inputs.Math.CeilAdapter,   1),
-            ("clz32",  inputs.Math.Clz32Adapter,  1),
-            ("cos",    inputs.Math.CosAdapter,    1),
-            ("cosh",   inputs.Math.CoshAdapter,   1),
-            ("exp",    inputs.Math.ExpAdapter,    1),
-            ("expm1",  inputs.Math.Expm1Adapter,  1),
-            ("floor",  inputs.Math.FloorAdapter,  1),
-            ("fround", inputs.Math.FroundAdapter, 1),
-            ("f16round", inputs.Math.F16RoundAdapter, 1),
-            ("hypot",  inputs.Math.HypotAdapter,  2),
-            ("imul",   inputs.Math.ImulAdapter,   2),
-            ("log",    inputs.Math.LogAdapter,    1),
-            ("log10",  inputs.Math.Log10Adapter,  1),
-            ("log1p",  inputs.Math.Log1pAdapter,  1),
-            ("log2",   inputs.Math.Log2Adapter,   1),
-            ("max",    inputs.Math.MaxAdapter,    2),
-            ("min",    inputs.Math.MinAdapter,    2),
-            ("pow",    inputs.Math.PowAdapter,    2),
-            // "random" → inputs.Math.Random; EmitRandom now precedes gOPD emit
-            // (see RuntimeEmitter.RuntimeClass.cs ~line 660), so we can wire
-            // the actual MethodBuilder here for `desc.value === Math.random`.
-            ("random", inputs.Math.Random,             0),
-            ("round",  inputs.Math.RoundAdapter,  1),
-            ("sign",   inputs.Math.SignAdapter,   1),
-            ("sin",    inputs.Math.SinAdapter,    1),
-            ("sinh",   inputs.Math.SinhAdapter,   1),
-            ("sqrt",   inputs.Math.SqrtAdapter,   1),
-            ("tan",    inputs.Math.TanAdapter,    1),
-            ("tanh",   inputs.Math.TanhAdapter,   1),
-            ("trunc",  inputs.Math.TruncAdapter,  1),
-            // This early fallback historically precedes SumPrecise's declaration.
-            // Preserve its undefined value; the later populated PDS supplies the actual function.
-            ("sumPrecise", null, 1),
-        };
-        foreach (var (mn, mb, ml) in mathMethods)
-            EmitMathNameDesc(mn, isMethod: true, methodTarget: mb, methodArity: ml);
-        // Constants (W:F, E:F, C:F) with embedded literal values.
-        EmitMathNameDesc("E", isMethod: false, constValue: System.Math.E);
-        EmitMathNameDesc("LN10", isMethod: false, constValue: System.Math.Log(10));
-        EmitMathNameDesc("LN2", isMethod: false, constValue: System.Math.Log(2));
-        EmitMathNameDesc("LOG10E", isMethod: false, constValue: 1.0 / System.Math.Log(10));
-        EmitMathNameDesc("LOG2E", isMethod: false, constValue: 1.0 / System.Math.Log(2));
-        EmitMathNameDesc("PI", isMethod: false, constValue: System.Math.PI);
-        EmitMathNameDesc("SQRT1_2", isMethod: false, constValue: System.Math.Sqrt(0.5));
-        EmitMathNameDesc("SQRT2", isMethod: false, constValue: System.Math.Sqrt(2));
+        EmitMathConstantDescriptor("E", System.Math.E);
+        EmitMathConstantDescriptor("LN10", System.Math.Log(10));
+        EmitMathConstantDescriptor("LN2", System.Math.Log(2));
+        EmitMathConstantDescriptor("LOG10E", 1.0 / System.Math.Log(10));
+        EmitMathConstantDescriptor("LOG2E", 1.0 / System.Math.Log(2));
+        EmitMathConstantDescriptor("PI", System.Math.PI);
+        EmitMathConstantDescriptor("SQRT1_2", System.Math.Sqrt(0.5));
+        EmitMathConstantDescriptor("SQRT2", System.Math.Sqrt(2));
         il.MarkLabel(notMathSingletonLabel);
-    }
-
-    // Requires an empty entry stack. Unhandled receivers fall through empty; matches
-    // branch to endLabel with one result object, or returnNullLabel with an empty stack.
-    // The caller owns those exits and resultDictLocal; scratch locals/internal labels belong here.
-    private void EmitGetOwnDescriptorJsonReceiver(
-        ILGenerator il,
-        GetOwnDescriptorJsonReceiverInputs inputs,
-        LocalBuilder propNameLocal,
-        LocalBuilder resultDictLocal,
-        Label returnNullLabel,
-        Label endLabel
-    )
-    {
-        // JSON singleton — synth descriptors for parse/stringify/isRawJSON/rawJSON.
-        // Same pattern as Math; the singleton dict is empty, static dispatch
-        // handles JSON.X(); gOPD just needs to report spec attrs.
-        var notJsonSingletonLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldsfld, inputs.Json.SingletonField);
-        il.Emit(OpCodes.Bne_Un, notJsonSingletonLabel);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, propNameLocal);
-        il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
-        il.Emit(OpCodes.Brtrue, returnNullLabel);
-        void EmitJsonNameDesc(string n)
-        {
-            var skipLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldloc, propNameLocal);
-            il.Emit(OpCodes.Ldstr, n);
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-            il.Emit(OpCodes.Brfalse, skipLabel);
-            il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
-            il.Emit(OpCodes.Stloc, resultDictLocal);
-            il.Emit(OpCodes.Ldloc, resultDictLocal);
-            il.Emit(OpCodes.Ldstr, "value");
-            il.Emit(OpCodes.Ldsfld, inputs.Json.SingletonField);
-            il.Emit(OpCodes.Ldstr, n);
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(
-                _types.DictionaryStringObject, "get_Item", _types.String));
-            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
-            EmitDescriptorBoolField(il, resultDictLocal, "writable", true);
-            EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
-            EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
-            il.Emit(OpCodes.Ldloc, resultDictLocal);
-            il.Emit(OpCodes.Br, endLabel);
-            il.MarkLabel(skipLabel);
-        }
-        if (inputs.Json.Implementation is not null)
-        {
-            EmitJsonNameDesc("parse");
-            EmitJsonNameDesc("stringify");
-            EmitJsonNameDesc("isRawJSON");
-            EmitJsonNameDesc("rawJSON");
-        }
-        il.MarkLabel(notJsonSingletonLabel);
     }
 
     // Requires an empty entry stack. Unhandled receivers fall through empty; matches

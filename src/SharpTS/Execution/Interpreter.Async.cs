@@ -221,6 +221,42 @@ public partial class Interpreter
         return completion.Task;
     }
 
+    // External async-generator return arguments use intrinsic PromiseResolve,
+    // independently of ordinary body return/yield values.
+    internal async Task<object?> AwaitAsyncGeneratorReturnValue(object? value)
+    {
+        var saved = _environment;
+        var savedGen = CurrentAsyncGenerator;
+        try
+        {
+            Task<object?> task;
+            try
+            {
+                if (value is SharpTSPromise promise)
+                    task = NormalizePromiseForAwait(promise);
+                else if (value is Task<object?> nativeTask)
+                    task = nativeTask;
+                else
+                {
+                    var completion = new TaskCompletionSource<object?>();
+                    PromiseBuiltIns.ResolveThenableIntoCapability(this, completion, value);
+                    task = completion.Task;
+                }
+            }
+            catch (Exception error) { task = Task.FromException<object?>(error); }
+
+            // Even an available primitive resumes in a Promise job. This is
+            // request adoption, so do not toggle a possibly unrelated caller
+            // generator's running flag as a body await would.
+            return await QueuePromiseReaction(() => task);
+        }
+        finally
+        {
+            _environment = saved;
+            CurrentAsyncGenerator = savedGen;
+        }
+    }
+
     private async Task<ExecutionResult> ExecuteLoopBodyAsync(Token variable, bool isDeclaration, object? value, Stmt body)
     {
         var loopEnv = CreateIterationEnvironment(variable, isDeclaration, value);

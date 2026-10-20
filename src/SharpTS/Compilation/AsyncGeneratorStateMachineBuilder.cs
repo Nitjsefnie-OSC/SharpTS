@@ -606,12 +606,180 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
 
     private void EmitReturnMethodBody()
     {
+        // Declare both internal operations before callbacks refer to them; the
+        // public throw method is declared later in DefineGeneratorMethods.
+        var resolved = _stateMachineType.DefineMethod("<ReturnResolved>",
+            MethodAttributes.Private, _types.TaskOfObject, [_types.Object]);
+        var rejected = _stateMachineType.DefineMethod("<ReturnRejected>",
+            MethodAttributes.Private, _types.TaskOfObject, [_types.Object]);
+        EmitReturnResumeBody(resolved.GetILGenerator());
+        EmitThrowResumeBody(rejected.GetILGenerator(), publishTail: false);
+
+        var fromException = EmitGenerics.MakeGenericMethod(
+            typeof(Task).GetMethod("FromException", 1, [typeof(Exception)])!, _types.Object);
+        var completionType = _types.MakeGenericType(typeof(TaskCompletionSource<>), _types.Object);
+        var completionTask = _types.GetPropertyGetter(completionType, "Task");
+        var callbackType = _types.MakeGenericType(typeof(Func<,,>), _types.TaskOfObject, _types.Object, _types.TaskOfObject);
+        var settleType = _types.MakeGenericType(typeof(Action<,>), _types.TaskOfObject, _types.Object);
+        var callback = _stateMachineType.DefineMethod("<ResumeAdoptedReturn>",
+            MethodAttributes.Private | MethodAttributes.Static,
+            _types.TaskOfObject, [_types.TaskOfObject, _types.Object]);
+        var settle = _stateMachineType.DefineMethod("<SettleReturnRequest>",
+            MethodAttributes.Private | MethodAttributes.Static,
+            _types.Void, [_types.TaskOfObject, _types.Object]);
+
+        // Invoked only after the adoption task settles, so GetResult cannot
+        // block. Rejection becomes a throw completion at a suspended yield.
+        {
+            var body = callback.GetILGenerator();
+            var awaiter = body.DeclareLocal(_types.TaskAwaiterOfObject);
+            var value = body.DeclareLocal(_types.Object);
+            var error = body.DeclareLocal(_types.Exception);
+            var result = body.DeclareLocal(_types.TaskOfObject);
+            var done = body.DefineLabel();
+            body.BeginExceptionBlock();
+            body.Emit(OpCodes.Ldarg_0);
+            body.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.TaskOfObject, "GetAwaiter"));
+            body.Emit(OpCodes.Stloc, awaiter);
+            body.Emit(OpCodes.Ldloca, awaiter);
+            body.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.TaskAwaiterOfObject, "GetResult"));
+            body.Emit(OpCodes.Stloc, value);
+            body.Emit(OpCodes.Ldarg_1);
+            body.Emit(OpCodes.Castclass, _stateMachineType);
+            body.Emit(OpCodes.Ldloc, value);
+            body.Emit(OpCodes.Call, resolved);
+            body.Emit(OpCodes.Stloc, result);
+            body.Emit(OpCodes.Leave, done);
+            body.BeginCatchBlock(_types.Exception);
+            body.Emit(OpCodes.Stloc, error);
+            body.Emit(OpCodes.Ldarg_1);
+            body.Emit(OpCodes.Castclass, _stateMachineType);
+            body.Emit(OpCodes.Ldloc, error);
+            body.Emit(OpCodes.Call, _runtime!.Errors.WrapException);
+            body.Emit(OpCodes.Call, rejected);
+            body.Emit(OpCodes.Stloc, result);
+            body.Emit(OpCodes.Leave, done);
+            body.EndExceptionBlock();
+            body.MarkLabel(done);
+            body.Emit(OpCodes.Ldloc, result);
+            body.Emit(OpCodes.Ret);
+        }
+
+        // Complete the reserved request only after adoption and all injected
+        // cleanup have produced their actual iterator result or rejection.
+        {
+            var body = settle.GetILGenerator();
+            var awaiter = body.DeclareLocal(_types.TaskAwaiterOfObject);
+            var value = body.DeclareLocal(_types.Object);
+            var error = body.DeclareLocal(_types.Exception);
+            var done = body.DefineLabel();
+            body.BeginExceptionBlock();
+            body.Emit(OpCodes.Ldarg_0);
+            body.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.TaskOfObject, "GetAwaiter"));
+            body.Emit(OpCodes.Stloc, awaiter);
+            body.Emit(OpCodes.Ldloca, awaiter);
+            body.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.TaskAwaiterOfObject, "GetResult"));
+            body.Emit(OpCodes.Stloc, value);
+            body.Emit(OpCodes.Ldarg_1);
+            body.Emit(OpCodes.Castclass, completionType);
+            body.Emit(OpCodes.Ldloc, value);
+            body.Emit(OpCodes.Callvirt, _types.GetMethod(completionType, "TrySetResult", _types.Object));
+            body.Emit(OpCodes.Pop);
+            body.Emit(OpCodes.Leave, done);
+            body.BeginCatchBlock(_types.Exception);
+            body.Emit(OpCodes.Stloc, error);
+            body.Emit(OpCodes.Ldarg_1);
+            body.Emit(OpCodes.Castclass, completionType);
+            body.Emit(OpCodes.Ldloc, error);
+            body.Emit(OpCodes.Callvirt, _types.GetMethod(completionType, "TrySetException", _types.Exception));
+            body.Emit(OpCodes.Pop);
+            body.Emit(OpCodes.Leave, done);
+            body.EndExceptionBlock();
+            body.MarkLabel(done);
+            body.Emit(OpCodes.Ret);
+        }
+
+        var continueReturn = EmitGenerics.MakeGenericMethod(
+            _types.GetMethods(_types.TaskOfObject).Single(method => method.Name == "ContinueWith"
+                && method.IsGenericMethodDefinition && method.GetParameters() is { Length: 3 } parameters
+                && parameters[0].ParameterType.IsGenericType
+                && parameters[0].ParameterType.GetGenericTypeDefinition() == typeof(Func<,,>)
+                && parameters[0].ParameterType.GetGenericArguments()[0] == _types.TaskOfObject
+                && parameters[1].ParameterType == _types.Object
+                && parameters[2].ParameterType == typeof(TaskContinuationOptions)), _types.TaskOfObject);
+        var continueSettle = _types.GetMethods(_types.TaskOfObject).Single(method => method.Name == "ContinueWith"
+            && !method.IsGenericMethodDefinition && method.GetParameters() is { Length: 3 } parameters
+            && parameters[0].ParameterType.IsGenericType
+            && parameters[0].ParameterType.GetGenericTypeDefinition() == typeof(Action<,>)
+            && parameters[0].ParameterType.GetGenericArguments()[0] == _types.TaskOfObject
+            && parameters[1].ParameterType == _types.Object
+            && parameters[2].ParameterType == typeof(TaskContinuationOptions));
+
         var il = ReturnMethod.GetILGenerator();
-
-        // Preserve the existing rejection of overlapping requests. Return-request queuing is separate
-        // from carrying one accepted completion through the body's cleanup suspension points.
         EmitThrowIfBusyAsync(il);
+        var completion = il.DeclareLocal(completionType);
+        var adopted = il.DeclareLocal(_types.TaskOfObject);
+        var response = il.DeclareLocal(_types.TaskOfObject);
+        var normalized = il.DefineLabel();
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(completionType));
+        il.Emit(OpCodes.Stloc, completion);
+        // Publish before Get(constructor/then) can reentrantly enqueue next().
+        // Neither internal resume operation may overwrite a subsequently queued tail.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, completion);
+        il.Emit(OpCodes.Callvirt, completionTask);
+        il.Emit(OpCodes.Stfld, PendingTailField);
 
+        il.BeginExceptionBlock();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _runtime!.RequirePromise().AwaitValueToTaskMethod);
+        if (_runtime.EventLoop.Hosted is { } hosted)
+            il.Emit(OpCodes.Call, hosted.PrepareAwait);
+        il.Emit(OpCodes.Stloc, adopted);
+        il.Emit(OpCodes.Leave, normalized);
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Call, fromException);
+        il.Emit(OpCodes.Stloc, adopted);
+        il.Emit(OpCodes.Leave, normalized);
+        il.EndExceptionBlock();
+        il.MarkLabel(normalized);
+        // AwaitValueToTask already gives pending tasks a Promise-job facade.
+        // An available value (including a primitive or lookup rejection) still
+        // needs that job boundary before cleanup can resume.
+        var pendingAdoption = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, adopted);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.Task, "IsCompleted"));
+        il.Emit(OpCodes.Brfalse, pendingAdoption);
+        il.Emit(OpCodes.Ldloc, adopted);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Call, _runtime.RequirePromise().Then);
+        il.Emit(OpCodes.Stloc, adopted);
+        il.MarkLabel(pendingAdoption);
+        il.Emit(OpCodes.Ldloc, adopted);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldftn, callback);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(callbackType, _types.Object, _types.IntPtr)!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, (int)TaskContinuationOptions.ExecuteSynchronously);
+        il.Emit(OpCodes.Callvirt, continueReturn);
+        il.Emit(OpCodes.Call, ResolveTaskUnwrap());
+        il.Emit(OpCodes.Stloc, response);
+        il.Emit(OpCodes.Ldloc, response);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldftn, settle);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(settleType, _types.Object, _types.IntPtr)!);
+        il.Emit(OpCodes.Ldloc, completion);
+        il.Emit(OpCodes.Ldc_I4, (int)TaskContinuationOptions.ExecuteSynchronously);
+        il.Emit(OpCodes.Callvirt, continueSettle);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, completion);
+        il.Emit(OpCodes.Callvirt, completionTask);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitReturnResumeBody(ILGenerator il)
+    {
         // If state >= 0 (suspended at a yield point), we need to trigger finally blocks
         // by setting __returnRequested and calling MoveNextAsync
         var simpleReturnLabel = il.DefineLabel();
@@ -637,9 +805,6 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, _driveOnceMethod);
         il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Stfld, PendingTailField);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 
@@ -674,7 +839,11 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
 
         // Preserve the existing guard against overlapping in-flight requests.
         EmitThrowIfBusyAsync(il);
+        EmitThrowResumeBody(il, publishTail: true);
+    }
 
+    private void EmitThrowResumeBody(ILGenerator il, bool publishTail)
+    {
         // A suspended yield receives an abrupt completion inside the body.
         // Drive the ordinary result path so catches can yield/await and uncaught
         // exceptions reject the returned promise with their original value.
@@ -705,9 +874,12 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, _driveOnceMethod);
         il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Stfld, PendingTailField);
+        if (publishTail)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Stfld, PendingTailField);
+        }
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(rejectWithoutResumeLabel);

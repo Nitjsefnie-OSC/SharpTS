@@ -1080,9 +1080,10 @@ public static partial class ObjectBuiltIns
             SharpTSArrayPrototype arrayPrototype when !arrayPrototype.HasOwnProperty(propertyKey) => null,
             SharpTSArrayPrototype arrayPrototype => arrayPrototype.GetOwnPropertyDescriptor(propertyKey)
                 ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
-            SharpTSMath math when math.IsBuiltInDeleted(propertyKey) => null,
             SharpTSMath math => math.GetOwnPropertyDescriptor(propertyKey)
-                ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),
+                ?? (math.IsBuiltInDeleted(propertyKey)
+                    ? null
+                    : GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey)),
             SharpTSJSON json when json.IsBuiltInDeleted(propertyKey) => null,
             SharpTSJSON json => json.GetOwnPropertyDescriptor(propertyKey)
                 ?? GetBuiltInOwnPropertyDescriptor(interpreter, target, propertyKey),

@@ -86,7 +86,7 @@ public sealed class ClassPrototypeProxyEnumerationTests
             observe(new Proxy(target, {}));
             observe(new Proxy(target, {
                 ownKeys() { events.push('keys'); return ['first', 'boom', 'after']; },
-                getOwnPropertyDescriptor(target: any, key: any) {
+                getOwnPropertyDescriptor(target: any, key: string | symbol) {
                     events.push('desc:' + String(key));
                     if (key === 'boom') throw marker;
                     return Reflect.getOwnPropertyDescriptor(target, key);

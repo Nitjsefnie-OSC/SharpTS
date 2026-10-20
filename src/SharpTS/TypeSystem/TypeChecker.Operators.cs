@@ -77,7 +77,12 @@ public partial class TypeChecker
                 or TypeInfo.NumberLiteral or TypeInfo.String or TypeInfo.StringLiteral
                 or TypeInfo.BooleanLiteral or TypeInfo.BigInt or TypeInfo.BigIntLiteral
                 or TypeInfo.Null or TypeInfo.Undefined;
-            if (disjoint && !looseNullishOverlap)
+            // One Symbol constituent does not make the whole union disjoint:
+            // any overlapping non-Symbol arm can still equal the scalar operand.
+            if (disjoint && !looseNullishOverlap &&
+                !(symbolSide is TypeInfo.Union union && union.FlattenedTypes.Any(member =>
+                    member is not (TypeInfo.Symbol or TypeInfo.UniqueSymbol or TypeInfo.Never) &&
+                    (IsCompatible(member, other) || IsCompatible(other, member)))))
             {
                 throw new TypeCheckException(
                     $"This comparison appears to be unintentional because the types '{left}' and '{right}' have no overlap.",

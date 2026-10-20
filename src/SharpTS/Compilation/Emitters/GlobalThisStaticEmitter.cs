@@ -29,11 +29,26 @@ public sealed class GlobalThisStaticEmitter : IStaticTypeEmitterStrategy
         switch (methodName)
         {
             case "parseInt":
-                if (arguments.Count > 0) { emitter.EmitExpression(arguments[0]); emitter.EmitBoxIfNeeded(arguments[0]); } else { il.Emit(OpCodes.Ldnull); }
-                if (arguments.Count > 1) { emitter.EmitExpression(arguments[1]); emitter.EmitBoxIfNeeded(arguments[1]); } else { il.Emit(OpCodes.Ldc_I4, 10); il.Emit(OpCodes.Box, ctx.Types.Int32); }
+            {
+                // Finish every argument before builtin coercion, retaining the first two
+                // values in await-safe spills while ignored expressions may throw or suspend.
+                var input = arguments.Count > 0 ? emitter.SpillBoxedArg(arguments[0]) : null;
+                var radix = arguments.Count > 1 ? emitter.SpillBoxedArg(arguments[1]) : null;
+                for (int index = 2; index < arguments.Count; index++)
+                {
+                    emitter.EmitExpression(arguments[index]);
+                    emitter.EmitBoxIfNeeded(arguments[index]);
+                    il.Emit(OpCodes.Pop);
+                }
+
+                if (input != null) il.Emit(OpCodes.Ldloc, input);
+                else il.Emit(OpCodes.Ldnull);
+                if (radix != null) il.Emit(OpCodes.Ldloc, radix);
+                else { il.Emit(OpCodes.Ldc_I4, 10); il.Emit(OpCodes.Box, ctx.Types.Int32); }
                 il.Emit(OpCodes.Call, ctx.Runtime!.Numbers.ParseInt);
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
+            }
 
             case "parseFloat":
                 if (arguments.Count > 0) { emitter.EmitExpression(arguments[0]); emitter.EmitBoxIfNeeded(arguments[0]); } else { il.Emit(OpCodes.Ldnull); }

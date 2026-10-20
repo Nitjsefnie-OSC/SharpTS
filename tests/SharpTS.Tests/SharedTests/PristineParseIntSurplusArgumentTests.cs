@@ -98,11 +98,7 @@ public sealed class PristineParseIntSurplusArgumentTests
             """, "pending extra\nsettled 7 extra,last,input-convert\n"];
     }
 
-    // Compiled parseInt omits object radix conversion; its separate owner is under audit.
-    // Retain both full object-radix sources interpreted-only, alongside the numeric-radix saved control.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row => (string)row[0] is not (
-        "all-arguments-before-coercion-and-ignored-objects-with-alias-controls" or
-        "pending-extra-preserves-earlier-values-and-delays-conversions"));
+    public static IEnumerable<object[]> SavedCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases()
     {

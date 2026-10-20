@@ -121,11 +121,7 @@ public sealed class ClassDeclarationDeclareFieldErasureTests
             """, "17 true true true\n23 true true true\nfirst true true true\ntrue false true\n23 true true true\n3 actual,id\n"];
     }
 
-    // #2801 owns compiled deletion of assignment-created class-instance expandos,
-    // including their raw field storage after descriptor installation. Keep the full
-    // original interpreted-only; its companion retains all writes and static deletion.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] != "later-typed-and-dynamic-writes-create-properties-with-live-descriptors");
+    public static IEnumerable<object[]> SavedCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases()
     {

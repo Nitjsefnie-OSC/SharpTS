@@ -703,13 +703,14 @@ public partial class RuntimeEmitter
         // Previously these objects fell straight through to true without
         // changing observable state, so verifyProperty incorrectly classified
         // configurable Error cause/message slots as non-configurable.
+        var fallbackFieldsLabel = il.DefineLabel();
         var fallbackDescriptorLocal = il.DeclareLocal(inputs.DescriptorStorage.DescriptorType);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
         il.Emit(OpCodes.Stloc, fallbackDescriptorLocal);
         il.Emit(OpCodes.Ldloc, fallbackDescriptorLocal);
-        il.Emit(OpCodes.Brfalse, trueLabel);
+        il.Emit(OpCodes.Brfalse, fallbackFieldsLabel);
         // Sealing/freezing makes every existing own property
         // non-configurable even though the stable stored descriptor retains
         // its original bit. Match gOPD's effective-configurability view.
@@ -729,6 +730,43 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, inputs.DescriptorStorage.DeleteProperty);
         il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(fallbackFieldsLabel);
+        // Assignment-created class expandos live outside PDS. The public
+        // Fields view may be a snapshot containing declared fields; use the
+        // generated class's existing accessor for its actual dynamic store.
+        // Missing/inherited properties need no backing-store mutation.
+        il.Emit(OpCodes.Ldloc, ordinaryDeleteDescriptorLocal);
+        il.Emit(OpCodes.Brfalse, trueLabel);
+        il.Emit(OpCodes.Ldloc, ordinaryDeleteDescriptorLocal);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.IHasFieldsInterface);
+        il.Emit(OpCodes.Brfalse, trueLabel);
+        var dynamicStore = il.DeclareLocal(_types.MethodInfo);
+        var dynamicFields = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
+        il.Emit(OpCodes.Ldstr, "$EnsureFields");
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, dynamicStore);
+        il.Emit(OpCodes.Ldloc, dynamicStore);
+        il.Emit(OpCodes.Brfalse, trueLabel);
+        il.Emit(OpCodes.Ldloc, dynamicStore);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Stloc, dynamicFields);
+        il.Emit(OpCodes.Ldloc, dynamicFields);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
+        il.Emit(OpCodes.Brfalse, trueLabel);
+        il.Emit(OpCodes.Ldloc, dynamicFields);
+        il.Emit(OpCodes.Call, objectDeletion.CompactDictionaryOrder);
         il.Emit(OpCodes.Br, trueLabel);
 
         // $TSFunction delete handler.

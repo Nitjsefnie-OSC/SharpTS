@@ -73,10 +73,7 @@ public sealed class PromiseAbsentPropertyReadTests
             """, "true true true true true\ntrue true\ntrue false true\ntrue true true true true\ntrue true\ntrue false true\n"];
     }
 
-    // #2801 owns compiled assignment-created class instance expando deletion.
-    // Preserve that full original source interpreted-only; the descriptor-installed companion remains dual-mode.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] != "present-null-and-undefined-remain-distinct-from-deleted-promise-properties");
+    public static IEnumerable<object[]> SavedCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases()
     {

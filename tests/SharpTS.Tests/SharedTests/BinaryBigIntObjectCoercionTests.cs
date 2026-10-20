@@ -210,10 +210,7 @@ public sealed class BinaryBigIntObjectCoercionTests
     {
         foreach (var row in AllCases())
         {
-            // #2786 tracks interpreter large-count semantics; restore this full source there.
-            // Compiled and isolated saved execution retain all of its Node expectations.
-            if ((string)row[0] != "converted-object-bigint-counts-preserve-finite-results-and-range-errors")
-                yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
+            yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
     }

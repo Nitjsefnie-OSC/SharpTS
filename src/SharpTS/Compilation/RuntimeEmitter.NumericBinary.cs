@@ -120,19 +120,8 @@ public partial class RuntimeEmitter
                 GuestErrorEmitter.ThrowError(il, errors.CreateException, errors.RangeErrorConstructor, "Division by zero");
                 il.MarkLabel(nonzero);
             }
-            if (op == TokenType.STAR_STAR)
-            {
-                var nonnegative = il.DefineLabel();
-                il.Emit(OpCodes.Ldloca, rightBig);
-                il.Emit(OpCodes.Call, sign);
-                il.Emit(OpCodes.Ldc_I4_0);
-                il.Emit(OpCodes.Bge, nonnegative);
-                GuestErrorEmitter.ThrowError(il, errors.CreateException, errors.RangeErrorConstructor,
-                    "BigInt exponent must be non-negative");
-                il.MarkLabel(nonnegative);
-            }
             if (op is TokenType.STAR_STAR or TokenType.LESS_LESS or TokenType.GREATER_GREATER)
-                EmitLargeCountGuard(op);
+                EmitBigIntCountGuard(il, op, leftBig, rightBig, errors.CreateException, errors.RangeErrorConstructor);
             il.Emit(OpCodes.Ldloc, leftBig);
             il.Emit(OpCodes.Ldloc, rightBig);
             bool intRight = op is TokenType.STAR_STAR or TokenType.LESS_LESS or TokenType.GREATER_GREATER;
@@ -179,6 +168,25 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Unbox_Any, _types.Double);
             if (toInt32) il.Emit(OpCodes.Call, numeric.JsNumberToInt32);
         }
+    }
+
+    private void EmitBigIntCountGuard(
+        ILGenerator il, TokenType operation, LocalBuilder leftBig, LocalBuilder rightBig,
+        MethodInfo createException, ConstructorInfo rangeErrorCtor)
+    {
+        var sign = _types.GetProperty(_types.BigInteger, "Sign").GetGetMethod()!;
+        if (operation == TokenType.STAR_STAR)
+        {
+            var nonnegative = il.DefineLabel();
+            il.Emit(OpCodes.Ldloca, rightBig);
+            il.Emit(OpCodes.Call, sign);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Bge, nonnegative);
+            GuestErrorEmitter.ThrowError(il, createException, rangeErrorCtor,
+                "BigInt exponent must be non-negative");
+            il.MarkLabel(nonnegative);
+        }
+        EmitLargeCountGuard(operation);
 
         // BCL power/shift methods take an Int32 count. Handle unrepresentable
         // counts before casting, including the finite results of huge shifts
@@ -244,7 +252,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloca, leftBig);
             il.Emit(OpCodes.Call, sign);
             il.Emit(OpCodes.Brfalse, zero);
-            GuestErrorEmitter.ThrowError(il, errors.CreateException, errors.RangeErrorConstructor,
+            GuestErrorEmitter.ThrowError(il, createException, rangeErrorCtor,
                 "Maximum BigInt size exceeded");
             il.MarkLabel(zero);
             EmitReturnBigInt("Zero");
@@ -270,7 +278,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, _types.GetProperty(_types.BigInteger, "MinusOne").GetGetMethod()!);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.BigInteger, "op_Equality", _types.BigInteger, _types.BigInteger));
             il.Emit(OpCodes.Brtrue, negativeOne);
-            GuestErrorEmitter.ThrowError(il, errors.CreateException, errors.RangeErrorConstructor,
+            GuestErrorEmitter.ThrowError(il, createException, rangeErrorCtor,
                 "Maximum BigInt size exceeded");
             il.MarkLabel(negativeOne);
             var odd = il.DefineLabel();

@@ -2898,9 +2898,9 @@ public partial class RuntimeEmitter
                         runtime.Errors.CreateException, runtime.Errors.TypeErrorConstructor),
                     runtime.ObjectStorage.Type, runtime.StringCoercion.ToJsString, runtime.Errors.RangeErrorConstructor, runtime.Errors.SyntaxErrorConstructor));
             EmitBigIntStaticMethods(typeBuilder, bigInt, runtime.NumericCoercion.ToNumber, runtime.Errors.CreateException, runtime.Errors.RangeErrorConstructor);
-            EmitBigIntArithmetic(typeBuilder, bigInt);
+            EmitBigIntArithmetic(typeBuilder, bigInt, runtime.Errors.CreateException, runtime.Errors.RangeErrorConstructor);
             EmitBigIntComparison(typeBuilder, bigInt, runtime.Errors.CreateException, runtime.Errors.RangeErrorConstructor);
-            EmitBigIntBitwise(typeBuilder, bigInt);
+            EmitBigIntBitwise(typeBuilder, bigInt, runtime.Errors.CreateException, runtime.Errors.RangeErrorConstructor);
             EmitBigIntPrototypePopulate(typeBuilder, runtime.BigInt, bigInt.ToStringRadix,
                 new BigIntPrototypeInputs(
                     new PrototypeDescriptorInputs(runtime.DescriptorStorage.DescriptorConstructor,

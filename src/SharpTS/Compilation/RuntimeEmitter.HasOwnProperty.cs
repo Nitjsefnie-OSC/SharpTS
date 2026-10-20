@@ -342,24 +342,28 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brtrue, trueLabel);
         }
 
-        // Math singleton — synth-check the known Math names. The dict is
-        // empty but Math.X resolves through static dispatch; per spec
-        // hasOwn(Math, "abs") === true.
+        // Math methods are installed as actual dictionary/PDS own properties by MathPopulate.
+        // Read current storage before the deletion ledger so descriptor-backed recreations remain own.
+        // Only the constants still need synthetic presence; method-name synthesis would resurrect
+        // an absent method after ordinary dictionary deletion (#2790).
         var notMathForHasOwnLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldsfld, inputs.Math.SingletonField);
         il.Emit(OpCodes.Bne_Un, notMathForHasOwnLabel);
-        // First skip if marked deleted in tracker.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
+        il.Emit(OpCodes.Brtrue, trueLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, nameLocal);
         il.Emit(OpCodes.Call, inputs.ObjectState.IsBuiltinDeleted);
         il.Emit(OpCodes.Brtrue, falseLabel);
-        foreach (var m in new[] { "abs", "acos", "acosh", "asin", "asinh", "atan", "atan2",
-            "atanh", "cbrt", "ceil", "clz32", "cos", "cosh", "exp", "expm1", "floor",
-            "fround", "hypot", "imul", "log", "log10", "log1p", "log2", "max", "min",
-            "pow", "random", "round", "sign", "sin", "sinh", "sqrt", "tan", "tanh", "trunc",
-            "f16round", "sumPrecise",
-            "E", "LN10", "LN2", "LOG10E", "LOG2E", "PI", "SQRT1_2", "SQRT2" })
+        foreach (var m in new[] { "E", "LN10", "LN2", "LOG10E", "LOG2E", "PI", "SQRT1_2", "SQRT2" })
             DictNameEq(m);
         il.MarkLabel(notMathForHasOwnLabel);
 

@@ -86,19 +86,14 @@ public sealed class MathAccessorPropertyReadTests
             """, "true\ntrue\ntarget,child\n2\n"];
     }
 
-    // Compiled Math own-presence still resurrects a deleted built-in; its separate owner is under audit.
-    // Preserve the full source and assertions interpreted-only until that deletion-query boundary is fixed.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] != "math-own-live-values-getterless-delete-restore");
+    public static IEnumerable<object[]> SavedCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases()
     {
         foreach (var row in Cases())
         {
             yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
-            // The full deletion-query source remains interpreted-only for the boundary documented above.
-            if ((string)row[0] != "math-own-live-values-getterless-delete-restore")
-                yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
+            yield return [row[0], row[1], row[2], ExecutionMode.Compiled];
         }
     }
 

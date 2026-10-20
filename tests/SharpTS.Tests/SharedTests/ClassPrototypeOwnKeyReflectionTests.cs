@@ -284,42 +284,53 @@ public sealed class ClassPrototypeOwnKeyReflectionTests
             or "creation-order-expression-and-generic-computed-accessors"
             or "creation-order-deferred-registration-preserves-forward-class-body");
 
+    public const string RecreationOrderSource = """
+        const first = Symbol('same'), second = Symbol('same');
+        let reads = 0;
+        class Owner {
+            first() {}
+            get middle() { reads++; return 1; }
+            [first]() {}
+            last() {}
+            set pair(value: number) {}
+            [second]() {}
+            get pair() { reads++; return 2; }
+        }
+        const prototype: any = Owner.prototype;
+        function keys(value: any): string {
+            return Reflect.ownKeys(value).map(key => key === first ? 'first-symbol'
+                : key === second ? 'second-symbol' : String(key)).join(',');
+        }
+        console.log(Object.getOwnPropertyNames(prototype).join(','), keys(prototype), reads);
+        delete prototype.middle;
+        Object.defineProperty(prototype, 'middle', {
+            get() { reads++; return 3; }, enumerable: true, configurable: true
+        });
+        delete prototype.first;
+        Object.defineProperty(prototype, 'first', {
+            value: () => 4, writable: true, enumerable: true, configurable: true
+        });
+        console.log(Object.getOwnPropertyNames(prototype).join(','), keys(prototype), reads);
+        const pair = Object.getOwnPropertyDescriptor(prototype, 'pair')!;
+        console.log(Object.keys(prototype).join(','), typeof pair.get, typeof pair.set, reads);
+        """;
+
+    public const string RecreationOrderExpected = "constructor,first,middle,last,pair constructor,first,middle,last,pair,first-symbol,second-symbol 0\nconstructor,last,pair,middle,first constructor,last,pair,middle,first,first-symbol,second-symbol 0\nmiddle,first function function 0\n";
+
     [Fact]
     public void DeletionAndRecreationAppendClassPrototypeKeysWithoutInvokingGetters()
     {
-        // #2764: compiled class-prototype deletion/recreation reuses the original key position.
-        const string source = """
-            const first = Symbol('same'), second = Symbol('same');
-            let reads = 0;
-            class Owner {
-                first() {}
-                get middle() { reads++; return 1; }
-                [first]() {}
-                last() {}
-                set pair(value: number) {}
-                [second]() {}
-                get pair() { reads++; return 2; }
-            }
-            const prototype: any = Owner.prototype;
-            function keys(value: any): string {
-                return Reflect.ownKeys(value).map(key => key === first ? 'first-symbol'
-                    : key === second ? 'second-symbol' : String(key)).join(',');
-            }
-            console.log(Object.getOwnPropertyNames(prototype).join(','), keys(prototype), reads);
-            delete prototype.middle;
-            Object.defineProperty(prototype, 'middle', {
-                get() { reads++; return 3; }, enumerable: true, configurable: true
-            });
-            delete prototype.first;
-            Object.defineProperty(prototype, 'first', {
-                value: () => 4, writable: true, enumerable: true, configurable: true
-            });
-            console.log(Object.getOwnPropertyNames(prototype).join(','), keys(prototype), reads);
-            const pair = Object.getOwnPropertyDescriptor(prototype, 'pair')!;
-            console.log(Object.keys(prototype).join(','), typeof pair.get, typeof pair.set, reads);
-            """;
-        const string expected = "constructor,first,middle,last,pair constructor,first,middle,last,pair,first-symbol,second-symbol 0\nconstructor,last,pair,middle,first constructor,last,pair,middle,first,first-symbol,second-symbol 0\nmiddle,first function function 0\n";
+        const string source = RecreationOrderSource;
+        const string expected = RecreationOrderExpected;
         Assert.Equal(expected, TestHarness.Run(source, ExecutionMode.Interpreted));
+    }
+
+    [Fact]
+    public void CompiledDeletionAndRecreationAppendClassPrototypeKeysWithoutInvokingGetters()
+    {
+        var (errors, output) = TestHarness.CompileVerifyAndRun(RecreationOrderSource);
+        Assert.Empty(errors);
+        Assert.Equal(RecreationOrderExpected, output);
     }
 
     [Theory, MemberData(nameof(ModeCases))]

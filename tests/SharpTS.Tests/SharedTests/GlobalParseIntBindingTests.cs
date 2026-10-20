@@ -317,11 +317,7 @@ public sealed class GlobalParseIntBindingTests
     {
         foreach (var row in Cases())
         {
-            // Interpreter typeof of a grouped missing binding also throws; that separate owner is under audit.
-            // Keep these full sources and assertions active in compiled and isolated saved coverage.
-            if ((string)row[0] is not ("deleted-binding-throws-before-call-arguments-with-lexical-shadows" or
-                "deleted-binding-typeof-and-read-after-await-in-both-async-forms"))
-                yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
+            yield return [row[0], row[1], row[2], ExecutionMode.Interpreted];
             // The qualified compiled call in the original issue source is #2539.
             if ((string)row[0] != "issue")
                 yield return [row[0], row[1], row[2], ExecutionMode.Compiled];

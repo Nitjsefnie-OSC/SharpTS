@@ -504,13 +504,16 @@ public partial class Interpreter
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Logical_NOT">MDN Logical NOT</seealso>
     private RuntimeValue EvaluateUnary(Expr.Unary unary)
     {
-        // typeof never throws on undeclared variables - it returns "undefined"
-        if (unary.Operator.Type == TokenType.TYPEOF && unary.Right is Expr.Variable)
+        // Parentheses preserve an identifier Reference for typeof's unresolvable exemption.
+        if (unary.Operator.Type == TokenType.TYPEOF)
         {
-            RuntimeValue right;
-            try { right = EvaluateRV(unary.Right); }
-            catch (InterpreterException) { right = RuntimeValue.Undefined; }
-            return RuntimeValue.FromString(right.TypeofString());
+            Expr reference = unary.Right;
+            while (reference is Expr.Grouping grouping) reference = grouping.Expression;
+            if (reference is Expr.Variable variable)
+            {
+                var right = LookupVariableRV(variable.Name, variable, allowUnresolvable: true);
+                return RuntimeValue.FromString(right.TypeofString());
+            }
         }
 
         // Fast path for common unary operations on RuntimeValue

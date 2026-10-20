@@ -1269,7 +1269,7 @@ public partial class Interpreter : IDisposable
     /// Looks up a variable and returns its value as RuntimeValue without boxing.
     /// This is the fast path for variable access in expressions.
     /// </summary>
-    private RuntimeValue LookupVariableRV(Token name, Expr expr)
+    private RuntimeValue LookupVariableRV(Token name, Expr expr, bool allowUnresolvable = false)
     {
         // Fast path: resolved locals with known depth
         if (_locals.TryGetValue(expr, out int distance))
@@ -1299,7 +1299,10 @@ public partial class Interpreter : IDisposable
             if (GlobalThis.HasUserProperty(name.Lexeme))
                 return RuntimeValue.FromBoxed(GetPropertyValue(GlobalThis, name.Lexeme));
             if (GlobalThis.IsDeletedProperty(name.Lexeme))
+            {
+                if (allowUnresolvable) return RuntimeValue.Undefined;
                 throw new InterpreterException($"ReferenceError: Undefined variable '{name.Lexeme}'.");
+            }
         }
 
         // Per-realm mutable built-ins (Math, …) shadow the shared global-constants
@@ -1320,6 +1323,10 @@ public partial class Interpreter : IDisposable
         // Check for Node.js module globals (__dirname, __filename)
         if (name.Lexeme == "__filename") return RuntimeValue.FromString(_currentModule?.Path ?? "");
         if (name.Lexeme == "__dirname") return RuntimeValue.FromString(Path.GetDirectoryName(_currentModule?.Path) ?? "");
+
+        // Only typeof on an identifier Reference exempts an unresolvable binding.
+        // Reads above still propagate TDZ and accessor abrupt completions.
+        if (allowUnresolvable) return RuntimeValue.Undefined;
 
         // ECMA-262 §9.4.2: resolving an unbound name is a ReferenceError. The name prefix
         // is what routes this to a guest ReferenceError at the catch binding

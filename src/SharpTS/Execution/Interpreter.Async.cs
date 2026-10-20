@@ -782,13 +782,16 @@ public partial class Interpreter
 
     private async Task<RuntimeValue> EvaluateUnaryAsync(Expr.Unary unary)
     {
-        // typeof never throws on undeclared variables
-        if (unary.Operator.Type == TokenType.TYPEOF && unary.Right is Expr.Variable)
+        // Parentheses preserve an identifier Reference for typeof's unresolvable exemption.
+        if (unary.Operator.Type == TokenType.TYPEOF)
         {
-            RuntimeValue right;
-            try { right = await EvaluateAsync(unary.Right); }
-            catch (InterpreterException) { right = RuntimeValue.Undefined; }
-            return RuntimeValue.FromString(right.TypeofString());
+            Expr reference = unary.Right;
+            while (reference is Expr.Grouping grouping) reference = grouping.Expression;
+            if (reference is Expr.Variable variable)
+            {
+                var right = LookupVariableRV(variable.Name, variable, allowUnresolvable: true);
+                return RuntimeValue.FromString(right.TypeofString());
+            }
         }
 
         var rv = await EvaluateAsync(unary.Right);

@@ -14,6 +14,9 @@ public partial class RuntimeEmitter
         var il = promise.AwaitValueToTaskMethod.GetILGenerator();
         var nativePromiseLabel = il.DefineLabel();
         var intrinsicPromiseLabel = il.DefineLabel();
+        var normalizedLabel = il.DefineLabel();
+        var completedLabel = il.DefineLabel();
+        var taskLocal = il.DeclareLocal(_types.TaskOfObject);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, promise.Type);
@@ -26,7 +29,7 @@ public partial class RuntimeEmitter
         // promises need the observable constructor test introduced here.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, promise.CoerceAwaitableToTaskMethod);
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Br, normalizedLabel);
 
         il.MarkLabel(nativePromiseLabel);
         // Get constructor once, before choosing a fast path. A subclass may
@@ -44,13 +47,32 @@ public partial class RuntimeEmitter
         // the original receiver. Coerce would incorrectly unwrap this promise.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, promise.ResolveValueMethod);
-        il.Emit(OpCodes.Ret);
+        il.Emit(OpCodes.Br, normalizedLabel);
 
         il.MarkLabel(intrinsicPromiseLabel);
         // The intrinsic identity permits task reuse, including ignoring a
         // poisoned own then property. Coerce performs only the native unwrap.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, promise.CoerceAwaitableToTaskMethod);
+
+        il.MarkLabel(normalizedLabel);
+        il.Emit(OpCodes.Stloc, taskLocal);
+        il.Emit(OpCodes.Ldloc, taskLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Task, "IsCompleted").GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, completedLabel);
+
+        // A synchronous-capable adoption bridge may settle inside then(resolve).
+        // Give a pending await its own Promise job so guest code cannot resume
+        // before the thenable finishes. The intrinsic no-handler path forwards
+        // the raw value or exception without another guest then/constructor read.
+        il.Emit(OpCodes.Ldloc, taskLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Call, promise.Then);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(completedLabel);
+        il.Emit(OpCodes.Ldloc, taskLocal);
         il.Emit(OpCodes.Ret);
     }
 }

@@ -93,8 +93,7 @@ public sealed class SynchronousLoopMicrotaskTests
 
     public static IEnumerable<object[]> ModeCases() => Cases()
         .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted })
-        // #2740 separately owns compiled adoption ordering against due timers.
-        .Concat(Cases().Where(row => (string)row[0] != "thenable-and-due-timer")
+        .Concat(Cases()
             .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Compiled }));
 
     [Theory, MemberData(nameof(ModeCases))]

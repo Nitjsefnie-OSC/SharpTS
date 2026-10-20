@@ -103,13 +103,21 @@ public sealed class ThenableAdoptionSchedulingTests
             """, "true\ntimer\n"];
     }
 
+    // #2741 independently owns compiled nested self-resolution.
+    public static IEnumerable<object[]> CompiledCases() => Cases()
+        .Where(row => (string)row[0] != "nested-self-resolution");
+
     public static IEnumerable<object[]> ModeCases() => Cases()
         .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted })
-        // Compiled adoption ordering is tracked by #2740 and self-resolution by #2741.
-        // Keep the supported settlement/rejection parity rows.
-        .Concat(Cases().Where(row => (string)row[0] is
-                "first-settlement-and-nested-rejection" or "nested-getter-rejection")
+        .Concat(CompiledCases()
             .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Compiled }));
+
+    public static IEnumerable<object[]> SavedCases() => Cases()
+        .Where(row => (string)row[0] is "original-nested-adoption" or
+            "timer-before-nested-resolution-and-reactions" or
+            "captured-then-and-microtask-fifo" or "loop-inside-then-keeps-job-deferred")
+        .Concat(SynchronousLoopMicrotaskTests.Cases()
+            .Where(row => (string)row[0] == "thenable-and-due-timer"));
 
     [Theory, MemberData(nameof(ModeCases))]
     public void ThenableJobsDrainBeforeDueTimers(

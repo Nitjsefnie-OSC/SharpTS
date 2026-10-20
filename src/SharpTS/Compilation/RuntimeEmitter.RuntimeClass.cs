@@ -2307,7 +2307,15 @@ public partial class RuntimeEmitter
                     runtime.Reflect.ToPropertyKey,
                     runtime.ObjectDescriptors.DefineProperty,
                     runtime.ObjectState.IsExtensible,
-                    runtime.ObjectRead.Property
+                    runtime.ObjectRead.Property,
+                    new PropertyDescriptorConversionInputs(
+                        runtime.Booleans, runtime.DescriptorStorage, runtime.Errors,
+                        new DescriptorPropertyPresenceInputs(
+                            runtime.ObjectDescriptors.GetOwnPropertyDescriptor,
+                            runtime.ObjectPrototypes.GetPrototypeOf,
+                            runtime.Operators.HasIn, runtime.Sentinels.UndefinedType),
+                        runtime.Reflect.Get, runtime.Operators.TypeOf,
+                        runtime.Sentinels.UndefinedType)
                 )
             );
         }

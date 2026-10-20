@@ -154,6 +154,16 @@ public partial class RuntimeEmitter
         FieldInfo UndefinedInstance
     );
 
+    private readonly record struct PropertyDescriptorConversionInputs(
+        EmittedBooleanRuntime Booleans,
+        EmittedDescriptorStorageRuntime DescriptorStorage,
+        EmittedErrorRuntime Errors,
+        DescriptorPropertyPresenceInputs PropertyPresence,
+        MethodInfo ReflectGet,
+        MethodInfo TypeOf,
+        Type UndefinedType
+    );
+
     private readonly record struct ObjectDefinePropertiesInputs(
         EmittedBooleanRuntime Booleans,
         EmittedDescriptorStorageRuntime DescriptorStorage,
@@ -2047,7 +2057,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.Reflect.Get);
         il.Emit(OpCodes.Stloc, descriptorValue);
         il.MarkLabel(valueReady);
-        var converted = EmitConvertDefinePropertiesDescriptor(il, inputs, descriptorValue);
+        var converted = EmitConvertPropertyDescriptor(il,
+            new PropertyDescriptorConversionInputs(
+                inputs.Booleans, inputs.DescriptorStorage, inputs.Errors,
+                new DescriptorPropertyPresenceInputs(inputs.ProxyOwnKeys.GetOwnPropertyDescriptor,
+                    inputs.ObjectPrototypes.GetPrototypeOf, inputs.Operators.HasIn, inputs.UndefinedType),
+                inputs.Reflect.Get, inputs.Operators.TypeOf, inputs.UndefinedType),
+            descriptorValue);
         il.Emit(OpCodes.Ldloc, pendingKeys);
         il.Emit(OpCodes.Ldloc, keyLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
@@ -2148,8 +2164,8 @@ public partial class RuntimeEmitter
         }
     }
 
-    private LocalBuilder EmitConvertDefinePropertiesDescriptor(ILGenerator il,
-        ObjectDefinePropertiesInputs inputs, LocalBuilder descriptor)
+    private LocalBuilder EmitConvertPropertyDescriptor(ILGenerator il,
+        PropertyDescriptorConversionInputs inputs, LocalBuilder descriptor)
     {
         var valid = il.DefineLabel();
         var invalid = il.DefineLabel();
@@ -2157,7 +2173,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, descriptor);
         il.Emit(OpCodes.Brfalse, invalid);
         il.Emit(OpCodes.Ldloc, descriptor);
-        il.Emit(OpCodes.Call, inputs.Operators.TypeOf);
+        il.Emit(OpCodes.Call, inputs.TypeOf);
         il.Emit(OpCodes.Stloc, kind);
         foreach (string objectKind in new[] { "object", "function" })
         {
@@ -2184,16 +2200,13 @@ public partial class RuntimeEmitter
         {
             var absent = il.DefineLabel();
             var present = il.DefineLabel();
-            EmitDescriptorPropertyPresence(il,
-                new DescriptorPropertyPresenceInputs(inputs.ProxyOwnKeys.GetOwnPropertyDescriptor,
-                    inputs.ObjectPrototypes.GetPrototypeOf, inputs.Operators.HasIn, inputs.UndefinedType),
-                descriptor, field, present);
+            EmitDescriptorPropertyPresence(il, inputs.PropertyPresence, descriptor, field, present);
             il.Emit(OpCodes.Br, absent);
             il.MarkLabel(present);
             il.Emit(OpCodes.Ldloc, descriptor);
             il.Emit(OpCodes.Ldstr, field);
             il.Emit(OpCodes.Ldloc, descriptor);
-            il.Emit(OpCodes.Call, inputs.Reflect.Get);
+            il.Emit(OpCodes.Call, inputs.ReflectGet);
             il.Emit(OpCodes.Stloc, value);
             if (field is "enumerable" or "configurable" or "writable")
             {
@@ -2209,7 +2222,7 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Isinst, inputs.UndefinedType);
                 il.Emit(OpCodes.Brtrue, callable);
                 il.Emit(OpCodes.Ldloc, value);
-                il.Emit(OpCodes.Call, inputs.Operators.TypeOf);
+                il.Emit(OpCodes.Call, inputs.TypeOf);
                 il.Emit(OpCodes.Ldstr, "function");
                 il.Emit(OpCodes.Call, _types.StringOpEquality);
                 il.Emit(OpCodes.Brtrue, callable);

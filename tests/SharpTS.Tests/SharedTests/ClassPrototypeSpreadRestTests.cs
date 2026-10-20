@@ -125,7 +125,6 @@ public sealed class ClassPrototypeSpreadRestTests
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
-    // #2758: compiled spread does not recheck live descriptors after getter mutations.
     [Fact]
     public void InterpretedSpreadRechecksLiveDescriptorsAfterItsKeySnapshot()
     {
@@ -133,6 +132,14 @@ public sealed class ClassPrototypeSpreadRestTests
         Assert.True(result.Success, string.Join("\n", result.Errors) + result.Output);
         Assert.Empty(result.Errors);
         Assert.Equal("first,later,hidden 10 20 4 true true 1\n", result.Output.Replace("\r\n", "\n"));
+    }
+
+    [Fact]
+    public void CompiledSpreadRechecksLiveDescriptorsAfterItsKeySnapshot()
+    {
+        var (errors, output) = TestHarness.CompileVerifyAndRun(LiveSpreadSource);
+        Assert.Empty(errors);
+        Assert.Equal("first,later,hidden 10 20 4 true true 1\n", output);
     }
 
     [Theory, MemberData(nameof(ModeCases))]

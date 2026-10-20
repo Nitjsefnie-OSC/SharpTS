@@ -1922,7 +1922,11 @@ public partial class TypeChecker
                     // inference can also leave a literal contextual result (`5`) where the
                     // callback expression naturally widens to its primitive (`number`).
                     bool discardsResult = !arrow.IsAsync && expectedFuncType.ReturnType is TypeInfo.Void;
-                    if (!discardsResult && !IsCompatible(WidenLiteralType(expectedRetType), exprType))
+                    var (expectedValueType, returnedValueType) =
+                        arrow.IsAsync && expectedFuncType.ReturnType is TypeInfo.Promise
+                            ? (ResolveAwaitedType(expectedRetType), ResolveAwaitedType(exprType))
+                            : (expectedRetType, exprType);
+                    if (!discardsResult && !IsCompatible(WidenLiteralType(expectedValueType), returnedValueType))
                     {
                         throw new TypeCheckException(
                             $"Arrow function expression evaluates to '{exprType}', but its contextual return type is '{expectedRetType}'.",
@@ -1957,7 +1961,12 @@ public partial class TypeChecker
                         expectedRetType = promiseType.ValueType;
                     }
 
-                    if (!IsCompatible(expectedRetType, exprType))
+                    var (expectedValueType, returnedValueType) =
+                        arrow.IsAsync && returnType is TypeInfo.Promise
+                            ? (ResolveAwaitedType(expectedRetType), ResolveAwaitedType(exprType))
+                            : (expectedRetType, exprType);
+
+                    if (!IsCompatible(expectedValueType, returnedValueType))
                     {
                         throw new TypeCheckException($" Arrow function declared to return '{returnType}' but expression evaluates to '{exprType}'.", tsCode: "TS2322");
                     }

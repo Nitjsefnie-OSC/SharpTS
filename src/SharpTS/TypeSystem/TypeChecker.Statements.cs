@@ -805,11 +805,18 @@ public partial class TypeChecker
 
                 MarkIfUndefinedReachableTypedReturn(stmt.Value, actualReturnType);
 
+                // Normalize adoption only for compatibility, preserving the
+                // contextual expression type, compiler hints and diagnostic types.
+                var (expectedValueType, returnedValueType) =
+                    _inAsyncFunction && _currentFunctionReturnType is TypeInfo.Promise
+                        ? (ResolveAwaitedType(expectedReturnType), ResolveAwaitedType(actualReturnType))
+                        : (expectedReturnType, actualReturnType);
+
                 if (_inGeneratorFunction && expectedReturnType is TypeInfo.Void)
                 {
                     // Allow any return value in generators with no explicit return type
                 }
-                else if (!IsCompatible(expectedReturnType, actualReturnType) &&
+                else if (!IsCompatible(expectedValueType, returnedValueType) &&
                     !(!_strictNullChecks && actualReturnType is TypeInfo.Void))
                 {
                     throw new TypeMismatchException(_currentFunctionReturnType, actualReturnType, stmt.Keyword.Line, tsCode: "TS2322");

@@ -168,9 +168,14 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         IL.Emit(OpCodes.Ldloc, caught);
         if (TryInitializeLexicalCell(parameter)) return;
         string name = GetBindingStorageName(declaration, parameter.Lexeme);
-        var local = IL.DeclareLocal(Types.Object);
-        Ctx.Locals.RegisterLocal(name, local);
-        RegisterLoopLocal(name, local);
+        if (GetHoistedVariableField(name) == null)
+        {
+            // A suspending catch uses its existing field. Registering an IL local
+            // would make async-arrow reads and writes bypass that field (#2850).
+            var local = IL.DeclareLocal(Types.Object);
+            Ctx.Locals.RegisterLocal(name, local);
+            RegisterLoopLocal(name, local);
+        }
         EmitStoreVariable(name);
     }
 

@@ -59,6 +59,13 @@ public class StaticTypeHandler : ICallHandler
             return false;
         }
 
+        if (staticVar.Name.Lexeme == "Reflect"
+            && (emitter.HasVariable("Reflect")
+                || ctx.HasVisibleValueBinding("Reflect")))
+        {
+            return false;
+        }
+
         var staticStrategy = ctx.TypeEmitterRegistry.GetStaticStrategy(staticVar.Name.Lexeme);
         if (staticStrategy == null)
             return false;

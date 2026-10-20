@@ -3213,14 +3213,14 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
     /// <summary>
     /// Returns whether a bare built-in name may use its registry-backed static
-    /// property representation. Lexical Number/Math/ArrayBuffer/globalThis bindings require ordinary member reads.
+    /// property representation. Lexical Number/Math/ArrayBuffer/globalThis/Reflect bindings require ordinary member reads.
     /// Promise additionally checks mutation because primitive-await
     /// lowering must preserve a shadowed or mutated <c>Promise.resolve</c> call
     /// all the way through method materialization and receiver binding.
     /// </summary>
     protected bool CanUseStaticTypeStrategy(string name)
     {
-        if (name is "Number" or "Math" or "ArrayBuffer" or "globalThis")
+        if (name is "Number" or "Math" or "ArrayBuffer" or "globalThis" or "Reflect")
             return !Resolver.HasVariable(name) && !Ctx.HasVisibleValueBinding(name);
 
         return name != "Promise"

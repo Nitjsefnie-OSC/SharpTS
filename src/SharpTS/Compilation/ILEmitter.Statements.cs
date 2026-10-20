@@ -149,6 +149,13 @@ public partial class ILEmitter
         if (v.IsVar && v.Initializer is null
             && _ctx.InitializedParameterNames?.Contains(v.Name.Lexeme) == true)
             return;
+        // The callable-body hoisting pass already initialized this shared
+        // binding. A declaration without an initializer performs no assignment.
+        if (v.IsVar && v.Initializer is null
+            && _ctx.HoistedInnerFunctions?.Any(function => function.Body != null
+                && function.Name.Lexeme == v.Name.Lexeme
+                && _ctx.InnerFunctionMethods?.ContainsKey(function) == true) == true)
+            return;
 
         // Module-level storage (static field / entry-point display class) is only the right
         // target when this declaration IS a module-level binding: we are emitting the module

@@ -1807,8 +1807,12 @@ public partial class Interpreter
         }
         if (obj is SharpTSRegExp regexStringSet)
         {
-            regexStringSet.SetProperty(
-                PropertyKeyConverter.ToPropertyKeyString(index), value);
+            string key = PropertyKeyConverter.ToPropertyKeyString(index);
+            var ownDescriptor = regexStringSet.GetOwnPropertyDescriptor(key);
+            if (ownDescriptor is { HasGet: true } or { HasSet: true }
+                && TryAssignThroughDescriptor(ownDescriptor, regexStringSet, key, value, strictMode))
+                return RuntimeValue.FromBoxed(value);
+            regexStringSet.SetProperty(key, value);
             return RuntimeValue.FromBoxed(value);
         }
 
@@ -1987,6 +1991,12 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.InstanceString t:
+                // Installed own accessors take precedence without changing the declared or
+                // raw-data paths below. The descriptor lookup never invokes its getter.
+                var ownDescriptor = t.Target.GetOwnPropertyDescriptor(t.Key);
+                if (ownDescriptor is { HasGet: true } or { HasSet: true }
+                    && TryAssignThroughDescriptor(ownDescriptor, t.Target, t.Key, value, strictMode))
+                    break;
                 // Bracket assignment must invoke a declared setter / auto-accessor, mirroring
                 // dot assignment (SharpTSInstance.Set) and JS [[Set]] semantics. Without this the
                 // write lands in _fields while reads keep hitting the getter, silently

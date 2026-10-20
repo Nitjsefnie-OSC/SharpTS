@@ -1234,6 +1234,21 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ret);
             il.MarkLabel(unchangedChain);
         }
+        // Assigned prototype properties live in PDS, independently of the
+        // prototype's dynamic Fields dictionary. A present own descriptor
+        // decides the read even when its value/getter result is undefined.
+        // Without one, keep the existing method and ancestor fallback order.
+        var noOwnPrototypeDescriptor = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, prototypeLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _runtime.DescriptorStorage.GetPropertyDescriptor);
+        il.Emit(OpCodes.Brfalse, noOwnPrototypeDescriptor);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, prototypeLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _runtime.ClassDefinitions.ReadPrototypeProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(noOwnPrototypeDescriptor);
         var noDescriptor = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _runtime.ClassDefinitions.InstanceInterface);

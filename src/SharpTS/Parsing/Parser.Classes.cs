@@ -639,6 +639,8 @@ public partial class Parser
             throw new Exception($"Parse Error at line {syntheticName.Line}: Generator marker '*' can only be used with methods, not fields.");
         }
 
+        bool isOptional = Match(TokenType.QUESTION);
+
         // Type annotation is optional (ES class fields), matching the identifier-keyed field path:
         // `[Symbol.iterator] = 0;` / `[Symbol.iterator];` are both valid without a `: type`.
         string? typeAnnotation = null;
@@ -662,7 +664,7 @@ public partial class Parser
             Match(TokenType.SEMICOLON);
         else
             ConsumeSemicolon("Expect ';' after computed property field declaration.");
-        var field = new Stmt.Field(syntheticName, typeAnnotation, initializer, isStatic, access, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, memberDecorators, IsPrivate: false, IsDeclare: isDeclare || isMemberDeclare, ComputedKey: computedKey);
+        var field = new Stmt.Field(syntheticName, typeAnnotation, initializer, isStatic, access, isReadonly, IsOptional: isOptional, HasDefiniteAssignmentAssertion: false, memberDecorators, IsPrivate: false, IsDeclare: isDeclare || isMemberDeclare, ComputedKey: computedKey);
         AttachEditorSyntax(field, typeAnnotationNode);
         fields.Add(field);
         if (isStatic)

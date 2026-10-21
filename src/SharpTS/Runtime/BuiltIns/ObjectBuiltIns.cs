@@ -129,7 +129,7 @@ public static partial class ObjectBuiltIns
                         includeValues ? interpreter.GetProperty(arr, key) : null);
                 yield break;
             case SharpTSInstance inst:
-                foreach (var n in inst.GetFieldNames())
+                foreach (var n in inst.OwnEnumerableKeys())
                     yield return new(n, includeValues ? inst.GetRawField(n) : null);
                 yield break;
             case IDictionary<string, object?> dict:

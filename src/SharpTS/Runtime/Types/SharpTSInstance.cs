@@ -29,8 +29,8 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Instance;
     private Dictionary<string, object?> _fields = [];
-    private Dictionary<string, ISharpTSCallable>? _getters;
-    private Dictionary<string, ISharpTSCallable>? _setters;
+    private Dictionary<string, ISharpTSCallable?>? _getters;
+    private Dictionary<string, ISharpTSCallable?>? _setters;
     private SharpTSObject? _symbolProperties;
     private Dictionary<string, PropertyDescriptorFlags>? _descriptors;
     private Interpreter? _interpreter;
@@ -251,9 +251,10 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
     public RuntimeValue GetRV(Token name) => RuntimeValue.FromBoxed(Get(name));
 
-    private object? InvokeOwnAccessor(ISharpTSCallable callable, List<object?> args)
+    private object? InvokeOwnAccessor(ISharpTSCallable? callable, List<object?> args)
         => callable switch
         {
+            null => SharpTSUndefined.Instance,
             SharpTSFunction function => function.Bind(this).Call(_interpreter!, args),
             SharpTSArrowFunction function => function.Bind(this).Call(_interpreter!, args),
             _ => callable.Call(_interpreter!, args),
@@ -271,7 +272,8 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
         if (_setters?.TryGetValue(propName, out var ownSetter) == true)
         {
-            InvokeOwnAccessor(ownSetter, [value]);
+            if (ownSetter is not null)
+                InvokeOwnAccessor(ownSetter, [value]);
             return;
         }
 
@@ -338,7 +340,10 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
         if (_setters?.TryGetValue(propName, out var ownSetter) == true)
         {
-            InvokeOwnAccessor(ownSetter, [value]);
+            if (ownSetter is not null)
+                InvokeOwnAccessor(ownSetter, [value]);
+            else if (strictMode)
+                throw StrictModeErrors.TypeError($"Cannot set property '{propName}' which has only a getter");
             return;
         }
 
@@ -762,24 +767,14 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         if (isAccessor)
         {
             _fields.Remove(name);
-            if (descriptor.HasGet && descriptor.Get is not null)
-            {
-                _getters ??= [];
-                _getters[name] = descriptor.Get;
-            }
-            else if (descriptor.HasGet)
-            {
-                _getters?.Remove(name);
-            }
-            if (descriptor.HasSet && descriptor.Set is not null)
-            {
-                _setters ??= [];
-                _setters[name] = descriptor.Set;
-            }
-            else if (descriptor.HasSet)
-            {
-                _setters?.Remove(name);
-            }
+            var getter = descriptor.HasGet ? descriptor.Get
+                : existingIsAccessor ? _getters?.GetValueOrDefault(name) : null;
+            var setter = descriptor.HasSet ? descriptor.Set
+                : existingIsAccessor ? _setters?.GetValueOrDefault(name) : null;
+            _getters ??= [];
+            _setters ??= [];
+            _getters[name] = getter;
+            _setters[name] = setter;
         }
         else
         {

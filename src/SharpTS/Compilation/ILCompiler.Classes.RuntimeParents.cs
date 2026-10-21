@@ -352,6 +352,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldarg_2);
             il.Emit(OpCodes.Call, liveParent
                 ? _runtime.ObjectPrototypes.GetPrototypeOf : _runtime.ClassDefinitions.GetParent);
+            if (liveParent) ConstructorReceiverEmitter.CloseNominalSuperTarget(il, ctx);
             if (!liveParent) il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldarg_3);

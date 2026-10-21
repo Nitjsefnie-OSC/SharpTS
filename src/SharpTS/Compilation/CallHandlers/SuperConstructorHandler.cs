@@ -28,6 +28,7 @@ public class SuperConstructorHandler : ICallHandler
             emitter.IL.Emit(OpCodes.Ldarg, definitionParameter);
             emitter.IL.Emit(OpCodes.Call, liveParent
                 ? ctx.Runtime!.ObjectPrototypes.GetPrototypeOf : ctx.Runtime!.ClassDefinitions.GetParent);
+            if (liveParent) ConstructorReceiverEmitter.CloseNominalSuperTarget(emitter.IL, ctx);
             if (!liveParent) emitter.IL.Emit(OpCodes.Ldarg_0);
             emitter.EmitArgsArrayWithSpread(call.Arguments);
             if (ctx.NewTargetParameterIndex is { } targetIndex) emitter.IL.Emit(OpCodes.Ldarg, targetIndex);

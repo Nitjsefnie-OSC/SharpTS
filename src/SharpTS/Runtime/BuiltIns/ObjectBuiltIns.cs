@@ -1645,6 +1645,8 @@ public static partial class ObjectBuiltIns
                 .Concat(klass.OwnStaticSymbolKeys()).ToList(),
             SharpTSInstance inst => inst.GetFieldNames().Cast<object?>().ToList(),
             SharpTSArray arr => GetOwnPropertyNamesFromArray(arr),
+            SharpTSMath math => math.OwnStringKeys().Cast<object?>()
+                .Concat(math.GetSymbolPropertyNames().Cast<object?>()).ToList(),
             SharpTSRegExp regex => regex.OwnStringKeys().Cast<object?>().ToList(),
             SharpTSProxy proxy => proxy.TrapOwnPropertyKeys(interpreter),
             Dictionary<string, object?> dict => dict.Keys.Cast<object?>().ToList(),

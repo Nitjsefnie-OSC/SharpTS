@@ -152,7 +152,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         // loopVar = result.value
         IL.Emit(OpCodes.Ldloc, resultLocal);
         IL.Emit(OpCodes.Call, Ctx.Runtime.IteratorProtocol.Value);
-        if (!f.IsDeclaration)
+        if (!f.IsDeclaration || f.IsVar)
         {
             SetStackUnknown();
             EmitStoreAssignmentLoopVariable(varName);

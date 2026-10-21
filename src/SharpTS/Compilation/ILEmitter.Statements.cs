@@ -146,6 +146,18 @@ public partial class ILEmitter
         }
 
         if (TryInitializeLoopBodyBinding(v)) return;
+        if (v.IsVar && _ownedVarLoopHeadNames?.Contains(v.Name.Lexeme) == true)
+        {
+            // The containing-body prologue already created this binding. A var
+            // redeclaration without an initializer must not reset the shared home.
+            if (v.Initializer != null)
+            {
+                EmitExpression(v.Initializer);
+                EmitBoxIfNeeded(v.Initializer);
+                EmitStoreAssignmentLoopVariable(v.Name.Lexeme);
+            }
+            return;
+        }
         if (v.IsVar && v.Initializer is null
             && _ctx.InitializedParameterNames?.Contains(v.Name.Lexeme) == true)
             return;
@@ -2195,7 +2207,7 @@ public partial class ILEmitter
             return;
         }
 
-        if (f.IsDeclaration && iterableType is TypeInfo.Map
+        if (f.IsDeclaration && !f.IsVar && iterableType is TypeInfo.Map
             && _ctx.TypeMap?.IsStableNumericMapIteration(f) == true)
         {
             // The analyzer proved that the receiver is a fresh, non-escaping
@@ -2408,7 +2420,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Stloc, nextMethodLocal);
 
             // Loop variable
-            var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, _ctx.Types.Object);
+            var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, _ctx.Types.Object);
             var resultLocal = IL.DeclareLocal(_ctx.Types.Object);
             var closeNeeded = IL.DeclareLocal(_ctx.Types.Boolean);
             var throwing = IL.DeclareLocal(_ctx.Types.Boolean);
@@ -2453,7 +2465,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldloc, resultLocal);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.IteratorProtocol.Value);
             IL.Emit(OpCodes.Stloc, loopVar);
-            InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
+            InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, loopVar);
 
             _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
                 closeNeeded, iterContinueLabel, escapingTargets));
@@ -2511,7 +2523,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Stloc, indexLocal);
 
             // Loop variable
-            var indexLoopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, _ctx.Types.Object);
+            var indexLoopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, _ctx.Types.Object);
 
             builder.MarkLabel(startLabel);
             EmitCancellationCheck();
@@ -2528,7 +2540,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldloc, indexLocal);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.ObjectRead.Element);
             IL.Emit(OpCodes.Stloc, indexLoopVar);
-            InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, indexLoopVar);
+            InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, indexLoopVar);
 
             // Emit body
             EmitStatement(f.Body);
@@ -2703,7 +2715,7 @@ public partial class ILEmitter
         var cont = builder.DefineLabel("forof_stable_iterator_continue");
         var result = IL.DeclareLocal(resultType);
         var loopVar = DeclareIdentifierLoopHead(
-            loop.Variable, loop.IsDeclaration, _ctx.Types.Double);
+            loop.Variable, loop.IsDeclaration && !loop.IsVar, _ctx.Types.Double);
         var closeNeeded = IL.DeclareLocal(_ctx.Types.Boolean);
         var throwing = IL.DeclareLocal(_ctx.Types.Boolean);
 
@@ -2740,7 +2752,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, result);
         IL.Emit(OpCodes.Ldfld, valueField);
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeIdentifierLoopHead(loop.Variable, loop.IsDeclaration, loopVar);
+        InitializeIdentifierLoopHead(loop.Variable, loop.IsDeclaration && !loop.IsVar, loopVar);
 
         _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
             closeNeeded, cont, escapingTargets));
@@ -2868,7 +2880,7 @@ public partial class ILEmitter
         // benchmark's `any[]` case it's _types.Object so the loop var
         // matches the existing slow path's binding.
         var elementType = desc.GetElementType(_ctx.Types);
-        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, elementType);
+        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, elementType);
 
         builder.MarkLabel(startLabel);
         EmitCancellationCheck();
@@ -2898,7 +2910,7 @@ public partial class ILEmitter
             builder.MarkLabel(unholedLabel);
         }
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
+        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, loopVar);
 
         // Body
         EmitStatement(f.Body);
@@ -2928,7 +2940,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Stloc, generatorLocal);
 
         // Loop variable
-        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, _ctx.Types.Object);
+        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, _ctx.Types.Object);
         var resultLocal = IL.DeclareLocal(_ctx.Types.Object);
         var closeNeeded = IL.DeclareLocal(_ctx.Types.Boolean);
         var throwing = IL.DeclareLocal(_ctx.Types.Boolean);
@@ -2962,7 +2974,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, resultLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime.IteratorProtocol.Value);
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
+        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, loopVar);
 
         _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
             closeNeeded, continueLabel, escapingTargets));
@@ -3074,7 +3086,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Stloc, generatorLocal);
 
         var loopVar = DeclareIdentifierLoopHead(
-            f.Variable, f.IsDeclaration, _ctx.Types.Double);
+            f.Variable, f.IsDeclaration && !f.IsVar, _ctx.Types.Double);
         var closeNeeded = IL.DeclareLocal(_ctx.Types.Boolean);
         var throwing = IL.DeclareLocal(_ctx.Types.Boolean);
 
@@ -3105,7 +3117,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Callvirt,
             _ctx.Runtime.Generators.NumericCurrent);
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
+        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, loopVar);
 
         _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
             closeNeeded, continueLabel, escapingTargets));
@@ -3161,7 +3173,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Stloc, enumLocal);
 
         // Loop variable
-        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, _ctx.Types.Object);
+        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, _ctx.Types.Object);
 
         builder.MarkLabel(startLabel);
         EmitCancellationCheck();
@@ -3173,7 +3185,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, enumLocal);
         IL.Emit(OpCodes.Callvirt, current);
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
+        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, loopVar);
 
         EmitStatement(f.Body);
 
@@ -3225,7 +3237,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Stloc, indexLocal);
 
         // Loop variable (holds current key)
-        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, _ctx.Types.Object);
+        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, _ctx.Types.Object);
 
         builder.MarkLabel(startLabel);
         EmitCancellationCheck();
@@ -3242,7 +3254,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, indexLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.ObjectRead.Element);
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
+        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, loopVar);
 
         // Emit body
         EmitStatement(f.Body);

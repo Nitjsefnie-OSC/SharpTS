@@ -860,10 +860,10 @@ public class ClosureAnalyzer : AstVisitorBase
         // Visit iterable BEFORE creating loop scope - matches interpreter/resolver behavior
         Visit(stmt.Iterable);
         EnterScope();
-        // The loop variable and body declarations are per-iteration bindings (#1223):
+        // Only lexical heads create per-iteration bindings; var reuses its hoisted owner.
         // depth is bumped before the variable's declare so it lands in the loop-body set.
         _loopBodyDepth++;
-        if (stmt.IsDeclaration)
+        if (stmt.IsDeclaration && !stmt.IsVar)
             DeclareVariable(stmt.Variable.Lexeme, isPerIterationBinding: true);
         else
         {
@@ -881,7 +881,7 @@ public class ClosureAnalyzer : AstVisitorBase
         Visit(stmt.Object);
         EnterScope();
         _loopBodyDepth++;
-        if (stmt.IsDeclaration)
+        if (stmt.IsDeclaration && !stmt.IsVar)
             DeclareVariable(stmt.Variable.Lexeme, isPerIterationBinding: true);
         else
         {

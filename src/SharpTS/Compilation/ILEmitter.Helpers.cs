@@ -261,8 +261,9 @@ public partial class ILEmitter
     /// </summary>
     internal void InitializeFunctionBodyVarBindings(List<Stmt>? body)
     {
-        if (body is null || _ctx.ClosureAnalyzer is not { } analyzer) return;
-        foreach (var (declaration, parameter) in analyzer.GetParameterBodyCopies(body))
+        if (body is null) return;
+        var analyzer = _ctx.ClosureAnalyzer;
+        foreach (var (declaration, parameter) in analyzer?.GetParameterBodyCopies(body) ?? [])
         {
             CreateCell(declaration, () =>
             {
@@ -272,8 +273,9 @@ public partial class ILEmitter
                 EnsureBoxed();
             });
         }
-        foreach (var declaration in analyzer.GetUndefinedBodyVars(body))
+        foreach (var declaration in analyzer?.GetUndefinedBodyVars(body) ?? [])
             CreateCell(declaration, () => IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.Sentinels.UndefinedInstance));
+        InitializeVarLoopHeadBindings(body);
 
         void CreateCell(Token declaration, Action emitValue)
         {
@@ -287,6 +289,52 @@ public partial class ILEmitter
             _ctx.CellBindingLocals[name] = cell;
             _ctx.LoopBodyCellDeclarations[name] = declaration;
             _ctx.LexicalCellStorageNames[declaration] = name;
+        }
+    }
+
+    private HashSet<string>? _ownedVarLoopHeadNames;
+
+    /// <summary>Creates containing-callable homes for var loop heads before body evaluation.</summary>
+    private void InitializeVarLoopHeadBindings(List<Stmt> body)
+    {
+        var heads = SharpTS.Execution.InterpreterVarDeclarations.CollectLoopHeads(body);
+        if (heads.Count == 0) return;
+        _ownedVarLoopHeadNames = heads.Select(head => head.Lexeme).ToHashSet(StringComparer.Ordinal);
+        var functionNames = SharpTS.Runtime.ParameterBinder.BodyVarDeclarations(body)
+            .Where(declaration => declaration.IsFunction)
+            .Select(declaration => declaration.Name.Lexeme).ToHashSet(StringComparer.Ordinal);
+        foreach (var head in heads)
+        {
+            string name = head.Lexeme;
+            if (_ctx.HasLoopBodyBindingAccess(name) || _ctx.TryGetParameter(name, out _)
+                || _ctx.InitializedParameterNames?.Contains(name) == true || functionNames.Contains(name))
+                continue;
+            if (_ctx.CapturedFunctionLocals?.Contains(name) == true
+                && _ctx.FunctionDisplayClassFields?.TryGetValue(name, out var functionField) == true
+                && _ctx.FunctionDisplayClassLocal != null)
+            {
+                // A proven numeric capture cannot be observed before its initializer.
+                if (functionField.FieldType == _ctx.Types.Object)
+                {
+                    IL.Emit(OpCodes.Ldloc, _ctx.FunctionDisplayClassLocal);
+                    IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.Sentinels.UndefinedInstance);
+                    IL.Emit(OpCodes.Stfld, functionField);
+                }
+                continue;
+            }
+            if (_ctx.CapturedArrowLocals?.Contains(name) == true
+                && _ctx.ArrowScopeDisplayClassFields?.TryGetValue(name, out var arrowField) == true
+                && _ctx.ArrowScopeDisplayClassLocal != null)
+            {
+                IL.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+                IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.Sentinels.UndefinedInstance);
+                IL.Emit(OpCodes.Stfld, arrowField);
+                continue;
+            }
+            if (_ctx.Locals.HasLocal(name)) continue;
+            var local = _ctx.Locals.DeclareLocal(name, _ctx.Types.Object, head);
+            IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.Sentinels.UndefinedInstance);
+            IL.Emit(OpCodes.Stloc, local);
         }
     }
 

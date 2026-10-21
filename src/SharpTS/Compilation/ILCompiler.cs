@@ -2105,6 +2105,8 @@ public partial class ILCompiler
         {
             RegisterCapturedStmt(stmt, key, modulePath, ref moduleVars, ref moduleFields);
         }
+        foreach (var head in GetVarLoopHeadDeclarations(statements))
+            RegisterCapturedStmt(head, key, modulePath, ref moduleVars, ref moduleFields);
 
         RegisterLiftableBlockScopedVars(statements, key, modulePath, declaredNameCounts, ref moduleVars, ref moduleFields);
 
@@ -2490,6 +2492,15 @@ public partial class ILCompiler
         foreach (var stmt in statements)
         {
             DefineModuleScopedTopLevelStaticField(stmt, modulePath, moduleDict);
+        }
+        foreach (var head in GetVarLoopHeadDeclarations(statements))
+        {
+            // Ordinary declarations may already have registered this exact var owner.
+            bool registered = modulePath == null
+                ? _topLevelStaticVars.ContainsKey(head.Name.Lexeme)
+                : moduleDict?.ContainsKey(head.Name.Lexeme) == true;
+            if (!registered)
+                DefineModuleScopedTopLevelStaticField(head, modulePath, moduleDict);
         }
     }
 

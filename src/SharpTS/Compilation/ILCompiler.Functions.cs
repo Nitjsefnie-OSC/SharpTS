@@ -1455,6 +1455,24 @@ public partial class ILCompiler
     /// sentinel before executing any statement. CLR fields otherwise start as
     /// null, which is observably different for reads before the declaration.
     /// </summary>
+    // Metadata-only declarations: never inserted into the checked AST. Existing
+    // hoisted functions keep their own initialization/lookup contract.
+    private static IEnumerable<Stmt.Var> GetVarLoopHeadDeclarations(IEnumerable<Stmt> statements)
+    {
+        static IEnumerable<string> FunctionNames(Stmt statement) => statement switch
+        {
+            Stmt.Function function => [function.Name.Lexeme],
+            Stmt.Sequence sequence => sequence.Statements.SelectMany(FunctionNames),
+            Stmt.Export { Declaration: { } declaration } => FunctionNames(declaration),
+            _ => []
+        };
+        var body = statements.ToList();
+        var functions = body.SelectMany(FunctionNames).ToHashSet(StringComparer.Ordinal);
+        return SharpTS.Execution.InterpreterVarDeclarations.CollectLoopHeads(body)
+            .Where(name => !functions.Contains(name.Lexeme))
+            .Select(name => new Stmt.Var(name, null, null, IsVar: true));
+    }
+
     private void EmitInitializeHoistedVars(
         ILGenerator il,
         CompilationContext ctx,
@@ -1479,12 +1497,17 @@ public partial class ILCompiler
             }
         }
 
-        foreach (var variable in statements.SelectMany(HoistedVars).DistinctBy(v => v.Name.Lexeme))
+        var body = statements.ToList();
+        foreach (var variable in body.SelectMany(HoistedVars)
+            .Concat(GetVarLoopHeadDeclarations(body)).DistinctBy(v => v.Name.Lexeme))
         {
-            if (ctx.EntryPointDisplayClassLocal != null &&
-                ctx.EntryPointDisplayClassFields?.TryGetValue(variable.Name.Lexeme, out var displayField) == true)
+            if (ctx.EntryPointDisplayClassFields?.TryGetValue(variable.Name.Lexeme, out var displayField) == true
+                && (ctx.EntryPointDisplayClassLocal != null || ctx.EntryPointDisplayClassStaticField != null))
             {
-                il.Emit(OpCodes.Ldloc, ctx.EntryPointDisplayClassLocal);
+                if (ctx.EntryPointDisplayClassLocal != null)
+                    il.Emit(OpCodes.Ldloc, ctx.EntryPointDisplayClassLocal);
+                else
+                    il.Emit(OpCodes.Ldsfld, ctx.EntryPointDisplayClassStaticField!);
                 il.Emit(OpCodes.Ldsfld, _runtime.Sentinels.UndefinedInstance);
                 il.Emit(OpCodes.Stfld, displayField);
             }

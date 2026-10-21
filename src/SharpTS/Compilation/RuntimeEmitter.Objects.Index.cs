@@ -1988,20 +1988,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, inputs.Symbols.GetStorage);
         il.Emit(OpCodes.Stloc, symDictLocal);
 
-        // Frozen objects reject writes to existing symbol properties too.
-        // (Sealed/non-extensible objects may still update an existing
-        // writable property, so only the frozen table is checked here.)
+        // Frozen state restricts data stores, not calling an existing accessor setter.
+        // Keep the guard on both descriptor-value and raw side-table mutations.
         var symFrozenStateLocal = il.DeclareLocal(_types.Object);
-        var symReceiverNotFrozenLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldloca, symFrozenStateLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(
-            _types.ConditionalWeakTable, "TryGetValue",
-            _types.Object, _types.Object.MakeByRefType()));
-        il.Emit(OpCodes.Brfalse, symReceiverNotFrozenLabel);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(symReceiverNotFrozenLabel);
+        void EmitFrozenSymbolDataWriteGuard()
+        {
+            var notFrozen = il.DefineLabel();
+            il.Emit(OpCodes.Ldsfld, inputs.ObjectState.FrozenObjects);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloca, symFrozenStateLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(
+                _types.ConditionalWeakTable, "TryGetValue",
+                _types.Object, _types.Object.MakeByRefType()));
+            il.Emit(OpCodes.Brfalse, notFrozen);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notFrozen);
+        }
 
         // Existing descriptor entries apply ordinary setter/writable
         // semantics while preserving their attributes.
@@ -2057,6 +2059,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
         il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorWritable.GetGetMethod()!);
         il.Emit(OpCodes.Brfalse, symReturnWithoutSetLabel);
+        EmitFrozenSymbolDataWriteGuard();
         il.Emit(OpCodes.Ldloc, symExistingDescriptorLocal);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Callvirt, inputs.DescriptorStorage.DescriptorValue.GetSetMethod()!);
@@ -2099,6 +2102,7 @@ public partial class RuntimeEmitter
         // supplies writable/enumerable/configurable = true.
         il.Emit(OpCodes.Br, symCreateLabel);
         il.MarkLabel(symRawSetLabel);
+        EmitFrozenSymbolDataWriteGuard();
         il.Emit(OpCodes.Ldloc, symDictLocal);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_2);

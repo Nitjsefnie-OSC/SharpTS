@@ -12,13 +12,15 @@ namespace SharpTS.Compilation;
 internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 {
     private sealed class Owner(object node, bool canOwnCells, bool canForward,
-        bool canOwnGeneratorCells = true, bool canRelayClassSelf = true)
+        bool canOwnGeneratorCells = true, bool canRelayClassSelf = true,
+        Expr.ClassExpr? classCaptureOwner = null)
     {
         public object Node { get; } = node;
         public bool CanOwnCells { get; } = canOwnCells;
         public bool CanForward { get; } = canForward;
         public bool CanOwnGeneratorCells { get; } = canOwnGeneratorCells;
         public bool CanRelayClassSelf { get; } = canRelayClassSelf;
+        public Expr.ClassExpr? ClassCaptureOwner { get; } = classCaptureOwner;
     }
 
     private sealed class Binding(Token name, Owner owner, bool candidate, Binding? shadowOf, bool lexical,
@@ -404,7 +406,13 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         for (int index = _owners.Count - 1; index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
         {
             var owner = _owners[index];
-            if (!owner.CanForward || binding.OrdinaryHandlerCandidate &&
+            // Only a direct synchronous member may relay through its evaluated
+            // class definition. Class evaluation, static blocks and nested
+            // callable barriers keep their existing eligibility rules.
+            bool classCaptureRelay = owner.ClassCaptureOwner is { } expression &&
+                (!ReferenceEquals(owner.Node, expression) || index + 1 < _owners.Count &&
+                    ReferenceEquals(_owners[index + 1].ClassCaptureOwner, expression));
+            if (!owner.CanForward && !classCaptureRelay || binding.OrdinaryHandlerCandidate &&
                 owner.Node is not Expr.ArrowFunction { IsAsync: false, IsGenerator: false })
             { binding.Eligible = false; continue; }
             RecordCapture(owner.Node, name, binding);
@@ -576,7 +584,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
     private void VisitCallable(object node, List<Stmt.Parameter> parameters, List<Stmt> body,
         Expr? expressionBody, bool synchronous, Token? self, bool canOwnGeneratorCells = true,
-        bool canRelayClassSelf = true)
+        bool canRelayClassSelf = true, Expr.ClassExpr? classCaptureOwner = null)
     {
         int previousDepth = _loopBodyDepth;
         _loopBodyDepth = 0;
@@ -584,7 +592,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         bool localCellScope = _classDepth == 0 || _staticBlockClassDepth == _classDepth;
         _owners.Add(new(node, synchronous && localCellScope && !directSuspension,
             node is Expr.ArrowFunction { IsGenerator: false } && localCellScope,
-            canOwnGeneratorCells, canRelayClassSelf));
+            canOwnGeneratorCells, canRelayClassSelf,
+            synchronous && !directSuspension ? classCaptureOwner : null));
         EnterScope([], allowCandidates: false);
         try
         {
@@ -698,7 +707,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
                     if (initializer is Stmt.StaticBlock block)
                         VisitClassStaticBlock(block, includeVars: true);
                     else Visit(initializer);
-        });
+        }, expr);
     }
 
     private void VisitClassMethod(Stmt.Function method)
@@ -706,14 +715,16 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         if (method.ComputedKey is { } key) Visit(key);
         // A method's property name does not introduce a callable self binding.
         VisitCallable(method, method.Parameters, method.Body ?? [], null,
-            !method.IsAsync && !method.IsGenerator, self: null, canRelayClassSelf: true);
+            !method.IsAsync && !method.IsGenerator, self: null, canRelayClassSelf: true,
+            classCaptureOwner: _owners[^1].Node as Expr.ClassExpr);
     }
 
     protected override void VisitAccessor(Stmt.Accessor accessor)
     {
         if (accessor.ComputedKey is { } key) Visit(key);
         VisitCallable(accessor, accessor.SetterParam is { } parameter ? [parameter] : [],
-            accessor.Body, null, synchronous: true, self: null, canOwnGeneratorCells: false);
+            accessor.Body, null, synchronous: true, self: null, canOwnGeneratorCells: false,
+            classCaptureOwner: _owners[^1].Node as Expr.ClassExpr);
     }
 
     private void VisitClassStaticBlock(Stmt.StaticBlock block, bool includeVars)
@@ -774,12 +785,13 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     protected override void VisitNamespace(Stmt.Namespace stmt) =>
         VisitClassBody(stmt.Name, () => VisitStatementScope(stmt.Members));
 
-    private void VisitClassBody(Token? name, Action visit)
+    private void VisitClassBody(Token? name, Action visit, Expr.ClassExpr? expression = null)
     {
         int previousDepth = _loopBodyDepth;
         _loopBodyDepth = 0;
         _classDepth++;
-        _owners.Add(new(new object(), false, false, canOwnGeneratorCells: false));
+        _owners.Add(new(expression ?? (object)new object(), false, false,
+            canOwnGeneratorCells: false, classCaptureOwner: expression));
         EnterScope([], allowCandidates: false);
         try { if (name is not null) Declare(name); visit(); }
         finally { _scopes.Pop(); _owners.RemoveAt(_owners.Count - 1); _classDepth--; _loopBodyDepth = previousDepth; }

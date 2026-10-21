@@ -13,9 +13,11 @@ public partial class StandaloneDllTests
         string name, string source, string expected)
     {
         Assert.NotEmpty(name);
-        bool restoredAbsentDeletion = name is "own-named-data-flags-writes-and-absence"
-            or "strict-present-deletion-and-absent-deletion-after-integrity";
-        if (restoredAbsentDeletion)
+        bool fullIntegrityCase = name is "own-named-data-flags-writes-and-absence"
+            or "strict-present-deletion-and-absent-deletion-after-integrity"
+            or "declared-method-accessor-and-constructor-integrity"
+            or "symbol-data-declared-method-accessor-and-carrier-boundaries";
+        if (fullIntegrityCase)
         {
             source = source.ReplaceLineEndings("\n") + "\n";
             Assert.Empty(new TypeChecker(TypeCheckerOptions.Strict)
@@ -25,12 +27,12 @@ public partial class StandaloneDllTests
         var sourcePath = directory.CreateFile("main.ts", source);
         var output = directory.GetPath("class-prototype-integrity-" + name + ".dll");
         var compile = IntegrationTests.CliTestHelper.RunCli(
-            $"--no-tsconfig{(restoredAbsentDeletion ? " --strict" : "")} --noLib --compile \"{sourcePath}\" -o \"{output}\" --standalone --verify",
+            $"--no-tsconfig{(fullIntegrityCase ? " --strict" : "")} --noLib --compile \"{sourcePath}\" -o \"{output}\" --standalone --verify",
             directory.Path, TimeSpan.FromSeconds(60));
 
         Assert.True(compile.ExitCode == 0, compile.StandardOutput + compile.StandardError);
         Assert.Contains("IL verification passed.", compile.StandardOutput);
-        if (restoredAbsentDeletion)
+        if (fullIntegrityCase)
         {
             Assert.Empty(compile.StandardError);
             Assert.DoesNotMatch(@"(?i)(verification.*(?:omission|skipped)|(?:omission|skipped).*verification)",
@@ -39,10 +41,10 @@ public partial class StandaloneDllTests
         }
         Assert.All(GetAssemblyReferences(output), reference => Assert.StartsWith("System.", reference));
         Assert.False(File.Exists(directory.GetPath("SharpTS.dll")));
-        var verifiedHash = restoredAbsentDeletion ? SHA256.HashData(File.ReadAllBytes(output)) : Array.Empty<byte>();
-        Assert.Equal(expected, ExecuteCompiledDllIsolated(output, timeoutMs: restoredAbsentDeletion ? 20000 : 10000,
+        var verifiedHash = fullIntegrityCase ? SHA256.HashData(File.ReadAllBytes(output)) : Array.Empty<byte>();
+        Assert.Equal(expected, ExecuteCompiledDllIsolated(output, timeoutMs: fullIntegrityCase ? 20000 : 10000,
             verifyStandardError: error => Assert.Empty(error), standardInput: ""));
-        if (restoredAbsentDeletion)
+        if (fullIntegrityCase)
         {
             Assert.Equal(verifiedHash, SHA256.HashData(File.ReadAllBytes(output)));
             Assert.False(File.Exists(directory.GetPath("SharpTS.dll")));

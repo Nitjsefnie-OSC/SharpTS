@@ -582,7 +582,7 @@ public abstract partial class ExpressionEmitterBase
         EmitDefinitionKeyArray(factory.Keys);
         IL.Emit(OpCodes.Stloc, keys);
         var captures = IL.DeclareLocal(Types.ObjectArray);
-        EmitDefinitionCaptureArray(Ctx.ClassExprCaptureSlots!.GetValueOrDefault(expression)?.Keys.ToArray() ?? []);
+        EmitDefinitionCaptureArray(expression, Ctx.ClassExprCaptureSlots!.GetValueOrDefault(expression)?.Keys.ToArray() ?? []);
         IL.Emit(OpCodes.Stloc, captures);
         IL.Emit(OpCodes.Ldtoken, factory.Template);
         IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
@@ -606,9 +606,11 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Call, method);
     }
 
-    private void EmitDefinitionCaptureArray(IReadOnlyList<string> names)
+    private void EmitDefinitionCaptureArray(Expr.ClassExpr expression, IReadOnlyList<string> names)
     {
         var values = new List<LocalBuilder>(names.Count);
+        var enclosingExpression = Ctx.CurrentClassExpr ?? Ctx.ClassExprBuilders?
+            .FirstOrDefault(entry => ReferenceEquals(entry.Value, Ctx.CurrentClassBuilder)).Key;
         foreach (var name in names)
         {
             if (name == CompilationContext.PrivateOwnerCaptureName)
@@ -618,8 +620,24 @@ public abstract partial class ExpressionEmitterBase
                 values.Add(_helpers.SpillStoreObject());
                 continue;
             }
+            // A nested class member can already own this exact lexical cell
+            // through its evaluated definition. Forward that wrapper unchanged.
+            if (enclosingExpression != null
+                && Ctx.ClosureAnalyzer?.TryGetLoopBodyCellCapture(expression, name, out var declaration) == true
+                && Ctx.ClosureAnalyzer.TryGetLoopBodyCellCapture(enclosingExpression, name, out var enclosingDeclaration)
+                && ReferenceEquals(declaration, enclosingDeclaration)
+                && TryGetClassDefinitionCaptureSlot(name, out var enclosingSlot) && TryEmitOwnedClassDefinition())
+            {
+                IL.Emit(OpCodes.Ldfld, Ctx.Runtime!.ClassDefinitions.Captures);
+                IL.Emit(OpCodes.Ldc_I4, enclosingSlot);
+                IL.Emit(OpCodes.Ldelem_Ref);
+                values.Add(_helpers.SpillStoreObject());
+                continue;
+            }
             FieldInfo? field = null;
-            if (Ctx.CellBindingLocals.TryGetValue(name, out var cell))
+            if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(IL, Ctx, expression, name))
+                field = Types.StrongBoxOfObjectValueField;
+            else if (Ctx.CellBindingLocals.TryGetValue(name, out var cell))
             {
                 IL.Emit(OpCodes.Ldloc, cell);
                 field = Types.StrongBoxOfObjectValueField;

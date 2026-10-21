@@ -254,11 +254,7 @@ public sealed class ClassPrototypeIntegrityTests
             """, "seal 0 0 true true false false true true false\ntrue true false\nfreeze 0 0 true false false false true false false\ntrue true false\n"];
     }
 
-    // #2815 still owns observable state loss through declared prototype accessors.
-    // Keep its two full original programs interpreted-only; #2814's full programs run both modes.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] is not "declared-method-accessor-and-constructor-integrity"
-            and not "symbol-data-declared-method-accessor-and-carrier-boundaries");
+    public static IEnumerable<object[]> SavedCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases()
     {
@@ -274,7 +270,9 @@ public sealed class ClassPrototypeIntegrityTests
     {
         Assert.NotEmpty(name);
         if (name is "own-named-data-flags-writes-and-absence"
-            or "strict-present-deletion-and-absent-deletion-after-integrity")
+            or "strict-present-deletion-and-absent-deletion-after-integrity"
+            or "declared-method-accessor-and-constructor-integrity"
+            or "symbol-data-declared-method-accessor-and-carrier-boundaries")
         {
             // Bridge the unchanged raw Cases value to the exact historical LF/finalLF source.
             source = source.ReplaceLineEndings("\n") + "\n";

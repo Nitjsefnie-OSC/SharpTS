@@ -71,6 +71,34 @@ public sealed class BuiltInPrototypeConstructorAssignmentTests
                 }
             }
             """, "0 true 2 true true true\n1 true true true\n1 true 2 true true true\n1 true true true\n2 true 2 true true true\n1 true true true\n3 true 2 true true true\n1 true true true\n4 true 2 true true true\n1 true true true\n5 true 2 true true true\n1 true true true\n6 true 2 true true true\n1 true true true\n7 true 2 true true true\n1 true true true\n8 true 2 true true true\n1 true true true\n9 true 2 true true true\n1 true true true\n"];
+        yield return ["deleted-constructor-recreation-and-fresh-expando-defaults-order", """
+            const prototypes: any[] = [String.prototype, Number.prototype, Boolean.prototype,
+                Array.prototype, Object.prototype, Function.prototype, Error.prototype,
+                Promise.prototype, BigInt.prototype, Symbol.prototype];
+            for (let i = 0; i < prototypes.length; i++) {
+                const prototype: any = prototypes[i];
+                const original = Object.getOwnPropertyDescriptor(prototype, 'constructor')!;
+                try {
+                    prototype.overlayFirst = 1;
+                    const deleted = delete prototype.constructor;
+                    const absent = !Object.hasOwn(prototype, 'constructor');
+                    prototype.constructor = 2;
+                    prototype.overlayLast = 3;
+                    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'constructor')!;
+                    const extra = Object.getOwnPropertyDescriptor(prototype, 'overlayFirst')!;
+                    console.log(i, deleted, absent, descriptor.value, descriptor.writable, descriptor.enumerable, descriptor.configurable);
+                    let order = '';
+                    for (const key of Object.keys(prototype)) {
+                        if (key === 'overlayFirst' || key === 'constructor' || key === 'overlayLast') order += key + ',';
+                    }
+                    console.log(order, extra.value, extra.writable, extra.enumerable, extra.configurable);
+                } finally {
+                    delete prototype.overlayFirst;
+                    delete prototype.overlayLast;
+                    Object.defineProperty(prototype, 'constructor', original);
+                }
+            }
+            """.ReplaceLineEndings("\n") + "\n", "0 true true 2 true true true\noverlayFirst,constructor,overlayLast, 1 true true true\n1 true true 2 true true true\noverlayFirst,constructor,overlayLast, 1 true true true\n2 true true 2 true true true\noverlayFirst,constructor,overlayLast, 1 true true true\n3 true true 2 true true true\noverlayFirst,constructor,overlayLast, 1 true true true\n4 true true 2 true true true\noverlayFirst,constructor,overlayLast, 1 true true true\n5 true true 2 true true true\noverlayFirst,constructor,overlayLast, 1 true true true\n6 true true 2 true true true\noverlayFirst,constructor,overlayLast, 1 true true true\n7 true true 2 true true true\noverlayFirst,constructor,overlayLast, 1 true true true\n8 true true 2 true true true\noverlayFirst,constructor,overlayLast, 1 true true true\n9 true true 2 true true true\noverlayFirst,constructor,overlayLast, 1 true true true\n"];
     }
 
     [Theory, MemberData(nameof(Cases))]

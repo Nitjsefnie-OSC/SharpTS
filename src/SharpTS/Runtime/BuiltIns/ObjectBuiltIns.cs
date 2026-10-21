@@ -183,6 +183,36 @@ public static partial class ObjectBuiltIns
                     yield return new(key,
                         includeValues ? interpreter.GetPropertyValue(numberPrototype, key) : null);
                 yield break;
+            case SharpTSBooleanPrototype booleanPrototype:
+                foreach (var key in booleanPrototype.OwnEnumerableKeys().ToList())
+                    yield return new(key,
+                        includeValues ? interpreter.GetPropertyValue(booleanPrototype, key) : null);
+                yield break;
+            case SharpTSArrayPrototype arrayPrototype:
+                foreach (var key in arrayPrototype.OwnEnumerableKeys().ToList())
+                    yield return new(key,
+                        includeValues ? interpreter.GetPropertyValue(arrayPrototype, key) : null);
+                yield break;
+            case SharpTSObjectPrototype objectPrototype:
+                foreach (var key in objectPrototype.OwnEnumerableKeys().ToList())
+                    yield return new(key,
+                        includeValues ? interpreter.GetPropertyValue(objectPrototype, key) : null);
+                yield break;
+            case SharpTSPromisePrototype promisePrototype:
+                foreach (var key in promisePrototype.OwnEnumerableKeys().ToList())
+                    yield return new(key,
+                        includeValues ? interpreter.GetPropertyValue(promisePrototype, key) : null);
+                yield break;
+            case SharpTSBigIntPrototype bigIntPrototype:
+                foreach (var key in bigIntPrototype.OwnEnumerableKeys().ToList())
+                    yield return new(key,
+                        includeValues ? interpreter.GetPropertyValue(bigIntPrototype, key) : null);
+                yield break;
+            case SharpTSSymbolPrototype symbolPrototype:
+                foreach (var key in symbolPrototype.OwnEnumerableKeys().ToList())
+                    yield return new(key,
+                        includeValues ? interpreter.GetPropertyValue(symbolPrototype, key) : null);
+                yield break;
             case SharpTSFunctionPrototype functionPrototype:
                 foreach (var key in functionPrototype.OwnEnumerableKeys().ToList())
                     yield return new(key,

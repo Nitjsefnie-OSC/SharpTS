@@ -172,10 +172,12 @@ public sealed class PromiseClassExpressionSpeciesTests
             """, "0 true true\n8 0\n"];
     }
 
-    // #2809: saved CLI ValidateParent rejects a nominal class extending an
-    // evaluated native-Promise expression. Keep its full in-memory dual-mode case.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] != "repeated-expression-definitions-retain-captures-and-nominal-child-species").Concat(
+    // Only the restored saved row adds the historical oracle's final CRLF.
+    // Keep Cases and every previously saved row object unchanged.
+    public static IEnumerable<object[]> SavedCases() => Cases().Select(row =>
+        (string)row[0] == "repeated-expression-definitions-retain-captures-and-nominal-child-species"
+            ? new object[] { row[0], ((string)row[1]).ReplaceLineEndings("\r\n") + "\r\n", row[2] }
+            : row).Concat(
         ClassExpressionDeclareFieldErasureTests.Cases().Where(row =>
             (string)row[0] == "native-promise-subclass-preserves-state"));
 

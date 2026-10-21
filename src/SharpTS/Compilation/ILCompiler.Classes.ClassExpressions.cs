@@ -175,6 +175,9 @@ public partial class ILCompiler
             EmitTypeDefinitions.SetParent(typeBuilder, baseType);
         }
 
+        if (HasNativePromiseBase(baseType))
+            _classes.PromiseSubclasses.Add(className);
+
         // Implement $IHasFields interface for unified property access
         // All classes implement this interface (including derived classes)
         EmitTypeDefinitions.AddInterfaceImplementation(typeBuilder, _runtime.ObjectFields.Interface);
@@ -578,7 +581,7 @@ public partial class ILCompiler
         string className = _classExprs.Names[classExpr];
         var fieldsField = _classes.InstanceFieldsField[className];
         if (_usesRuntimeParents && !typeBuilder.IsGenericTypeDefinition && !_classes.ErrorSubclasses.Contains(className)
-            && typeBuilder.BaseType is not { Name: "$Promise" }
+            && !_classes.PromiseSubclasses.Contains(className)
             && SupportsReceiverInitialization(ClassExpressionDeclaration(classExpr)))
             EmitReceiverInitializer(typeBuilder, ClassExpressionDeclaration(classExpr), classExpr);
 
@@ -1067,6 +1070,19 @@ public partial class ILCompiler
             return declCtor;
 
         return null;
+    }
+
+    private bool HasNativePromiseBase(Type? type)
+    {
+        if (_runtime.Promise is not { } promise) return false;
+        var visited = new HashSet<Type>(ReferenceEqualityComparer.Instance);
+        for (int guard = 0; type != null && guard < 64 && visited.Add(type); guard++)
+        {
+            if (type == promise.Type) return true;
+            if (type.IsConstructedGenericType) type = type.GetGenericTypeDefinition();
+            type = type.BaseType;
+        }
+        return false;
     }
 
     private Expr.ClassExpr? ResolveClassExpressionParent(Expr.ClassExpr classExpr) =>

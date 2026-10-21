@@ -1398,6 +1398,16 @@ public partial class ILCompiler
     /// </summary>
     private void ModulePhase5_DefineDeclarations(List<ParsedModule> modules)
     {
+        // Register expression identities before any declaration resolves its checked
+        // parent. This does not add aliases or evaluate guest class definitions.
+        var expressions = new ClassExpressionTemplateCollector(CollectClassExpression);
+        foreach (var module in modules)
+        {
+            _modules.CurrentPath = NormalizeToEmissionPath(module.Path);
+            _modules.CurrentDotNetNamespace = _modules.Namespaces.GetValueOrDefault(module.Path);
+            foreach (var statement in module.Statements) expressions.Visit(statement);
+        }
+
         foreach (var module in modules)
         {
             // NormalizeToEmissionPath, not module.Path: a script-like module's top-level

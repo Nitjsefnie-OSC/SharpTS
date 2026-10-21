@@ -290,6 +290,25 @@ public partial class ILEmitter
         }
     }
 
+    /// <summary>Enters one evaluated class-expression static block activation.</summary>
+    internal void EmitClassExpressionStaticBlock(Stmt.StaticBlock block)
+    {
+        _ctx.Locals.EnterScope();
+        List<LoopBodyCellScopeEntry> vars = [];
+        try
+        {
+            // Every owned var masks outer storage; only selected captures share a box.
+            foreach (var declaration in _ctx.ClosureAnalyzer?.GetClassStaticBlockVars(block.Body) ?? [])
+                EnterLexicalCellBinding(declaration, declaration, vars, classStaticBlockVar: true);
+            EmitStatement(new Stmt.Block(block.Body));
+        }
+        finally
+        {
+            ExitLoopBodyCellScope(vars);
+            _ctx.Locals.ExitScope();
+        }
+    }
+
     /// <summary>
     /// Routes the shared static-dispatch helpers' extra-arg boxing through
     /// EmitBoxIfNeeded so ILEmitter keeps its TypeMap/literal-aware boxing

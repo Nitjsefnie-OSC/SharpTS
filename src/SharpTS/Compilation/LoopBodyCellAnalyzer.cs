@@ -40,6 +40,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         public bool BodyVarDeclared { get; set; }
         public bool NeedsUndefinedCell { get; set; }
         public bool ParameterPattern { get; set; }
+        public bool ClassStaticBlockVar { get; set; }
     }
 
     private readonly List<Owner> _owners = [];
@@ -60,7 +61,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     private readonly HashSet<Expr.Variable> _transportedClassSelfReferences = new(ReferenceEqualityComparer.Instance);
     private int _loopBodyDepth;
     private int _classDepth;
-    private int? _nominalStaticBlockClassDepth;
+    private readonly Dictionary<List<Stmt>, IReadOnlyList<Token>> _classStaticBlockVars = new(ReferenceEqualityComparer.Instance);
+    private int? _staticBlockClassDepth;
     private IReadOnlyDictionary<Stmt.Class, Expr.ClassExpr>? _runtimeClassDeclarations;
     private object? _currentModuleOwner;
 
@@ -74,6 +76,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     public IReadOnlyList<(Token Declaration, Token Parameter)> GetParameterBodyCopies(List<Stmt> body) =>
         _parameterBodyCopies.GetValueOrDefault(body) ?? [];
     public IReadOnlyList<Token> GetUndefinedBodyVars(List<Stmt> body) => _undefinedBodyVars.GetValueOrDefault(body) ?? [];
+    public IReadOnlyList<Token> GetClassStaticBlockVars(List<Stmt> body) => _classStaticBlockVars.GetValueOrDefault(body) ?? [];
     public void MarkUndefinedBodyVarReferences(TypeSystem.TypeMap typeMap)
     {
         foreach (var (reference, binding) in _variableBindings)
@@ -114,13 +117,14 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         _ordinaryBlockShadows.Clear();
         _parameterBodyCopies.Clear();
         _undefinedBodyVars.Clear();
+        _classStaticBlockVars.Clear();
         _functionBodyVarDeclarations.Clear();
         _cellOnlyCapturedNames.Clear();
         _classSelfReferences.Clear();
         _transportedClassSelfReferences.Clear();
         _loopBodyDepth = 0;
         _classDepth = 0;
-        _nominalStaticBlockClassDepth = null;
+        _staticBlockClassDepth = null;
         _runtimeClassDeclarations = runtimeClassDeclarations;
         _currentModuleOwner = null;
         _owners.Add(new(new object(), !HasDirectSuspension(statements), false));
@@ -137,6 +141,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
         foreach (var binding in _declarations.Values)
         {
+            if (binding.ClassStaticBlockVar && binding.Captured && binding.Eligible)
+                binding.NeedsUndefinedCell = true;
             if (binding.ParameterBodyCopy || binding.NeedsUndefinedCell || binding.ParameterPattern && binding.Captured
                 || binding.Eligible && binding.Captured && binding.ShadowOf is null)
                 _cells.Add(binding.Name);
@@ -344,6 +350,19 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             binding.Captured = true;
             for (int index = _owners.Count - 1; index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
                 RecordCapture(_owners[index].Node, name, binding);
+            return;
+        }
+        if (binding.ClassStaticBlockVar)
+        {
+            if (ReferenceEquals(binding.Owner, _owners[^1])) return;
+            binding.Captured = true;
+            for (int index = _owners.Count - 1; index >= 0 && !ReferenceEquals(_owners[index], binding.Owner); index--)
+            {
+                var owner = _owners[index];
+                if (!owner.CanForward || owner.Node is not Expr.ArrowFunction { IsAsync: false, IsGenerator: false })
+                { binding.Eligible = false; continue; }
+                RecordCapture(owner.Node, name, binding);
+            }
             return;
         }
         if (binding.FunctionBody != null)
@@ -556,7 +575,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
         int previousDepth = _loopBodyDepth;
         _loopBodyDepth = 0;
         bool directSuspension = HasDirectSuspension(body, expressionBody);
-        bool localCellScope = _classDepth == 0 || _nominalStaticBlockClassDepth == _classDepth;
+        bool localCellScope = _classDepth == 0 || _staticBlockClassDepth == _classDepth;
         _owners.Add(new(node, synchronous && localCellScope && !directSuspension,
             node is Expr.ArrowFunction { IsGenerator: false } && localCellScope,
             canOwnGeneratorCells, canRelayClassSelf));
@@ -638,6 +657,11 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
 
     protected override void VisitClass(Stmt.Class stmt)
     {
+        if (_runtimeClassDeclarations?.TryGetValue(stmt, out var expression) == true)
+        {
+            VisitClassExpr(expression);
+            return;
+        }
         if (stmt.SuperclassExpr is { } parent) Visit(parent);
         VisitClassBody(stmt.Name, () =>
         {
@@ -647,8 +671,8 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             if (stmt.AutoAccessors is { } autoAccessors) foreach (var accessor in autoAccessors) VisitAutoAccessor(accessor);
             if (stmt.StaticInitializers is { } initializers)
                 foreach (var initializer in initializers)
-                    if (initializer is Stmt.StaticBlock block && _runtimeClassDeclarations?.ContainsKey(stmt) != true)
-                        VisitNominalStaticBlock(block);
+                    if (initializer is Stmt.StaticBlock block)
+                        VisitClassStaticBlock(block, includeVars: false);
                     else Visit(initializer);
         });
     }
@@ -663,7 +687,11 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             foreach (var method in expr.Methods) VisitClassMethod(method);
             if (expr.Accessors is { } accessors) foreach (var accessor in accessors) VisitAccessor(accessor);
             if (expr.AutoAccessors is { } autoAccessors) foreach (var accessor in autoAccessors) VisitAutoAccessor(accessor);
-            if (expr.StaticInitializers is { } initializers) foreach (var initializer in initializers) Visit(initializer);
+            if (expr.StaticInitializers is { } initializers)
+                foreach (var initializer in initializers)
+                    if (initializer is Stmt.StaticBlock block)
+                        VisitClassStaticBlock(block, includeVars: true);
+                    else Visit(initializer);
         });
     }
 
@@ -682,21 +710,49 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
             accessor.Body, null, synchronous: true, self: null, canOwnGeneratorCells: false);
     }
 
-    private void VisitNominalStaticBlock(Stmt.StaticBlock block)
+    private void VisitClassStaticBlock(Stmt.StaticBlock block, bool includeVars)
     {
-        // Reuse token-owned live lexical cells only for nominal static blocks.
-        // Nested class expressions and their var snapshot policy remain barriers.
-        var previousDepth = _nominalStaticBlockClassDepth;
-        _nominalStaticBlockClassDepth = _classDepth;
+        // Each static block is one activation. Nested callables/classes retain
+        // their existing cell-eligibility barriers.
+        var previousDepth = _staticBlockClassDepth;
+        _staticBlockClassDepth = _classDepth;
         _owners.Add(new(block, true, false, canOwnGeneratorCells: false));
         EnterScope(block.Body, allowCandidates: false, hoistVars: true, ordinaryHandler: true);
-        try { foreach (var statement in block.Body) Visit(statement); }
+        try
+        {
+            if (includeVars) PrepareClassStaticBlockVars(block.Body);
+            foreach (var statement in block.Body) Visit(statement);
+        }
         finally
         {
             _scopes.Pop();
             _owners.RemoveAt(_owners.Count - 1);
-            _nominalStaticBlockClassDepth = previousDepth;
+            _staticBlockClassDepth = previousDepth;
         }
+    }
+
+    private void PrepareClassStaticBlockVars(List<Stmt> body)
+    {
+        // Match the bounded direct/Sequence and loop-head var inventory used by
+        // interpreter static-block entry; nested ordinary var hoisting is unchanged.
+        var declarations = Runtime.ParameterBinder.InterpreterBodyVarDeclarations(body).ToList();
+        var functionNames = declarations.Where(declaration => declaration.IsFunction)
+            .Select(declaration => declaration.Name.Lexeme).ToHashSet(StringComparer.Ordinal);
+        List<Token> vars = [];
+        foreach (var group in declarations.Where(declaration => !declaration.IsFunction)
+            .GroupBy(declaration => declaration.Name.Lexeme, StringComparer.Ordinal))
+        {
+            if (functionNames.Contains(group.Key)) continue;
+            var binding = _declarations[group.First().Name];
+            binding.ClassStaticBlockVar = true;
+            binding.FunctionBody = body;
+            binding.Eligible = true;
+            _scopes.Peek()[group.Key] = binding;
+            foreach (var declaration in group)
+                _functionBodyVarDeclarations[declaration.Name] = binding.Name;
+            vars.Add(binding.Name);
+        }
+        _classStaticBlockVars[body] = vars;
     }
 
     protected override void VisitStaticBlock(Stmt.StaticBlock block)

@@ -54,11 +54,11 @@ public abstract partial class StatementEmitterBase
     }
 
     protected void EnterLexicalCellBinding(object declaration, Token token, List<LoopBodyCellScopeEntry> prior,
-        bool ordinaryHandler = false)
+        bool ordinaryHandler = false, bool classStaticBlockVar = false)
     {
             string name = GetBindingStorageName(declaration, token.Lexeme);
             bool selected = Ctx.ClosureAnalyzer?.IsLoopBodyCellDeclaration(token) == true;
-            if (!NeedsLexicalCellBinding(declaration, token, ordinaryHandler))
+            if (!classStaticBlockVar && !NeedsLexicalCellBinding(declaration, token, ordinaryHandler))
                 return;
 
             prior.Add(new(name, token, Ctx.CellBindingLocals.GetValueOrDefault(name), Ctx.LoopBodyCellFields.GetValueOrDefault(name),
@@ -76,7 +76,9 @@ public abstract partial class StatementEmitterBase
             {
                 var field = DefineLexicalCellField($"<>lexicalCell{_lexicalCellCount++}");
                 if (field is not null) IL.Emit(OpCodes.Ldarg_0);
-                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Sentinels.LexicalUninitializedInstance);
+                IL.Emit(OpCodes.Ldsfld, classStaticBlockVar
+                    ? Ctx.Runtime!.Sentinels.UndefinedInstance
+                    : Ctx.Runtime!.Sentinels.LexicalUninitializedInstance);
                 IL.Emit(OpCodes.Newobj, Ctx.Types.StrongBoxOfObjectCtor);
                 if (field is not null)
                 {
@@ -97,7 +99,9 @@ public abstract partial class StatementEmitterBase
                 // including reads before its textual initialization.
                 var field = DefineLexicalCellField($"<>lexicalShadow{_lexicalCellCount++}");
                 if (field is not null) IL.Emit(OpCodes.Ldarg_0);
-                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.Sentinels.LexicalUninitializedInstance);
+                IL.Emit(OpCodes.Ldsfld, classStaticBlockVar
+                    ? Ctx.Runtime!.Sentinels.UndefinedInstance
+                    : Ctx.Runtime!.Sentinels.LexicalUninitializedInstance);
                 if (field is not null)
                 {
                     IL.Emit(OpCodes.Newobj, Ctx.Types.StrongBoxOfObjectCtor);

@@ -405,7 +405,12 @@ public partial class ILEmitter
                 // Routing through LoadThis() also picks up the minimatch
                 // `.map(s => s.map(ss => this.parse(ss)))` chain (case 1 fires for the
                 // parent arrow; class-method arg0 for the outermost).
-                if (!_resolver.TryLoadThisBindingCell()) _resolver.LoadThis();
+                if (!_resolver.TryLoadThisBindingCell())
+                {
+                    if (_ctx.ClassDefinitionThisParameterIndex is { } parameter)
+                        IL.Emit(OpCodes.Ldarg, parameter);
+                    else _resolver.LoadThis();
+                }
             }
             else if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(IL, _ctx, af, capturedVar)) { }
             else if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))

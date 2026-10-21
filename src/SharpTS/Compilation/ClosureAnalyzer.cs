@@ -163,6 +163,7 @@ public class ClosureAnalyzer : AstVisitorBase
     internal IReadOnlyList<(Token Declaration, Token Parameter)> GetParameterBodyCopies(List<Stmt> body) =>
         _bodyCells.GetParameterBodyCopies(body);
     internal IReadOnlyList<Token> GetUndefinedBodyVars(List<Stmt> body) => _bodyCells.GetUndefinedBodyVars(body);
+    internal IReadOnlyList<Token> GetClassStaticBlockVars(List<Stmt> body) => _bodyCells.GetClassStaticBlockVars(body);
     internal HashSet<string> GetCellOnlyCapturedLocalNames(object owner) => _bodyCells.GetCellOnlyCapturedNames(owner);
     internal bool TryGetLoopBodyCellCapture(object closure, string name, out Token declaration) =>
         _bodyCells.TryGetCaptureDeclaration(closure, name, out declaration);
@@ -818,8 +819,9 @@ public class ClosureAnalyzer : AstVisitorBase
         // Analyze field initializers for captured variables
         AnalyzeFunctionBody(expr, [], expr.Fields.Where(field => field.Initializer != null)
             .Select(field => (Stmt)new Stmt.Expression(field.Initializer!))
-            .Concat((expr.StaticInitializers ?? []).OfType<Stmt.StaticBlock>().SelectMany(block => block.Body))
             .ToList());
+        foreach (var block in (expr.StaticInitializers ?? []).OfType<Stmt.StaticBlock>())
+            AnalyzeFunctionBody(block, [], block.Body);
 
         // Analyze methods
         foreach (var method in expr.Methods)

@@ -37,12 +37,8 @@ public sealed class ComputedInstanceFieldOrderTests
             """.ReplaceLineEndings("\n") + "\n", "true before,after\nbefore,after,actual 4\n"];
     }
 
-    // TODO #2859: restore only the mutation control's interpreted row when
-    // recreated class-instance properties append after surviving keys.
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            .Where(mode => mode != ExecutionMode.Interpreted ||
-                (string)row[0] != "computed-field-deletion-and-recreation")
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]

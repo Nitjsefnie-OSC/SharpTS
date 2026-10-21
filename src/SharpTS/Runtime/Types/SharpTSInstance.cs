@@ -28,7 +28,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Instance;
-    private readonly Dictionary<string, object?> _fields = [];
+    private Dictionary<string, object?> _fields = [];
     private Dictionary<string, ISharpTSCallable>? _getters;
     private Dictionary<string, ISharpTSCallable>? _setters;
     private SharpTSObject? _symbolProperties;
@@ -447,6 +447,8 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     /// </summary>
     public IEnumerable<string> GetFieldNames()
         => _fields.Keys
+            // A deferred enumerator may retain an older store after deletion.
+            .Where(name => _fields.ContainsKey(name))
             .Concat(_getters?.Keys as IEnumerable<string> ?? Enumerable.Empty<string>())
             .Concat(_setters?.Keys as IEnumerable<string> ?? Enumerable.Empty<string>())
             .Distinct();
@@ -584,6 +586,14 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
     private bool RemoveField(string name)
     {
         bool removed = _fields.Remove(name);
+        if (removed)
+        {
+            // Dictionary reuses deleted slots; dense survivors make recreation append.
+            var fields = new Dictionary<string, object?>(_fields.Count, _fields.Comparer);
+            foreach (var field in _fields)
+                fields.Add(field.Key, field.Value);
+            _fields = fields;
+        }
         _descriptors?.Remove(name);
         _lookupCache.Remove(name);
         return removed;

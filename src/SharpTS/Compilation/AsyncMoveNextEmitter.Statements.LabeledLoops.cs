@@ -197,6 +197,9 @@ public partial class AsyncMoveNextEmitter
 
         EmitExpression(f.Object);
         EnsureBoxed();
+        var sourceLocal = _il.DeclareLocal(_types.Object);
+        _il.Emit(OpCodes.Stloc, sourceLocal);
+        _il.Emit(OpCodes.Ldloc, sourceLocal);
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.ObjectKeys.Keys);
         var keysLocal = _il.DeclareLocal(typeof(List<object>));
         _il.Emit(OpCodes.Stloc, keysLocal);
@@ -222,9 +225,15 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Clt);
         _il.Emit(OpCodes.Brfalse, outerBreakLabel);
 
+        var currentKey = _il.DeclareLocal(_types.Object);
         _il.Emit(OpCodes.Ldloc, keysLocal);
         _il.Emit(OpCodes.Ldloc, indexLocal);
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.ObjectRead.Element);
+        _il.Emit(OpCodes.Stloc, currentKey);
+        EmitForInKeyCheck(
+            () => _il.Emit(OpCodes.Ldloc, sourceLocal),
+            () => _il.Emit(OpCodes.Ldloc, currentKey), continueLabel);
+        _il.Emit(OpCodes.Ldloc, currentKey);
 
         if (varField != null)
         {

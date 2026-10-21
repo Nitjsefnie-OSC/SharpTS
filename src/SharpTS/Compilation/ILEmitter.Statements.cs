@@ -3225,8 +3225,12 @@ public partial class ILEmitter
         _ctx.EnterLoop(endLabel, continueLabel);
         _ctx.Locals.EnterScope();
 
-        // Evaluate object and get keys
+        // Evaluate the receiver once and retain it alongside the key snapshot.
         EmitExpression(f.Object);
+        EnsureBoxed();
+        var sourceLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, sourceLocal);
+        IL.Emit(OpCodes.Ldloc, sourceLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.ObjectKeys.Keys);
         var keysLocal = IL.DeclareLocal(_ctx.Types.ListOfObject);
         IL.Emit(OpCodes.Stloc, keysLocal);
@@ -3249,10 +3253,16 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Clt);
         builder.Emit_Brfalse(endLabel);
 
-        // Get current key: keys[index]
+        // Recheck before assigning the head: the body may have deleted this key.
+        var keyLocal = IL.DeclareLocal(_ctx.Types.Object);
         IL.Emit(OpCodes.Ldloc, keysLocal);
         IL.Emit(OpCodes.Ldloc, indexLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.ObjectRead.Element);
+        IL.Emit(OpCodes.Stloc, keyLocal);
+        EmitForInKeyCheck(
+            () => IL.Emit(OpCodes.Ldloc, sourceLocal),
+            () => IL.Emit(OpCodes.Ldloc, keyLocal), continueLabel);
+        IL.Emit(OpCodes.Ldloc, keyLocal);
         IL.Emit(OpCodes.Stloc, loopVar);
         InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration && !f.IsVar, loopVar);
 

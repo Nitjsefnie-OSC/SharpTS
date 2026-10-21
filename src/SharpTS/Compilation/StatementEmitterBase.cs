@@ -1498,6 +1498,15 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         il.MarkLabel(afterLoopLabel);
     }
 
+    /// <summary>Skips a snapshotted key whose own enumerable property no longer exists.</summary>
+    protected void EmitForInKeyCheck(Action emitReceiver, Action emitKey, Label continueLabel)
+    {
+        emitReceiver();
+        emitKey();
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectOwnProperties.IsEnumerable);
+        IL.Emit(OpCodes.Brfalse, continueLabel);
+    }
+
     /// <summary>
     /// Emits a for...in loop iterating over object keys.
     /// </summary>
@@ -1507,9 +1516,12 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         var endLabel = IL.DefineLabel();
         var continueLabel = IL.DefineLabel();
 
-        // Get keys from object
+        // Retain the receiver once for live checks against the key snapshot.
         EmitExpression(f.Object);
         EnsureBoxed();
+        var sourceLocal = IL.DeclareLocal(Types.Object);
+        IL.Emit(OpCodes.Stloc, sourceLocal);
+        IL.Emit(OpCodes.Ldloc, sourceLocal);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectKeys.Keys);
 
         var keysLocal = IL.DeclareLocal(Types.ListOfObject);
@@ -1535,13 +1547,17 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         IL.Emit(OpCodes.Clt);
         IL.Emit(OpCodes.Brfalse, endLabel);
 
-        // Set loop variable from keys[index]
-        EmitStoreLoopVariable(loopVarLocal, GetBindingStorageName(f, f.Variable.Lexeme), () =>
-        {
-            IL.Emit(OpCodes.Ldloc, keysLocal);
-            IL.Emit(OpCodes.Ldloc, indexLocal);
-            IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Element);
-        }, f.IsDeclaration && !f.IsVar);
+        // Deleted/non-enumerable candidates do not assign the loop head.
+        var keyLocal = IL.DeclareLocal(Types.Object);
+        IL.Emit(OpCodes.Ldloc, keysLocal);
+        IL.Emit(OpCodes.Ldloc, indexLocal);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Element);
+        IL.Emit(OpCodes.Stloc, keyLocal);
+        EmitForInKeyCheck(
+            () => IL.Emit(OpCodes.Ldloc, sourceLocal),
+            () => IL.Emit(OpCodes.Ldloc, keyLocal), continueLabel);
+        EmitStoreLoopVariable(loopVarLocal, GetBindingStorageName(f, f.Variable.Lexeme),
+            () => IL.Emit(OpCodes.Ldloc, keyLocal), f.IsDeclaration && !f.IsVar);
 
         // Emit body
         EmitStatement(f.Body);

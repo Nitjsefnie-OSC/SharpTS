@@ -636,14 +636,13 @@ public partial class TypeChecker
         // Type-check static blocks
         if (classStmt.StaticInitializers != null)
         {
-            // Create environment with static class context ('this' refers to the class constructor)
-            var staticBlockEnv = new TypeEnvironment(_environment);
-            staticBlockEnv.Define("this", classTypeForBody);
-
             foreach (var initializer in classStmt.StaticInitializers)
             {
                 if (initializer is Stmt.StaticBlock block)
                 {
+                    // Each static block owns its lexical bindings; only the class context is shared.
+                    var staticBlockEnv = new TypeEnvironment(_environment);
+                    staticBlockEnv.Define("this", classTypeForBody);
                     RegisterEditorScope(block, staticBlockEnv);
                     using var _ = new EnvironmentScope(this, staticBlockEnv);
                     bool previousInStaticBlock = _inStaticBlock;
@@ -656,10 +655,7 @@ public partial class TypeChecker
 
                     try
                     {
-                        foreach (var stmt in block.Body)
-                        {
-                            CheckStmt(stmt);
-                        }
+                        CheckBlock(block.Body, staticBlockEnv);
                     }
                     finally
                     {

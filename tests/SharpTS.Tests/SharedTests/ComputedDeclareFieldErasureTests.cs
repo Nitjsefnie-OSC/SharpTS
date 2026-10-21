@@ -114,10 +114,7 @@ public sealed class ComputedDeclareFieldErasureTests
             """, "actual-key\nbefore,actual-value,after,before,actual-value,after\nfalse false true true true 1 3\n"];
     }
 
-    // #2812 owns compiled computed-instance-field enumeration order.
-    // Preserve the full original source interpreted-only; its companion remains dual-mode/saved.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] != "ordinary-computed-key-and-field-initializer-order-survive-erasure");
+    public static IEnumerable<object[]> SavedCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases()
     {

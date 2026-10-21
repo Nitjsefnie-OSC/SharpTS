@@ -34,7 +34,7 @@ public sealed class EmittedObjectDeletionRuntimeTests
         var first = new EmittedRuntime(); var second = new EmittedRuntime();
         Assert.NotSame(first.ObjectDeletion, second.ObjectDeletion);
         Assert.False(first.ObjectDeletion.IsComplete); Assert.False(second.ObjectDeletion.IsComplete);
-        Assert.Equal(5, Handles(typeof(EmittedObjectDeletionRuntime)).Length);
+        Assert.Equal(7, Handles(typeof(EmittedObjectDeletionRuntime)).Length);
         Assert.Null(typeof(EmittedRuntime).GetProperty(nameof(EmittedRuntime.ObjectDeletion))!.SetMethod);
     }
 

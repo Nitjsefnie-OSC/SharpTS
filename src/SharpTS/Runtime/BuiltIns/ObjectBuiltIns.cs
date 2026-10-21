@@ -2163,6 +2163,10 @@ public static partial class ObjectBuiltIns
             case SharpTSArrowFunction arrow:
                 arrow.PreventExtensions();
                 return true;
+            case SharpTSFunctionPrototype functionPrototype:
+                functionPrototype.PreventExtensionsOwnProperties();
+                PropertyDescriptorStore.PreventExtensions(functionPrototype);
+                return true;
             case ISharpTSCallable callable:
                 PropertyDescriptorStore.PreventExtensions(callable);
                 return true;

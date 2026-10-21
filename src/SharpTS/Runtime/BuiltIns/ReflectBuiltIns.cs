@@ -405,6 +405,10 @@ public static class ReflectBuiltIns
                     case SharpTSClassPrototype prototype:
                         PropertyDescriptorStore.PreventExtensions(prototype);
                         break;
+                    case SharpTSFunctionPrototype functionPrototype:
+                        functionPrototype.PreventExtensionsOwnProperties();
+                        PropertyDescriptorStore.PreventExtensions(functionPrototype);
+                        return RuntimeValue.True;
                     case ISharpTSCallable callable:
                         PropertyDescriptorStore.PreventExtensions(callable);
                         break;

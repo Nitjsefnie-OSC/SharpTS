@@ -1708,6 +1708,7 @@ public static partial class ObjectBuiltIns
             SharpTSArray arr => GetOwnPropertyNamesFromArray(arr),
             SharpTSMath math => math.OwnStringKeys().Cast<object?>().ToList(),
             SharpTSJSON json => json.OwnStringKeys().Cast<object?>().ToList(),
+            SharpTSDate date => date.OwnStringKeys().Cast<object?>().ToList(),
             SharpTSError error => error.OwnPropertyNames.Select(k => (object?)k).ToList(),
             IBuiltInFunctionMetadata metadata => new[] { "length", "name" }
                 .Where(metadata.HasMetadataProperty)

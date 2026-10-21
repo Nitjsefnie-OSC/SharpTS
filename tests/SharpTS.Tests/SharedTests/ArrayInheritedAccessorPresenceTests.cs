@@ -1,4 +1,5 @@
 using SharpTS.Tests.Infrastructure;
+using SharpTS.TypeSystem;
 using Xunit;
 
 namespace SharpTS.Tests.SharedTests;
@@ -123,10 +124,7 @@ public sealed class ArrayInheritedAccessorPresenceTests
             """, "0 true true false false\n7 false 0 0\ntrue\nfalse 0 0\n1 true true false false\n7 false 0 0\ntrue\nfalse 0 0\n2 true true false false\n7 false 0 0\ntrue\nfalse 0 0\n3 true true false false\n7 false 0 0\ntrue\nfalse 0 0\n"];
     }
 
-    // #2818: compiled own numeric writes can leave gOPD.value stale.
-    // Preserve the full source and Node expectation for restoration after that repair.
-    public static IEnumerable<object[]> CompiledCases() => Cases().Where(row =>
-        (string)row[0] != "own-index-and-writable-inherited-data-preserve-attributes");
+    public static IEnumerable<object[]> CompiledCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases() => Cases()
         .Select(row => new object[] { row[0], row[1], row[2], ExecutionMode.Interpreted })
@@ -138,6 +136,13 @@ public sealed class ArrayInheritedAccessorPresenceTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
+        if (name == "own-index-and-writable-inherited-data-preserve-attributes")
+        {
+            // Match the historically strict-qualified full source, including its final LF.
+            source = source.ReplaceLineEndings("\n") + "\n";
+            Assert.Empty(new TypeChecker(TypeCheckerOptions.Strict)
+                .CheckWithRecovery(TestHarness.ParseOrThrow(source)).Diagnostics);
+        }
         if (mode == ExecutionMode.Compiled)
         {
             var (errors, output) = TestHarness.CompileVerifyAndRun(source);

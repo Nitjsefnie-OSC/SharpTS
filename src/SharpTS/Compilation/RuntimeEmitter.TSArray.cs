@@ -2343,6 +2343,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, setCoreWithExtend);
+        EmitTSArrayOwnDataDescriptorValueSync(il, runtime.DescriptorStorage);
 
         il.MarkLabel(frozenReturnLabel);
         il.MarkLabel(notExtensibleReturnLabel);
@@ -2421,10 +2422,46 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, setCoreWithExtend);
+        EmitTSArrayOwnDataDescriptorValueSync(il, runtime.DescriptorStorage);
         il.Emit(OpCodes.Ret);
 
         EmitInlineThrowError(il, runtime, "Index out of bounds.", runtime.Errors.RangeErrorConstructor, negThrowLabel);
         EmitInlineThrowError(il, runtime, "Array index exceeds ECMA-262 uint32 maximum.", runtime.Errors.RangeErrorConstructor, maxThrowLabel);
+    }
+
+    // Args 0/1/2 are the array, normalized long index and successfully stored value.
+    // Keep this after the backing write: rejected frozen/length writes must not alter PDS.
+    private void EmitTSArrayOwnDataDescriptorValueSync(ILGenerator il, EmittedDescriptorStorageRuntime descriptors)
+    {
+        // Opaque Object/Reflect aliases can install descriptors without the narrower
+        // direct-descriptor flag. Omit probes only while both existing guards are clear.
+        if (!_features.UsesDynamicPropertyDescriptors && !_features.UsesObjectDefinitionRuntime)
+            return;
+
+        var done = il.DefineLabel();
+        var descriptor = il.DeclareLocal(descriptors.DescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, descriptors.HasPropertyDescriptors);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarga_S, (byte)1);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int64, "ToString"));
+        il.Emit(OpCodes.Call, descriptors.GetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descriptor);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, descriptors.DescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, done);
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Callvirt, descriptors.DescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, done);
+        // Do not test Writable here: defineProperty also uses SetLong to install
+        // a readonly data value. Only Value changes; all descriptor flags survive.
+        il.Emit(OpCodes.Ldloc, descriptor);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Callvirt, descriptors.DescriptorValue.GetSetMethod()!);
+        il.MarkLabel(done);
     }
 
     /// <summary>

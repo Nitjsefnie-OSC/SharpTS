@@ -174,11 +174,7 @@ public sealed class ClassicGlobalLoopVarBindingTests
     {
         Assert.NotEmpty(name);
         var files = new Dictionary<string, string> { ["main.ts"] = source };
-        // #2807: retain the full source while its independent checker scope gap remains.
-        // Other module rows keep checking enabled; restore this row when #2807 is fixed.
-        bool allowTypeErrors = name == "module-var-head-slots-closures-and-empty-loop-nonpublication";
-        Assert.Equal(expected, TestHarness.RunModules(files, "main.ts", ExecutionMode.Interpreted,
-            allowTypeErrors: allowTypeErrors));
+        Assert.Equal(expected, TestHarness.RunModules(files, "main.ts", ExecutionMode.Interpreted));
     }
 
     [Fact]

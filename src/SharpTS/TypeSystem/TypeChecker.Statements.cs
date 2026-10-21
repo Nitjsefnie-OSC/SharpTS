@@ -176,6 +176,7 @@ public partial class TypeChecker
         BindingSymbol variableSymbol = RegisterValueDeclaration(
             stmt.Name,
             mergeWithLocal: stmt.IsVar);
+        _hoistedVarPlaceholders.Remove((_environment, variableSymbol));
         if (stmt.TypeAnnotationNode is IntersectionTypeNode)
             _intersectionDeclaredVariables.Add(variableSymbol);
 
@@ -1470,7 +1471,6 @@ public partial class TypeChecker
         }
 
         TypeInfo iterableType = CheckExpr(stmt.Iterable);
-        var incomingAssignments = SnapshotDefiniteAssignmentState();
 
         // Now that generator yield-type inference draws from the `yield` / `yield*` operands (#548), the
         // Generator/AsyncGenerator yield type is real (a delegating-only generator infers its delegate's
@@ -1510,9 +1510,20 @@ public partial class TypeChecker
         if (stmt.IsAsync)
             elementType = ResolveAwaitedType(elementType);
 
+        BindingSymbol? hoistedVar = stmt.IsDeclaration && stmt.IsVar
+            ? DeclareHoistedLoopHead(stmt.Variable, elementType)
+            : null;
+        var incomingAssignments = SnapshotDefiniteAssignmentState();
         TypeEnvironment forOfEnv = new(_environment);
         RegisterEditorScope(stmt, forOfEnv, EditorScopeKind.Block, EditorSyntaxRole.Whole);
-        DeclareValue(forOfEnv, stmt.Variable, elementType);
+        if (hoistedVar is not null)
+        {
+            forOfEnv.Define(stmt.Variable.Lexeme, elementType);
+            forOfEnv.DefineValueBinding(stmt.Variable.Lexeme, hoistedVar);
+            MarkDefinitelyAssigned(stmt.Variable);
+        }
+        else
+            DeclareValue(forOfEnv, stmt.Variable, elementType);
 
         try
         {
@@ -1528,7 +1539,6 @@ public partial class TypeChecker
     internal VoidResult VisitForIn(Stmt.ForIn stmt)
     {
         TypeInfo objType = CheckExpr(stmt.Object);
-        var incomingAssignments = SnapshotDefiniteAssignmentState();
 
         // The right-hand side must be an object type / `any` / a type parameter; a symbol fails (TS2407).
         if (ContainsSymbolType(objType))
@@ -1573,9 +1583,19 @@ public partial class TypeChecker
             _ => TypeInfo.String.Shared,
         };
 
+        BindingSymbol? hoistedVar = stmt.IsDeclaration && stmt.IsVar
+            ? DeclareHoistedLoopHead(stmt.Variable, loopKeyType)
+            : null;
+        var incomingAssignments = SnapshotDefiniteAssignmentState();
         TypeEnvironment forInEnv = new(_environment);
         RegisterEditorScope(stmt, forInEnv, EditorScopeKind.Block, EditorSyntaxRole.Whole);
-        if (stmt.IsDeclaration)
+        if (hoistedVar is not null)
+        {
+            forInEnv.Define(stmt.Variable.Lexeme, loopKeyType);
+            forInEnv.DefineValueBinding(stmt.Variable.Lexeme, hoistedVar);
+            MarkDefinitelyAssigned(stmt.Variable);
+        }
+        else if (stmt.IsDeclaration)
             DeclareValue(forInEnv, stmt.Variable, loopKeyType);
         else
         {
@@ -1598,6 +1618,33 @@ public partial class TypeChecker
             RestoreDefiniteAssignmentState(incomingAssignments);
         }
         return VoidResult.Instance;
+    }
+
+    private BindingSymbol? DeclareHoistedLoopHead(Token name, TypeInfo iterationType)
+    {
+        if (!_loopHeadVarOwners.TryGetValue(name, out var owner) ||
+            owner.GetLocalValueBinding(name.Lexeme) is not { } symbol)
+            return null;
+
+        TypeInfo inferredType = WidenLiteralType(iterationType);
+        bool isPlaceholder = _hoistedVarPlaceholders.Remove((owner, symbol));
+        TypeInfo declaredType = isPlaceholder
+            ? inferredType
+            : owner.Get(name.Lexeme) ?? inferredType;
+        if (!isPlaceholder && declaredType is not TypeInfo.Any && inferredType is not TypeInfo.Any &&
+            !AreEquivalentVarDeclarationTypes(declaredType, inferredType))
+        {
+            throw new TypeCheckException(
+                $" Subsequent variable declarations must have the same type. Variable '{name.Lexeme}' must be of type '{declaredType}', but here has type '{inferredType}'.",
+                line: name.Line, tsCode: "TS2403");
+        }
+
+        DeclareValue(owner, name, declaredType, mergeWithLocal: true);
+        _checkedVarRedeclarationSymbols.Add(symbol);
+        RecordDeclaredType(name.Lexeme, declaredType);
+        // A loop can be empty: retain an unassigned incoming state, and assign only its body path.
+        RecordDefiniteAssignmentDeclaration(symbol, isAssigned: false, declaredType);
+        return symbol;
     }
 
     #region Loop Helper Methods

@@ -15,9 +15,16 @@ public partial class TypeChecker
     private readonly Dictionary<TypeEnvironment, HashSet<Stmt.Function>> _completedBodylessFunctions =
         new(ReferenceEqualityComparer.Instance);
 
+    // Loop-head vars belong to the module/function being hoisted, even through ordinary blocks.
+    private readonly Dictionary<Token, TypeEnvironment> _loopHeadVarOwners =
+        new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<(TypeEnvironment Environment, BindingSymbol Symbol)> _hoistedVarPlaceholders = [];
+
     private void ResetFunctionDeclarationTracking()
     {
         _completedBodylessFunctions.Clear();
+        _loopHeadVarOwners.Clear();
+        _hoistedVarPlaceholders.Clear();
         _forwardClassDeclarations.Clear();
         _forwardClassTypeShadows.Clear();
         _deferredClassDefaultFlows.Clear();
@@ -224,7 +231,8 @@ public partial class TypeChecker
     /// </summary>
     private void HoistVarDeclarations(IEnumerable<Stmt> statements)
     {
-        foreach (var stmt in statements)
+        var stmtList = statements as IReadOnlyList<Stmt> ?? statements.ToList();
+        foreach (var stmt in stmtList)
         {
             switch (stmt)
             {
@@ -233,17 +241,88 @@ public partial class TypeChecker
                     HoistVarDeclarations(sequence.Statements);
                     break;
                 case Stmt.Var v when v.IsVar:
-                    RegisterValueDeclaration(v.Name, mergeWithLocal: true);
-                    if (!_environment.IsDefinedLocally(v.Name.Lexeme))
-                        _environment.Define(v.Name.Lexeme, TypeInfo.Any.Shared);
+                    HoistVarBinding(v.Name);
                     break;
                 case Stmt.Export { Declaration: Stmt.Var v } when v.IsVar:
-                    RegisterValueDeclaration(v.Name, mergeWithLocal: true);
-                    if (!_environment.IsDefinedLocally(v.Name.Lexeme))
-                        _environment.Define(v.Name.Lexeme, TypeInfo.Any.Shared);
+                    HoistVarBinding(v.Name);
                     break;
             }
         }
+        foreach (var stmt in stmtList)
+            HoistLoopHeadVars(stmt);
+    }
+
+    private void HoistVarBinding(Token name)
+    {
+        BindingSymbol symbol = RegisterValueDeclaration(name, mergeWithLocal: true);
+        if (!_environment.IsDefinedLocally(name.Lexeme))
+        {
+            _environment.Define(name.Lexeme, TypeInfo.Any.Shared);
+            _hoistedVarPlaceholders.Add((_environment, symbol));
+        }
+    }
+
+    private void HoistLoopHeadVars(Stmt statement)
+    {
+        switch (statement)
+        {
+            case Stmt.ForOf loop:
+                if (loop.IsDeclaration && loop.IsVar)
+                    HoistLoopHeadVar(loop.Variable);
+                HoistLoopHeadVars(loop.Body);
+                break;
+            case Stmt.ForIn loop:
+                if (loop.IsDeclaration && loop.IsVar)
+                    HoistLoopHeadVar(loop.Variable);
+                HoistLoopHeadVars(loop.Body);
+                break;
+            case Stmt.Block block:
+                foreach (var child in block.Statements) HoistLoopHeadVars(child);
+                break;
+            case Stmt.Sequence sequence:
+                foreach (var child in sequence.Statements) HoistLoopHeadVars(child);
+                break;
+            case Stmt.If conditional:
+                HoistLoopHeadVars(conditional.ThenBranch);
+                if (conditional.ElseBranch is { } alternative) HoistLoopHeadVars(alternative);
+                break;
+            case Stmt.While loop:
+                HoistLoopHeadVars(loop.Body);
+                break;
+            case Stmt.DoWhile loop:
+                HoistLoopHeadVars(loop.Body);
+                break;
+            case Stmt.For loop:
+                if (loop.Initializer is { } initializer) HoistLoopHeadVars(initializer);
+                HoistLoopHeadVars(loop.Body);
+                break;
+            case Stmt.LabeledStatement labeled:
+                HoistLoopHeadVars(labeled.Statement);
+                break;
+            case Stmt.Switch selection:
+                foreach (var arm in selection.Cases)
+                    foreach (var child in arm.Body) HoistLoopHeadVars(child);
+                if (selection.DefaultBody is { } defaultBody)
+                    foreach (var child in defaultBody) HoistLoopHeadVars(child);
+                break;
+            case Stmt.TryCatch guarded:
+                foreach (var child in guarded.TryBlock) HoistLoopHeadVars(child);
+                if (guarded.CatchBlock is { } catchBody)
+                    foreach (var child in catchBody) HoistLoopHeadVars(child);
+                if (guarded.FinallyBlock is { } finallyBody)
+                    foreach (var child in finallyBody) HoistLoopHeadVars(child);
+                break;
+            case Stmt.Export { Declaration: { } declaration }:
+                HoistLoopHeadVars(declaration);
+                break;
+            // Expressions, callables, classes and namespaces own separate bodies.
+        }
+    }
+
+    private void HoistLoopHeadVar(Token name)
+    {
+        HoistVarBinding(name);
+        _loopHeadVarOwners[name] = _environment;
     }
 
     /// <summary>

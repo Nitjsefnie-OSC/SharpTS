@@ -2734,6 +2734,8 @@ public partial class TypeChecker
                 TypeInfo fieldType = ResolveAnnotation(field.TypeAnnotation, field.TypeAnnotationNode, field)
                     ?? TypeInfo.Any.Shared;
 
+                ValidateClassFieldComputedKey(field);
+
                 if (field.IsPrivate)
                 {
                     if (field.IsStatic) mutableClass.StaticPrivateFields[fieldName] = fieldType;

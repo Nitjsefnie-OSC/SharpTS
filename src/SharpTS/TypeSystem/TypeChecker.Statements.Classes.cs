@@ -19,6 +19,19 @@ public partial class TypeChecker
         _ => false
     };
 
+    private void ValidateClassFieldComputedKey(Stmt.Field field)
+    {
+        // TS1166 permits entity-name keys independently of their symbol type.
+        // Other dynamic symbol expressions, such as `[Symbol()]`, remain invalid.
+        if (field.ComputedKey != null && CheckExpr(field.ComputedKey) is TypeInfo.Symbol &&
+            !IsClassFieldEntityName(field.ComputedKey))
+        {
+            RecordTypeError(new TypeCheckException(
+                "A computed property name in a class property declaration must have a simple literal type or a 'unique symbol' type.",
+                line: TryGetExprLine(field.ComputedKey) ?? field.Name.Line, tsCode: "TS1166"));
+        }
+    }
+
     /// <summary>
     /// Maps a class computed method/accessor key expression to the canonical well-known-symbol member
     /// name the type system uses (<c>Symbol.iterator</c> → <c>@@iterator</c>,
@@ -353,15 +366,7 @@ public partial class TypeChecker
             }
             TypeInfo fieldType = ResolveFieldType(field);
 
-            // TS1166 permits entity-name keys independently of their symbol type.
-            // Other dynamic symbol expressions, such as `[Symbol()]`, remain invalid.
-            if (field.ComputedKey != null && CheckExpr(field.ComputedKey) is TypeInfo.Symbol &&
-                !IsClassFieldEntityName(field.ComputedKey))
-            {
-                RecordTypeError(new TypeCheckException(
-                    "A computed property name in a class property declaration must have a simple literal type or a 'unique symbol' type.",
-                    line: TryGetExprLine(field.ComputedKey) ?? field.Name.Line, tsCode: "TS1166"));
-            }
+            ValidateClassFieldComputedKey(field);
 
             // Handle ES2022 private fields (#field)
             if (field.IsPrivate)

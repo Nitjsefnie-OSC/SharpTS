@@ -178,6 +178,11 @@ public static partial class ObjectBuiltIns
                     yield return new(key,
                         includeValues ? interpreter.GetPropertyValue(stringPrototype, key) : null);
                 yield break;
+            case SharpTSNumberPrototype numberPrototype:
+                foreach (var key in numberPrototype.OwnEnumerableKeys().ToList())
+                    yield return new(key,
+                        includeValues ? interpreter.GetPropertyValue(numberPrototype, key) : null);
+                yield break;
             case SharpTSFunctionPrototype functionPrototype:
                 foreach (var key in functionPrototype.OwnEnumerableKeys().ToList())
                     yield return new(key,

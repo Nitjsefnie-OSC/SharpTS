@@ -122,6 +122,7 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ret);
         }
         string name = expression.Name?.Lexeme
+            ?? _classExprs.InferredNames.GetValueOrDefault(expression)
             ?? _classExprs.VarToClassExpr.FirstOrDefault(entry => ReferenceEquals(entry.Value, expression)).Key
             ?? "";
         var initializer = _programType.DefineMethod("$Initialize_" + _classExprs.Names[expression],

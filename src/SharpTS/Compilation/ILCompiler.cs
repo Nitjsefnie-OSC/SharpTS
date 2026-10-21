@@ -962,7 +962,7 @@ public partial class ILCompiler
 
     private void RegisterTopLevelClassExpressions(IEnumerable<Stmt> statements)
     {
-        var collector = new ClassExpressionTemplateCollector(CollectClassExpression);
+        var collector = new ClassExpressionTemplateCollector(CollectClassExpression, _classExprs.InferredNames);
         foreach (var statement in statements) collector.Visit(statement);
         foreach (var stmt in statements)
         {
@@ -982,8 +982,37 @@ public partial class ILCompiler
         _ => null
     };
 
-    private sealed class ClassExpressionTemplateCollector(Action<Expr.ClassExpr> collect) : Parsing.Visitors.AstVisitorBase
+    private sealed class ClassExpressionTemplateCollector(Action<Expr.ClassExpr> collect,
+        Dictionary<Expr.ClassExpr, string> inferredNames) : Parsing.Visitors.AstVisitorBase
     {
+        private void RecordInitializerName(string name, Expr? initializer)
+        {
+            while (initializer is Expr.Grouping grouping) initializer = grouping.Expression;
+            if (initializer is Expr.ClassExpr { Name: null } expression)
+                inferredNames.TryAdd(expression, name);
+        }
+
+        protected override void VisitVar(Stmt.Var statement)
+        {
+            RecordInitializerName(statement.Name.Lexeme, statement.Initializer);
+            base.VisitVar(statement);
+        }
+
+        protected override void VisitConst(Stmt.Const statement)
+        {
+            RecordInitializerName(statement.Name.Lexeme, statement.Initializer);
+            base.VisitConst(statement);
+        }
+
+        protected override void VisitAssign(Expr.Assign expression)
+        {
+            // VarHoister retains the declaration's source name on lowered
+            // initializations. Ordinary assignments have no initializer name here.
+            if (expression.IsVarRedeclaration)
+                RecordInitializerName(expression.Name.Lexeme, expression.Value);
+            base.VisitAssign(expression);
+        }
+
         protected override void VisitClassExpr(Expr.ClassExpr expression)
         {
             collect(expression);
@@ -1398,9 +1427,9 @@ public partial class ILCompiler
     /// </summary>
     private void ModulePhase5_DefineDeclarations(List<ParsedModule> modules)
     {
-        // Register expression identities before any declaration resolves its checked
-        // parent. This does not add aliases or evaluate guest class definitions.
-        var expressions = new ClassExpressionTemplateCollector(CollectClassExpression);
+        // Register expression identities and initializer names before any declaration
+        // resolves its checked parent. This adds no aliases or guest evaluation.
+        var expressions = new ClassExpressionTemplateCollector(CollectClassExpression, _classExprs.InferredNames);
         foreach (var module in modules)
         {
             _modules.CurrentPath = NormalizeToEmissionPath(module.Path);

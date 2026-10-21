@@ -402,6 +402,7 @@ public partial class ILCompiler
     {
         public Dictionary<Expr.ClassExpr, TypeBuilder> Builders { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<Expr.ClassExpr, string> Names { get; } = new(ReferenceEqualityComparer.Instance);
+        public Dictionary<Expr.ClassExpr, string> InferredNames { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<string, Expr.ClassExpr> VarToClassExpr { get; } = [];
         public List<Expr.ClassExpr> ToDefine { get; } = [];
         public HashSet<Expr.ClassExpr> MethodsBeingDefined { get; } = new(ReferenceEqualityComparer.Instance);

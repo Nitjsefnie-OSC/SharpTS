@@ -1,4 +1,5 @@
 using SharpTS.Tests.Infrastructure;
+using SharpTS.TypeSystem;
 using Xunit;
 
 namespace SharpTS.Tests.SharedTests;
@@ -135,12 +136,7 @@ public sealed class ClassExpressionInferredNameTests
             """, "Chosen Chosen Chosen Chosen false\n1 2 true true\nPending Pending Pending Pending false\n3 4 true true\n"];
     }
 
-    // #2816 owns compiler inferred names in grouped and lowered variable initializers.
-    // Retain the full original sources/Node expectations interpreted-only; the
-    // bare-initializer companion also runs compiled and in isolated saved output.
-    public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] is not "variable-kinds-parentheses-and-name-descriptor-views"
-            and not "nested-and-duplicate-var-initializers-in-sync-and-async-bodies");
+    public static IEnumerable<object[]> SavedCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases()
     {
@@ -155,6 +151,14 @@ public sealed class ClassExpressionInferredNameTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
+        if (name is "variable-kinds-parentheses-and-name-descriptor-views"
+            or "nested-and-duplicate-var-initializers-in-sync-and-async-bodies")
+        {
+            // Preserve Cases while matching the exact historical LF/finalLF source at execution.
+            source = source.ReplaceLineEndings("\n") + "\n";
+            Assert.Empty(new TypeChecker(TypeCheckerOptions.Strict)
+                .CheckWithRecovery(TestHarness.ParseOrThrow(source)).Diagnostics);
+        }
         if (mode == ExecutionMode.Compiled)
         {
             var (errors, output) = TestHarness.CompileVerifyAndRun(source);

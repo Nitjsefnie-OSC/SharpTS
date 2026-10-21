@@ -891,6 +891,8 @@ public partial class RuntimeEmitter
             runtime.ObjectOwnProperties,
             new PropertyIsEnumerableHelperInputs(
                 runtime.ArrayStorage,
+                runtime.ObjectKeys,
+                runtime.ObjectFields.Interface,
                 runtime.DescriptorStorage,
                 runtime.Errors,
                 runtime.Promise,
@@ -1751,6 +1753,8 @@ public partial class RuntimeEmitter
         EmitObjectIsExtensible(runtime.ObjectState, new ObjectIsExtensibleInputs(runtime.DescriptorStorage, runtime.ObjectRead.Property, runtime.ReflectedMethods.InvokeUnwrapped));
         DeclareProxyOwnKeysHelpers(typeBuilder, runtime.ObjectKeys);
         EmitNormalizeOwnPropertyKeys(typeBuilder, runtime.ObjectKeys);
+        EmitClassConstructorKeys(typeBuilder, runtime.ObjectKeys, runtime.DescriptorStorage,
+            runtime.ObjectState, runtime.FunctionAttributes, runtime.ObjectFields.Interface);
         EmitGetOwnPropertyNames(
             typeBuilder,
             runtime.ObjectKeys,
@@ -1962,6 +1966,7 @@ public partial class RuntimeEmitter
                 runtime.BoxedPrimitives,
                 runtime.Errors,
                 runtime.ObjectRead.Index,
+                runtime.Reflect.Get,
                 runtime.ObjectRead.Property,
                 runtime.ObjectDescriptors,
                 runtime.ObjectKeys,

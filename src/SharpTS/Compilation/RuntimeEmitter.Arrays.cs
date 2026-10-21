@@ -361,6 +361,16 @@ public partial class RuntimeEmitter
         );
         il.MarkLabel(notProxyLabel);
 
+        var notClassConstructor = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Call, objectKeys.ConstructorKeys);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, notClassConstructor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notClassConstructor);
+        il.Emit(OpCodes.Pop);
+
         // String primitive: indexed-char keys "0", "1", ... per ECMA-262
         // §10.4.3 String exotic objects. `Object.keys("abc")` returns ["0","1","2"].
         var notStrKeysLabel = il.DefineLabel();
@@ -1104,6 +1114,16 @@ public partial class RuntimeEmitter
             enumerableOnly: false
         );
         il.MarkLabel(notProxyLabel);
+
+        var notClassConstructor = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Call, objectKeys.ConstructorKeys);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, notClassConstructor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notClassConstructor);
+        il.Emit(OpCodes.Pop);
 
         // if (obj is Dictionary<string, object?> dict)
         il.Emit(OpCodes.Ldarg_0);

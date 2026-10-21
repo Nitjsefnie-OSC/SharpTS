@@ -205,6 +205,8 @@ public partial class ILCompiler
                 paramTypes
             );
 
+            methodBuilder.SetCustomAttribute(_runtime.ObjectKeys.ClassStaticPropertyConstructor,
+                CustomAttributeEncoder.Encode(_runtime.ObjectKeys.ClassStaticPropertyConstructor, method.Name.Lexeme, false));
             _classes.StaticMethods[qualifiedClassName][method.Name.Lexeme] = methodBuilder;
             RegisterArgumentsCapturingMethod(methodBuilder, method.Body, method.Parameters);
         }

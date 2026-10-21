@@ -32,6 +32,9 @@ public partial class ILCompiler
             paramTypes
         );
 
+        methodBuilder.SetCustomAttribute(_runtime.ObjectKeys.ClassStaticPropertyConstructor,
+            CustomAttributeEncoder.Encode(_runtime.ObjectKeys.ClassStaticPropertyConstructor, method.Name.Lexeme, false));
+
         // Initialize dictionary if needed
         if (!_classes.StaticMethods.ContainsKey(className))
         {

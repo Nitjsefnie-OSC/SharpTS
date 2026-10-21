@@ -29,6 +29,8 @@ public partial class RuntimeEmitter
 
     private readonly record struct PropertyIsEnumerableHelperInputs(
         EmittedArrayStorageRuntime ArrayStorage,
+        EmittedObjectKeysRuntime ObjectKeys,
+        Type IHasFieldsInterface,
         EmittedDescriptorStorageRuntime DescriptorStorage,
         EmittedErrorRuntime Errors,
         EmittedPromiseRuntime? Promise,
@@ -854,15 +856,43 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, falseLabel);
         il.MarkLabel(notArrayLength);
 
-        // System.Type receivers represent built-in constructors. Their
-        // descriptor-less synthetic own properties (prototype, name, length,
-        // constants, and static methods) are all non-enumerable per ECMA-262
-        // §17. User-defined properties installed through defineProperty are
-        // represented in PDS and were handled above. Missing properties also
-        // correctly report false, so no synthetic-name inventory is needed.
+        // Descriptor-less constructor intrinsics and methods are non-enumerable.
+        // Only a positively marked, declared source data field has the default
+        // enumerable shape; explicit PDS descriptors already took priority.
+        var notConstructor = il.DefineLabel();
+        var constructor = il.DeclareLocal(_types.Type);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.Type);
-        il.Emit(OpCodes.Brtrue, falseLabel);
+        il.Emit(OpCodes.Stloc, constructor);
+        il.Emit(OpCodes.Ldloc, constructor);
+        il.Emit(OpCodes.Brfalse, notConstructor);
+        il.Emit(OpCodes.Ldtoken, inputs.IHasFieldsInterface);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ldloc, constructor);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        var memberOwner = EmitStaticMemberLookupOwner(il, constructor, inputs.IHasFieldsInterface);
+        var ownField = il.DeclareLocal(typeof(FieldInfo));
+        il.Emit(OpCodes.Ldloc, memberOwner);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly));
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetField", _types.String, typeof(BindingFlags)));
+        il.Emit(OpCodes.Stloc, ownField);
+        il.Emit(OpCodes.Ldloc, ownField);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldloc, ownField);
+        il.Emit(OpCodes.Ldtoken, inputs.ObjectKeys.ClassStaticPropertyType);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(MemberInfo), "IsDefined", _types.Type, _types.Boolean));
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        // The source data-field marker is enumerable; own presence still
+        // consults the original constructor's deletion/descriptor identity.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, objectOwnProperties.HasOwnProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notConstructor);
 
         // No PDS descriptor — fall back to HasOwnPropertyHelper. ECMA-262
         // says only "own" properties qualify; plain dict entries with no

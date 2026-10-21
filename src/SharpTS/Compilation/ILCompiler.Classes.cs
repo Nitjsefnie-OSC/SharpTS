@@ -412,6 +412,9 @@ public partial class ILCompiler
                     FieldAttributes.Public | FieldAttributes.Static
                 );
                 staticFieldBuilders[field.Name.Lexeme] = fieldBuilder;
+                if (field.ComputedKey == null)
+                    fieldBuilder.SetCustomAttribute(_runtime.ObjectKeys.ClassStaticPropertyConstructor,
+                        CustomAttributeEncoder.Encode(_runtime.ObjectKeys.ClassStaticPropertyConstructor, field.Name.Lexeme, true));
 
                 // Apply field-level decorators as .NET attributes
                 if (_decoratorMode != DecoratorMode.None)

@@ -1,4 +1,5 @@
 using SharpTS.Tests.Infrastructure;
+using SharpTS.TypeSystem;
 using Xunit;
 
 namespace SharpTS.Tests.SharedTests;
@@ -129,12 +130,9 @@ public sealed class ComputedDeclarationMetadataFieldTests
             """, "generic generic generic true true true\n3 3 3 true true true\ntrue true\nderived derived derived true true true\n8 8 8 true true true\ntrue true\n7 ok 11\n5 true false\n"];
     }
 
-    // Keep the full original Node expectations for compiler boundaries #2633
-    // (constructor key inventory) and #2817 (inherited generic value).
-    // Minimal companions retain descriptor, initializer and own-presence coverage.
+    // #2817 still owns the full inherited generic-value control.
     private static IEnumerable<object[]> CompiledCases() => Cases().Where(row => (string)row[0] is not
-        "field-descriptors-own-key-order-and-partial-redefinition"
-        and not "generic-and-derived-declarations-retain-own-metadata-fields");
+        "generic-and-derived-declarations-retain-own-metadata-fields");
 
     public static IEnumerable<object[]> SavedCases() => CompiledCases().Concat(
         ClassNameReflectionTests.Cases().Where(row => (string)row[0] is
@@ -153,6 +151,12 @@ public sealed class ComputedDeclarationMetadataFieldTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
+        if (name == "field-descriptors-own-key-order-and-partial-redefinition")
+        {
+            source = source.ReplaceLineEndings("\n") + "\n";
+            Assert.Empty(new TypeChecker(TypeCheckerOptions.Strict)
+                .CheckWithRecovery(TestHarness.ParseOrThrow(source)).Diagnostics);
+        }
         if (mode == ExecutionMode.Compiled)
         {
             var (errors, output) = TestHarness.CompileVerifyAndRun(source);

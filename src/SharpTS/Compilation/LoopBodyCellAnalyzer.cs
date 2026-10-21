@@ -470,7 +470,10 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     {
         Visit(stmt.Iterable); // Iterator acquisition precedes the loop binding's scope.
         _scopes.Push(new(StringComparer.Ordinal));
-        if (stmt.IsDeclaration && !stmt.IsVar) Declare(stmt.Variable, unsupportedShadow: true, lexical: true);
+        if (stmt.IsDeclaration && !stmt.IsVar)
+            Declare(stmt.Variable,
+                candidate: VisibleBinding(stmt.Variable.Lexeme) != null && _owners[^1].CanOwnGeneratorCells,
+                unsupportedShadow: true, lexical: true);
         else if (!stmt.IsDeclaration) Reference(stmt.Variable.Lexeme);
         try { VisitLoopBody(stmt.Body, !stmt.IsAsync); }
         finally { _scopes.Pop(); }
@@ -480,7 +483,10 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     {
         Visit(stmt.Object);
         _scopes.Push(new(StringComparer.Ordinal));
-        if (stmt.IsDeclaration && !stmt.IsVar) Declare(stmt.Variable, unsupportedShadow: true, lexical: true);
+        if (stmt.IsDeclaration && !stmt.IsVar)
+            Declare(stmt.Variable,
+                candidate: VisibleBinding(stmt.Variable.Lexeme) != null && _owners[^1].CanOwnGeneratorCells,
+                unsupportedShadow: true, lexical: true);
         else if (!stmt.IsDeclaration) Reference(stmt.Variable.Lexeme);
         try { Visit(stmt.Body); }
         finally { _scopes.Pop(); }

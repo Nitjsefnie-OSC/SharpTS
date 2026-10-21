@@ -2195,7 +2195,7 @@ public partial class ILEmitter
             return;
         }
 
-        if (iterableType is TypeInfo.Map
+        if (f.IsDeclaration && iterableType is TypeInfo.Map
             && _ctx.TypeMap?.IsStableNumericMapIteration(f) == true)
         {
             // The analyzer proved that the receiver is a fresh, non-escaping
@@ -2408,7 +2408,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Stloc, nextMethodLocal);
 
             // Loop variable
-            var loopVar = _ctx.Locals.DeclareLocal(f.Variable.Lexeme, _ctx.Types.Object);
+            var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, _ctx.Types.Object);
             var resultLocal = IL.DeclareLocal(_ctx.Types.Object);
             var closeNeeded = IL.DeclareLocal(_ctx.Types.Boolean);
             var throwing = IL.DeclareLocal(_ctx.Types.Boolean);
@@ -2453,7 +2453,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldloc, resultLocal);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.IteratorProtocol.Value);
             IL.Emit(OpCodes.Stloc, loopVar);
-            InitializeGeneratorLoopLocal(f.Variable, loopVar);
+            InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
 
             _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
                 closeNeeded, iterContinueLabel, escapingTargets));
@@ -2511,7 +2511,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Stloc, indexLocal);
 
             // Loop variable
-            var indexLoopVar = _ctx.Locals.DeclareLocal(f.Variable.Lexeme, _ctx.Types.Object);
+            var indexLoopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, _ctx.Types.Object);
 
             builder.MarkLabel(startLabel);
             EmitCancellationCheck();
@@ -2528,6 +2528,7 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldloc, indexLocal);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.ObjectRead.Element);
             IL.Emit(OpCodes.Stloc, indexLoopVar);
+            InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, indexLoopVar);
 
             // Emit body
             EmitStatement(f.Body);
@@ -2701,8 +2702,8 @@ public partial class ILEmitter
         var body = builder.DefineLabel("forof_stable_iterator_body");
         var cont = builder.DefineLabel("forof_stable_iterator_continue");
         var result = IL.DeclareLocal(resultType);
-        var loopVar = _ctx.Locals.DeclareLocal(
-            loop.Variable.Lexeme, _ctx.Types.Double);
+        var loopVar = DeclareIdentifierLoopHead(
+            loop.Variable, loop.IsDeclaration, _ctx.Types.Double);
         var closeNeeded = IL.DeclareLocal(_ctx.Types.Boolean);
         var throwing = IL.DeclareLocal(_ctx.Types.Boolean);
 
@@ -2739,7 +2740,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, result);
         IL.Emit(OpCodes.Ldfld, valueField);
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeGeneratorLoopLocal(loop.Variable, loopVar);
+        InitializeIdentifierLoopHead(loop.Variable, loop.IsDeclaration, loopVar);
 
         _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
             closeNeeded, cont, escapingTargets));
@@ -2867,7 +2868,7 @@ public partial class ILEmitter
         // benchmark's `any[]` case it's _types.Object so the loop var
         // matches the existing slow path's binding.
         var elementType = desc.GetElementType(_ctx.Types);
-        var loopVar = _ctx.Locals.DeclareLocal(f.Variable.Lexeme, elementType);
+        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, elementType);
 
         builder.MarkLabel(startLabel);
         EmitCancellationCheck();
@@ -2897,7 +2898,7 @@ public partial class ILEmitter
             builder.MarkLabel(unholedLabel);
         }
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeGeneratorLoopLocal(f.Variable, loopVar);
+        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
 
         // Body
         EmitStatement(f.Body);
@@ -2927,7 +2928,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Stloc, generatorLocal);
 
         // Loop variable
-        var loopVar = _ctx.Locals.DeclareLocal(f.Variable.Lexeme, _ctx.Types.Object);
+        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, _ctx.Types.Object);
         var resultLocal = IL.DeclareLocal(_ctx.Types.Object);
         var closeNeeded = IL.DeclareLocal(_ctx.Types.Boolean);
         var throwing = IL.DeclareLocal(_ctx.Types.Boolean);
@@ -2961,7 +2962,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, resultLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime.IteratorProtocol.Value);
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeGeneratorLoopLocal(f.Variable, loopVar);
+        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
 
         _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
             closeNeeded, continueLabel, escapingTargets));
@@ -3072,8 +3073,8 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Castclass, _ctx.Runtime.Generators.NumericType);
         IL.Emit(OpCodes.Stloc, generatorLocal);
 
-        var loopVar = _ctx.Locals.DeclareLocal(
-            f.Variable.Lexeme, _ctx.Types.Double);
+        var loopVar = DeclareIdentifierLoopHead(
+            f.Variable, f.IsDeclaration, _ctx.Types.Double);
         var closeNeeded = IL.DeclareLocal(_ctx.Types.Boolean);
         var throwing = IL.DeclareLocal(_ctx.Types.Boolean);
 
@@ -3104,7 +3105,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Callvirt,
             _ctx.Runtime.Generators.NumericCurrent);
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeGeneratorLoopLocal(f.Variable, loopVar);
+        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
 
         _iteratorLoopCompletionScopes.Push(new IteratorLoopCompletionScope(
             closeNeeded, continueLabel, escapingTargets));
@@ -3160,7 +3161,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Stloc, enumLocal);
 
         // Loop variable
-        var loopVar = _ctx.Locals.DeclareLocal(f.Variable.Lexeme, _ctx.Types.Object);
+        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, _ctx.Types.Object);
 
         builder.MarkLabel(startLabel);
         EmitCancellationCheck();
@@ -3172,7 +3173,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, enumLocal);
         IL.Emit(OpCodes.Callvirt, current);
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeGeneratorLoopLocal(f.Variable, loopVar);
+        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
 
         EmitStatement(f.Body);
 
@@ -3182,6 +3183,24 @@ public partial class ILEmitter
         builder.MarkLabel(endLabel);
         _ctx.Locals.ExitScope();
         _ctx.ExitLoop();
+    }
+
+    private LocalBuilder DeclareIdentifierLoopHead(Token variable, bool isDeclaration, Type storageType) =>
+        isDeclaration
+            ? _ctx.Locals.DeclareLocal(variable.Lexeme, storageType)
+            : IL.DeclareLocal(storageType);
+
+    private void InitializeIdentifierLoopHead(Token variable, bool isDeclaration, LocalBuilder value)
+    {
+        if (isDeclaration)
+        {
+            InitializeGeneratorLoopLocal(variable, value);
+            return;
+        }
+        IL.Emit(OpCodes.Ldloc, value);
+        if (value.LocalType.IsValueType) IL.Emit(OpCodes.Box, value.LocalType);
+        SetStackUnknown();
+        EmitStoreAssignmentLoopVariable(variable.Lexeme);
     }
 
     protected override void EmitForIn(Stmt.ForIn f)
@@ -3206,7 +3225,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Stloc, indexLocal);
 
         // Loop variable (holds current key)
-        var loopVar = _ctx.Locals.DeclareLocal(f.Variable.Lexeme, _ctx.Types.Object);
+        var loopVar = DeclareIdentifierLoopHead(f.Variable, f.IsDeclaration, _ctx.Types.Object);
 
         builder.MarkLabel(startLabel);
         EmitCancellationCheck();
@@ -3223,7 +3242,7 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, indexLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.ObjectRead.Element);
         IL.Emit(OpCodes.Stloc, loopVar);
-        InitializeGeneratorLoopLocal(f.Variable, loopVar);
+        InitializeIdentifierLoopHead(f.Variable, f.IsDeclaration, loopVar);
 
         // Emit body
         EmitStatement(f.Body);

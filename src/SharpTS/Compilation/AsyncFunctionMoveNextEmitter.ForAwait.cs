@@ -152,7 +152,12 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         // loopVar = result.value
         IL.Emit(OpCodes.Ldloc, resultLocal);
         IL.Emit(OpCodes.Call, Ctx.Runtime.IteratorProtocol.Value);
-        if (TryInitializeLexicalCell(f.Variable, fresh: true)) { }
+        if (!f.IsDeclaration)
+        {
+            SetStackUnknown();
+            EmitStoreAssignmentLoopVariable(varName);
+        }
+        else if (TryInitializeLexicalCell(f.Variable, fresh: true)) { }
         else if (varField != null)
         {
             var valueTemp = IL.DeclareLocal(Types.Object);

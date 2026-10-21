@@ -863,7 +863,13 @@ public class ClosureAnalyzer : AstVisitorBase
         // The loop variable and body declarations are per-iteration bindings (#1223):
         // depth is bumped before the variable's declare so it lands in the loop-body set.
         _loopBodyDepth++;
-        DeclareVariable(stmt.Variable.Lexeme, isPerIterationBinding: true);
+        if (stmt.IsDeclaration)
+            DeclareVariable(stmt.Variable.Lexeme, isPerIterationBinding: true);
+        else
+        {
+            ReferenceVariable(stmt.Variable.Lexeme);
+            _assignedNames.Add(stmt.Variable.Lexeme);
+        }
         Visit(stmt.Body);
         _loopBodyDepth--;
         ExitScope();
@@ -875,7 +881,13 @@ public class ClosureAnalyzer : AstVisitorBase
         Visit(stmt.Object);
         EnterScope();
         _loopBodyDepth++;
-        DeclareVariable(stmt.Variable.Lexeme, isPerIterationBinding: true);
+        if (stmt.IsDeclaration)
+            DeclareVariable(stmt.Variable.Lexeme, isPerIterationBinding: true);
+        else
+        {
+            ReferenceVariable(stmt.Variable.Lexeme);
+            _assignedNames.Add(stmt.Variable.Lexeme);
+        }
         Visit(stmt.Body);
         _loopBodyDepth--;
         ExitScope();

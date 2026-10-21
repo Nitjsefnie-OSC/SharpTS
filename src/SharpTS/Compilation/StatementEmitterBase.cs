@@ -1081,7 +1081,7 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         EnterLoop(endLabel, continueLabel);
 
         // Declare loop variable
-        var loopVarLocal = DeclareLoopVariable(GetBindingStorageName(f, f.Variable.Lexeme));
+        var loopVarLocal = DeclareLoopVariable(GetBindingStorageName(f, f.Variable.Lexeme), f.IsDeclaration);
 
         IL.MarkLabel(startLabel);
         EmitCancellationCheck();
@@ -1096,7 +1096,7 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         {
             loadEnumerator();
             IL.Emit(OpCodes.Callvirt, current);
-        });
+        }, f.IsDeclaration);
 
         // Emit body
         EmitStatement(f.Body);
@@ -1222,7 +1222,7 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         // DeclareLoopVariable/EmitStoreLoopVariable hooks so each emitter binds it correctly: a
         // hoisted state-machine field for async functions and async generators, or an
         // emitter-local for async arrows (whose resolver reads its own local map, not Ctx.Locals).
-        var loopVarLocal = DeclareLoopVariable(varName);
+        var loopVarLocal = DeclareLoopVariable(varName, f.IsDeclaration);
 
         // Try async iterator protocol: GetIteratorFunction(iterable, Symbol.asyncIterator)
         var asyncIteratorFnLocal = il.DeclareLocal(types.Object);
@@ -1330,7 +1330,7 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
             {
                 il.Emit(OpCodes.Ldloc, resultLocal);
                 il.Emit(OpCodes.Call, runtime.IteratorProtocol.Value);
-            });
+            }, f.IsDeclaration);
 
             EmitStatement(f.Body);
 
@@ -1466,7 +1466,7 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
                 il.Emit(OpCodes.Ldloc, genResultLocal);
                 il.Emit(OpCodes.Ldstr, "value");
                 il.Emit(OpCodes.Call, runtime.ObjectRead.Property);
-            });
+            }, f.IsDeclaration);
 
             EmitStatement(f.Body);
 
@@ -1523,7 +1523,7 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         EnterLoop(endLabel, continueLabel);
 
         // Loop variable
-        var loopVarLocal = DeclareLoopVariable(GetBindingStorageName(f, f.Variable.Lexeme));
+        var loopVarLocal = DeclareLoopVariable(GetBindingStorageName(f, f.Variable.Lexeme), f.IsDeclaration);
 
         IL.MarkLabel(startLabel);
         EmitCancellationCheck();
@@ -1541,7 +1541,7 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
             IL.Emit(OpCodes.Ldloc, keysLocal);
             IL.Emit(OpCodes.Ldloc, indexLocal);
             IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Element);
-        });
+        }, f.IsDeclaration);
 
         // Emit body
         EmitStatement(f.Body);
@@ -1843,8 +1843,9 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
     /// (detected via <see cref="GetHoistedVariableField"/>), returns null.
     /// Otherwise declares a local and registers it via <see cref="RegisterLoopLocal"/>.
     /// </summary>
-    protected virtual LocalBuilder? DeclareLoopVariable(string name)
+    protected virtual LocalBuilder? DeclareLoopVariable(string name, bool isDeclaration = true)
     {
+        if (!isDeclaration) return null;
         if (Ctx.LoopBodyCellDeclarations.ContainsKey(name)) return null;
         if (GetHoistedVariableField(name) != null)
             return null;
@@ -1867,8 +1868,15 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
     /// Stores a value into a loop variable. If the variable is hoisted to a state machine
     /// field, emits a safe store through a temp local to avoid stack ordering issues.
     /// </summary>
-    protected virtual void EmitStoreLoopVariable(LocalBuilder? local, string name, Action emitValue)
+    protected virtual void EmitStoreLoopVariable(LocalBuilder? local, string name, Action emitValue, bool isDeclaration = true)
     {
+        if (!isDeclaration)
+        {
+            emitValue();
+            SetStackUnknown();
+            EmitStoreAssignmentLoopVariable(name);
+            return;
+        }
         if (Ctx.LoopBodyCellDeclarations.TryGetValue(name, out var declaration))
         {
             emitValue();
@@ -1894,6 +1902,15 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
             emitValue();
             IL.Emit(OpCodes.Stloc, local);
         }
+    }
+
+    /// <summary>Consumes one boxed iteration value as an assignment to an existing binding.</summary>
+    protected virtual void EmitStoreAssignmentLoopVariable(string name)
+    {
+        if (!Ctx.HasLoopBodyBindingAccess(name) && InCjsContext && name == "exports")
+            IL.Emit(OpCodes.Stsfld, Ctx.CurrentCjsExportsField!);
+        else
+            EmitStoreVariable(name);
     }
 
     #endregion

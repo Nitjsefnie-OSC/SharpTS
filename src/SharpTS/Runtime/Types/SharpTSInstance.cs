@@ -608,10 +608,14 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
     /// <summary>
     /// Removes a field by name with strict mode behavior.
-    /// In strict mode, throws TypeError for deletions on frozen/sealed objects.
+    /// In strict mode, throws TypeError when an existing own property cannot be deleted.
     /// </summary>
     public bool DeleteFieldStrict(string name, bool strictMode)
     {
+        if (GetOwnPropertyDescriptor(name) is null)
+        {
+            return true;
+        }
         if (IsFrozen || IsSealed)
         {
             if (strictMode)

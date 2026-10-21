@@ -72,12 +72,8 @@ public sealed class ClassInstanceExpandoDeletionTests
             """, "7 true\ntrue false true\ntrue false true\n"];
     }
 
-    // #2859, #2860 and #2861 own the interpreter failures in the unchanged
-    // full storage control. Preserve its compiled and isolated saved coverage.
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-            .Where(mode => mode != ExecutionMode.Interpreted ||
-                (string)row[0] != "expando-deletion-preserves-descriptors-and-prototypes")
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]

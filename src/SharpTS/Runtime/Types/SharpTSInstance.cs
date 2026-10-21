@@ -582,7 +582,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
             || !flags.HasExplicitDescriptor
             || flags.Configurable;
 
-    /// <summary>Drops the field plus any descriptor flags and stale resolution-cache entry.</summary>
+    /// <summary>Drops an own data/accessor property plus its descriptor flags and stale resolution-cache entry.</summary>
     private bool RemoveField(string name)
     {
         bool removed = _fields.Remove(name);
@@ -594,6 +594,8 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
                 fields.Add(field.Key, field.Value);
             _fields = fields;
         }
+        removed |= _getters?.Remove(name) ?? false;
+        removed |= _setters?.Remove(name) ?? false;
         _descriptors?.Remove(name);
         _lookupCache.Remove(name);
         return removed;

@@ -207,8 +207,15 @@ public partial class ILEmitter
             targetCtor = EmitterTypeHelpers.ResolveConstructor(targetType, ctorBuilder);
         }
 
-        if (!isGeneric)
+        var ctorParams = ctorBuilder.GetParameters();
+        bool usesJsArgumentArray = ctorParams.Length == 1
+            && ctorParams[0].ParameterType == _ctx.Types.ObjectArray
+            && ctorParams[0].Name == "__jsArgs";
+
+        if (!isGeneric || usesJsArgumentArray)
         {
+            // Implicit Array constructors retain their internal argument-array
+            // signature when a generic class is closed. Use the same packing.
             // Constructors are ordinary ECMAScript function environments too:
             // reuse the class-call argument lowering so surplus values remain
             // observable through `arguments`, spreads expand once, and omitted
@@ -220,7 +227,6 @@ public partial class ILEmitter
             return;
         }
 
-        var ctorParams = ctorBuilder.GetParameters();
         int expectedParamCount = ctorParams.Length;
 
         // Emit arguments with proper type conversions

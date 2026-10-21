@@ -520,6 +520,7 @@ public partial class Interpreter
     private Runtime.Types.SharpTSBigIntPrototype? _bigIntPrototype;
     private Runtime.Types.SharpTSSymbolPrototype? _symbolPrototype;
     private Runtime.Types.SharpTSArrayPrototype? _arrayPrototype;
+    private Runtime.Types.SharpTSObject? _arrayBufferPrototype;
     private Runtime.Types.SharpTSFunctionPrototype? _functionPrototype;
     private Runtime.Types.SharpTSObjectPrototype? _objectPrototype;
     private Runtime.Types.SharpTSDate? _datePrototype;
@@ -561,6 +562,19 @@ public partial class Interpreter
             _arrayGlobal!.RealmPrototype = _arrayPrototype;
         }
         return _arrayPrototype;
+    }
+    internal Runtime.Types.SharpTSObject GetArrayBufferPrototype()
+    {
+        if (_arrayBufferPrototype is null)
+        {
+            // The native constructor is shared, but its mutable prototype is realm-local.
+            var prototype = new Runtime.Types.SharpTSObject([]);
+            prototype.DefineProperty("constructor", new Runtime.Types.SharpTSPropertyDescriptor(
+                _globalConstants[BuiltInNames.ArrayBuffer],
+                writable: true, enumerable: false, configurable: true));
+            _arrayBufferPrototype = prototype;
+        }
+        return _arrayBufferPrototype;
     }
     internal Runtime.Types.SharpTSFunctionPrototype GetFunctionPrototype() => _functionPrototype ??= new();
     internal Runtime.Types.SharpTSObjectPrototype GetObjectPrototype()

@@ -169,12 +169,12 @@ internal class ArrayBufferConstructorImpl : ISharpTSCallable, IBuiltInTypeConstr
         return new SharpTSArrayBuffer((int)length);
     }
 
-    public object? GetProperty(string name)
+    public object? GetProperty(string name, Interpreter? interpreter = null)
     {
         return name switch
         {
             "isView" => _isViewMethod,
-            "prototype" => null,
+            "prototype" => interpreter?.GetArrayBufferPrototype(),
             _ => null
         };
     }

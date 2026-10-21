@@ -656,7 +656,7 @@ public partial class Interpreter
 
             // Native own statics remain visible before following a callable's parent.
             if (current is ArrayBufferConstructorImpl arrayBufferConstructor
-                && arrayBufferConstructor.GetProperty(name) is { } arrayBufferStatic)
+                && arrayBufferConstructor.GetProperty(name, this) is { } arrayBufferStatic)
                 return arrayBufferStatic;
 
             if (FunctionObjectProperties.TryGetExplicitPrototype(current, this, out var explicitPrototype))

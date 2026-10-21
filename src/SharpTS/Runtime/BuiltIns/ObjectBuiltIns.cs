@@ -1702,6 +1702,7 @@ public static partial class ObjectBuiltIns
                 .OfType<string>().Cast<object?>().ToList(),
             SharpTSInstance inst => inst.GetFieldNames().Select(k => (object?)k).ToList(),
             SharpTSArray arr => GetOwnPropertyNamesFromArray(arr),
+            SharpTSMath math => math.OwnStringKeys().Cast<object?>().ToList(),
             SharpTSError error => error.OwnPropertyNames.Select(k => (object?)k).ToList(),
             IBuiltInFunctionMetadata metadata => new[] { "length", "name" }
                 .Where(metadata.HasMetadataProperty)

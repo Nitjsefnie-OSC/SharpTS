@@ -613,6 +613,7 @@ public static class ReflectBuiltIns
                         keys.AddRange(inst.GetSymbolPropertyNames().Select(s => (object?)s));
                         break;
                     case SharpTSMath math:
+                        keys.AddRange(math.OwnStringKeys().Cast<object?>());
                         keys.AddRange(math.GetSymbolPropertyNames().Select(s => (object?)s));
                         break;
                     case SharpTSStringPrototype stringPrototype:

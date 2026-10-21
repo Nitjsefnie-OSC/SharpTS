@@ -149,7 +149,7 @@ internal class SharedArrayBufferConstructorImpl : ISharpTSCallable, IBuiltInType
 /// </summary>
 internal class ArrayBufferConstructorImpl : ISharpTSCallable, IBuiltInTypeConstructor
 {
-    private static readonly BuiltInMethod _isViewMethod = BuiltInMethod.CreateV2("isView", 1, static (_, _, args) =>
+    private static readonly BuiltInMethod _isViewMethod = BuiltInMethod.CreateV2("isView", 1, int.MaxValue, static (_, _, args) =>
         RuntimeValue.FromBoolean(SharpTSArrayBuffer.IsView(args.Length > 0 ? args[0].ToObject() : null)));
 
     public int Arity() => 1;

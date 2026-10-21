@@ -143,6 +143,12 @@ public sealed class SharpTSFunctionPrototype : ISharpTSMutableBuiltIn, ISharpTSS
 
     internal IEnumerable<string> OwnStringKeys() => _overlay.OwnVisibleStringKeys();
 
+    internal void PreventExtensionsOwnProperties()
+    {
+        MaterializeOwnVirtualPropertiesForIntegrity();
+        _overlay.PreventExtensions();
+    }
+
     internal void FreezeOwnProperties()
     {
         MaterializeOwnVirtualPropertiesForIntegrity();

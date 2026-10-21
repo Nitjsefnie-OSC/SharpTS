@@ -68,6 +68,21 @@ public sealed class FunctionPrototypeIntegrityTests
                 Object.getOwnPropertyDescriptor(prototype, 'apply') === undefined, prototype.apply === undefined);
             console.log(frozen.value === originalConstructor, frozen.writable, frozen.enumerable, frozen.configurable);
             """, "true\ntrue false false true true\ntrue true false false\ntrue false false true true\ntrue false false false\n"];
+        yield return ["preventextensions-preserves-live-flags-and-rejects-new-property", """
+            const prototype: any = Function.prototype;
+            const originalConstructor = prototype.constructor;
+            const originalCall = prototype.call;
+            Object.preventExtensions(prototype);
+            const before = Object.getOwnPropertyDescriptor(prototype, 'constructor')!;
+            console.log(Object.isExtensible(prototype), Object.isSealed(prototype), Object.isFrozen(prototype),
+                before.writable, before.enumerable, before.configurable);
+            prototype.constructor = 7;
+            prototype.__integrityNew = 9;
+            const after = Object.getOwnPropertyDescriptor(prototype, 'constructor')!;
+            console.log(prototype.constructor === 7, before.value === originalConstructor, prototype.call === originalCall);
+            console.log(after.value === 7, after.writable, after.enumerable, after.configurable);
+            console.log(Object.hasOwn(prototype, '__integrityNew'), prototype.__integrityNew === undefined);
+            """.ReplaceLineEndings("\n") + "\n", "false false false true false true\ntrue true true\ntrue true false true\nfalse true\n"];
     }
 
     [Theory, MemberData(nameof(Cases))]

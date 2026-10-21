@@ -2111,6 +2111,9 @@ public static partial class ObjectBuiltIns
             case SharpTSDate date:
                 date.PreventExtensions();
                 return date;
+            case SharpTSFunctionPrototype functionPrototype:
+                functionPrototype.PreventExtensionsOwnProperties();
+                return functionPrototype;
             case ISharpTSCallable callable:
                 PropertyDescriptorStore.PreventExtensions(callable);
                 return callable;

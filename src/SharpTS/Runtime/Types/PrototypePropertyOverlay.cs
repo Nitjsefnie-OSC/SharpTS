@@ -16,6 +16,7 @@ internal sealed class PrototypePropertyOverlay(
     public bool IsExtensible => _extras.IsExtensible;
     public void Freeze() => _extras.Freeze();
     public void Seal() => _extras.Seal();
+    public void PreventExtensions() => _extras.PreventExtensions();
 
     public bool HasExtra(string name) => _extras.HasProperty(name) || _extras.HasSetter(name);
     public object? GetProperty(string name) => _extras.GetProperty(name);

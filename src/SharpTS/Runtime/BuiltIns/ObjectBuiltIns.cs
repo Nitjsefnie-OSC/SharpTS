@@ -1647,6 +1647,8 @@ public static partial class ObjectBuiltIns
             SharpTSArray arr => GetOwnPropertyNamesFromArray(arr),
             SharpTSMath math => math.OwnStringKeys().Cast<object?>()
                 .Concat(math.GetSymbolPropertyNames().Cast<object?>()).ToList(),
+            SharpTSJSON json => json.OwnStringKeys().Cast<object?>()
+                .Concat(json.GetSymbolPropertyNames().Cast<object?>()).ToList(),
             SharpTSRegExp regex => regex.OwnStringKeys().Cast<object?>().ToList(),
             SharpTSProxy proxy => proxy.TrapOwnPropertyKeys(interpreter),
             Dictionary<string, object?> dict => dict.Keys.Cast<object?>().ToList(),
@@ -1705,6 +1707,7 @@ public static partial class ObjectBuiltIns
             SharpTSInstance inst => inst.GetFieldNames().Select(k => (object?)k).ToList(),
             SharpTSArray arr => GetOwnPropertyNamesFromArray(arr),
             SharpTSMath math => math.OwnStringKeys().Cast<object?>().ToList(),
+            SharpTSJSON json => json.OwnStringKeys().Cast<object?>().ToList(),
             SharpTSError error => error.OwnPropertyNames.Select(k => (object?)k).ToList(),
             IBuiltInFunctionMetadata metadata => new[] { "length", "name" }
                 .Where(metadata.HasMetadataProperty)

@@ -616,6 +616,10 @@ public static class ReflectBuiltIns
                         keys.AddRange(math.OwnStringKeys().Cast<object?>());
                         keys.AddRange(math.GetSymbolPropertyNames().Select(s => (object?)s));
                         break;
+                    case SharpTSJSON json:
+                        keys.AddRange(json.OwnStringKeys().Cast<object?>());
+                        keys.AddRange(json.GetSymbolPropertyNames().Cast<object?>());
+                        break;
                     case SharpTSStringPrototype stringPrototype:
                         keys.AddRange(stringPrototype.GetSymbolPropertyNames().Select(s => (object?)s));
                         break;

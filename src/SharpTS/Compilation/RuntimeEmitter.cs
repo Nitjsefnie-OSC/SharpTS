@@ -206,6 +206,7 @@ public partial class RuntimeEmitter
         EmitNewTargetCoreAttribute(moduleBuilder, runtime.FunctionAttributes);
         EmitFunctionNameAttribute(moduleBuilder, runtime.FunctionAttributes);
         EmitClassStaticPropertyAttribute(moduleBuilder, runtime.ObjectKeys);
+        EmitCanonicalStaticStorageAttribute(moduleBuilder, runtime.ClassInitialization);
         EmitNumericRest4Attribute(moduleBuilder, runtime.FunctionAttributes);
         EmitNonConstructibleAttribute(moduleBuilder, runtime.FunctionAttributes);
 

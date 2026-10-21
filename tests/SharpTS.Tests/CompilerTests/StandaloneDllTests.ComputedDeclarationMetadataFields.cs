@@ -13,7 +13,8 @@ public partial class StandaloneDllTests
         string name, string source, string expected)
     {
         Assert.NotEmpty(name);
-        bool fullKeyInventoryCase = name == "field-descriptors-own-key-order-and-partial-redefinition";
+        bool fullKeyInventoryCase = name is "field-descriptors-own-key-order-and-partial-redefinition"
+            or "generic-and-derived-declarations-retain-own-metadata-fields";
         if (fullKeyInventoryCase)
         {
             source = source.ReplaceLineEndings("\n") + "\n";

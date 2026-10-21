@@ -1230,6 +1230,7 @@ public partial class RuntimeEmitter
             runtime.ObjectRead,
             new GetPropertyInputs(
                 runtime.ClassDefinitions,
+                runtime.ClassInitialization,
                 runtime.Abort,
                 runtime.Arguments.LengthField,
                 runtime.Arguments.Type,

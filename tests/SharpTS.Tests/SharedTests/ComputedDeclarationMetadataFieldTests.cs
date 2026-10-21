@@ -130,9 +130,7 @@ public sealed class ComputedDeclarationMetadataFieldTests
             """, "generic generic generic true true true\n3 3 3 true true true\ntrue true\nderived derived derived true true true\n8 8 8 true true true\ntrue true\n7 ok 11\n5 true false\n"];
     }
 
-    // #2817 still owns the full inherited generic-value control.
-    private static IEnumerable<object[]> CompiledCases() => Cases().Where(row => (string)row[0] is not
-        "generic-and-derived-declarations-retain-own-metadata-fields");
+    private static IEnumerable<object[]> CompiledCases() => Cases();
 
     public static IEnumerable<object[]> SavedCases() => CompiledCases().Concat(
         ClassNameReflectionTests.Cases().Where(row => (string)row[0] is
@@ -151,7 +149,8 @@ public sealed class ComputedDeclarationMetadataFieldTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
-        if (name == "field-descriptors-own-key-order-and-partial-redefinition")
+        if (name is "field-descriptors-own-key-order-and-partial-redefinition"
+            or "generic-and-derived-declarations-retain-own-metadata-fields")
         {
             source = source.ReplaceLineEndings("\n") + "\n";
             Assert.Empty(new TypeChecker(TypeCheckerOptions.Strict)

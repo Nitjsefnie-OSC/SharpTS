@@ -461,6 +461,9 @@ public partial class ILCompiler
         });
         var keys = deferred.Select(entry => entry.Key).ToArray();
         _classes.DeferredDefinitions.Declare(source, typeBuilder, initializer, registrar, keys, fieldKeys, capturedKeys);
+        if (hasGenericKeys)
+            typeBuilder.SetCustomAttribute(_runtime.ClassInitialization.CanonicalStaticStorageAttributeConstructor,
+                CustomAttributeEncoder.EmptyBlob);
     }
 
     private void EmitComputedStaticFieldInitializer(ILEmitter emitter, ILGenerator il,

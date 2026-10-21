@@ -125,14 +125,8 @@ public sealed class ArrayBufferStaticMemberTests
 
     public static IEnumerable<object[]> CompiledCases() => Cases();
 
-    // #2822 owns interpreted Object.hasOwn missing the present isView member;
-    // preserve the full descriptor control in compiled and isolated saved execution.
     public static IEnumerable<object[]> ModeCases() => Cases().SelectMany(row =>
-        ((string)row[0] switch
-        {
-            "repeated-member-cache-and-own-descriptor-identity" => new[] { ExecutionMode.Compiled },
-            _ => new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
-        })
+        new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }
             .Select(mode => new object[] { row[0], row[1], row[2], mode }));
 
     [Theory, MemberData(nameof(ModeCases))]

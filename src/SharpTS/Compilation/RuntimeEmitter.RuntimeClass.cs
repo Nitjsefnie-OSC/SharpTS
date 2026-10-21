@@ -156,6 +156,12 @@ public partial class RuntimeEmitter
                 FieldAttributes.Public | FieldAttributes.Static);
         }
 
+        if (runtime.ArrayBuffer is { } arrayBufferPrototypeOwner)
+            arrayBufferPrototypeOwner.PrototypeField = typeBuilder.DefineField(
+                "_arrayBufferPrototype",
+                _types.DictionaryStringObject,
+                FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly);
+
         // Array.prototype singleton — populated lazily after $TSFunction and the
         // Array* helper MethodBuilders are defined. Read by ArrayStaticEmitter
         // for `Array.prototype` value access. Required so `Array.prototype.sort`
@@ -535,6 +541,12 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         cctorIL.Emit(OpCodes.Stsfld, runtime.Dates.Prototype);
 
+        if (runtime.ArrayBuffer is { } arrayBufferPrototypeInit)
+        {
+            cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+            cctorIL.Emit(OpCodes.Stsfld, arrayBufferPrototypeInit.PrototypeField);
+        }
+
         // Array.prototype starts empty; populated lazily by
         // EmitArrayPrototypePopulate-emitted helper on first read.
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
@@ -632,6 +644,17 @@ public partial class RuntimeEmitter
         EmitLinkProto(numberPrototypeField);
         EmitLinkProto(stringPrototypeField);
         EmitLinkProto(arrayPrototypeField);
+        if (runtime.ArrayBuffer is { } arrayBufferPrototypeLink)
+        {
+            EmitLinkProto(arrayBufferPrototypeLink.PrototypeField);
+            var descriptor = cctorIL.DeclareLocal(runtime.DescriptorStorage.DescriptorType);
+            EmitInstallConstructor(cctorIL, runtime, arrayBufferPrototypeLink.PrototypeField, descriptor,
+                _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object), () =>
+                {
+                    cctorIL.Emit(OpCodes.Ldtoken, arrayBufferPrototypeLink.Type);
+                    cctorIL.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+                });
+        }
         EmitLinkProto(errorPrototypeField);
         EmitLinkProto(functionPrototypeField);
         EmitLinkProto(regexpPrototypeField);

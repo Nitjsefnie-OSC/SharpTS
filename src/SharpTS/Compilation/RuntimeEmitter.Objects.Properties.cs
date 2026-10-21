@@ -2450,6 +2450,18 @@ public partial class RuntimeEmitter
                 il.MarkLabel(notRegExpLabel);
             }
 
+            if (inputs.ArrayBuffer is { } arrayBufferPrototype)
+            {
+                var notArrayBufferPrototype = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldtoken, arrayBufferPrototype.Type);
+                il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+                il.Emit(OpCodes.Bne_Un, notArrayBufferPrototype);
+                il.Emit(OpCodes.Ldsfld, arrayBufferPrototype.PrototypeField);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(notArrayBufferPrototype);
+            }
+
             // Emitted user classes implement $IHasFields. Their prototype is
             // a stable constructor-free instance whose normal GetProperty
             // implementation exposes declared methods/accessors.

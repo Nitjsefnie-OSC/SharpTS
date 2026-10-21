@@ -43,4 +43,13 @@ public sealed class NativeAccessorRecreationOrderTests
         Assert.Empty(errors);
         Assert.Equal(Expected, output);
     }
+
+    [Fact]
+    public void InterpretedRecreationPreservesNativeAccessorCreationOrder()
+    {
+        var source = Source;
+        Assert.Empty(new TypeChecker(TypeCheckerOptions.Strict)
+            .CheckWithRecovery(TestHarness.ParseOrThrow(source)).Diagnostics);
+        Assert.Equal(Expected, TestHarness.RunInterpreted(source));
+    }
 }

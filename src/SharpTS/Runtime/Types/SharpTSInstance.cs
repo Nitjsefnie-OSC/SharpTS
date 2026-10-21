@@ -454,8 +454,10 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         => _fields.Keys
             // A deferred enumerator may retain an older store after deletion.
             .Where(name => _fields.ContainsKey(name))
-            .Concat(_getters?.Keys as IEnumerable<string> ?? Enumerable.Empty<string>())
-            .Concat(_setters?.Keys as IEnumerable<string> ?? Enumerable.Empty<string>())
+            .Concat((_getters?.Keys as IEnumerable<string> ?? Enumerable.Empty<string>())
+                .Where(name => _getters?.ContainsKey(name) == true))
+            .Concat((_setters?.Keys as IEnumerable<string> ?? Enumerable.Empty<string>())
+                .Where(name => _setters?.ContainsKey(name) == true))
             .Distinct();
 
     /// <summary>
@@ -599,8 +601,22 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
                 fields.Add(field.Key, field.Value);
             _fields = fields;
         }
-        removed |= _getters?.Remove(name) ?? false;
-        removed |= _setters?.Remove(name) ?? false;
+        if (_getters?.Remove(name) == true)
+        {
+            removed = true;
+            var getters = new Dictionary<string, ISharpTSCallable?>(_getters.Count, _getters.Comparer);
+            foreach (var getter in _getters)
+                getters.Add(getter.Key, getter.Value);
+            _getters = getters;
+        }
+        if (_setters?.Remove(name) == true)
+        {
+            removed = true;
+            var setters = new Dictionary<string, ISharpTSCallable?>(_setters.Count, _setters.Comparer);
+            foreach (var setter in _setters)
+                setters.Add(setter.Key, setter.Value);
+            _setters = setters;
+        }
         _descriptors?.Remove(name);
         _lookupCache.Remove(name);
         return removed;

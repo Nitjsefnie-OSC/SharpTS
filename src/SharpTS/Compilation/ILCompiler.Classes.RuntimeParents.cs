@@ -72,7 +72,13 @@ public partial class ILCompiler
     }
 
     private static Expr.ClassExpr CreateRuntimeClassExpression(Stmt.Class declaration) =>
-        new(declaration.Name, declaration.TypeParams,
+        // The adapter's immutable inner self is distinct from the outer declaration binding.
+        new(new Token(declaration.Name.Type, declaration.Name.Lexeme, declaration.Name.Literal,
+                declaration.Name.Line, declaration.Name.Start)
+            {
+                SourceIdentity = declaration.Name.SourceIdentity,
+                SourceOrderOffset = declaration.Name.SourceOrderOffset,
+            }, declaration.TypeParams,
             declaration.SuperclassExpr, declaration.SuperclassTypeArgs, declaration.Methods,
             declaration.Fields, declaration.Accessors, declaration.AutoAccessors, declaration.Interfaces,
             declaration.InterfaceTypeArgs, declaration.IsAbstract, declaration.StaticInitializers);

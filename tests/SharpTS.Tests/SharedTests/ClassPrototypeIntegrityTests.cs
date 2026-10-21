@@ -1,4 +1,5 @@
 using SharpTS.Tests.Infrastructure;
+using SharpTS.TypeSystem;
 using Xunit;
 
 namespace SharpTS.Tests.SharedTests;
@@ -253,14 +254,10 @@ public sealed class ClassPrototypeIntegrityTests
             """, "seal 0 0 true true false false true true false\ntrue true false\nfreeze 0 0 true false false false true false false\ntrue true false\n"];
     }
 
-    // #2814 owns compiled absent-string deletion on sealed/frozen class prototypes.
-    // #2815 owns observable state loss through declared prototype accessors.
-    // Preserve all full original programs interpreted-only at those boundaries;
-    // the additional companions retain the supported compiled integrity checks.
+    // #2815 still owns observable state loss through declared prototype accessors.
+    // Keep its two full original programs interpreted-only; #2814's full programs run both modes.
     public static IEnumerable<object[]> SavedCases() => Cases().Where(row =>
-        (string)row[0] is not "own-named-data-flags-writes-and-absence"
-            and not "strict-present-deletion-and-absent-deletion-after-integrity"
-            and not "declared-method-accessor-and-constructor-integrity"
+        (string)row[0] is not "declared-method-accessor-and-constructor-integrity"
             and not "symbol-data-declared-method-accessor-and-carrier-boundaries");
 
     public static IEnumerable<object[]> ModeCases()
@@ -276,6 +273,14 @@ public sealed class ClassPrototypeIntegrityTests
         string name, string source, string expected, ExecutionMode mode)
     {
         Assert.NotEmpty(name);
+        if (name is "own-named-data-flags-writes-and-absence"
+            or "strict-present-deletion-and-absent-deletion-after-integrity")
+        {
+            // Bridge the unchanged raw Cases value to the exact historical LF/finalLF source.
+            source = source.ReplaceLineEndings("\n") + "\n";
+            Assert.Empty(new TypeChecker(TypeCheckerOptions.Strict)
+                .CheckWithRecovery(TestHarness.ParseOrThrow(source)).Diagnostics);
+        }
         if (mode == ExecutionMode.Compiled)
         {
             var (errors, output) = TestHarness.CompileVerifyAndRun(source);

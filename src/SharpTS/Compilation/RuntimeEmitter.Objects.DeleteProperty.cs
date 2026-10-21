@@ -1054,6 +1054,14 @@ public partial class RuntimeEmitter
         // $TSObject - call the DeleteProperty / DeletePropertyStrict instance method
         il.MarkLabel(sharpTSObjectLabel);
 
+        // Integrity levels constrain existing own properties only. Reuse the
+        // complete descriptor so absent or inherited keys succeed when sealed.
+        il.Emit(OpCodes.Ldloc, ordinaryDeleteDescriptorLocal);
+        il.Emit(OpCodes.Brfalse, trueLabel);
+        il.Emit(OpCodes.Ldloc, ordinaryDeleteDescriptorLocal);
+        il.Emit(OpCodes.Isinst, inputs.UndefinedType);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+
         // SetIntegrityLevel makes every existing own property non-configurable.
         // The stable PDS descriptor intentionally retains its original bit, so
         // consult the receiver's effective sealed state before either the

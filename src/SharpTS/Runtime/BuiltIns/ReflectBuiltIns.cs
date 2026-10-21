@@ -175,8 +175,7 @@ public static class ReflectBuiltIns
                     case SharpTSInstance inst:
                         if ((inst.IsFrozen || inst.IsSealed) && inst.HasField(propertyKey))
                             return RuntimeValue.False;
-                        inst.DeleteField(propertyKey);
-                        return RuntimeValue.True;
+                        return RuntimeValue.FromBoolean(inst.DeleteField(propertyKey) || !inst.HasField(propertyKey));
                     case SharpTSPromise promise:
                         return RuntimeValue.FromBoolean(promise.DeletePropertyStrict(propertyKey, false));
                     case SharpTSClassPrototype prototype:

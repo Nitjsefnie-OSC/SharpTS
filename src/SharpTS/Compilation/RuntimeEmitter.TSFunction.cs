@@ -279,6 +279,10 @@ public partial class RuntimeEmitter
         // reflection-style invocations); replacing reflection with a cached
         // invoker is the single biggest improvement to callback dispatch.
         var invokerField = typeBuilder.DefineField("_invoker", _types.MethodInvoker, FieldAttributes.Private);
+        // Actual CLR void has no completion value. Cache its signature once so
+        // value calls distinguish it from object-returning methods yielding null.
+        var returnsVoidField = typeBuilder.DefineField("_returnsVoid", _types.Boolean,
+            FieldAttributes.Private | FieldAttributes.InitOnly);
         // AdjustArgs cache: paramCount + rest-param shape. Pre-cache, every
         // Invoke paid GetParameters + ParameterType lookups to decide between
         // pad / trim / rest-list / rest-array branches. Computed once at
@@ -431,6 +435,7 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Brfalse, noMethodLabel);
         // User methods carry their ECMAScript arity explicitly because reflection cannot
         // recover the "stop at the first default initializer" rule.
+        EmitComputeReturnsVoid(ctorIL, returnsVoidField, methodArgIndex: 2);
         EmitComputeFunctionLength(ctorIL, cachedLengthField, inputs.FunctionAttributes, methodArgIndex: 2);
         EmitComputeFunctionName(ctorIL, cachedNameField, inputs.FunctionAttributes, methodArgIndex: 2);
         // Source receivers are explicitly marked; helpers retain their metadata convention.
@@ -481,6 +486,7 @@ public partial class RuntimeEmitter
         ctorCacheIL.Emit(OpCodes.Ldarg_2);
         ctorCacheIL.Emit(OpCodes.Brfalse, noCachedMethodLabel);
         // Source receivers are explicitly marked; helpers retain their metadata convention.
+        EmitComputeReturnsVoid(ctorCacheIL, returnsVoidField, methodArgIndex: 2);
         EmitComputeExpectsThis(ctorCacheIL, expectsThisField, inputs.FunctionAttributes, methodArgIndex: 2);
         EmitComputeCapturesArguments(ctorCacheIL, capturesArgumentsField, inputs.FunctionAttributes, methodArgIndex: 2);
         EmitComputePadUndefinedMask(ctorCacheIL, padUndefinedMaskField, inputs.FunctionAttributes, methodArgIndex: 2);
@@ -751,7 +757,7 @@ public partial class RuntimeEmitter
         invokeIL.Emit(OpCodes.Ldloc, adjustedArgsLocal);
         invokeIL.Emit(OpCodes.Newobj, spanCtorFromArray);
         invokeIL.Emit(OpCodes.Callvirt, invokerInvokeSpan);
-        EmitNormalizeClrNumericReturn(invokeIL);
+        EmitNormalizeTSFunctionReturn(invokeIL, returnsVoidField, inputs.UndefinedInstance);
         invokeIL.Emit(OpCodes.Ret);
 
         // InvokeWithThis method: public object InvokeWithThis(object thisArg, object[] args)
@@ -963,7 +969,7 @@ public partial class RuntimeEmitter
         iwt.Emit(OpCodes.Ldloc, iwtAdjustedArgsLocal);
         iwt.Emit(OpCodes.Newobj, iwtSpanCtor);
         iwt.Emit(OpCodes.Callvirt, iwtInvokerInvokeSpan);
-        EmitNormalizeClrNumericReturn(iwt);
+        EmitNormalizeTSFunctionReturn(iwt, returnsVoidField, inputs.UndefinedInstance);
         iwt.Emit(OpCodes.Ret);
 
         EmitTSFunctionInvokeConstructed(typeBuilder, functionValues, inputs.FunctionAttributes,
@@ -979,7 +985,9 @@ public partial class RuntimeEmitter
             needsArgConversionField,
             invokerField,
             methodField,
-            targetField
+            targetField,
+            returnsVoidField,
+            inputs.UndefinedInstance
         );
 
         // ToString method
@@ -1291,6 +1299,33 @@ public partial class RuntimeEmitter
         nameProperty.SetGetMethod(nameGetterBuilder);
 
         typeBuilder.CreateType();
+    }
+
+    private void EmitComputeReturnsVoid(ILGenerator il, FieldBuilder returnsVoidField, int methodArgIndex)
+    {
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg, methodArgIndex);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.MethodInfo, "ReturnType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldtoken, _types.Void);
+        il.Emit(OpCodes.Call, _types.TypeGetTypeFromHandle);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Stfld, returnsVoidField);
+    }
+
+    private void EmitNormalizeTSFunctionReturn(
+        ILGenerator il, FieldBuilder returnsVoidField, FieldInfo undefinedInstance)
+    {
+        var nonVoid = il.DefineLabel();
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, returnsVoidField);
+        il.Emit(OpCodes.Brfalse, nonVoid);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldsfld, undefinedInstance);
+        il.Emit(OpCodes.Br, done);
+        il.MarkLabel(nonVoid);
+        EmitNormalizeClrNumericReturn(il);
+        il.MarkLabel(done);
     }
 
     /// <summary>

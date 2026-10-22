@@ -366,6 +366,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case Expr.Grouping g:
                 EmitGrouping(g);
                 break;
+            case Expr.Instantiation instantiation:
+                EmitExpression(instantiation.Expression);
+                break;
             case Expr.TypeAssertion ta:
                 EmitTypeAssertion(ta);
                 break;
@@ -1440,6 +1443,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // that boundary while following type-only wrappers on the chain itself.
         return expression switch
         {
+            Expr.Instantiation instantiation => ReferenceHasOptionalLink(instantiation.Expression),
             Expr.TypeAssertion assertion => ReferenceHasOptionalLink(assertion.Expression),
             Expr.Satisfies satisfies => ReferenceHasOptionalLink(satisfies.Expression),
             Expr.NonNullAssertion assertion => ReferenceHasOptionalLink(assertion.Expression),

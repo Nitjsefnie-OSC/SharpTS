@@ -1284,6 +1284,7 @@ public abstract partial class ExpressionEmitterBase
         Expr.TemplateLiteral tl => AnyContainsSuspension(tl.Expressions),
         Expr.TaggedTemplateLiteral tagged => ExprContainsSuspension(tagged.Tag) || AnyContainsSuspension(tagged.Expressions),
         Expr.Spread sp => ExprContainsSuspension(sp.Expression),
+        Expr.Instantiation instantiation => ExprContainsSuspension(instantiation.Expression),
         Expr.TypeAssertion ta => ExprContainsSuspension(ta.Expression),
         Expr.Satisfies sa => ExprContainsSuspension(sa.Expression),
         Expr.NonNullAssertion nn => ExprContainsSuspension(nn.Expression),
@@ -1806,6 +1807,7 @@ public abstract partial class ExpressionEmitterBase
         Expr.GetIndex gi => gi.Optional || HasOptionalLink(gi.Object),
         Expr.Call call => call.Optional || HasOptionalLink(call.Callee),
         Expr.Grouping gr => HasOptionalLink(gr.Expression),
+        Expr.Instantiation instantiation => HasOptionalLink(instantiation.Expression),
         Expr.TypeAssertion ta => HasOptionalLink(ta.Expression),
         _ => false
     };
@@ -1825,6 +1827,7 @@ public abstract partial class ExpressionEmitterBase
         while (true)
         {
             if (original is Expr.Grouping grouping) original = grouping.Expression;
+            else if (original is Expr.Instantiation instantiation) original = instantiation.Expression;
             else if (original is Expr.TypeAssertion assertion) original = assertion.Expression;
             else break;
         }

@@ -1246,6 +1246,11 @@ internal sealed class NestedFunctionLifter
                 var child = ProcessExpr(e.Expression);
                 return ReferenceEquals(child, e.Expression) ? e : e with { Expression = child };
             }
+            case Expr.Instantiation instantiation:
+            {
+                var child = ProcessExpr(instantiation.Expression);
+                return ReferenceEquals(child, instantiation.Expression) ? instantiation : instantiation with { Expression = child };
+            }
             case Expr.TypeAssertion e:
             {
                 var child = ProcessExpr(e.Expression);

@@ -1141,6 +1141,9 @@ public partial class ILCompiler
             case Expr.DynamicImport di:
                 CollectArrowsFromExpr(di.PathExpression);
                 break;
+            case Expr.Instantiation instantiation:
+                CollectArrowsFromExpr(instantiation.Expression);
+                break;
             case Expr.TypeAssertion ta:
                 CollectArrowsFromExpr(ta.Expression);
                 break;

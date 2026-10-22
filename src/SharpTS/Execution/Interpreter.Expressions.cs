@@ -97,6 +97,7 @@ public partial class Interpreter
     internal RuntimeValue VisitTemplateLiteral(Expr.TemplateLiteral template) => EvaluateTemplateLiteral(template);
     internal RuntimeValue VisitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral tagged) => EvaluateTaggedTemplateLiteral(tagged);
     internal RuntimeValue VisitSpread(Expr.Spread spread) => EvaluateRV(spread.Expression);
+    internal RuntimeValue VisitInstantiation(Expr.Instantiation expression) => EvaluateRV(expression.Expression);
     internal RuntimeValue VisitTypeAssertion(Expr.TypeAssertion ta) => EvaluateRV(ta.Expression);
     internal RuntimeValue VisitSatisfies(Expr.Satisfies sat) => EvaluateRV(sat.Expression);
     internal RuntimeValue VisitNonNullAssertion(Expr.NonNullAssertion nna) => EvaluateRV(nna.Expression);
@@ -183,6 +184,7 @@ public partial class Interpreter
     internal ValueTask<RuntimeValue> VisitTaggedTemplateLiteralAsync(Expr.TaggedTemplateLiteral tagged) => new(EvaluateTaggedTemplateLiteralAsync(tagged));
     internal ValueTask<RuntimeValue> VisitSpreadAsync(Expr.Spread spread) => EvaluateAsync(spread.Expression);
     internal ValueTask<RuntimeValue> VisitAssertedAssignmentAsync(Expr.AssertedAssignment assignment) => EvaluateAssertedAssignmentCore(_asyncContext, assignment);
+    internal ValueTask<RuntimeValue> VisitInstantiationAsync(Expr.Instantiation expression) => EvaluateAsync(expression.Expression);
     internal ValueTask<RuntimeValue> VisitTypeAssertionAsync(Expr.TypeAssertion ta) => EvaluateAsync(ta.Expression);
     internal ValueTask<RuntimeValue> VisitSatisfiesAsync(Expr.Satisfies sat) => EvaluateAsync(sat.Expression);
     internal ValueTask<RuntimeValue> VisitNonNullAssertionAsync(Expr.NonNullAssertion nna) => EvaluateAsync(nna.Expression);

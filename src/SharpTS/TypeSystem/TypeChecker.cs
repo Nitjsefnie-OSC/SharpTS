@@ -3194,6 +3194,7 @@ public partial class TypeChecker
     {
         Expr.AssertedAssignment assignment => TryGetExprLine(assignment.LoweredAssignment),
         Expr.Grouping g => TryGetExprLine(g.Expression),
+        Expr.Instantiation instantiation => instantiation.LessThan.Line,
         Expr.Variable v => v.Name.Line,
         Expr.This t => t.Keyword.Line,
         Expr.NewTarget nt => nt.Keyword.Line,

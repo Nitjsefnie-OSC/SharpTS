@@ -228,6 +228,7 @@ public abstract partial class ExpressionEmitterBase
     private static Expr UnwrapSuperCallReference(Expr expression) => expression switch
     {
         Expr.Grouping grouping => UnwrapSuperCallReference(grouping.Expression),
+        Expr.Instantiation instantiation => UnwrapSuperCallReference(instantiation.Expression),
         Expr.TypeAssertion assertion => UnwrapSuperCallReference(assertion.Expression),
         Expr.Satisfies satisfies => UnwrapSuperCallReference(satisfies.Expression),
         Expr.NonNullAssertion assertion => UnwrapSuperCallReference(assertion.Expression),

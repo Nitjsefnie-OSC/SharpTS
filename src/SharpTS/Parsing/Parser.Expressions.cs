@@ -642,6 +642,10 @@ public partial class Parser
             {
                 expr = FinishCall(expr, typeArgs, typeArgNodes: typeArgNodes);
             }
+            else if (Check(TokenType.LESS) && TryParseTypeArgumentsForInstantiation(out typeArgNodes) is { } instantiationArgs)
+            {
+                expr = CompleteExpression(new Expr.Instantiation(receiver, operation, instantiationArgs, typeArgNodes), start);
+            }
             else if (Match(TokenType.DOT))
             {
                 if (Match(TokenType.PRIVATE_IDENTIFIER))

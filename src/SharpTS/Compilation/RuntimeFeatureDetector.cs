@@ -1758,6 +1758,9 @@ public sealed class RuntimeFeatureDetector
                 MarkPotentiallyMaterialized(sp2.Expression);
                 VisitExpr(sp2.Expression);
                 break;
+            case Expr.Instantiation instantiation:
+                VisitExpr(instantiation.Expression);
+                break;
             case Expr.TypeAssertion ta:
                 VisitExpr(ta.Expression);
                 break;

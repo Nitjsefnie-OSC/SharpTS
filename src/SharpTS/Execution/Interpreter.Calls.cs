@@ -116,12 +116,13 @@ public partial class Interpreter
             expression = expression switch
             {
                 Expr.Grouping grouping => grouping.Expression,
+                Expr.Instantiation instantiation => instantiation.Expression,
                 Expr.TypeAssertion assertion => assertion.Expression,
                 Expr.Satisfies satisfies => satisfies.Expression,
                 Expr.NonNullAssertion assertion => assertion.Expression,
                 _ => expression,
             };
-            if (expression is not (Expr.Grouping or Expr.TypeAssertion or Expr.Satisfies or Expr.NonNullAssertion))
+            if (expression is not (Expr.Grouping or Expr.Instantiation or Expr.TypeAssertion or Expr.Satisfies or Expr.NonNullAssertion))
                 return expression;
         }
     }

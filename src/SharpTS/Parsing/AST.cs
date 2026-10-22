@@ -112,6 +112,8 @@ public abstract record Expr
         /// </summary>
         public JsxCallInfo? JsxOrigin { get; init; } = null;
     }
+    /// <summary>A type-only specialization of a callable value; evaluating it does not call the operand.</summary>
+    public record Instantiation(Expr Expression, Token LessThan, List<string> TypeArgs, List<TypeNode?>? TypeArgNodes = null) : Expr;
     // Defaulted: this property read was synthesized by destructuring desugaring and is covered
     // by a default (its own, or a default on an enclosing pattern). The type checker treats a
     // missing property as `undefined` for such reads instead of reporting TS2339, since the

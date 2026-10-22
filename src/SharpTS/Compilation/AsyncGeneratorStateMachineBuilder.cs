@@ -852,19 +852,23 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
         il.Emit(OpCodes.Ldfld, StateField);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Blt, rejectWithoutResumeLabel);
-        // Only native async delegation consumes a forwarded throw request.
-        // Keep unsupported synchronous/plain delegation on its existing path.
+        // Native sync/async generator protocols consume forwarded throws.
+        // Keep plain enumerators on their existing unsupported path.
         if (DelegatedAsyncEnumeratorField is not null)
         {
-            var noDelegationLabel = il.DefineLabel();
+            var resumeThrowLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, DelegatedAsyncEnumeratorField);
-            il.Emit(OpCodes.Brfalse, noDelegationLabel);
+            il.Emit(OpCodes.Brfalse, resumeThrowLabel);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, DelegatedAsyncEnumeratorField);
             il.Emit(OpCodes.Isinst, _runtime!.RequireAsyncGenerators().Type);
+            il.Emit(OpCodes.Brtrue, resumeThrowLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, DelegatedAsyncEnumeratorField);
+            il.Emit(OpCodes.Isinst, _runtime.Generators.Type);
             il.Emit(OpCodes.Brfalse, rejectWithoutResumeLabel);
-            il.MarkLabel(noDelegationLabel);
+            il.MarkLabel(resumeThrowLabel);
         }
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);

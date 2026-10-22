@@ -154,7 +154,25 @@ public partial class AsyncGeneratorMoveNextEmitter
         EmitCaptureTryOperation(() =>
         {
             var nextLabel = _il.DefineLabel();
+            var returnOrNextLabel = _il.DefineLabel();
             var resultLabel = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.ThrowRequestedField);
+            _il.Emit(OpCodes.Brfalse, returnOrNextLabel);
+            // Consume before the synchronous protocol call can throw. Its
+            // handled result is a normal yield* step, not an outer return.
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldc_I4_0);
+            _il.Emit(OpCodes.Stfld, _builder.ThrowRequestedField);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, delegatedField);
+            _il.Emit(OpCodes.Castclass, _ctx.Runtime.Generators.Type);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.ThrowValueField);
+            _il.Emit(OpCodes.Callvirt, _ctx.Runtime.Generators.Throw);
+            _il.Emit(OpCodes.Br, resultLabel);
+
+            _il.MarkLabel(returnOrNextLabel);
             _il.Emit(OpCodes.Ldarg_0);
             _il.Emit(OpCodes.Ldfld, delegatedReturn);
             _il.Emit(OpCodes.Brfalse, nextLabel);

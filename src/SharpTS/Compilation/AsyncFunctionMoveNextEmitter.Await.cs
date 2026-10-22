@@ -55,8 +55,8 @@ public abstract partial class AsyncFunctionMoveNextEmitter
     protected abstract MethodInfo BuilderAwaitUnsafeOnCompletedMethod();
 
     /// <summary>
-    /// True only for an async declaration whose exception routing can accept a direct synchronous
-    /// core call. Async arrows and functions with JavaScript try/catch retain the ordinary await path.
+    /// Legacy extension flag retained for compatibility with derived emitters. It no longer
+    /// controls await lowering; every syntactic await uses the ordinary suspension path.
     /// </summary>
     protected virtual bool AllowSuspensionFreePrimitiveAsyncCoreAwait => false;
 

@@ -2,7 +2,6 @@ using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Diagnostics.Exceptions;
 using SharpTS.Parsing;
-using SharpTS.Parsing.Visitors;
 using TypeSystem = SharpTS.TypeSystem;
 
 namespace SharpTS.Compilation;
@@ -123,255 +122,6 @@ public partial class ILCompiler
                 (result ??= [])[parameter.Name.Lexeme] = _types.Double;
         }
         return result;
-    }
-
-    private HashSet<Expr.Await> FindSuspensionFreeAwaits(
-        Stmt.Function function,
-        CompilationContext definitionContext,
-        AsyncStateAnalyzer.AsyncFunctionAnalysis analysis)
-    {
-        if (analysis.HasTryCatch || analysis.AsyncArrows.Count != 0 || function.Body == null)
-            return [];
-
-        var localBindings = new FunctionLocalBindingCollector(function.Parameters);
-        foreach (Stmt statement in function.Body)
-            localBindings.Visit(statement);
-
-        var collector = new SuspensionFreeAwaitCollector(
-            definitionContext,
-            _async.StableSuspensionFreePrimitiveCores,
-            localBindings.Names,
-            _typeMap,
-            _features?.UsesPromisePrototypeMutation != true
-                && !_promiseBindingScopes.Contains(
-                    PromiseBindingScopeKey(_modules.CurrentPath)));
-        foreach (Stmt statement in function.Body)
-            collector.Visit(statement);
-        return collector.Awaits;
-    }
-
-    private sealed class FunctionLocalBindingCollector(
-        IEnumerable<Stmt.Parameter> parameters) : AstVisitorBase
-    {
-        public HashSet<string> Names { get; } =
-            new(parameters.Select(parameter => parameter.Name.Lexeme), StringComparer.Ordinal);
-
-        protected override void VisitVar(Stmt.Var statement)
-        {
-            Names.Add(statement.Name.Lexeme);
-            base.VisitVar(statement);
-        }
-
-        protected override void VisitConst(Stmt.Const statement)
-        {
-            Names.Add(statement.Name.Lexeme);
-            base.VisitConst(statement);
-        }
-
-        protected override void VisitForOf(Stmt.ForOf statement)
-        {
-            Names.Add(statement.Variable.Lexeme);
-            base.VisitForOf(statement);
-        }
-
-        protected override void VisitForIn(Stmt.ForIn statement)
-        {
-            if (statement.IsDeclaration)
-                Names.Add(statement.Variable.Lexeme);
-            base.VisitForIn(statement);
-        }
-
-        protected override void VisitTryCatch(Stmt.TryCatch statement)
-        {
-            if (statement.CatchParam != null)
-                Names.Add(statement.CatchParam.Lexeme);
-            base.VisitTryCatch(statement);
-        }
-
-        protected override void VisitFunction(Stmt.Function statement) =>
-            Names.Add(statement.Name.Lexeme);
-
-        protected override void VisitClass(Stmt.Class statement) =>
-            Names.Add(statement.Name.Lexeme);
-
-        protected override void VisitArrowFunction(Expr.ArrowFunction expression) { }
-        protected override void VisitClassExpr(Expr.ClassExpr expression) { }
-    }
-
-    private void RegisterPromiseBindingScope(
-        IReadOnlyList<Stmt> statements,
-        string? modulePath)
-    {
-        var collector = new ModulePromiseBindingCollector();
-        foreach (Stmt statement in statements)
-            collector.Visit(statement);
-        if (collector.HasBinding)
-            _promiseBindingScopes.Add(PromiseBindingScopeKey(modulePath));
-    }
-
-    private static string PromiseBindingScopeKey(string? modulePath) =>
-        modulePath ?? ClosureCompilationState.SingleFileKey;
-
-    /// <summary>
-    /// Finds value bindings visible from a module body without descending into
-    /// nested callables. The result is deliberately module-wide: a block-scoped
-    /// false positive only retains the ordinary await path, while a missed
-    /// module/import binding can bypass an observable Promise.resolve call.
-    /// </summary>
-    private sealed class ModulePromiseBindingCollector : AstVisitorBase
-    {
-        public bool HasBinding { get; private set; }
-
-        private void Add(string name)
-        {
-            if (name == "Promise")
-                HasBinding = true;
-        }
-
-        protected override void VisitVar(Stmt.Var statement) =>
-            Add(statement.Name.Lexeme);
-
-        protected override void VisitConst(Stmt.Const statement) =>
-            Add(statement.Name.Lexeme);
-
-        protected override void VisitFunction(Stmt.Function statement) =>
-            Add(statement.Name.Lexeme);
-
-        protected override void VisitClass(Stmt.Class statement) =>
-            Add(statement.Name.Lexeme);
-
-        protected override void VisitEnum(Stmt.Enum statement) =>
-            Add(statement.Name.Lexeme);
-
-        protected override void VisitNamespace(Stmt.Namespace statement)
-        {
-            Add(statement.Name.Lexeme);
-            base.VisitNamespace(statement);
-        }
-
-        protected override void VisitForOf(Stmt.ForOf statement)
-        {
-            Add(statement.Variable.Lexeme);
-            base.VisitForOf(statement);
-        }
-
-        protected override void VisitForIn(Stmt.ForIn statement)
-        {
-            if (statement.IsDeclaration)
-                Add(statement.Variable.Lexeme);
-            base.VisitForIn(statement);
-        }
-
-        protected override void VisitTryCatch(Stmt.TryCatch statement)
-        {
-            if (statement.CatchParam is not null)
-                Add(statement.CatchParam.Lexeme);
-            base.VisitTryCatch(statement);
-        }
-
-        protected override void VisitImport(Stmt.Import statement)
-        {
-            if (statement.IsTypeOnly)
-                return;
-            if (statement.DefaultImport is not null)
-                Add(statement.DefaultImport.Lexeme);
-            if (statement.NamespaceImport is not null)
-                Add(statement.NamespaceImport.Lexeme);
-            if (statement.NamedImports is not null)
-            {
-                foreach (var specifier in statement.NamedImports)
-                {
-                    if (!specifier.IsTypeOnly)
-                        Add((specifier.LocalName ?? specifier.Imported).Lexeme);
-                }
-            }
-        }
-
-        protected override void VisitImportAlias(Stmt.ImportAlias statement) =>
-            Add(statement.AliasName.Lexeme);
-
-        protected override void VisitImportRequire(Stmt.ImportRequire statement) =>
-            Add(statement.AliasName.Lexeme);
-
-        protected override void VisitArrowFunction(Expr.ArrowFunction expression) { }
-        protected override void VisitClassExpr(Expr.ClassExpr expression) { }
-    }
-
-    private sealed class SuspensionFreeAwaitCollector(
-        CompilationContext context,
-        IReadOnlyDictionary<string, MethodBuilder> stableCores,
-        IReadOnlySet<string> localBindings,
-        TypeSystem.TypeMap? typeMap,
-        bool promiseBehaviorStable) : AstVisitorBase
-    {
-        public HashSet<Expr.Await> Awaits { get; } =
-            new(ReferenceEqualityComparer.Instance);
-
-        protected override void VisitAwait(Expr.Await expression)
-        {
-            if (promiseBehaviorStable
-                && !localBindings.Contains("Promise")
-                && expression.Expression is Expr.Call
-                {
-                    Optional: false,
-                    Callee: Expr.Get
-                    {
-                        Optional: false,
-                        Object: Expr.Variable { Name.Lexeme: "Promise" },
-                        Name.Lexeme: "resolve"
-                    },
-                    Arguments: [var resolvedValue]
-                }
-                && resolvedValue is not Expr.Spread
-                && !ContainsSuspension(resolvedValue)
-                && IsStableNonThenablePrimitive(typeMap?.Get(resolvedValue)))
-            {
-                Awaits.Add(expression);
-            }
-
-            if (expression.Expression is Expr.Call
-                {
-                    Callee: Expr.Variable variable,
-                    Arguments: var arguments
-                }
-                && !localBindings.Contains(variable.Name.Lexeme)
-                && !arguments.Any(argument => argument is Expr.Spread)
-                && !arguments.Any(ContainsSuspension)
-                && context.ResolveFunctionName(variable.Name.Lexeme) is var resolvedName
-                && string.Equals(
-                    resolvedName,
-                    context.GetQualifiedFunctionName(variable.Name.Lexeme),
-                    StringComparison.Ordinal)
-                && stableCores.TryGetValue(resolvedName, out MethodBuilder? core)
-                && arguments.Count == core.GetParameters().Length)
-            {
-                Awaits.Add(expression);
-            }
-            base.VisitAwait(expression);
-        }
-
-        private static bool ContainsSuspension(Expr expression)
-        {
-            var detector = new SuspensionDetector();
-            detector.Visit(expression);
-            return detector.Found;
-        }
-
-        protected override void VisitFunction(Stmt.Function statement) { }
-        protected override void VisitArrowFunction(Expr.ArrowFunction expression) { }
-        protected override void VisitClass(Stmt.Class statement) { }
-        protected override void VisitClassExpr(Expr.ClassExpr expression) { }
-
-        private sealed class SuspensionDetector : AstVisitorBase
-        {
-            public bool Found { get; private set; }
-            protected override void VisitAwait(Expr.Await expression) => Found = true;
-            protected override void VisitYield(Expr.Yield expression) => Found = true;
-            protected override void VisitFunction(Stmt.Function statement) { }
-            protected override void VisitArrowFunction(Expr.ArrowFunction expression) { }
-            protected override void VisitClass(Stmt.Class statement) { }
-            protected override void VisitClassExpr(Expr.ClassExpr expression) { }
-        }
     }
 
     /// <summary>
@@ -1341,8 +1091,6 @@ public partial class ILCompiler
             ctx.CommonJsGetExportsMethods = _modules.CommonJsGetExportsMethods;
             // Check for function-level "use strict" directive
             ctx.IsStrictMode = _isStrictMode || BodyDeclaresUseStrict(func.Body);
-            ctx.SuspensionFreePrimitiveAsyncAwaits =
-                _async.SuspensionFreeAwaits.GetValueOrDefault(funcName);
             // Entry-point display class for captured top-level variables
             ApplyCapturedTopLevelVariableAccess(ctx);
             ctx.ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null;
@@ -1433,8 +1181,6 @@ public partial class ILCompiler
             var coreContext = CreateSuspensionFreePrimitiveFunctionContext(
                 coreIl, coreMethod, function);
             coreContext.CurrentMethodReturnType = coreMethod.ReturnType;
-            coreContext.SuspensionFreePrimitiveAsyncAwaits =
-                _async.SuspensionFreeAwaits.GetValueOrDefault(functionName);
             ParameterInfo[] coreParameters = coreMethod.GetParameters();
             for (int index = 0; index < function.Parameters.Count; index++)
             {
@@ -1443,7 +1189,7 @@ public partial class ILCompiler
                     index,
                     coreParameters[index].ParameterType);
             }
-            var coreEmitter = new SuspensionFreeAsyncCoreEmitter(coreContext);
+            var coreEmitter = new ILEmitter(coreContext);
             coreEmitter.EmitStatements(function.Body!);
 
             MethodBuilder stubMethod = _functions.Builders[functionName];

@@ -1507,6 +1507,28 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         IL.Emit(OpCodes.Brfalse, continueLabel);
     }
 
+    protected readonly record struct ForInIterationState(
+        Action LoadReceiver, Action LoadKeys, Action LoadIndex, Action StoreIndex);
+
+    /// <summary>Consumes the boxed receiver and initializes a fresh key snapshot and cursor.</summary>
+    protected virtual ForInIterationState StoreForInIterationState(Stmt.ForIn loop)
+    {
+        var receiver = IL.DeclareLocal(Types.Object);
+        IL.Emit(OpCodes.Stloc, receiver);
+        IL.Emit(OpCodes.Ldloc, receiver);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectKeys.Keys);
+        var keys = IL.DeclareLocal(Types.ListOfObject);
+        IL.Emit(OpCodes.Stloc, keys);
+        var index = IL.DeclareLocal(Types.Int32);
+        IL.Emit(OpCodes.Ldc_I4_0);
+        IL.Emit(OpCodes.Stloc, index);
+        return new ForInIterationState(
+            () => IL.Emit(OpCodes.Ldloc, receiver),
+            () => IL.Emit(OpCodes.Ldloc, keys),
+            () => IL.Emit(OpCodes.Ldloc, index),
+            () => IL.Emit(OpCodes.Stloc, index));
+    }
+
     /// <summary>
     /// Emits a for...in loop iterating over object keys.
     /// </summary>
@@ -1516,21 +1538,10 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         var endLabel = IL.DefineLabel();
         var continueLabel = IL.DefineLabel();
 
-        // Retain the receiver once for live checks against the key snapshot.
+        // Retain the receiver once; async functions can persist this iteration state.
         EmitExpression(f.Object);
         EnsureBoxed();
-        var sourceLocal = IL.DeclareLocal(Types.Object);
-        IL.Emit(OpCodes.Stloc, sourceLocal);
-        IL.Emit(OpCodes.Ldloc, sourceLocal);
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectKeys.Keys);
-
-        var keysLocal = IL.DeclareLocal(Types.ListOfObject);
-        IL.Emit(OpCodes.Stloc, keysLocal);
-
-        // Index variable
-        var indexLocal = IL.DeclareLocal(Types.Int32);
-        IL.Emit(OpCodes.Ldc_I4_0);
-        IL.Emit(OpCodes.Stloc, indexLocal);
+        var state = StoreForInIterationState(f);
 
         EnterLoop(endLabel, continueLabel);
 
@@ -1541,20 +1552,20 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         EmitCancellationCheck();
 
         // Check index < keys.Count
-        IL.Emit(OpCodes.Ldloc, indexLocal);
-        IL.Emit(OpCodes.Ldloc, keysLocal);
+        state.LoadIndex();
+        state.LoadKeys();
         IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Length);
         IL.Emit(OpCodes.Clt);
         IL.Emit(OpCodes.Brfalse, endLabel);
 
         // Deleted/non-enumerable candidates do not assign the loop head.
         var keyLocal = IL.DeclareLocal(Types.Object);
-        IL.Emit(OpCodes.Ldloc, keysLocal);
-        IL.Emit(OpCodes.Ldloc, indexLocal);
+        state.LoadKeys();
+        state.LoadIndex();
         IL.Emit(OpCodes.Call, Ctx.Runtime!.ObjectRead.Element);
         IL.Emit(OpCodes.Stloc, keyLocal);
         EmitForInKeyCheck(
-            () => IL.Emit(OpCodes.Ldloc, sourceLocal),
+            state.LoadReceiver,
             () => IL.Emit(OpCodes.Ldloc, keyLocal), continueLabel);
         EmitStoreLoopVariable(loopVarLocal, GetBindingStorageName(f, f.Variable.Lexeme),
             () => IL.Emit(OpCodes.Ldloc, keyLocal), f.IsDeclaration && !f.IsVar);
@@ -1565,10 +1576,10 @@ public abstract partial class StatementEmitterBase : ExpressionEmitterBase
         IL.MarkLabel(continueLabel);
 
         // Increment index
-        IL.Emit(OpCodes.Ldloc, indexLocal);
+        state.LoadIndex();
         IL.Emit(OpCodes.Ldc_I4_1);
         IL.Emit(OpCodes.Add);
-        IL.Emit(OpCodes.Stloc, indexLocal);
+        state.StoreIndex();
 
         IL.Emit(OpCodes.Br, startLabel);
 

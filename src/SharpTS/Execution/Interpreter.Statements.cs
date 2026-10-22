@@ -775,7 +775,8 @@ public partial class Interpreter
             ISharpTSOwnPropertyObject ownPropertyObject => ownPropertyObject.OwnProperties.OwnEnumerableKeys(),
             // Own enumerable keys only, hiding boxed-primitive internal slots and
             // honoring enumerability — consistent with Object.keys (#475).
-            SharpTSObject o => o.OwnEnumerableKeys(),
+            // Snapshot candidates before the body; keep descriptor checks live.
+            SharpTSObject o => o.OwnVisibleStringKeys().ToArray().Where(o.IsOwnEnumerableProperty),
             SharpTSInstance i => i.GetFieldNames(),
             // for...in skips holes per ECMA-262 (only own enumerable index properties
             // that actually exist — holes don't).

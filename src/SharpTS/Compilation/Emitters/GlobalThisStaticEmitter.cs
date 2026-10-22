@@ -61,7 +61,7 @@ public sealed class GlobalThisStaticEmitter : IStaticTypeEmitterStrategy
                 if (input != null) il.Emit(OpCodes.Ldloc, input);
                 else il.Emit(OpCodes.Ldnull);
                 if (radix != null) il.Emit(OpCodes.Ldloc, radix);
-                else { il.Emit(OpCodes.Ldc_I4, 10); il.Emit(OpCodes.Box, ctx.Types.Int32); }
+                else il.Emit(OpCodes.Ldnull); // Let the runtime infer an omitted radix.
                 il.Emit(OpCodes.Call, ctx.Runtime!.Numbers.ParseInt);
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;

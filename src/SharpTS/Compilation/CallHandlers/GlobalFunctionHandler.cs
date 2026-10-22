@@ -248,11 +248,8 @@ public class GlobalFunctionHandler : ICallHandler
         if (input != null) il.Emit(System.Reflection.Emit.OpCodes.Ldloc, input);
         else il.Emit(System.Reflection.Emit.OpCodes.Ldnull);
         if (radixValue != null) il.Emit(System.Reflection.Emit.OpCodes.Ldloc, radixValue);
-        else
-        {
-            il.Emit(System.Reflection.Emit.OpCodes.Ldc_I4, 10);
-            il.Emit(System.Reflection.Emit.OpCodes.Box, ctx.Types.Int32);
-        }
+        // Match Number.parseInt: omitted radix is inferred by the shared runtime helper.
+        else il.Emit(System.Reflection.Emit.OpCodes.Ldnull);
         il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.Numbers.ParseInt);
         emitter.SetStackType(StackType.Double);
         return true;

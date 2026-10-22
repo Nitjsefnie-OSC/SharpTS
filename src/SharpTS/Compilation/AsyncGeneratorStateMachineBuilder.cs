@@ -852,14 +852,19 @@ public class AsyncGeneratorStateMachineBuilder : StateMachineBuilderBase, IItera
         il.Emit(OpCodes.Ldfld, StateField);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Blt, rejectWithoutResumeLabel);
-        // Delegation needs its own throw-method forwarding protocol. Preserve
-        // that path until it can consume the request rather than leaving a
-        // pending injection for an unrelated later ordinary yield.
+        // Only native async delegation consumes a forwarded throw request.
+        // Keep unsupported synchronous/plain delegation on its existing path.
         if (DelegatedAsyncEnumeratorField is not null)
         {
+            var noDelegationLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, DelegatedAsyncEnumeratorField);
-            il.Emit(OpCodes.Brtrue, rejectWithoutResumeLabel);
+            il.Emit(OpCodes.Brfalse, noDelegationLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, DelegatedAsyncEnumeratorField);
+            il.Emit(OpCodes.Isinst, _runtime!.RequireAsyncGenerators().Type);
+            il.Emit(OpCodes.Brfalse, rejectWithoutResumeLabel);
+            il.MarkLabel(noDelegationLabel);
         }
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);

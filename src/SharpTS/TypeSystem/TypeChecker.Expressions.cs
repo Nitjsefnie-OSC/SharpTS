@@ -1799,7 +1799,8 @@ public partial class TypeChecker
                     namedDefaults?.Check(param.DefaultValue, i);
                     if (!IsCompatible(paramType, defaultType))
                     {
-                        throw new TypeCheckException($" Default value type '{defaultType}' is not assignable to parameter type '{paramType}'.", tsCode: "TS2322");
+                        throw new TypeCheckException($" Default value type '{defaultType}' is not assignable to parameter type '{paramType}'.",
+                            line: TryGetExprLine(param.DefaultValue) ?? param.Name.Line, tsCode: "TS2322");
                     }
                 }
                 else if (param.IsOptional)

@@ -25,12 +25,12 @@ public sealed class TupleParameterDefaultDiagnosticTests
             const target: any = function (
                 [value]: [(value: number) => number] = []
             ) { return value; };
-            """.ReplaceLineEndings("\n") + "\n", "TS2322", 1];
+            """.ReplaceLineEndings("\n") + "\n", "TS2322", 2];
         yield return ["wrong-tuple-element", """
             const target: any = function (
                 [value]: [(value: number) => number] = [0]
             ) { return value; };
-            """.ReplaceLineEndings("\n") + "\n", "TS2322", 1];
+            """.ReplaceLineEndings("\n") + "\n", "TS2322", 2];
     }
 
     public static IEnumerable<object[]> CollectionCases() => Cases()
@@ -66,7 +66,7 @@ public sealed class TupleParameterDefaultDiagnosticTests
         {
             var diagnostic = Assert.Single(diagnostics);
             Assert.Equal(expectedCode, diagnostic.TsCode);
-            // Preserve SharpTS's existing statement anchor; TypeScript reports line 2.
+            // Both collectors must retain the parameter/default line reported by TypeScript.
             Assert.Equal(expectedLine, diagnostic.Line);
         }
     }

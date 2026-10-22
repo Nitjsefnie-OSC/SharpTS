@@ -1185,6 +1185,8 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
 
     private Dictionary<string, object?>? _namedProperties;
     private Dictionary<string, (ISharpTSCallable? Get, ISharpTSCallable? Set)>? _namedAccessors;
+    // Data and accessor storage share one creation order for named own keys.
+    private List<string>? _namedPropertyOrder;
     private Dictionary<string, PropertyDescriptorFlags>? _descriptors;
     private Dictionary<uint, (ISharpTSCallable? Get, ISharpTSCallable? Set)>? _indexAccessors;
     private SharpTSObject? _symbolProperties;
@@ -1294,12 +1296,14 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     {
         get
         {
-            if (_namedProperties is not null)
-                foreach (string key in _namedProperties.Keys)
-                    yield return key;
-            if (_namedAccessors is not null)
-                foreach (string key in _namedAccessors.Keys)
-                    yield return key;
+            if (_namedPropertyOrder is not null)
+            {
+                // A for-in body may delete or recreate names while this iterator
+                // is suspended. Snapshot candidates, then check current presence.
+                foreach (string key in _namedPropertyOrder.ToArray())
+                    if (HasNamedProperty(key))
+                        yield return key;
+            }
         }
     }
 
@@ -1383,8 +1387,11 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
     public void SetNamedProperty(string name, object? value)
     {
         if (IsFrozen) return;
-        if (!IsExtensible && !HasNamedProperty(name)) return;
+        bool hasNamedProperty = HasNamedProperty(name);
+        if (!IsExtensible && !hasNamedProperty) return;
 
+        if (!hasNamedProperty)
+            (_namedPropertyOrder ??= []).Add(name);
         _namedProperties ??= new Dictionary<string, object?>();
         _namedProperties[name] = value;
     }
@@ -1415,6 +1422,7 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
         {
             _namedProperties?.Remove(name);
             _namedAccessors?.Remove(name);
+            _namedPropertyOrder?.Remove(name);
         }
         _descriptors?.Remove(name);
         return true;
@@ -1647,6 +1655,9 @@ public class SharpTSArray : ITypeCategorized, IReadOnlyList<object?>
 
         if (!IsExtensible && !hasNamedProperty)
             return false;
+
+        if (!hasNamedProperty)
+            (_namedPropertyOrder ??= []).Add(name);
 
         bool preservesNamedKind = hasNamedProperty
             && (!namedDescriptorIsAccessor && !namedDescriptorIsData

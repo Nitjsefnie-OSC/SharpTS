@@ -280,7 +280,6 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable, IBuiltInFunct
             // is observable here.
             IBuiltInFunctionMetadata meta when key is "name" or "length"
                 => meta.HasMetadataProperty(key),
-            ArrayBufferConstructorImpl constructor when constructor.GetProperty(key, interpreter) is not null => true,
             SharpTSBuiltInConstructor constructor
                 => interpreter?.HasBuiltInConstructorOwnProperty(constructor, key)
                     ?? constructor.GetMember(key) is not null,

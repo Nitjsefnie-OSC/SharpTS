@@ -481,6 +481,11 @@ public partial class Interpreter
             value = GetArrayGlobal();
             return true;
         }
+        if (name == BuiltInNames.ArrayBuffer)
+        {
+            value = GetArrayBufferConstructor();
+            return true;
+        }
         if (name == BuiltInNames.RegExp)
         {
             value = RegExpConstructorObject;
@@ -503,7 +508,7 @@ public partial class Interpreter
     /// method identity holds (<c>Math.max === Math.max</c>).
     /// </summary>
     internal static bool IsRealmIntrinsicName(string name)
-        => name is "Object" or "Math" or "JSON" or "String" or "Number" or "Boolean" or "Array" or "RegExp" or "Promise"
+        => name is "Object" or "Math" or "JSON" or "String" or "Number" or "Boolean" or "Array" or "ArrayBuffer" or "RegExp" or "Promise"
             || BuiltInNames.IsErrorTypeName(name);
 
     // Per-realm String/Number/Boolean.prototype. Each is an extensible ECMA-262
@@ -563,18 +568,26 @@ public partial class Interpreter
         }
         return _arrayPrototype;
     }
+    private ArrayBufferConstructorImpl? _arrayBufferConstructor;
+    internal ArrayBufferConstructorImpl GetArrayBufferConstructor()
+    {
+        if (_arrayBufferConstructor is null)
+        {
+            // Seed the constructor in native key order without recursively
+            // constructing either side of its prototype backlink.
+            _arrayBufferPrototype = new Runtime.Types.SharpTSObject([]);
+            _arrayBufferConstructor = new ArrayBufferConstructorImpl(this, _arrayBufferPrototype);
+            _arrayBufferPrototype.DefineProperty("constructor", new Runtime.Types.SharpTSPropertyDescriptor(
+                _arrayBufferConstructor,
+                writable: true, enumerable: false, configurable: true));
+        }
+        return _arrayBufferConstructor;
+    }
+
     internal Runtime.Types.SharpTSObject GetArrayBufferPrototype()
     {
-        if (_arrayBufferPrototype is null)
-        {
-            // The native constructor is shared, but its mutable prototype is realm-local.
-            var prototype = new Runtime.Types.SharpTSObject([]);
-            prototype.DefineProperty("constructor", new Runtime.Types.SharpTSPropertyDescriptor(
-                _globalConstants[BuiltInNames.ArrayBuffer],
-                writable: true, enumerable: false, configurable: true));
-            _arrayBufferPrototype = prototype;
-        }
-        return _arrayBufferPrototype;
+        GetArrayBufferConstructor();
+        return _arrayBufferPrototype!;
     }
     internal Runtime.Types.SharpTSFunctionPrototype GetFunctionPrototype() => _functionPrototype ??= new();
     internal Runtime.Types.SharpTSObjectPrototype GetObjectPrototype()

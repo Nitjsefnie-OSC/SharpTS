@@ -786,6 +786,17 @@ public partial class TypeChecker
         if (!IsNumber(indexType) && !canonicalArrayStringIndex)
             throw new TypeCheckException("Array index must be a number.", tsCode: "TS7053");
 
+        if (objType is TypeInfo.Tuple { IsReadonly: true })
+        {
+            if (indexType is TypeInfo.NumberLiteral literalIndex)
+                throw new TypeCheckException(
+                    $"Cannot assign to '{literalIndex.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}' because it is a read-only property.",
+                    compound.Operator.Line > 0 ? compound.Operator.Line : null, tsCode: "TS2540");
+            throw new TypeCheckException(
+                $" Index signature in type '{objType}' only permits reading.",
+                compound.Operator.Line > 0 ? compound.Operator.Line : null, tsCode: "TS2542");
+        }
+
         if (objType is TypeInfo.Array arrayType)
         {
             // Every compound assignment writes through the same readonly index signature.

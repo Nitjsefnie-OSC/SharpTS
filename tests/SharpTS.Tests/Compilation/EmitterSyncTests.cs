@@ -73,6 +73,9 @@ public class EmitterSyncTests
             // A synchronous for-of whose body awaits must retain its enumerator across MoveNext
             // calls; non-suspending loops still use the base implementation's local storage.
             "StoreForOfEnumerator",
+            // #2894: for-in bodies with await retain receiver, initial key snapshot and cursor in
+            // fields across MoveNext; bodies without suspension use the base locals.
+            "StoreForInIterationState",
         },
         [typeof(IteratorMoveNextEmitter)] = new()
         {

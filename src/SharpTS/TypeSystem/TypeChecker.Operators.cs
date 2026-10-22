@@ -33,7 +33,7 @@ public partial class TypeChecker
             OperatorDescriptor.Comparison => CheckComparisonBinary(
                 left, right, binary.Left, binary.Right, binary.Operator.Lexeme, line),
             OperatorDescriptor.Equality => CheckEqualityOperator(
-                left, right, binary.Left, binary.Right, binary.Operator.Type, line),
+                left, right, binary.Left, binary.Right, line),
             OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift => CheckBitwiseBinary(left, right, line),
             OperatorDescriptor.UnsignedRightShift => CheckUnsignedShiftBinary(left, right, line),
             OperatorDescriptor.In => CheckInOperator(right, line),
@@ -47,7 +47,6 @@ public partial class TypeChecker
         TypeInfo right,
         Expr leftExpression,
         Expr rightExpression,
-        TokenType operatorType,
         int line)
     {
         // Check()/the execution harness intentionally permits JavaScript-valid comparisons that
@@ -70,16 +69,16 @@ public partial class TypeChecker
         {
             TypeInfo other = leftSymbol ? right : left;
             TypeInfo symbolSide = leftSymbol ? left : right;
-            bool looseNullishOverlap = operatorType is TokenType.EQUAL_EQUAL or TokenType.BANG_EQUAL
-                && ((ContainsNullType(other) && ContainsUndefinedType(symbolSide))
-                    || (ContainsUndefinedType(other) && ContainsNullType(symbolSide)));
+            // A nullish scalar is a valid absence check for Symbol values too,
+            // whether the comparison is loose or strict and regardless of union members.
+            bool nullishComparison = other is TypeInfo.Null or TypeInfo.Undefined;
             bool disjoint = other is TypeInfo.Primitive
                 or TypeInfo.NumberLiteral or TypeInfo.String or TypeInfo.StringLiteral
                 or TypeInfo.BooleanLiteral or TypeInfo.BigInt or TypeInfo.BigIntLiteral
                 or TypeInfo.Null or TypeInfo.Undefined;
             // One Symbol constituent does not make the whole union disjoint:
             // any overlapping non-Symbol arm can still equal the scalar operand.
-            if (disjoint && !looseNullishOverlap &&
+            if (disjoint && !nullishComparison &&
                 !(symbolSide is TypeInfo.Union union && union.FlattenedTypes.Any(member =>
                     member is not (TypeInfo.Symbol or TypeInfo.UniqueSymbol or TypeInfo.Never) &&
                     (IsCompatible(member, other) || IsCompatible(other, member)))))
@@ -98,12 +97,6 @@ public partial class TypeChecker
         Expr.ObjectLiteral or Expr.ArrayLiteral or Expr.ArrowFunction => true,
         _ => false,
     };
-
-    private static bool ContainsNullType(TypeInfo type) =>
-        type is TypeInfo.Null || type is TypeInfo.Union { ContainsNull: true };
-
-    private static bool ContainsUndefinedType(TypeInfo type) =>
-        type is TypeInfo.Undefined || type is TypeInfo.Union { ContainsUndefined: true };
 
     private TypeInfo CheckInstanceOfOperator(TypeInfo left, TypeInfo right, int line)
     {

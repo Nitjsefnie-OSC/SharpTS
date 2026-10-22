@@ -1014,7 +1014,7 @@ public partial class RuntimeEmitter
         // Dictionary reuses removed entry slots. Compact only after a real
         // deletion so a recreated property receives a new creation position,
         // preserving surviving descriptor instances and their current order.
-        var dictionaryInterface = typeof(IDictionary<,>).MakeGenericType(
+        var dictionaryInterface = _types.MakeGenericType(typeof(IDictionary<,>),
             typeof(Dictionary<,>).GetGenericArguments());
         // Persisted emission retains the descriptor TypeBuilder; in-memory
         // emission has baked it and requires the closed interface signature.
@@ -1022,7 +1022,7 @@ public partial class RuntimeEmitter
             ? EmitterTypeHelpers.ResolveConstructor(descriptorsDictType,
                 typeof(Dictionary<,>).GetConstructor([dictionaryInterface])!)
             : _types.GetConstructor(descriptorsDictType,
-                typeof(IDictionary<,>).MakeGenericType(_types.String, storage.DescriptorType));
+                _types.MakeGenericType(typeof(IDictionary<,>), _types.String, storage.DescriptorType));
         var weakTableArguments = typeof(ConditionalWeakTable<,>).GetGenericArguments();
         var compactLocal = il.DeclareLocal(descriptorsDictType);
         il.Emit(OpCodes.Ldloc, dictLocal);

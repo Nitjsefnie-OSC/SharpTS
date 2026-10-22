@@ -128,7 +128,7 @@ public partial class Parser
 
         // Compound assignment operators
         if (Match(TokenType.PLUS_EQUAL, TokenType.MINUS_EQUAL, TokenType.STAR_EQUAL,
-                  TokenType.SLASH_EQUAL, TokenType.PERCENT_EQUAL,
+                  TokenType.STAR_STAR_EQUAL, TokenType.SLASH_EQUAL, TokenType.PERCENT_EQUAL,
                   TokenType.AMPERSAND_EQUAL, TokenType.PIPE_EQUAL, TokenType.CARET_EQUAL,
                   TokenType.LESS_LESS_EQUAL, TokenType.GREATER_GREATER_EQUAL, TokenType.GREATER_GREATER_GREATER_EQUAL))
         {

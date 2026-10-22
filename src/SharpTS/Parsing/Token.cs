@@ -29,7 +29,7 @@ public enum TokenType
     QUESTION_QUESTION_EQUAL,  // Nullish coalescing assignment
     PLUS_PLUS, MINUS_MINUS,
     PLUS_EQUAL, MINUS_EQUAL, STAR_EQUAL, SLASH_EQUAL, PERCENT_EQUAL,
-    STAR_STAR,
+    STAR_STAR, STAR_STAR_EQUAL,
     DOT_DOT_DOT,
     // Bitwise operators
     AMPERSAND, PIPE, CARET, TILDE,

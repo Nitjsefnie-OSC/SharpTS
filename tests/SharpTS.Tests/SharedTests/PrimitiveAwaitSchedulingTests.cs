@@ -95,4 +95,20 @@ public sealed class PrimitiveAwaitSchedulingTests
         Assert.NotEmpty(name);
         Assert.Equal(expected, TestHarness.RunInterpreted(source));
     }
+
+    // New compiler/saved profiles use the exact qualified LF/finalLF programs;
+    // existing interpreted providers and their physical source payloads stay unchanged.
+    public static IEnumerable<object[]> CompiledCases() => Cases().Select(row =>
+        new object[] { row[0], ((string)row[1]).ReplaceLineEndings("\n") + "\n", row[2] });
+
+    [Theory, MemberData(nameof(CompiledCases))]
+    public void CompiledPrimitiveAwaitResumesInPromiseOrder(
+        string name, string source, string expected)
+    {
+        Assert.NotEmpty(name);
+        new TypeChecker(TypeCheckerOptions.Strict).Check(TestHarness.ParseOrThrow(source));
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+        Assert.Empty(errors);
+        Assert.Equal(expected, output);
+    }
 }

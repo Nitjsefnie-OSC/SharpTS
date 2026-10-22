@@ -3422,6 +3422,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, inputs.StringCoercion.ToJsString);
         il.Emit(OpCodes.Stloc, strictArrayKeyLocal);
+
+        // Negative integer keys are ordinary named properties. Match the
+        // non-strict SetIndex route without sending them to SetStrictLong,
+        // whose bounds/length policy applies only to array storage indices.
+        var strictArrayParsedIndexLocal = il.DeclareLocal(_types.Int64);
+        var strictArrayIndexedKeyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, strictArrayKeyLocal);
+        il.Emit(OpCodes.Ldloca, strictArrayParsedIndexLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(
+            _types.Int64, "TryParse", _types.String, _types.Int64.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, strictArrayIndexedKeyLabel);
+        il.Emit(OpCodes.Ldloc, strictArrayParsedIndexLocal);
+        il.Emit(OpCodes.Ldc_I8, 0L);
+        il.Emit(OpCodes.Bge, strictArrayIndexedKeyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, strictArrayKeyLocal);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Call, objectWrite.PropertyStrict);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(strictArrayIndexedKeyLabel);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, strictArrayKeyLocal);
         il.Emit(OpCodes.Call, inputs.DescriptorStorage.GetPropertyDescriptor);

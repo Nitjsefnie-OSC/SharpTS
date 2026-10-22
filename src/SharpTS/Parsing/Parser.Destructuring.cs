@@ -35,7 +35,11 @@ public partial class Parser
             }
             else
             {
-                elements.Add(new ArrayPatternElement(ParseDestructurePattern(), IsHole: false));
+                DestructurePattern elementPattern = ParseDestructurePattern();
+                Expr? defaultValue = null;
+                if ((elementPattern is ArrayPattern or ObjectPattern) && Match(TokenType.EQUAL))
+                    defaultValue = Expression();
+                elements.Add(new ArrayPatternElement(elementPattern, IsHole: false, defaultValue));
             }
 
             if (!Check(TokenType.RIGHT_BRACKET))
@@ -217,22 +221,24 @@ public partial class Parser
                 new Expr.Literal((double)index)
             );
 
+            // Apply an element's undefined-only default before entering its binding.
+            // The shared helper spills the source read once and evaluates the default lazily.
+            Expr? defaultValue = element.DefaultValue ?? (element.Pattern as IdentifierPattern)?.DefaultValue;
+            bool elementDefaulted = underDefault || defaultValue != null;
+            if (defaultValue != null)
+                accessExpr = DefaultIfUndefined(accessExpr, defaultValue, statements, pattern.Line);
+
             if (element.Pattern is IdentifierPattern id)
             {
-                // Apply default value if present (undefined-only, #784)
-                if (id.DefaultValue != null)
-                {
-                    accessExpr = DefaultIfUndefined(accessExpr, id.DefaultValue, statements, pattern.Line);
-                }
                 statements.Add(new Stmt.Var(id.Name, null, accessExpr, IsVar: isVar));
             }
             else if (element.Pattern is ArrayPattern nestedArray)
             {
-                statements.Add(DesugarArrayPattern(nestedArray, accessExpr, underDefault, isVar));
+                statements.Add(DesugarArrayPattern(nestedArray, accessExpr, elementDefaulted, isVar));
             }
             else if (element.Pattern is ObjectPattern nestedObj)
             {
-                statements.Add(DesugarObjectPattern(nestedObj, accessExpr, underDefault, isVar));
+                statements.Add(DesugarObjectPattern(nestedObj, accessExpr, elementDefaulted, isVar));
             }
 
             index++;

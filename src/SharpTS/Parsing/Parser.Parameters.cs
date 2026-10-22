@@ -223,8 +223,8 @@ public partial class Parser
     private static bool ContainsBindingExpressions(DestructurePattern pattern) => pattern switch
     {
         IdentifierPattern identifier => identifier.DefaultValue != null,
-        ArrayPattern array => array.Elements.Any(element => element.Pattern != null
-            && ContainsBindingExpressions(element.Pattern)),
+        ArrayPattern array => array.Elements.Any(element => element.DefaultValue != null
+            || (element.Pattern != null && ContainsBindingExpressions(element.Pattern))),
         ObjectPattern objectPattern => objectPattern.Properties.Any(property => property.ComputedKey != null
             || property.DefaultValue != null || ContainsBindingExpressions(property.Value)),
         RestPattern => false,

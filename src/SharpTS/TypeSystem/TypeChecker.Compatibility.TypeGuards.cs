@@ -425,6 +425,30 @@ public partial class TypeChecker
         var currentType = _environment.Get(varName);
         if (currentType == null) return (null, null, null);
 
+        // The no-library native Error constructors are value fallbacks, not class bindings.
+        // Do not project a same-named source value, type parameter, or namespace member.
+        if (currentType is TypeInfo.Any or TypeInfo.Unknown &&
+            Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(classToken.Lexeme) &&
+            _environment.Get(classToken.Lexeme) is null &&
+            _environment.GetValueBinding(classToken.Lexeme) is null &&
+            _currentMergedNamespace?.Values.ContainsKey(classToken.Lexeme) != true)
+        {
+            return (varName, new TypeInfo.Error(classToken.Lexeme), currentType);
+        }
+
+        // Loaded libraries bind Error as a constructor interface. Only the captured native
+        // value binding can use its selected-library instance projection; local aliases and
+        // unrelated constructable interfaces keep the existing class-resolution path.
+        if (currentType is TypeInfo.Any or TypeInfo.Unknown &&
+            _defaultLibraryErrorBindings.TryGetValue(classToken.Lexeme, out var errorBinding) &&
+            ReferenceEquals(_environment.GetValueBinding(classToken.Lexeme), errorBinding) &&
+            _environment.Get(classToken.Lexeme) is TypeInfo.Interface errorConstructor &&
+            ProjectDefaultLibraryErrorHeritage(new Expr.Variable(classToken), errorConstructor)
+                is TypeInfo.Class errorClass)
+        {
+            return (varName, new TypeInfo.Instance(errorClass), currentType);
+        }
+
         // Look up the class
         var classType = _environment.GetTypeBinding(classToken.Lexeme) ?? _environment.Get(classToken.Lexeme);
         if (classType == null) return (null, null, null);

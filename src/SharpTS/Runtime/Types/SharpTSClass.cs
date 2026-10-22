@@ -320,7 +320,7 @@ public partial class SharpTSClass(
         {
             object? value = field.Initializer != null
                 ? interpreter.EvaluateClassInitializer(this, instance, field.Initializer)
-                : field.ComputedKey != null ? SharpTSUndefined.Instance : null;
+                : SharpTSUndefined.Instance;
 
             // Check if this is a computed property name
             if (field.ComputedKey != null)
@@ -364,7 +364,7 @@ public partial class SharpTSClass(
         {
             object? value = field.Initializer != null
                 ? interpreter.EvaluateClassInitializer(this, receiver, field.Initializer)
-                : field.ComputedKey != null || field.IsPrivate ? SharpTSUndefined.Instance : null;
+                : SharpTSUndefined.Instance;
             if (field.IsPrivate)
             {
                 if (!privateFields!.TryAdd(field.Name.Lexeme, value))

@@ -2648,7 +2648,7 @@ public abstract partial class ExpressionEmitterBase
         EnsureBoxed();
         var objLocal = _helpers.SpillStoreObject();
 
-        if (methodName == "indexOf" && AnyContainsSuspension(arguments))
+        if ((methodName is "indexOf" or "includes") && AnyContainsSuspension(arguments))
         {
             // Mutually exclusive type branches must not emit the same source await twice.
             // Select the method before arguments and retain both receiver and callable.

@@ -8,7 +8,7 @@ namespace SharpTS.Tests.TypeCheckerTests;
 
 public sealed class CanonicalArrayStringIndexReadDiagnosticTests
 {
-    private const string Source = """
+    internal const string Source = """
         const numbers: number[] = [4, 8];
         const wrongNumber: string = numbers['0'];
         const words: readonly string[] = ['left', 'right'];
@@ -45,8 +45,8 @@ public sealed class CanonicalArrayStringIndexReadDiagnosticTests
         }
 
         Assert.Equal(5, diagnostics.Count);
-        // Strict TypeScript reports TS7015 for the invalid name; numeric-code parity is separate.
-        Assert.Single(diagnostics, diagnostic => diagnostic.Line == 11);
+        // The invalid named array key must retain the array-specific diagnostic.
+        Assert.Equal("TS7015", Assert.Single(diagnostics, diagnostic => diagnostic.Line == 11).TsCode);
         Assert.Equal("TS2322:2,TS2322:4,TS2322:6,TS2322:9".Split(',').OrderBy(value => value, StringComparer.Ordinal),
             diagnostics.Where(item => item.Line != 11)
                 .Select(item => (item.TsCode ?? "") + ":" + item.Line)

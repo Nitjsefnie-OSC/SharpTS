@@ -571,6 +571,13 @@ public partial class TypeChecker
                 return TypeInfo.Any.Shared;
         }
 
+        // Valid canonical string keys have already retained the array element
+        // type above. Other string keys remain rejected with the array diagnostic.
+        if (objType is TypeInfo.Array && IsString(indexType))
+            throw new TypeCheckException(
+                "Element implicitly has an 'any' type because index expression is not of type 'number'.",
+                TryGetExprLine(getIndex.Index) ?? TryGetExprLine(getIndex.Object), tsCode: "TS7015");
+
         throw new TypeCheckException($" Index type '{indexType}' is not valid for indexing '{objType}'.", tsCode: "TS7053");
     }
 

@@ -45,6 +45,11 @@ public partial class TypeChecker
         }
     }
 
+    private static TypeInfo? ParameterDefaultTupleContext(TypeInfo parameterType) =>
+        parameterType is TypeInfo.Tuple ||
+        parameterType is TypeInfo.Union union && union.FlattenedTypes.Any(member => member is TypeInfo.Tuple)
+            ? parameterType : null;
+
     /// <summary>
     /// Type-checks an expression under a contextual type (a narrow slice of tsc's
     /// checkExpressionWithContextualType). The context is consumed only by the node
@@ -1784,9 +1789,12 @@ public partial class TypeChecker
                     TypeInfo defaultType;
                     using (new EnvironmentScope(this, paramScope))
                     {
+                        TypeInfo? defaultContext = ParameterDefaultTupleContext(paramType);
                         defaultType = _immediateClassCallables.ContainsKey(arrow)
-                            ? CheckExpr(param.DefaultValue)
-                            : CheckDeferredClassDefault(param.DefaultValue);
+                            ? (defaultContext is null
+                                ? CheckExpr(param.DefaultValue)
+                                : CheckExprWithContext(param.DefaultValue, defaultContext))
+                            : CheckDeferredClassDefault(param.DefaultValue, defaultContext);
                     }
                     namedDefaults?.Check(param.DefaultValue, i);
                     if (!IsCompatible(paramType, defaultType))

@@ -1243,7 +1243,7 @@ public partial class TypeChecker
                     TypeInfo defaultType;
                     using (new EnvironmentScope(this, paramScope))
                     {
-                        defaultType = CheckDeferredClassDefault(param.DefaultValue);
+                        defaultType = CheckDeferredClassDefault(param.DefaultValue, ParameterDefaultTupleContext(paramType));
                     }
                     if (!IsCompatible(paramType, defaultType))
                     {

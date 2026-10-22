@@ -1539,7 +1539,7 @@ public partial class RuntimeEmitter
         // the Arrays section below. That left SetIndex's object-list branch unable to call it,
         // so we emit all of them up front now (including Object) for JS-spec auto-extend semantics.
         foreach (var desc in ArrayElements.All)
-            EmitSetArrayElementFor(typeBuilder, runtime.ArrayOperations, desc);
+            EmitSetArrayElementFor(typeBuilder, runtime.ArrayOperations, desc, runtime.ArrayStorage.HoleInstance);
         // Note: TypedArray detection helpers are emitted earlier (before GetProperty)
         EmitGetIndex(
             typeBuilder,

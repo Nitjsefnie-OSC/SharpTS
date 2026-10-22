@@ -54,7 +54,7 @@ public partial class RuntimeEmitter
     /// Auto-extends the list with default entries if index &gt;= Count (JS semantics).
     /// Descriptor-driven: one implementation for all backing types (List&lt;double&gt;, List&lt;bool&gt;, List&lt;object?&gt;).
     /// </summary>
-    private void EmitSetArrayElementFor(TypeBuilder typeBuilder, EmittedArrayOperationsRuntime arrays, ArrayElementsDescriptor desc)
+    private void EmitSetArrayElementFor(TypeBuilder typeBuilder, EmittedArrayOperationsRuntime arrays, ArrayElementsDescriptor desc, FieldInfo holeInstance)
     {
         var listType = desc.GetListType(_types);
         var elemType = desc.GetElementType(_types);
@@ -92,11 +92,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, countGetter);
         il.Emit(OpCodes.Blt, setExistingLabel);
 
-        // Auto-extend: while (list.Count < index) list.Add(default)
+        // Object-list gaps are absent properties. A hole also preserves a
+        // PDS-only arguments index: ordinary reads fall back to its descriptor
+        // instead of treating a newly padded null as the indexed value.
         il.Emit(OpCodes.Br, loopCheckLabel);
         il.MarkLabel(loopBodyLabel);
         il.Emit(OpCodes.Ldarg_0); // list
-        desc.EmitDefaultValue(il);
+        if (desc.Kind == ArrayElementsKind.Object)
+            il.Emit(OpCodes.Ldsfld, holeInstance);
+        else
+            desc.EmitDefaultValue(il);
         il.Emit(OpCodes.Callvirt, addMethod);
         il.MarkLabel(loopCheckLabel);
         il.Emit(OpCodes.Ldarg_0); // list

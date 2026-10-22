@@ -610,15 +610,36 @@ public partial class RuntimeEmitter
         LocalBuilder receiver,
         LocalBuilder args)
     {
+        EmitTextDecoderWrapperCall(il, functions, textEncoding, errors,
+            () =>
+            {
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldfld, targetField);
+            },
+            () => il.Emit(OpCodes.Ldloc, receiver),
+            () => il.Emit(OpCodes.Ldloc, args));
+    }
+
+    // Empty entry/fallthrough stack. Decoder calls return here; other functions fall through.
+    private void EmitTextDecoderWrapperCall(
+        ILGenerator il,
+        EmittedFunctionValueRuntime functions,
+        EmittedTextEncodingRuntime? textEncoding,
+        EmittedErrorRuntime errors,
+        Action emitFunction,
+        Action emitReceiver,
+        Action emitArguments)
+    {
         if (textEncoding is null) return;
         var otherMethod = il.DefineLabel();
         var validReceiver = il.DefineLabel();
         var method = il.DeclareLocal(_types.MethodInfo);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, targetField);
+        emitFunction();
         il.Emit(OpCodes.Castclass, functions.Type);
         il.Emit(OpCodes.Callvirt, functions.GetMethodInfo);
         il.Emit(OpCodes.Stloc, method);
+        il.Emit(OpCodes.Ldloc, method);
+        il.Emit(OpCodes.Brfalse, otherMethod);
         il.Emit(OpCodes.Ldloc, method);
         il.Emit(OpCodes.Callvirt, typeof(MemberInfo).GetProperty("DeclaringType")!.GetMethod!);
         il.Emit(OpCodes.Ldtoken, textEncoding.DecoderType);
@@ -630,7 +651,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "Decode");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, otherMethod);
-        il.Emit(OpCodes.Ldloc, receiver);
+        emitReceiver();
         il.Emit(OpCodes.Isinst, textEncoding.DecoderType);
         il.Emit(OpCodes.Brtrue, validReceiver);
         GuestErrorEmitter.ThrowError(il, errors.CreateException, errors.TypeErrorConstructor,
@@ -640,15 +661,15 @@ public partial class RuntimeEmitter
         var noInput = il.DefineLabel();
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Stloc, input);
-        il.Emit(OpCodes.Ldloc, args);
+        emitArguments();
         il.Emit(OpCodes.Ldlen);
         il.Emit(OpCodes.Brfalse, noInput);
-        il.Emit(OpCodes.Ldloc, args);
+        emitArguments();
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stloc, input);
         il.MarkLabel(noInput);
-        il.Emit(OpCodes.Ldloc, receiver);
+        emitReceiver();
         il.Emit(OpCodes.Castclass, textEncoding.DecoderType);
         il.Emit(OpCodes.Ldloc, input);
         il.Emit(OpCodes.Callvirt, textEncoding.DecoderDecode);

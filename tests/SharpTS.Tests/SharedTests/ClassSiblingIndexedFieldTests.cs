@@ -66,9 +66,7 @@ public sealed class ClassSiblingIndexedFieldTests
             """, "true true\n"];
     }
 
-    // #2828: preserve the full generic indexed-assignment control until its owner is repaired.
-    public static IEnumerable<object[]> EligibleCases() => Cases().Where(row =>
-        (string)row[0] != "inherited-and-generic-sibling-annotations");
+    public static IEnumerable<object[]> EligibleCases() => Cases();
 
     public static IEnumerable<object[]> ModeCases() => EligibleCases().SelectMany(row =>
         new[] { ExecutionMode.Interpreted, ExecutionMode.Compiled }

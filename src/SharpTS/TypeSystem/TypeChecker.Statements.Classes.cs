@@ -271,7 +271,8 @@ public partial class TypeChecker
     }
 
     // Runs in the class type-parameter environment and populates the caller-owned mutable signature model.
-    private void CollectClassFieldTypes(Stmt.Class classStmt, TypeInfo.MutableClass mutableClass)
+    private void CollectClassFieldTypes(
+        Stmt.Class classStmt, TypeInfo.MutableClass mutableClass, List<TypeInfo.TypeParameter>? classTypeParams)
     {
         // C["field"] names an instance member, even within a static field's
         // annotation. Keep declarations distinct when their spellings coincide.
@@ -327,11 +328,10 @@ public partial class TypeChecker
         TypeInfo? ResolveSiblingAccess(IndexedAccessTypeNode indexed, TypeInfo objectType, TypeInfo indexType)
         {
             if (!annotationAccesses.Contains(indexed)
-                || indexed.ObjectType is not NamedTypeNode { Name: var objectName, TypeArguments: null }
+                || indexed.ObjectType is not NamedTypeNode { Name: var objectName }
                 || objectName != classStmt.Name.Lexeme
                 || indexed.IndexType is not LiteralTypeNode
-                || objectType is not TypeInfo.Instance instance
-                || !ReferenceEquals(instance.ClassType, mutableClass))
+                || !IsCurrentClassInstance(objectType))
                 return null;
 
             string? memberName = indexType switch
@@ -346,6 +346,26 @@ public partial class TypeChecker
                 return null;
 
             return WithOptionalPropertyUndefined(ResolveFieldType(dependency), dependency.IsOptional);
+        }
+
+        bool IsCurrentClassInstance(TypeInfo type)
+        {
+            if (type is not TypeInfo.Instance instance) return false;
+            if (ReferenceEquals(instance.ClassType, mutableClass)) return true;
+
+            // Explicit C<T> must select this declaration with its current parameters,
+            // not another instantiation or a same-spelled parameter in a nested scope.
+            if (classTypeParams is not { Count: > 0 }
+                || instance.ClassType is not TypeInfo.InstantiatedGeneric
+                    { GenericDefinition: TypeInfo.GenericClass generic } instantiated
+                || generic.Core.DeclarationId != mutableClass.DeclarationId
+                || instantiated.TypeArguments.Count != classTypeParams.Count)
+                return false;
+
+            for (int i = 0; i < classTypeParams.Count; i++)
+                if (!ReferenceEquals(instantiated.TypeArguments[i], classTypeParams[i]))
+                    return false;
+            return true;
         }
 
         // Collect static property types, field access modifiers, and non-static field types
@@ -746,7 +766,7 @@ public partial class TypeChecker
                     CollectClassIndexSignatures(classStmt, mutableClass);
                     CollectComputedClassMethodSignatures(classStmt, mutableClass);
                     CollectNamedClassMethodSignatures(classStmt, mutableClass);
-                    CollectClassFieldTypes(classStmt, mutableClass);
+                    CollectClassFieldTypes(classStmt, mutableClass, classTypeParams);
                     CollectClassAccessorTypes(classStmt, mutableClass);
                     CollectClassAutoAccessorTypes(classStmt, mutableClass, superclass);
                 }

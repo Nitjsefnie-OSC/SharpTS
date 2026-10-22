@@ -70,7 +70,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             IL.Emit(OpCodes.Stloc, exLocal);
             IL.Emit(OpCodes.Ldc_I4_1);
             IL.Emit(OpCodes.Stloc, presentLocal);
-            IL.Emit(OpCodes.Br, skip);
+            EmitPendingExitBranch(skip);
             return;
         }
 
@@ -80,6 +80,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         loadValue();
         IL.Emit(OpCodes.Stfld, GetPendingExceptionField());
         int code = _nextExitCode++;
+        _iteratorCloseThrowExits.Add(code);
         _exitTerminals[code] = () =>
         {
             IL.Emit(OpCodes.Ldarg_0);
@@ -87,9 +88,9 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             IL.Emit(OpCodes.Stloc, exLocal);
             IL.Emit(OpCodes.Ldc_I4_1);
             IL.Emit(OpCodes.Stloc, presentLocal);
-            IL.Emit(OpCodes.Br, skip);
+            EmitPendingExitBranch(skip);
         };
-        RouteThroughFinallys(chain, code, OpCodes.Br);
+        RouteThroughFinallys(chain, code, ProtectedRegionDepth > 0 ? OpCodes.Leave : OpCodes.Br);
     }
 
     protected override void EmitTryCatch(Stmt.TryCatch t)
@@ -360,6 +361,14 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         => WithGeneratorLexicalScope(tryBody, () => EmitTryBodyWithAwaitsCore(tryBody, caughtExceptionLocal, exceptionPresentLocal));
 
     private void EmitTryBodyWithAwaitsCore(List<Stmt> tryBody, LocalBuilder caughtExceptionLocal, LocalBuilder exceptionPresentLocal)
+        => EmitTryBodyWithAwaitsCore(() =>
+        {
+            foreach (var stmt in tryBody)
+                EmitStatement(stmt);
+        }, caughtExceptionLocal, exceptionPresentLocal);
+
+    // The same resumable protected region can guard a generated iterator-close span.
+    private void EmitTryBodyWithAwaitsCore(Action emitBody, LocalBuilder caughtExceptionLocal, LocalBuilder exceptionPresentLocal)
     {
         var previousExceptionLocal = _currentTryCatchExceptionLocal;
         var previousExceptionPresentLocal = _currentTryCatchExceptionPresentLocal;
@@ -388,8 +397,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         _awaitCatchRegion = region;
         IL.Emit(OpCodes.Br, dispatch);
         IL.MarkLabel(initial);
-        foreach (var stmt in tryBody)
-            EmitStatement(stmt);
+        emitBody();
         IL.Emit(OpCodes.Leave, afterTryLabel);
 
         IL.MarkLabel(dispatch);

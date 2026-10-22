@@ -9,6 +9,9 @@ public abstract partial class AsyncFunctionMoveNextEmitter
     // Per-method counter giving each for await…of loop unique iterator/protocol field names.
     private int _forAwaitCounter;
 
+    // Throw completions retain their original error if a later iterator close also fails.
+    private readonly HashSet<int> _iteratorCloseThrowExits = [];
+
     /// <summary>
     /// Resumable for-await lowering shared by ordinary async functions and async arrows (#2848).
     /// The generic statement base blocks on GetResult; this implementation instead suspends
@@ -124,6 +127,10 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         // break → cleanup (await iterator.return()); natural done → endLabel (no return() per spec).
         // The chain's labels (when present) let `break`/`continue <label>` resolve to this loop; each is
         // registered as its own scope at the same targets (the #704 multi-label convention).
+        // Below this loop's own scopes: its continue does not close, and its break already
+        // targets cleanupLabel. An exit to an outer scope must close this iterator first.
+        var closeFrame = new FinallyScope { CleanupLabel = cleanupLabel };
+        _exitScopes.Add(closeFrame);
         bool labeled = labelNames is { Count: > 0 };
         if (labeled)
         {
@@ -178,17 +185,8 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         IL.MarkLabel(continueLabel);
         IL.Emit(OpCodes.Br, startLabel);
 
-        // Cleanup on break: await iterator.return() (runs the iterator's finally blocks), discard result.
-        int returnState = NextAwaitState();   // allocated after the body, matching the analyzer
-        IL.MarkLabel(cleanupLabel);
-        var returnStepLocal = IL.DeclareLocal(Types.Object);
-        EmitAsyncStep(returnStepLocal, iteratorField, isCustomField, isReturn: true);
-        IL.Emit(OpCodes.Ldloc, returnStepLocal);
-        SetStackUnknown();
-        EmitAwaitFromValueOnStack(returnState);
-        IL.Emit(OpCodes.Pop);
-
-        IL.MarkLabel(endLabel);
+        // Cleanup runs outside its own exit scopes. A close failure can then route through
+        // outer iterator/finally scopes without re-entering this close.
         if (labeled)
         {
             for (int i = 0; i < labelNames!.Count; i++)
@@ -196,6 +194,103 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         }
         else
             ExitLoop();
+        _exitScopes.RemoveAt(_exitScopes.Count - 1);
+
+        // Reuse the analyzer's one return-await state, allocated after the body as before.
+        int returnState = NextAwaitState();
+        IL.MarkLabel(cleanupLabel);
+        void EmitClose()
+        {
+            var returnStepLocal = IL.DeclareLocal(Types.Object);
+            EmitAsyncStep(returnStepLocal, iteratorField, isCustomField, isReturn: true);
+            IL.Emit(OpCodes.Ldloc, returnStepLocal);
+            SetStackUnknown();
+            EmitAwaitFromValueOnStack(returnState);
+            IL.Emit(OpCodes.Pop);
+        }
+
+        if (closeFrame.Dispatch.Count == 0)
+        {
+            // Preserve the existing own-loop break path when no routed exit crosses this loop.
+            EmitClose();
+        }
+        else
+        {
+            // IL locals reset on a pending return() resumption. Preserve the completion in a
+            // per-loop field, clearing the shared flag before either the call or await can fail.
+            var pendingExit = DefineStateMachineField($"<>7__aiterExit{loopId}", Types.Int32);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, GetPendingExitField());
+            IL.Emit(OpCodes.Stfld, pendingExit);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldc_I4_0);
+            IL.Emit(OpCodes.Stfld, GetPendingExitField());
+
+            var closeError = IL.DeclareLocal(Types.Object);
+            var closeFailed = IL.DeclareLocal(Types.Boolean);
+            IL.Emit(OpCodes.Ldnull);
+            IL.Emit(OpCodes.Stloc, closeError);
+            IL.Emit(OpCodes.Ldc_I4_0);
+            IL.Emit(OpCodes.Stloc, closeFailed);
+            EmitTryBodyWithAwaitsCore(EmitClose, closeError, closeFailed);
+
+            var dispatch = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, closeFailed);
+            IL.Emit(OpCodes.Brfalse, dispatch);
+            foreach (int code in closeFrame.Dispatch.Keys.Where(_iteratorCloseThrowExits.Contains))
+            {
+                // AsyncIteratorClose attempts outer cleanup but preserves an existing throw.
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldfld, pendingExit);
+                IL.Emit(OpCodes.Ldc_I4, code);
+                IL.Emit(OpCodes.Beq, dispatch);
+            }
+            EmitIteratorCloseThrow(closeError);
+
+            IL.MarkLabel(dispatch);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, pendingExit);
+            IL.Emit(OpCodes.Stfld, GetPendingExitField());
+            EmitFinallyDispatch(closeFrame);
+        }
+
+        IL.MarkLabel(endLabel);
+    }
+
+    // A failed close replaces a break/continue/return completion. Attempt the remaining
+    // outer cleanups before delivering that failure to the enclosing catch or Task boundary.
+    private void EmitIteratorCloseThrow(LocalBuilder error)
+    {
+        if (_currentTryCatchExceptionLocal != null && _currentTryCatchSkipLabel != null)
+        {
+            RouteThrowIntoCurrentTry(() => IL.Emit(OpCodes.Ldloc, error));
+            return;
+        }
+
+        var chain = ActiveFinallyFrames();
+        if (chain.Count == 0)
+        {
+            IL.Emit(OpCodes.Ldloc, error);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.Errors.CreateException);
+            IL.Emit(OpCodes.Throw);
+            return;
+        }
+
+        IL.Emit(OpCodes.Ldarg_0);
+        IL.Emit(OpCodes.Ldloc, error);
+        IL.Emit(OpCodes.Stfld, GetPendingExceptionField());
+        int code = _nextExitCode++;
+        _iteratorCloseThrowExits.Add(code);
+        _exitTerminals[code] = () =>
+        {
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, GetPendingExceptionField());
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.Errors.CreateException);
+            IL.Emit(OpCodes.Throw);
+        };
+        RouteThroughFinallys(chain, code, ProtectedRegionDepth > 0 ? OpCodes.Leave : OpCodes.Br);
     }
 
     /// <summary>

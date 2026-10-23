@@ -1,0 +1,75 @@
+name: osc-manual
+
+# Fork-only exact-ref validation. This file is intentionally not sent upstream.
+# Mirrors upstream ci.yml's per-PR core checks on any target ref: restore, build
+# (Release), the code-quality gates, and the core test suite with upstream's
+# exact filter. A dispatch has no diff base, so the diff-scoped workflow-policy
+# classification (get-ci-change-scope.ps1) and the git whitespace check are not
+# replicated; the full 'full'-mode set (windows legs, GUI conformance, standalone
+# shards, editor-contract, dap-macos-smoke, aot-ratchet, native-aot-compile-smoke,
+# typescript-conformance, and the packaging/benchmark smokes) is loudly skipped.
+# The closing step of the one check job prints that skip.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: "Branch, tag, or SHA of this fork to test"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osc-manual-sharpts-${{ inputs.target_ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.pin.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Nitjsefnie-OSC/SharpTS
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+      - id: pin
+        run: |
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Tested commit: $(git rev-parse HEAD) (resolved from target_ref '${{ inputs.target_ref }}')"
+
+  core:
+    name: Restore, build and test core (ubuntu)
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Nitjsefnie-OSC/SharpTS
+          ref: ${{ needs.resolve.outputs.commit }}
+          persist-credentials: false
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Restore dependencies
+        run: dotnet restore
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+      - name: Verify code quality gates
+        shell: pwsh
+        run: ./scripts/test-code-quality.ps1
+      - name: Test core
+        run: dotnet test tests/SharpTS.Tests/SharpTS.Tests.csproj --no-build --configuration Release --verbosity normal --filter "Category!=LiveNetwork&Category!=LoadSensitive&Category!=npm&FullyQualifiedName!~SharpTS.Tests.CompilerTests.StandaloneDllTests."
+        # The standalone job runs the complementary class on its own runner;
+        # its sequential child-process cases otherwise dominate this step.
+        timeout-minutes: 20
+      - name: Scope statement
+        if: always()
+        run: |
+          echo "osc-manual ran the per-PR core set (restore, Release build, code-quality gates, core suite with upstream's filter) on one ubuntu runner."
+          echo "Loudly skipped on this fork dispatch: workflow-policy diff classification, the windows/macOS legs, GUI conformance, standalone shards, editor-contract, dap-macos-smoke, aot-ratchet, native-aot-compile-smoke, typescript-conformance, and the packaging/benchmark smokes."

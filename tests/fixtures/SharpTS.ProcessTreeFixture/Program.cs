@@ -24,6 +24,7 @@ internal static class Program
                 [ChildMode] => RunChild(),
                 ["output"] => RunOutput(),
                 ["dual-output"] => RunDualOutput(),
+                ["utf8-output"] => RunUtf8Output(),
                 ["orphan"] => RunOrphan(),
                 ["orphan-with-pid-file", var pidPath] => RunOrphan(pidPath),
                 ["delayed-ready"] => RunDelayedReady(),
@@ -74,6 +75,17 @@ internal static class Program
         Console.Error.Write("stderr-begin:" + new string('e', 256 * 1024) + ":stderr-end");
         Console.Error.Flush();
         return 7;
+    }
+
+    private static int RunUtf8Output()
+    {
+        using var output = Console.OpenStandardOutput();
+        output.Write(new byte[] { 0xEF, 0xBB, 0xBF });
+        foreach (byte value in System.Text.Encoding.UTF8.GetBytes("Aé😀中|tail"))
+            output.WriteByte(value);
+        output.Flush();
+        Console.Error.Write("utf8-stderr");
+        return 0;
     }
 
     private static int RunOrphan(string? pidPath = null)

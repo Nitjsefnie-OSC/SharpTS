@@ -37,6 +37,11 @@ public partial class StandaloneDllTests
             var exception = await Assert.ThrowsAsync<TimeoutException>(
                 () => capture.WaitAsync(TimeSpan.FromSeconds(30)));
             Assert.Contains("exited, but its output pipes did not close", exception.Message);
+            if (OperatingSystem.IsLinux())
+            {
+                Assert.Equal(true, exception.Data["StandaloneCaptureStdoutStopped"]);
+                Assert.Equal(true, exception.Data["StandaloneCaptureStderrStopped"]);
+            }
             using var diagnostic = ReadCaptureDiagnostic(exception);
             var before = diagnostic.RootElement.GetProperty("beforeCleanup");
             int parentPid = AssertObservedExit(before, 0);

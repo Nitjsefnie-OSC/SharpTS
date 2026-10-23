@@ -16294,6 +16294,7 @@ public partial class StandaloneDllTests
         _ = inputTask.ContinueWith(task => { _ = task.Exception; }, CancellationToken.None,
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         var diagnostics = new StandaloneProcessDiagnostics(process, psi, clock, stdout, stderr, inputTask, dllIdentity);
+        Exception? captureFailure = null;
         try
         {
             if (readiness is not null &&
@@ -16357,6 +16358,7 @@ public partial class StandaloneDllTests
         }
         catch (Exception exception)
         {
+            captureFailure = exception;
             diagnostics.AttachFailure(exception);
             throw;
         }
@@ -16368,6 +16370,21 @@ public partial class StandaloneDllTests
             ObserveStandaloneTaskFault(readCancellation.CancelAsync());
             ObserveStandaloneTaskFault(outputTask);
             ObserveStandaloneTaskFault(errorTask);
+            if (OperatingSystem.IsLinux())
+            {
+                // Cleanup only: never reinterpret cancellation as EOF or extend the
+                // original readiness, execution, or five-second output-drain waits.
+                var cleanup = Stopwatch.StartNew();
+                bool outputStopped = stdout.WaitForStop(5000);
+                int remaining = (int)Math.Clamp(5000 - cleanup.ElapsedMilliseconds, 0, 5000);
+                bool errorStopped = stderr.WaitForStop(remaining);
+                if (captureFailure is not null)
+                {
+                    captureFailure.Data["StandaloneCaptureStdoutStopped"] = outputStopped;
+                    captureFailure.Data["StandaloneCaptureStderrStopped"] = errorStopped;
+                    captureFailure.Data["StandaloneCaptureReaderCleanupMilliseconds"] = cleanup.Elapsed.TotalMilliseconds;
+                }
+            }
         }
 
     }
@@ -16438,15 +16455,24 @@ public partial class StandaloneDllTests
         private long _characterCount;
 
         public StandalonePipeCapture(StreamReader reader, Stopwatch clock, CancellationToken cancellation,
-            string? marker = null, TaskCompletionSource<bool>? readiness = null)
+            string? marker = null, TaskCompletionSource<bool>? readiness = null, int linuxReadChunkBytes = 1024)
         {
             _clock = clock;
             _stream = CaptureStreamIdentity(reader);
-            Completion = CaptureAsync(reader, cancellation, marker, readiness);
+            Completion = OperatingSystem.IsLinux() && reader.BaseStream is System.IO.Pipes.PipeStream pipe
+                ? Task.Factory.StartNew(() => CapturePolling(reader, pipe, cancellation, marker, readiness,
+                    linuxReadChunkBytes), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)
+                : CaptureAsync(reader, cancellation, marker, readiness);
             ObserveStandaloneTaskFault(Completion);
         }
 
         public Task<string> Completion { get; }
+
+        public bool WaitForStop(int timeoutMilliseconds)
+        {
+            try { return Completion.Wait(timeoutMilliseconds); }
+            catch (AggregateException) when (Completion.IsCompleted) { return true; }
+        }
 
         public StandalonePipeSnapshot Snapshot()
         {
@@ -16472,6 +16498,60 @@ public partial class StandaloneDllTests
         }
 
         private StandaloneCaptureTime Now() => new(DateTimeOffset.UtcNow, _clock.Elapsed.TotalMilliseconds);
+
+        private string CapturePolling(StreamReader original, System.IO.Pipes.PipeStream pipe,
+            CancellationToken cancellation, string? marker, TaskCompletionSource<bool>? readiness,
+            int readChunkBytes)
+        {
+            lock (_gate) _readStarted = Now();
+            var buffer = new char[1024];
+            try
+            {
+                // The original Process reader has not consumed bytes. Preserve its
+                // encoding and normal BOM/partial-character decoding over a cancellable
+                // byte transport, rather than blocking directly in PipeStream.Read.
+                using var transport = new LinuxPollingReadStream(pipe.SafePipeHandle, cancellation, readChunkBytes);
+                using var reader = new StreamReader(transport, original.CurrentEncoding,
+                    detectEncodingFromByteOrderMarks: true, bufferSize: 1024, leaveOpen: false);
+                while (true)
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    int count = reader.Read(buffer, 0, buffer.Length);
+                    bool foundMarker;
+                    lock (_gate)
+                    {
+                        if (count == 0)
+                        {
+                            _eof = Now();
+                            readiness?.TrySetResult(false);
+                            return _text.ToString();
+                        }
+                        _firstRead ??= Now();
+                        _lastRead = Now();
+                        _readCount++;
+                        _characterCount += count;
+                        _text.Append(buffer, 0, count);
+                        foundMarker = readiness is not null && !readiness.Task.IsCompleted &&
+                            _text.ToString().Contains(marker!, StringComparison.Ordinal);
+                    }
+                    if (foundMarker) readiness!.TrySetResult(true);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                lock (_gate) _canceled = Now();
+                throw;
+            }
+            catch (Exception exception)
+            {
+                lock (_gate)
+                {
+                    _fault = Now();
+                    _faultDescription = exception.ToString();
+                }
+                throw;
+            }
+        }
 
         private async Task<string> CaptureAsync(StreamReader reader, CancellationToken cancellation,
             string? marker, TaskCompletionSource<bool>? readiness)
@@ -16518,6 +16598,112 @@ public partial class StandaloneDllTests
                 throw;
             }
         }
+    }
+
+    // Linux Process pipes use PipeSocket.ReceiveAsync in .NET 10. Their continuations
+    // can still depend on a busy pool. Keep this transport independent of that queue;
+    // a blocking read without poll would not offer bounded inherited-pipe cancellation.
+    private sealed class LinuxPollingReadStream : Stream
+    {
+        private readonly Microsoft.Win32.SafeHandles.SafePipeHandle _handle;
+        private readonly CancellationToken _cancellation;
+        private readonly int _descriptor;
+        private readonly int _readChunkBytes;
+        private int _disposed;
+
+        public LinuxPollingReadStream(Microsoft.Win32.SafeHandles.SafePipeHandle handle,
+            CancellationToken cancellation, int readChunkBytes)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(readChunkBytes, 1);
+            _handle = handle;
+            _cancellation = cancellation;
+            _readChunkBytes = readChunkBytes;
+            bool referenceHeld = false;
+            try
+            {
+                // Borrow, never close or duplicate the Process-owned descriptor. The
+                // reference prevents disposal/reuse until this reader actually stops.
+                handle.DangerousAddRef(ref referenceHeld);
+                _descriptor = handle.DangerousGetHandle().ToInt32();
+            }
+            catch
+            {
+                if (referenceHeld) handle.DangerousRelease();
+                throw;
+            }
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            ValidateBufferArguments(buffer, offset, count);
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            _cancellation.ThrowIfCancellationRequested();
+            if (count == 0) return 0;
+            var bytes = new byte[Math.Min(count, _readChunkBytes)];
+            var descriptor = new PollDescriptor { Descriptor = _descriptor, Events = 0x0001 };
+            while (true)
+            {
+                _cancellation.ThrowIfCancellationRequested();
+                descriptor.ReturnedEvents = 0;
+                int ready = Poll(ref descriptor, 1, 100);
+                if (ready < 0)
+                {
+                    int error = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+                    if (error == 4) continue; // EINTR: recheck cancellation before retrying.
+                    throw NativeFailure("poll", error);
+                }
+                if (ready == 0) continue;
+                if ((descriptor.ReturnedEvents & 0x0020) != 0)
+                    throw new IOException("The borrowed output pipe descriptor became invalid.");
+                if ((descriptor.ReturnedEvents & (0x0001 | 0x0008 | 0x0010)) == 0) continue;
+                _cancellation.ThrowIfCancellationRequested();
+                // Only this transport reads the descriptor. Read at most the bytes
+                // made ready by poll; HUP is not EOF until read itself returns zero.
+                nint received = ReadDescriptor(_descriptor, bytes, (nuint)bytes.Length);
+                if (received >= 0)
+                {
+                    int length = checked((int)received);
+                    Buffer.BlockCopy(bytes, 0, buffer, offset, length);
+                    return length;
+                }
+                int readError = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+                if (readError is 4 or 11) continue; // EINTR/EAGAIN: poll again, never synthesize EOF.
+                throw NativeFailure("read", readError);
+            }
+        }
+
+        private static IOException NativeFailure(string operation, int error) =>
+            new($"Output pipe {operation} failed with errno {error}.", new System.ComponentModel.Win32Exception(error));
+
+        protected override void Dispose(bool disposing)
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0) _handle.DangerousRelease();
+            base.Dispose(disposing);
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct PollDescriptor
+        {
+            public int Descriptor;
+            public short Events;
+            public short ReturnedEvents;
+        }
+
+        [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "poll", SetLastError = true)]
+        private static extern int Poll(ref PollDescriptor descriptor, nuint count, int timeoutMilliseconds);
+
+        [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "read", SetLastError = true)]
+        private static extern nint ReadDescriptor(int descriptor, [System.Runtime.InteropServices.Out] byte[] buffer, nuint count);
     }
 
     private sealed class StandaloneProcessDiagnostics(

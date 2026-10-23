@@ -143,6 +143,7 @@ public partial class RuntimeEmitter
         EmittedSymbolRuntime Symbols,
         MethodBuilder TSFunctionGetOrCreate,
         TypeBuilder TSFunctionType,
+        EmittedFunctionBindingRuntime FunctionBindings,
         FieldInfo UndefinedInstance,
         Type UndefinedType,
         FunctionOwnPrototypeInputs OwnPrototype
@@ -1711,6 +1712,7 @@ public partial class RuntimeEmitter
                 inputs.ObjectState,
                 inputs.Promise,
                 inputs.TSFunctionType,
+                inputs.FunctionBindings,
                 inputs.UndefinedType,
                 inputs.OwnPrototype
             ),

@@ -60,6 +60,7 @@ public partial class RuntimeEmitter
         EmittedObjectStateRuntime ObjectState,
         EmittedPromiseRuntime? Promise,
         TypeBuilder TSFunctionType,
+        EmittedFunctionBindingRuntime FunctionBindings,
         Type UndefinedType,
         FunctionOwnPrototypeInputs OwnPrototype
     );
@@ -385,8 +386,8 @@ public partial class RuntimeEmitter
     {
         // ECMA-262 §17 — built-in functions expose `name` and `length` as
         // { writable: false, enumerable: false, configurable: true } own data
-        // properties. Synthesize those descriptors for $TSFunction and the
-        // promise resolve/reject callback wrappers. After
+        // properties. Synthesize those descriptors for $TSFunction, bound
+        // function wrappers, and promise resolve/reject callbacks. After
         // `delete fn.name`/`length`, IsBuiltinDeleted hides the synthetic
         // descriptor — descriptor lookup returns null, matching the post-
         // delete state expected by verifyProperty's isConfigurable check.
@@ -394,6 +395,12 @@ public partial class RuntimeEmitter
         var functionDescriptorCheckLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, inputs.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, functionDescriptorCheckLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.FunctionBindings.BoundType);
+        il.Emit(OpCodes.Brtrue, functionDescriptorCheckLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, inputs.FunctionBindings.AnyType);
         il.Emit(OpCodes.Brtrue, functionDescriptorCheckLabel);
         if (inputs.Promise is not null)
         {

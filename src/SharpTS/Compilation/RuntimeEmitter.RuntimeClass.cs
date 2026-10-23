@@ -2096,6 +2096,7 @@ public partial class RuntimeEmitter
                 runtime.Symbols,
                 runtime.FunctionConstruction.GetOrCreate,
                 runtime.FunctionValues.Type,
+                runtime.FunctionBindings,
                 runtime.Sentinels.UndefinedInstance,
                 runtime.Sentinels.UndefinedType,
                 new FunctionOwnPrototypeInputs(runtime.FunctionValues, runtime.FunctionAttributes, runtime.GeneratorPrototypes.Kind)

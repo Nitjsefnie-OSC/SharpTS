@@ -111,7 +111,7 @@ public sealed class EmittedObjectDescriptorRuntimeTests
         var ownPrototype = Activator.CreateInstance(ownPrototypeType,
             runtime.FunctionValues, runtime.FunctionAttributes, runtime.GeneratorPrototypes.Kind)!;
         var inputs = Activator.CreateInstance(inputType,
-            getProperty, runtime.ObjectState, promise, runtime.FunctionValues.Type, runtime.Sentinels.UndefinedType,
+            getProperty, runtime.ObjectState, promise, runtime.FunctionValues.Type, runtime.FunctionBindings, runtime.Sentinels.UndefinedType,
             ownPrototype)!;
         EmitReceiverProbe(emitter, probe, helper, inputs); probe.CreateType();
         var loaded = SaveVerifyLoad(builder); var savedProbe = loaded.GetType(probe.FullName!)!;

@@ -52,6 +52,13 @@ public partial class AsyncStateAnalyzer
         }
     }
 
+    protected override void VisitNew(Expr.New expr)
+    {
+        // A runtime constructor is a value read, including after an await.
+        Visit(expr.Callee);
+        base.VisitNew(expr);
+    }
+
     protected override void VisitVariable(Expr.Variable expr)
     {
         // Track variable usage after await, under its (possibly disambiguated) storage name (#766).

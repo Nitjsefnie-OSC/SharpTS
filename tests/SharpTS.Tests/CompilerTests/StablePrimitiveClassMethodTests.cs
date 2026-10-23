@@ -291,7 +291,7 @@ public sealed class StablePrimitiveClassMethodTests
             console.log(model.getValue());
             """;
 
-        Assert.Equal("null\n", TestHarness.RunCompiled(source));
+        Assert.Equal("undefined\n", TestHarness.RunCompiled(source));
         Assert.Empty(TestHarness.CompileAndVerifyOnly(source));
 
         Assembly assembly = Compile(source);

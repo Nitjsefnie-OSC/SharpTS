@@ -354,7 +354,8 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
                 // Record only fields actually created after own parameters and
                 // locals were excluded; their same-spelled bindings stay own.
                 StandaloneCellCaptureDeclarations[captureName] = declaration;
-                captureType = _types.StrongBoxOfObject;
+                captureType = DebugLexicalCellStorages?.GetValueOrDefault(declaration)?.ReferenceType
+                    ?? _types.StrongBoxOfObject;
             }
             else if (liveCaptures?.TryGetValue(captureName, out var liveField) == true)
             {
@@ -364,7 +365,13 @@ public class AsyncArrowStateMachineBuilder : AsyncBuilderBase
             string fieldName = $"<>captured_{captureName}";
             if (DebugSymbols is not null)
             {
-                if (StandaloneLiveCaptureFields.TryGetValue(captureName, out var sourceField))
+                if (StandaloneCellCaptureDeclarations.TryGetValue(captureName, out var sourceDeclaration)
+                    && DebugLexicalCellStorages?.GetValueOrDefault(sourceDeclaration) is { DebugOwner: not null } cellStorage)
+                {
+                    fieldName = DebugDisplayClassName();
+                    DebugSymbols.ImportCapturedField((FieldBuilder)cellStorage.ValueField);
+                }
+                else if (StandaloneLiveCaptureFields.TryGetValue(captureName, out var sourceField))
                 {
                     fieldName = DebugDisplayClassName();
                     DebugSymbols.ImportCapturedField(sourceField);

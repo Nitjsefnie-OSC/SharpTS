@@ -637,7 +637,7 @@ public abstract partial class ExpressionEmitterBase
             }
             FieldInfo? field = null;
             if (LexicalEnvironmentCellAccess.TryEmitCaptureReference(IL, Ctx, expression, name))
-                field = Types.StrongBoxOfObjectValueField;
+                field = LexicalCellStorage.ForCapture(Ctx, expression, name).ValueField;
             else if (Ctx.CellBindingLocals.TryGetValue(name, out var cell))
             {
                 IL.Emit(OpCodes.Ldloc, cell);

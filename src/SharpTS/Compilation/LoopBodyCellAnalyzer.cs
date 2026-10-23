@@ -72,6 +72,7 @@ internal sealed class LoopBodyCellAnalyzer : AstVisitorBase
     private readonly Dictionary<object, Dictionary<string, Token>> _privateSelfCaptures = new(ReferenceEqualityComparer.Instance);
     public IEnumerable<Token> CellDeclarations => _cells;
     public bool IsCellDeclaration(Token token) => _cells.Contains(token);
+    public object? GetCellOwner(Token token) => _declarations.GetValueOrDefault(token)?.Owner.Node;
     public bool IsOrdinaryBlockShadowDeclaration(Token token) => _ordinaryBlockShadows.Contains(token);
     public bool IsFunctionBodyVarDeclaration(Token token) => _functionBodyVarDeclarations.ContainsKey(token);
     public Token? GetFunctionBodyVarDeclaration(Token token) => _functionBodyVarDeclarations.GetValueOrDefault(token);

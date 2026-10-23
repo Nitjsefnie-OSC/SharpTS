@@ -1184,6 +1184,8 @@ public partial class ILCompiler
         foreach (var info in _closures.ObjectShapes.ByKey.Values)
             ((TypeBuilder)info.ClrType).CreateType();
 
+        FinalizeDebugLexicalCellTypes();
+
         // Finalize entry-point display class first (needed by closures)
         _closures.EntryPointDisplayClass?.CreateType();
 
@@ -1814,6 +1816,8 @@ public partial class ILCompiler
         // Finalize generated object-literal shape structs (#862) before any type that uses them.
         foreach (var info in _closures.ObjectShapes.ByKey.Values)
             ((TypeBuilder)info.ClrType).CreateType();
+
+        FinalizeDebugLexicalCellTypes();
 
         // Finalize entry-point display class first (needed by closures)
         _closures.EntryPointDisplayClass?.CreateType();

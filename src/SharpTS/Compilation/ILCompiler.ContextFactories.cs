@@ -43,6 +43,7 @@ public partial class ILCompiler
         {
             // Closure analysis registries
             ClosureAnalyzer = _closures.Analyzer,
+            DebugLexicalCellStorages = _debugLexicalCellStorages,
             ArrowMethods = _closures.ArrowMethods,
             GeneratorExpressions = _closures.GeneratorExpressions,
             ConstArrowBindings = _closures.ConstArrowBindings,
@@ -276,6 +277,7 @@ public partial class ILCompiler
             RuntimeFeatures = parentCtx.RuntimeFeatures,
             StaticDirectEvalStatements = parentCtx.StaticDirectEvalStatements,
             ClosureAnalyzer = parentCtx.ClosureAnalyzer,
+            DebugLexicalCellStorages = parentCtx.DebugLexicalCellStorages,
             ArrowMethods = parentCtx.ArrowMethods,
             GeneratorExpressions = parentCtx.GeneratorExpressions,
             LexicalTdzNames = parentCtx.LexicalTdzNames,

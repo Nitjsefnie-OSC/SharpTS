@@ -482,6 +482,11 @@ public partial class CompilationContext
     internal Dictionary<string, Token> LoopBodyCellShadows { get; } = [];
     internal IReadOnlyDictionary<string, Token>? LoopBodyCellCaptures { get; set; }
 
+    // Shared by all contexts in this compilation. Declaration identity keeps escaped closures and
+    // same-spelled shadows on the exact cell selected by their owner. Empty outside debug builds.
+    internal IReadOnlyDictionary<Token, LexicalCellStorage>? DebugLexicalCellStorages { get; set; }
+    internal Dictionary<Token, FieldBuilder> ProjectedLexicalCellFields { get; } = new(ReferenceEqualityComparer.Instance);
+
     internal bool IsLoopBodyCellCapture(string name) =>
         LoopBodyCellCaptures?.ContainsKey(name) == true &&
         CapturedFields?.ContainsKey(name) == true &&

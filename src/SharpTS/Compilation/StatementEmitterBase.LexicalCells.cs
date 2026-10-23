@@ -7,7 +7,7 @@ public abstract partial class StatementEmitterBase
 {
     protected sealed record LoopBodyCellScopeEntry(string Name, Token Token, LocalBuilder? Cell, FieldBuilder? Field, FieldBuilder? ShadowField, Token? Declaration, Token? Shadow);
     private int _lexicalCellCount;
-    protected virtual FieldBuilder? DefineLexicalCellField(string name) => null;
+    protected virtual FieldBuilder? DefineLexicalCellField(string name, Token declaration) => null;
 
     protected void EnterLoopBodyCellScope(IEnumerable<Stmt> statements, List<LoopBodyCellScopeEntry> prior,
         bool ordinaryHandler = false, bool preserveActiveDeclarations = false)
@@ -74,12 +74,13 @@ public abstract partial class StatementEmitterBase
             Ctx.LexicalCellStorageNames[token] = name;
             if (selected)
             {
-                var field = DefineLexicalCellField($"<>lexicalCell{_lexicalCellCount++}");
+                var storage = LexicalCellStorage.ForDeclaration(Ctx, token);
+                var field = DefineLexicalCellField($"<>lexicalCell{_lexicalCellCount++}", token);
                 if (field is not null) IL.Emit(OpCodes.Ldarg_0);
                 IL.Emit(OpCodes.Ldsfld, classStaticBlockVar
                     ? Ctx.Runtime!.Sentinels.UndefinedInstance
                     : Ctx.Runtime!.Sentinels.LexicalUninitializedInstance);
-                IL.Emit(OpCodes.Newobj, Ctx.Types.StrongBoxOfObjectCtor);
+                IL.Emit(OpCodes.Newobj, storage.Constructor);
                 if (field is not null)
                 {
                     IL.Emit(OpCodes.Stfld, field);
@@ -87,7 +88,7 @@ public abstract partial class StatementEmitterBase
                 }
                 else
                 {
-                    var cell = Ctx.Locals.DeclareLocal(name, Ctx.Types.StrongBoxOfObject, token);
+                    var cell = Ctx.Locals.DeclareLocal(name, storage.ReferenceType, token);
                     IL.Emit(OpCodes.Stloc, cell);
                     Ctx.CellBindingLocals[name] = cell;
                 }
@@ -97,14 +98,14 @@ public abstract partial class StatementEmitterBase
             {
                 // A plain inner declaration masks the outer box from block entry,
                 // including reads before its textual initialization.
-                var field = DefineLexicalCellField($"<>lexicalShadow{_lexicalCellCount++}");
+                var field = DefineLexicalCellField($"<>lexicalShadow{_lexicalCellCount++}", token);
                 if (field is not null) IL.Emit(OpCodes.Ldarg_0);
                 IL.Emit(OpCodes.Ldsfld, classStaticBlockVar
                     ? Ctx.Runtime!.Sentinels.UndefinedInstance
                     : Ctx.Runtime!.Sentinels.LexicalUninitializedInstance);
                 if (field is not null)
                 {
-                    IL.Emit(OpCodes.Newobj, Ctx.Types.StrongBoxOfObjectCtor);
+                    IL.Emit(OpCodes.Newobj, LexicalCellStorage.ForDeclaration(Ctx, token).Constructor);
                     IL.Emit(OpCodes.Stfld, field);
                     Ctx.LoopBodyCellShadowFields[name] = field;
                 }
@@ -148,7 +149,7 @@ public abstract partial class StatementEmitterBase
             IL.Emit(OpCodes.Ldarg_0);
             IL.Emit(OpCodes.Ldfld, field);
             IL.Emit(OpCodes.Ldloc, value);
-            IL.Emit(OpCodes.Stfld, Types.StrongBoxOfObjectValueField);
+            IL.Emit(OpCodes.Stfld, LexicalCellStorage.ForDeclaration(Ctx, token).ValueField);
         }
         else
         {
@@ -231,7 +232,7 @@ public abstract partial class StatementEmitterBase
                 IL.Emit(OpCodes.Ldarg_0);
                 IL.Emit(OpCodes.Ldfld, field);
                 IL.Emit(OpCodes.Ldloc, value);
-                IL.Emit(OpCodes.Stfld, Types.StrongBoxOfObjectValueField);
+                IL.Emit(OpCodes.Stfld, LexicalCellStorage.ForDeclaration(Ctx, declarationToken).ValueField);
             }
             else
             {
@@ -255,7 +256,7 @@ public abstract partial class StatementEmitterBase
             bool hoisted = Ctx.LoopBodyCellFields.TryGetValue(name, out var field);
             if (hoisted) IL.Emit(OpCodes.Ldarg_0);
             IL.Emit(OpCodes.Ldloc, value);
-            IL.Emit(OpCodes.Newobj, Types.StrongBoxOfObjectCtor);
+            IL.Emit(OpCodes.Newobj, LexicalCellStorage.ForDeclaration(Ctx, token).Constructor);
             if (hoisted) IL.Emit(OpCodes.Stfld, field!);
             else IL.Emit(OpCodes.Stloc, Ctx.CellBindingLocals[name]);
         }
@@ -268,7 +269,7 @@ public abstract partial class StatementEmitterBase
             }
             else IL.Emit(OpCodes.Ldloc, Ctx.CellBindingLocals[name]);
             IL.Emit(OpCodes.Ldloc, value);
-            IL.Emit(OpCodes.Stfld, Types.StrongBoxOfObjectValueField);
+            IL.Emit(OpCodes.Stfld, LexicalCellStorage.ForDeclaration(Ctx, token).ValueField);
         }
         return true;
     }

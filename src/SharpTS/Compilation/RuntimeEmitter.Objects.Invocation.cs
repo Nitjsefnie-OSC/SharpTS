@@ -838,10 +838,13 @@ public partial class RuntimeEmitter
         // of the legacy wrappers. Preserve the decoder's explicit receiver check.
         var tsFunction = il.DeclareLocal(inputs.FunctionValues.Type);
         il.Emit(OpCodes.Stloc, tsFunction);
-        EmitTextDecoderWrapperCall(il, inputs.FunctionValues, inputs.TextEncoding, inputs.Errors,
-            () => il.Emit(OpCodes.Ldloc, tsFunction),
-            () => il.Emit(OpCodes.Ldarg_0),
-            () => il.Emit(OpCodes.Ldarg_2));
+        if (inputs.UsesTextEncoding)
+        {
+            EmitTextDecoderWrapperCall(il, inputs.FunctionValues, inputs.TextEncoding, inputs.Errors,
+                () => il.Emit(OpCodes.Ldloc, tsFunction),
+                () => il.Emit(OpCodes.Ldarg_0),
+                () => il.Emit(OpCodes.Ldarg_2));
+        }
 
         // return tsFunc.InvokeWithThis(receiver, args)
         il.Emit(OpCodes.Ldloc, tsFunction);

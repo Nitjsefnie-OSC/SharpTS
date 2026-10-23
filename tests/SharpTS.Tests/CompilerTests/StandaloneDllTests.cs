@@ -16511,7 +16511,8 @@ public partial class StandaloneDllTests
                 // encoding and normal BOM/partial-character decoding over a cancellable
                 // byte transport, rather than blocking directly in PipeStream.Read.
                 using var transport = new LinuxPollingReadStream(pipe.SafePipeHandle, cancellation, readChunkBytes);
-                using var reader = new StreamReader(transport, original.CurrentEncoding,
+                using var prefix = new BomPrefixReadStream(transport);
+                using var reader = new StreamReader(prefix, original.CurrentEncoding,
                     detectEncodingFromByteOrderMarks: true, bufferSize: 1024, leaveOpen: false);
                 while (true)
                 {
@@ -16598,6 +16599,76 @@ public partial class StandaloneDllTests
                 throw;
             }
         }
+    }
+
+    // StreamReader's BOM detection needs the initial bytes together when the
+    // supplied encoding has no preamble. Native pipe reads can split that prefix.
+    // Gather only a possible BOM: ordinary one-character output must remain live.
+    private sealed class BomPrefixReadStream(Stream inner) : Stream
+    {
+        private readonly byte[] _prefix = new byte[4];
+        private int _prefixLength, _prefixPosition;
+        private bool _initialized, _eof, _disposed;
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            ValidateBufferArguments(buffer, offset, count);
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (count == 0) return 0;
+            if (!_initialized)
+            {
+                do
+                {
+                    int received = inner.Read(_prefix, _prefixLength, 1);
+                    if (received == 0)
+                    {
+                        _eof = true;
+                        break;
+                    }
+                    _prefixLength += received;
+                }
+                while (CouldExtendBom(_prefix.AsSpan(0, _prefixLength)));
+                _initialized = true;
+            }
+
+            int available = _prefixLength - _prefixPosition;
+            if (available != 0)
+            {
+                int length = Math.Min(count, available);
+                Buffer.BlockCopy(_prefix, _prefixPosition, buffer, offset, length);
+                _prefixPosition += length;
+                return length;
+            }
+            return _eof ? 0 : inner.Read(buffer, offset, count);
+        }
+
+        private static bool CouldExtendBom(ReadOnlySpan<byte> prefix) => prefix.Length switch
+        {
+            1 => prefix[0] is 0x00 or 0xEF or 0xFE or 0xFF,
+            2 => (prefix[0] == 0xEF && prefix[1] == 0xBB) ||
+                 (prefix[0] == 0xFF && prefix[1] == 0xFE) ||
+                 (prefix[0] == 0x00 && prefix[1] == 0x00),
+            3 => (prefix[0] == 0xFF && prefix[1] == 0xFE && prefix[2] == 0x00) ||
+                 (prefix[0] == 0x00 && prefix[1] == 0x00 && prefix[2] == 0xFE),
+            _ => false
+        };
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && !_disposed) inner.Dispose();
+            _disposed = true;
+            base.Dispose(disposing);
+        }
+
+        public override bool CanRead => !_disposed && inner.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     // Linux Process pipes use PipeSocket.ReceiveAsync in .NET 10. Their continuations

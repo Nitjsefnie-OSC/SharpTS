@@ -14235,13 +14235,8 @@ public partial class StandaloneDllTests
         },
         new object[]
         {
-            """
-            const decoder = new TextDecoder(); const decode = decoder.decode;
-            console.log(decode(Buffer.from('direct')));
-            console.log(decode.call(decoder, Buffer.from('call')));
-            console.log(decode.apply(decoder, [Buffer.from('apply')]));
-            """,
-            "direct\ncall\napply\n"
+            "const decoder = new TextDecoder(); const decode = decoder.decode;\ntry { decode(Buffer.from('direct')); console.log('unexpected'); }\ncatch (error) { console.log(error instanceof TypeError); }\nconsole.log(decode.call(decoder, Buffer.from('call')));\nconsole.log(decode.apply(decoder, [Buffer.from('apply')]));\n",
+            "true\ncall\napply\n"
         },
         new object[]
         {

@@ -70,6 +70,7 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
     private readonly HashSet<string> _declaredVariables = [];
     private readonly HashSet<string> _variablesUsedAfterAwait = [];
     private ClosureAnalyzer? _closureAnalyzer;
+    private Stmt.Function? _analyzedFunction;
     private readonly List<AsyncArrowInfo> _asyncArrows = [];
     private readonly List<TryBlockInfo> _tryBlocks = [];
     private int _awaitCounter = 0;
@@ -122,6 +123,7 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
     {
         Reset();
         _closureAnalyzer = closureAnalyzer;
+        _analyzedFunction = func;
         _nonSuspendingAwaits = nonSuspendingAwaits;
 
         // Disambiguate block-scoped let/const declarations that shadow an enclosing binding so the
@@ -229,6 +231,7 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
         _currentTryRegion = TryRegion.None;
         _tryBlockAwaitFlags.Clear();
         _nonSuspendingAwaits = null;
+        _analyzedFunction = null;
     }
 
     /// <summary>

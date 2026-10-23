@@ -125,6 +125,23 @@ public partial class AsyncStateAnalyzer
             _asyncArrowNestingLevel--;
             _currentParentArrow = previousParent;
         }
+        else if (!expr.IsAsync && !expr.IsGenerator && _seenAwait
+            && _closureAnalyzer != null && _analyzedFunction != null)
+        {
+            // Creating the closure reads its capture sources at this point. Preserve
+            // this function's storage without visiting the nested body or sharing
+            // distinct loop iterations through one function display class.
+            foreach (var capture in _closureAnalyzer.GetCaptures(expr))
+            {
+                if (!ReferenceEquals(_closureAnalyzer.GetCaptureSource(expr, capture), _analyzedFunction))
+                    continue;
+
+                var source = _captureRenames.TryGetValue(expr, out var renames)
+                    && renames.TryGetValue(capture, out var renamed) ? renamed : capture;
+                if (_declaredVariables.Contains(source))
+                    _variablesUsedAfterAwait.Add(source);
+            }
+        }
         // Don't call base - we don't want to traverse into arrow bodies for the main analysis
         // The nested async arrow visitor handles that separately
     }
